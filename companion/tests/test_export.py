@@ -245,3 +245,22 @@ def test_output_ends_with_a_newline_and_declares_both_namespaces():
     text = record_to_tcx(make_record(steady_samples(30)))
     assert text.endswith("</TrainingCenterDatabase>\n")
     assert f'xmlns="{TCX_NS}"' in text and f'xmlns:ns3="{EXT_NS}"' in text
+
+
+def test_a_treadmill_name_with_control_characters_still_gives_valid_xml():
+    """A Bluetooth name can hold anything. One character XML does not allow
+    made every export of that walk unreadable for Garmin Connect and Strava."""
+    text = record_to_tcx(make_record(steady_samples(), treadmill="URTM\x00\x1b030￾ <&>"))
+    root = parse(text)  # must not raise
+    notes = next(element for element in root.iter() if local(element) == "Notes")
+    assert "URTM030" in notes.text and "<&>" in notes.text
+
+
+def test_cadence_follows_the_walkers_height_and_step_calibration():
+    def cadences(**options):
+        root = parse(record_to_tcx(make_record(steady_samples()), **options))
+        return {int(element.text) for element in root.iter() if local(element) == "RunCadence"}
+
+    default = max(cadences())
+    assert max(cadences(height_cm=150.0)) > default > max(cadences(height_cm=200.0))
+    assert max(cadences(step_calibration=1.3)) > default

@@ -8,6 +8,7 @@ and cadence.
 
 from __future__ import annotations
 
+import re
 import time
 from xml.sax.saxutils import escape
 
@@ -22,7 +23,15 @@ def _iso(epoch: float) -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(epoch))
 
 
-def record_to_tcx(record: SessionRecord, *, sport: str = "Other", height_cm: float = 172.0) -> str:
+# Characters XML 1.0 does not allow at all (a treadmill's Bluetooth name can
+# hold anything; one control character makes the whole file unreadable for
+# Garmin Connect or Strava).
+_NOT_XML = re.compile("[^\t\n\r\x20-\ud7ff\ue000-\ufffd\U00010000-\U0010ffff]")
+
+
+def record_to_tcx(
+    record: SessionRecord, *, sport: str = "Other", height_cm: float = 172.0, step_calibration: float = 1.0
+) -> str:
     """Render a walk as TCX.
 
     ``sport`` must be one of TCX's three values: "Running", "Biking" or
@@ -76,7 +85,7 @@ def record_to_tcx(record: SessionRecord, *, sport: str = "Other", height_cm: flo
         lines.append("        <Track>")
     for t, distance, kmh, bpm in points:
         # TCX cadence counts one foot (strides per minute), max 254.
-        cadence = min(254, int(round(metrics.steps_per_minute(kmh, height_cm) / 2.0)))
+        cadence = min(254, int(round(metrics.steps_per_minute(kmh, height_cm, step_calibration) / 2.0)))
         lines.append("          <Trackpoint>")
         lines.append(f"            <Time>{_iso(record.start + t)}</Time>")
         lines.append(f"            <DistanceMeters>{distance * scale:.1f}</DistanceMeters>")
@@ -95,8 +104,11 @@ def record_to_tcx(record: SessionRecord, *, sport: str = "Other", height_cm: flo
         "      </Lap>",
         "      <Notes>"
         + escape(
-            f"Walka walking-pad session ({record.source}); {int(record.steps)} steps "
-            f"({record.steps_source}), {record.treadmill or 'treadmill'}"
+            _NOT_XML.sub(
+                "",
+                f"Walka walking-pad session ({record.source}); {int(record.steps)} steps "
+                f"({record.steps_source}), {record.treadmill or 'treadmill'}",
+            )
         )
         + "</Notes>",
         "    </Activity>",

@@ -889,7 +889,12 @@ class Governor:
 
     def _rates(self, belt: Belt) -> tuple[float, float]:
         """How far one speed command may go up and down."""
-        window = self.limits.command_interval_s
+        # A longer time between commands means a slower ramp, never a bigger
+        # jump: the size of one change is that of one second's worth at
+        # most. (With the interval set to five seconds - to hear fewer
+        # beeps, say - each command would otherwise move the belt 0.6 mph
+        # at once.)
+        window = min(self.limits.command_interval_s, 1.0)
         # At least one grid step per command, or a rate limit smaller than
         # the belt's step would mean the speed could never change at all.
         return (

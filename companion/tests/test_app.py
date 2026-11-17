@@ -1590,3 +1590,61 @@ def test_snapshot_reports_the_hotkey(rig: Rig):
             rig.app.hotkey.stop()
 
     run(scenario())
+
+
+# ---- things that must not take the companion down ---------------------------------------------
+
+
+def test_a_sync_that_blows_up_is_reported_not_raised(rig: Rig, monkeypatch):
+    """The sync is a convenience: one damaged walk on file, or a treadmill
+    name that cannot be encoded, must not stop the companion starting."""
+
+    def explode(*_args, **_kwargs):
+        raise ValueError("cannot convert float NaN to integer")
+
+    monkeypatch.setattr("walka.app.addon_sync.sync", explode)
+    assert rig.app.sync_addon() is False
+    assert "NaN" in rig.app.addon_error
+
+
+class _PickyHotkey:
+    """Stands in for hotkey.GlobalHotkey: one combination is "taken"."""
+
+    taken = "ctrl+alt+s"
+
+    def __init__(self, combination, callback):
+        self.combination = combination
+        self.error = ""
+        self.running = False
+
+    def start(self) -> bool:
+        if self.combination == self.taken:
+            self.error = "the combination is in use by another program"
+            return False
+        self.running = bool(self.combination)
+        return self.running
+
+    def stop(self) -> None:
+        self.running = False
+
+    def to_dict(self) -> dict:
+        return {"combination": self.combination, "active": self.running, "error": self.error}
+
+
+def test_a_stop_hotkey_that_cannot_be_registered_leaves_the_old_one_working(rig: Rig, monkeypatch):
+    """Changing the STOP hotkey to something Windows refuses used to leave
+    no hotkey at all, with only a quiet line in the log."""
+    monkeypatch.setattr("walka.app.GlobalHotkey", _PickyHotkey)
+    app = rig.app
+    app._loop = object()  # (as once the companion is running)
+    app.config.stop_hotkey = "ctrl+alt+x"
+    app.register_hotkey()
+    assert app.hotkey.running and app.hotkey.combination == "ctrl+alt+x"
+
+    app.update_config({"stop_hotkey": "ctrl+alt+s"})
+    assert app.hotkey.running and app.hotkey.combination == "ctrl+alt+x"
+    assert app.config.stop_hotkey == "ctrl+alt+x"
+    assert any(event["level"] == "error" and "could not be changed" in event["text"] for event in app.events)
+
+    app.update_config({"stop_hotkey": "ctrl+alt+q"})
+    assert app.hotkey.running and app.hotkey.combination == "ctrl+alt+q"

@@ -92,6 +92,11 @@ async def guard(request: web.Request, handler: Handler) -> web.StreamResponse:
     response = await handler(request)
     response.headers.setdefault("Cache-Control", "no-store")
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    # On every response, not only on "/": the same page is also reachable
+    # as /static/index.html, and a page that can be framed can be used to
+    # trick a click onto a button that moves the belt.
+    for name, value in PAGE_HEADERS.items():
+        response.headers.setdefault(name, value)
     return response
 
 
@@ -277,7 +282,11 @@ def create_app(app: App) -> web.Application:
         if record is None:
             raise web.HTTPNotFound()
         return web.Response(
-            text=record_to_tcx(record),
+            text=record_to_tcx(
+                record,
+                height_cm=app.config.profile.height_cm,
+                step_calibration=app.config.profile.step_calibration,
+            ),
             content_type="application/vnd.garmin.tcx+xml",
             headers={"Content-Disposition": f'attachment; filename="walka-{record.id}.tcx"'},
         )

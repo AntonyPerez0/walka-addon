@@ -137,7 +137,9 @@ The HUD's live numbers are marked `~`: they are the addon's estimate. After
 a walk, press **Sync** in the history window (it reloads the interface; a
 session in progress carries on) or just log in next time, and the history
 switches that session to what the treadmill measured. The dashboard shows
-measured values the whole time - put it on a second monitor or your phone.
+measured values the whole time - put it on a second monitor. (It is only
+reachable from the PC itself: it can start and stop the belt, so it is not
+offered to other devices on your network.)
 
 ### In combat
 
@@ -211,8 +213,7 @@ post.
    Ember, Wildwood, Frost or Parchment) and a size: portrait 1080×1350,
    square 1080×1080, story 1080×1920 or wide 1200×675.
 3. **Download PNG** - or **Copy image** and paste it straight into a post or
-   a chat. (Copying works when the dashboard is open on the PC itself;
-   downloading works everywhere, also from your phone.)
+   a chat.
 
 What is on it:
 

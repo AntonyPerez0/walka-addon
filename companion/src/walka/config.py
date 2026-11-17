@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
 import os
@@ -219,6 +220,19 @@ def _update(target: Any, data: dict[str, Any], section: str = "") -> None:
         setattr(target, f.name, coerced)
 
 
+def is_loopback_host(host: object) -> bool:
+    """Does ``host`` name this computer only (127.x.x.x, ::1, localhost)?"""
+    if not isinstance(host, str):
+        return False
+    text = host.strip().lower()
+    if text == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(text.strip("[]")).is_loopback
+    except ValueError:
+        return False
+
+
 def apply_update(config: Config, data: dict[str, Any]) -> Config:
     """Merge a partial dict (from disk or the dashboard) into ``config``."""
     previous_hotkey = config.stop_hotkey
@@ -228,6 +242,12 @@ def apply_update(config: Config, data: dict[str, Any]) -> Config:
         config.stop_hotkey = previous_hotkey  # not a usable combination: keep the old one
     if config.units not in ("mph", "kmh"):
         config.units = "mph"
+    if not is_loopback_host(config.web.host):
+        # The dashboard can start and stop the belt and has no password. On
+        # this PC that is fine; reachable from the network it would hand the
+        # belt to every device on the Wi-Fi.
+        log.warning("web.host %r is not this computer itself - using 127.0.0.1", config.web.host)
+        config.web.host = "127.0.0.1"
     if config.treadmill.kind not in ("ftms", "simulated"):
         config.treadmill.kind = "ftms"
     if config.treadmill.units not in ("auto", "mph", "kmh"):

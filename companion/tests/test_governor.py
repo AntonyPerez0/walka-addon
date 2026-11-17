@@ -621,18 +621,34 @@ def test_cap_between_the_minimum_and_the_next_grid_point():
 def test_lowering_the_cap_does_not_wait_for_the_command_interval():
     """The belt is still accelerating towards the last commanded speed; a
     lower cap must be sent now, not up to command_interval_s later."""
-    rig = Rig(Limits(max_speed_kmh=6.0, command_interval_s=5.0, accel_kmh_per_s=0.5))
+    rig = Rig(Limits(max_speed_kmh=6.0, command_interval_s=5.0, accel_kmh_per_s=1.0))
     rig.run(1, IDLE)
-    rig.run(7, live(6.0))  # one speed command so far: 1.0 -> 3.5, and the belt is on its way there
-    assert [c.speed_kmh for c in rig.belt.log if c.action is Action.SET_SPEED] == [3.5]
-    assert 1.0 < rig.belt.speed < 2.5
-    rig.gov.limits.max_speed_kmh = 2.5
+    rig.run(7, live(6.0))
+    # One speed command so far - and one second's worth of speeding up, not
+    # five: a longer interval means a slower ramp, never a bigger jump.
+    assert [c.speed_kmh for c in rig.belt.log if c.action is Action.SET_SPEED] == [2.0]
+    at_the_time = rig.belt.speed
+    rig.gov.limits.max_speed_kmh = 1.5
+    before = len(rig.belt.log)
     rig.run(0.25, live(6.0))
-    assert rig.belt.log[-1] == Command(Action.SET_SPEED, speed_kmh=2.5, reason="following")
+    sent = [c for c in rig.belt.log[before:] if c.action is Action.SET_SPEED]
+    assert len(sent) == 1 and sent[0].speed_kmh < 2.0, "the reaction to a lowered cap is immediate"
     mark = len(rig.speeds)
-    rig.run(10, live(6.0))
-    assert rig.belt.speed == pytest.approx(2.5)
-    assert max(rig.speeds[mark:]) <= 2.5 + 1e-9  # it never climbed past the new cap
+    rig.run(20, live(6.0))
+    assert rig.belt.speed == pytest.approx(1.5)
+    assert max(rig.speeds[mark:]) <= max(1.5, at_the_time) + 1e-9  # it never climbed after the cap came down
+
+
+def test_a_longer_command_interval_slows_the_ramp_instead_of_enlarging_the_steps():
+    """Set to 5 s (to hear fewer beeps, say), each command used to move the
+    belt five seconds' worth at once: 0.6 mph in one go with the defaults."""
+    for interval in (1.0, 2.5, 5.0):
+        rig = Rig(Limits(command_interval_s=interval))
+        rig.run(1, IDLE)
+        rig.run(120, live(5.0))
+        speeds = [c.speed_kmh for c in rig.belt.log if c.action is Action.SET_SPEED]
+        steps = [b - a for a, b in zip(speeds, speeds[1:], strict=False)]
+        assert steps and max(steps) <= 0.2 + 1e-6, (interval, max(steps))
 
 
 # ---- gentle changes --------------------------------------------------------------------

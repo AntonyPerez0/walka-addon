@@ -452,9 +452,12 @@ class App:
             addon_sync.sync(
                 directory, self.store, profile=profile, limits=self.belt_limits_for_addon(), treadmill_name=name
             )
-        except OSError as exc:
+        except Exception as exc:
+            # The sync is a convenience. Whatever goes wrong with it - a disk
+            # that is full, one damaged walk on file - must not take the
+            # control loop or the start of the companion down with it.
             self.addon_error = f"could not write the addon data file: {exc}"
-            log.warning(self.addon_error)
+            log.warning(self.addon_error, exc_info=not isinstance(exc, OSError))
             return False
         self.addon_error = ""
         self.last_sync = self.wall()
@@ -623,15 +626,36 @@ class App:
         if loop is not None and not loop.is_closed():
             loop.call_soon_threadsafe(lambda: asyncio.ensure_future(self.emergency_stop()))
 
-    def register_hotkey(self) -> None:
-        """(Re)register the global STOP hotkey from the config."""
+    def register_hotkey(self, previous: str | None = None) -> None:
+        """(Re)register the global STOP hotkey from the config.
+
+        ``previous`` is the combination that worked until now. If the new
+        one cannot be registered (another program has it, Windows keeps it
+        for itself) the old one is put back: the hotkey is the second
+        fastest way to stop the belt, and finding out that it is dead by
+        pressing it is too late."""
         if self.hotkey is not None:
             self.hotkey.stop()
         self.hotkey = GlobalHotkey(self.config.stop_hotkey, self._hotkey_pressed)
         if self.hotkey.start():
             self.log_event(f"STOP hotkey: {self.hotkey.to_dict()['combination']} (works from inside the game).")
-        elif self.config.stop_hotkey and self.hotkey.error and "only available on Windows" not in self.hotkey.error:
-            self.log_event(f"STOP hotkey not available: {self.hotkey.error}.", "warning")
+            return
+        error = self.hotkey.error or ""
+        if not self.config.stop_hotkey or "only available on Windows" in error:
+            return
+        wanted = self.config.stop_hotkey
+        if previous and previous != wanted:
+            self.config.stop_hotkey = previous
+            self.save_config()
+            self.hotkey = GlobalHotkey(previous, self._hotkey_pressed)
+            if self.hotkey.start():
+                self.log_event(
+                    f"The STOP hotkey could not be changed to {wanted} ({error}). "
+                    f"{self.hotkey.to_dict()['combination']} is still the STOP hotkey.",
+                    "error",
+                )
+                return
+        self.log_event(f"There is no STOP hotkey: {wanted} could not be registered ({error}).", "error")
 
     def save_config(self) -> None:
         try:
@@ -649,6 +673,7 @@ class App:
                 # pad than the one that is running.
                 self.log_event("Stop the belt before changing the treadmill's address.", "warning")
                 patch = {**patch, "treadmill": {k: v for k, v in treadmill_patch.items() if k != "address"}}
+        previous_hotkey = self.config.stop_hotkey
         config_module.apply_update(self.config, patch)
         manual_patch = patch.get("manual")
         if isinstance(manual_patch, dict) and "speed_kmh" in manual_patch:
@@ -661,7 +686,7 @@ class App:
             self._state["profile_set"] = True
             self._save_state()
         if "stop_hotkey" in patch and self._loop is not None:
-            self.register_hotkey()
+            self.register_hotkey(previous_hotkey)
         treadmill_patch = patch.get("treadmill")
         if isinstance(treadmill_patch, dict):
             # Hand these to the driver so they apply on its next connection

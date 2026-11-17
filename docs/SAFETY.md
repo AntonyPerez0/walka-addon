@@ -15,7 +15,7 @@ Ways to stop, fastest first:
 1. the treadmill's remote, stop button or safety key;
 2. **Ctrl+Alt+X** - a system-wide hotkey the companion registers on
    Windows; it works while the game has focus and the key press is not
-   passed on to the game (change it under *Settings -> Safety*);
+   passed on to the game (change it under *Settings -> Safety limits*);
 3. the STOP button on the dashboard;
 4. *Stop* on the in-game HUD, or `/walka stop`.
 
@@ -31,9 +31,11 @@ with no I/O, so every rule below is covered by automated tests.
 
 2. **Your speed cap always wins.** The companion has a hard maximum speed
    (3.0 mph out of the box; change it in the dashboard under *Settings →
-   Safety*). No game state, addon setting or corrupted frame can make the
+   Safety limits*). No game state, addon setting or corrupted frame can make the
    companion command more than that, nor more than the range the treadmill
-   itself advertises. If you lower the cap during a walk, the belt starts
+   itself advertises. (On a pad that counts in mph the cap is the nearest
+   0.1 mph step at or below it; the number sent over Bluetooth is that
+   step rounded up to the next 0.1 km/h, which the pad cuts back down.) If you lower the cap during a walk, the belt starts
    coming down to it at once - at the gentle rate of rule 3, not in one
    jump.
 

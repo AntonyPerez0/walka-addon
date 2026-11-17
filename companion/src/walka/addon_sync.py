@@ -50,7 +50,9 @@ _LUA_KEYWORDS = {
 
 def _lua_string(text: str) -> str:
     out = ['"']
-    for byte in text.encode("utf-8"):
+    # (A Bluetooth name can hold what UTF-8 cannot: a lone surrogate from
+    # the operating system's stack. It must not stop the file being written.)
+    for byte in text.encode("utf-8", errors="replace"):
         char = chr(byte)
         if char == "\\":
             out.append("\\\\")

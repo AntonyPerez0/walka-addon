@@ -811,3 +811,19 @@ def test_the_server_shuts_down_promptly_with_a_dashboard_tab_open(rig: Rig, app_
 
     asyncio.run(asyncio.wait_for(scenario(), 30))
     assert web.SHUTDOWN_TIMEOUT_S <= 2.0
+
+
+def test_no_page_of_the_dashboard_can_be_framed(rig: Rig):
+    """The page is served at "/" and - being a file in the static folder -
+    at /static/index.html too. Both must refuse to be framed: a framed
+    dashboard could be used to trick a click onto a button that moves the
+    belt."""
+
+    async def scenario(client: TestClient):
+        for path in ("/", "/static/index.html", "/static/app.js", "/api/state"):
+            response = await client.get(path)
+            assert response.status == 200, path
+            assert response.headers["X-Frame-Options"] == "DENY", path
+            assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"], path
+
+    serve(rig, scenario)

@@ -83,7 +83,11 @@ sets this flag. A hidden value is never drawn on screen.
   a hung client) and the companion treats the signal as lost. Only the `seq`
   of live frames counts here (section 4).
 * **session** changing means a new walking session started; the companion
-  starts a new recording and treats it as a fresh, explicit start.
+  starts a new recording. It counts as an explicit start - one that may
+  start the belt - only if the companion watched it begin (the frame before
+  it said "no session"); a session id that simply changes under it does
+  not, and a stopped belt then waits for a deliberate act (SAFETY.md, rule
+  6).
 * **target speed** is a *request*. The companion clamps it to the treadmill's
   range and to the user's hard speed cap, rate-limits changes, and ignores it
   entirely unless ACTIVE is set and PAUSED is not. `0` with ACTIVE set means

@@ -346,7 +346,7 @@ def test_hand_edited_file_with_out_of_range_and_junk_values(tmp_path: Path):
     assert config.limits.stall_s == 2.0
     assert config.profile.weight_kg == 250.0 and config.profile.age is None
     assert isinstance(config.web.port, int) and 1 <= config.web.port <= 65535
-    assert config.web.host == "12345"
+    assert config.web.host == "127.0.0.1", "anything that is not this computer itself is refused"
     assert config.wow.capture_fps == 60.0 and config.wow.origin is None
     assert config.treadmill.name_prefixes == ["URTM"]
 
@@ -363,3 +363,19 @@ def test_data_dir_override(monkeypatch, tmp_path: Path):
         assert config_module.default_data_dir() == tmp_path / "xdg" / "walka"
         monkeypatch.delenv("XDG_CONFIG_HOME")
         assert config_module.default_data_dir() == Path.home() / ".config" / "walka"
+
+
+@pytest.mark.parametrize("host", ["0.0.0.0", "", "192.168.1.20", "::", "example.com", 12345, None])
+def test_the_dashboard_is_only_ever_served_to_this_computer(host):
+    """It can start and stop the belt and has no password: bound to the
+    network it would hand the belt to every device on the Wi-Fi."""
+    config = Config()
+    apply_update(config, {"web": {"host": host}})
+    assert config.web.host == "127.0.0.1"
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "::1", "127.0.0.2"])
+def test_loopback_hosts_are_kept(host):
+    config = Config()
+    apply_update(config, {"web": {"host": host}})
+    assert config.web.host == host
