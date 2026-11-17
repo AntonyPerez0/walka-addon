@@ -640,3 +640,31 @@ def test_random_use_never_breaks_anything(full_rt, seed):
     fresh = rt.reload()
     fresh.tick(20)
     assert fresh.find_secrets() == []
+
+
+def test_the_cap_set_on_the_options_page_is_the_cap_the_belt_gets(ui_rt):
+    # The page shows mph, stores km/h, and the speed model works on the
+    # treadmill's 0.1 mph grid: "never faster than 1.0 mph" must mean 1.0.
+    rt = ui_rt
+    panel = open_options(rt)
+    walka = rt.walka
+    cap_slider = None
+    for slider in rt.descendants(panel, "Slider", visible=True):
+        before = walka.Get(walka, "speed.maxKmh")
+        low, high = slider.GetMinMaxValues(slider)
+        rt.M.slide(slider, low + (high - low) * 0.37)
+        rt.check_errors()
+        if walka.Get(walka, "speed.maxKmh") != before:
+            cap_slider = slider
+            break
+    assert cap_slider is not None, "no slider on the options page changes the speed cap"
+    walka.ResetSpeedSettings(walka)         # undo what the search moved (mounted pace: 2.5 mph)
+    rt.tick(3)
+
+    rt.set(speed=14.0, mounted=True)
+    rt.slash("/walka start")
+    for mph in (1.0, 1.5, 2.3, 0.8):
+        rt.M.slide(cap_slider, mph)
+        rt.check_errors()
+        rt.tick(900)
+        assert rt.walka.GetLiveSpeed(walka)[1] / 1.609344 == pytest.approx(mph, abs=0.005), f"cap {mph} mph"
