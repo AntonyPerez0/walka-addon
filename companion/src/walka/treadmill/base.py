@@ -52,6 +52,7 @@ class TreadmillStatus:
     steps: int | None = None
     elapsed_s: int | None = None
     heart_rate_bpm: int | None = None
+    busy: bool = False  # the machine is still closing a workout and will ignore a start
     updated_at: float = 0.0  # time.monotonic() of the last data packet
     detail: str = ""  # human-readable connection detail / last error
 
@@ -116,6 +117,15 @@ class Treadmill(abc.ABC):
 
 class TreadmillError(RuntimeError):
     """A treadmill command or connection failed."""
+
+
+class CommandRejected(TreadmillError):
+    """The treadmill answered a command with a failure code (so the command
+    was definitely not carried out)."""
+
+    def __init__(self, message: str, result: int) -> None:
+        super().__init__(message)
+        self.result = result
 
 
 def mph_tenths_to_command_kmh(mph_tenths: int) -> float:

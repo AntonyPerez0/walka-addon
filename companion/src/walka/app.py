@@ -22,6 +22,7 @@ from . import __version__, addon_sync
 from . import config as config_module
 from .config import Config
 from .governor import Action, Belt, Command, Governor, Reading
+from .hotkey import GlobalHotkey
 from .metrics import Profile
 from .protocol import Flags
 from .session import SessionRecord, SessionRecorder, SessionStore
@@ -73,6 +74,15 @@ class App:
         self.addon_error = ""
         self.last_sync: float | None = None
 
+        # Keep trying to connect even with no session running: true at
+        # start-up and after "Connect" is pressed, until a connection is made.
+        # After that a dropped link is only chased while there is a reason
+        # to (a connection attempt wakes a pad that was switched off).
+        self._eager_connect = True
+        self._switch_treadmill = False
+        self.hotkey: GlobalHotkey | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+
         self._connect_now = asyncio.Event()
         self._stopping = asyncio.Event()
         self._tasks: list[asyncio.Task] = []
@@ -113,9 +123,11 @@ class App:
         elif event is TreadmillEvent.DISCONNECTED:
             self.governor.notify_disconnected()
             self.log_event("Treadmill disconnected.", "warning")
+            self._connect_now.set()
         elif event is TreadmillEvent.CONNECTED:
             status = self.treadmill.status
             self.connect_error = ""
+            self._eager_connect = False
             self.log_event(f"Treadmill connected: {status.name or status.address}.")
             self._state["treadmill"] = {
                 "name": status.name,
@@ -155,7 +167,7 @@ class App:
         speed = status.speed_kmh
         if status.connected and status.age_s(mono) > STALE_DATA_S:
             speed = 0.0  # no recent data: do not pretend to know the belt is moving
-        return Belt(status.connected, speed, status.min_kmh, status.max_kmh, status.step_kmh)
+        return Belt(status.connected, speed, status.min_kmh, status.max_kmh, status.step_kmh, busy=status.busy)
 
     async def _execute(self, command: Command) -> None:
         treadmill = self.treadmill
@@ -374,9 +386,14 @@ class App:
 
     async def emergency_stop(self) -> None:
         """Stop the belt now and keep it stopped until explicitly resumed."""
+        ended_manual_session = self.manual.active
         self.manual.stop()
         self.governor.notify_external_stop()
         self.governor.user_stopped = True
+        if ended_manual_session:
+            # (not the ordinary "session over" path, which would lift the latch)
+            self._manual_was_active = False
+            self.governor.end_session()
         # If the command below fails or is lost, the governor asks again for
         # as long as the belt reports that it is still moving.
         self.governor.expect_halt(self.mono())
@@ -396,17 +413,52 @@ class App:
 
     def connect(self, address: str | None = None) -> None:
         """Ask the connection loop to (re)connect, optionally to a new address."""
+        status = self.treadmill.status
         if address is not None:
+            switching = status.connected and bool(address) and address.upper() != status.address.upper()
+            if switching and (self.governor.belt_on or status.speed_kmh > 0.05):
+                self.log_event("Stop the belt before switching to another treadmill.", "warning")
+                return
             self.config.treadmill.address = address
             if hasattr(self.treadmill, "address"):
                 self.treadmill.address = address or None
             self.save_config()
+            self._switch_treadmill = switching
         self.want_connected = True
+        self._eager_connect = True
         self._connect_now.set()
 
     async def disconnect(self) -> None:
         self.want_connected = False
         await self.treadmill.disconnect()
+
+    def connection_wanted(self) -> bool:
+        """Should the connection loop be trying to reach the treadmill now?"""
+        if not self.want_connected:
+            return False
+        if self._eager_connect:
+            return True
+        # Otherwise only while something needs the belt.
+        reading = self._last_reading
+        signal_live = reading.active and reading.age_s <= self.config.limits.signal_timeout_s
+        return self.manual.active or self.governor.driving or signal_live
+
+    # ---- global STOP hotkey ----------------------------------------------------------
+    def _hotkey_pressed(self) -> None:
+        """Called on the hotkey thread: hand the stop to the event loop."""
+        loop = self._loop
+        if loop is not None and not loop.is_closed():
+            loop.call_soon_threadsafe(lambda: asyncio.ensure_future(self.emergency_stop()))
+
+    def register_hotkey(self) -> None:
+        """(Re)register the global STOP hotkey from the config."""
+        if self.hotkey is not None:
+            self.hotkey.stop()
+        self.hotkey = GlobalHotkey(self.config.stop_hotkey, self._hotkey_pressed)
+        if self.hotkey.start():
+            self.log_event(f"STOP hotkey: {self.hotkey.to_dict()['combination']} (works from inside the game).")
+        elif self.config.stop_hotkey and self.hotkey.error and "only available on Windows" not in self.hotkey.error:
+            self.log_event(f"STOP hotkey not available: {self.hotkey.error}.", "warning")
 
     def save_config(self) -> None:
         try:
@@ -427,6 +479,8 @@ class App:
             # ticks the dashboard's first-run checklist.
             self._state["profile_set"] = True
             self._save_state()
+        if "stop_hotkey" in patch and self._loop is not None:
+            self.register_hotkey()
         treadmill_patch = patch.get("treadmill")
         if isinstance(treadmill_patch, dict):
             # Hand these to the driver so they apply on its next connection
@@ -514,6 +568,7 @@ class App:
                 "error": self.addon_error,
             },
             "setup": {"profile_set": self.profile_is_set()},
+            "hotkey": self.hotkey.to_dict() if self.hotkey is not None else None,
             "config": self.config.to_dict(),
             "events": list(self.events)[:30],
         }
@@ -531,7 +586,14 @@ class App:
     async def _connect_loop(self) -> None:
         backoff = 5.0
         while not self._stopping.is_set():
-            if self.want_connected and not self.treadmill.status.connected:
+            if self._switch_treadmill:
+                # A different treadmill was chosen: let go of the current one.
+                self._switch_treadmill = False
+                if self.treadmill.status.connected:
+                    await self.treadmill.disconnect()
+            if not self.treadmill.status.connected and self.want_connected and not self.connection_wanted():
+                self.connect_error = "not connected - it reconnects when a session starts, or press Connect"
+            if self.connection_wanted() and not self.treadmill.status.connected:
                 try:
                     await self.treadmill.connect()
                     backoff = 5.0
@@ -548,13 +610,17 @@ class App:
                 backoff = 5.0
             self._connect_now.clear()
             try:
-                wait = backoff if not self.treadmill.status.connected else 2.0
-                await asyncio.wait_for(self._connect_now.wait(), timeout=wait)
+                # Connected, or idle until something needs the belt: look
+                # again soon. Otherwise back off between attempts.
+                idle = self.treadmill.status.connected or not self.connection_wanted()
+                await asyncio.wait_for(self._connect_now.wait(), timeout=2.0 if idle else backoff)
             except asyncio.TimeoutError:
                 pass
 
     async def start(self) -> None:
         """Start the background loops."""
+        self._loop = asyncio.get_running_loop()
+        self.register_hotkey()
         if self.beacon is not None:
             self.beacon.start()
         if self.heart_rate is not None:
@@ -571,6 +637,8 @@ class App:
             task.cancel()
         await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks.clear()
+        if self.hotkey is not None:
+            self.hotkey.stop()
         if self.config.treadmill.stop_on_exit and self.treadmill.status.connected:
             for command in self.governor.shutdown(self.mono()):
                 await self._execute(command)

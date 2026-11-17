@@ -182,7 +182,8 @@ function updateSession(s) {
         : "no sensor";
     tile(5, "Heart rate", live.hr ? String(live.hr) : "-", live.hr ? "bpm" : "", hrNote);
     const avg = live.seconds > 0 ? (live.distance_m / live.seconds) * 3.6 : null;
-    tile(6, "Average speed", avg == null ? "-" : fmt.speed(avg), U.speedUnit, `max ${fmt.speedU(live.max_kmh)}`);
+    const avgUnit = avg == null ? "" : U.speedUnit;
+    tile(6, "Average speed", avg == null ? "-" : fmt.speed(avg), avgUnit, `max ${fmt.speedU(live.max_kmh)}`);
     return;
   }
   const today = s.totals.today;

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+from time import perf_counter
 from types import SimpleNamespace
 
 import pytest
@@ -126,7 +127,12 @@ def test_connect_discovers_the_us_pad_and_its_exact_mph_grid():
     assert events == [TreadmillEvent.CONNECTED]
     # Connecting must not touch the belt or even ask for control.
     assert pad.writes == []
-    assert set(pad.subscriptions) == {ftms.CONTROL_POINT, ftms.TREADMILL_DATA, ftms.FITNESS_MACHINE_STATUS}
+    assert set(pad.subscriptions) == {
+        ftms.CONTROL_POINT,
+        ftms.TREADMILL_DATA,
+        ftms.FITNESS_MACHINE_STATUS,
+        ftms.TRAINING_STATUS,
+    }
 
 
 def test_connect_is_idempotent():
@@ -529,18 +535,18 @@ def test_control_still_refused_after_retry_is_an_error():
     run(scenario())
 
 
-def test_refused_request_control_is_an_error_and_nothing_else_is_sent():
+def test_refused_request_control_is_tolerated():
+    """Some pads answer Request Control with a failure and then obey every
+    command anyway (the vendor apps ignore the answer). So a refusal is not
+    fatal: the command is still sent, and only "control not permitted" on
+    the command itself makes the driver ask again."""
     driver, pad, *_ = rig()
     pad.reject[0x00] = 0x04
 
     async def scenario():
         await driver.connect()
-        with pytest.raises(TreadmillError, match="refused control"):
-            await driver.start()
-        assert pad.writes == [REQUEST_CONTROL]
-        assert pad.state == "idle"
-        del pad.reject[0x00]
         await driver.start()
+        assert pad.writes == [REQUEST_CONTROL, START]
         assert pad.state == "countdown"
 
     run(scenario())
@@ -945,3 +951,91 @@ def test_reconnect_after_link_loss_starts_from_scratch(clock):
 
     run(scenario())
     assert events == [TreadmillEvent.CONNECTED, TreadmillEvent.DISCONNECTED, TreadmillEvent.CONNECTED]
+
+
+# ---- behaviour learnt from other UREVO clients ---------------------------------------------------
+
+
+def test_post_workout_training_status_marks_the_pad_busy(clock):
+    """After a stop the Strol 2E spends a while "post-workout", during which
+    it acknowledges a start and ignores it. The driver reports that so the
+    governor can wait."""
+    driver, pad, *_ = rig()
+
+    async def scenario():
+        await running(driver, pad, clock)
+        assert driver.status.busy is False
+        await driver.stop()
+        pad.send_training_status(0x0F)
+        await asyncio.sleep(0)
+        assert driver.status.busy is True
+        pad.send_training_status(0x01)
+        await asyncio.sleep(0)
+        assert driver.status.busy is False
+        # A disconnect must not leave the flag set.
+        pad.send_training_status(0x0F)
+        await asyncio.sleep(0)
+        await driver.disconnect()
+        assert driver.status.busy is False
+
+    run(scenario())
+
+
+def test_top_step_refused_by_the_pad_falls_back_to_the_advertised_maximum(clock):
+    """4.0 mph has to be sent as 6.5 km/h to survive the firmware's rounding,
+    which is above the 6.43 km/h the pad advertises. A pad that refuses the
+    out-of-range value gets its advertised maximum instead (one step less),
+    and the driver stops offering the unreachable step."""
+    driver, pad, *_ = rig()
+    pad.reject_payloads[ftms.cmd_set_target_speed(6.5)] = 0x03  # invalid parameter
+
+    async def scenario():
+        await running(driver, pad, clock)
+        top = 4.0 * KMH_PER_MPH
+        assert driver.status.max_kmh == pytest.approx(top)
+        await driver.set_speed(top)
+        assert pad.writes[-2:] == [ftms.cmd_set_target_speed(6.5), ftms.cmd_set_target_speed(6.43)]
+        assert pad.target_tenths == 39  # 6.43 km/h truncates to 3.9 mph
+        assert driver.status.max_kmh == pytest.approx(3.9 * KMH_PER_MPH)
+        assert driver.status.target_kmh == pytest.approx(3.9 * KMH_PER_MPH)
+        # From now on the top of the range is 3.9 mph and is sent directly.
+        n = len(pad.writes)
+        await driver.set_speed(top)
+        assert len(pad.writes) == n + 1 and pad.target_tenths == 39
+
+    run(scenario())
+
+
+def test_a_rejection_inside_the_range_is_not_papered_over(clock):
+    driver, pad, *_ = rig()
+    pad.reject_payloads[ftms.cmd_set_target_speed(3.3)] = 0x04
+
+    async def scenario():
+        await running(driver, pad, clock)
+        with pytest.raises(TreadmillError):
+            await driver.set_speed(2.0 * KMH_PER_MPH)  # sent as 3.3 km/h
+        assert driver.status.max_kmh == pytest.approx(4.0 * KMH_PER_MPH)
+
+    run(scenario())
+
+
+def test_control_point_writes_are_paced(monkeypatch):
+    """Cheap modules drop writes that arrive back to back."""
+    monkeypatch.setattr(ftms_ble, "WRITE_GAP_S", 0.05)
+    driver, pad, *_ = rig()
+    stamps: list[float] = []
+
+    class StampedWrites(list):
+        def append(self, item):
+            stamps.append(perf_counter())
+            super().append(item)
+
+    pad.writes = StampedWrites()
+
+    async def scenario():
+        await driver.connect()
+        await driver.start()  # request control, then start
+
+    run(scenario())
+    assert list(pad.writes) == [REQUEST_CONTROL, START]
+    assert stamps[1] - stamps[0] >= 0.045

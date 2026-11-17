@@ -35,8 +35,16 @@ def prepare_windows_threading() -> None:
         pass
 
 
+def _advertised_services(adv: AdvertisementData | None) -> list[str]:
+    """Service UUIDs from an advertisement: the UUID list and, for devices
+    that only mention a service in their service data, those keys too."""
+    if adv is None:
+        return []
+    return [u.lower() for u in [*adv.service_uuids, *adv.service_data.keys()]]
+
+
 def _found(device: BLEDevice, adv: AdvertisementData | None) -> FoundDevice:
-    uuids = [u.lower() for u in (adv.service_uuids if adv else [])]
+    uuids = _advertised_services(adv)
     name = (adv.local_name if adv and adv.local_name else device.name) or ""
     return FoundDevice(
         name=name,
@@ -108,7 +116,7 @@ class BleakBackend:
             if wanted is not None:
                 ok = device.address.upper() == wanted
             else:
-                ok = is_treadmill_candidate(adv.local_name or device.name, adv.service_uuids, name_prefixes)
+                ok = is_treadmill_candidate(adv.local_name or device.name, _advertised_services(adv), name_prefixes)
             if ok:
                 seen[device.address] = adv
             return ok

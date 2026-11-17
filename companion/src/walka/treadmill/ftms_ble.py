@@ -32,6 +32,7 @@ from .. import ftms
 from .base import (
     KMH_PER_MPH,
     BeltState,
+    CommandRejected,
     Treadmill,
     TreadmillError,
     TreadmillEvent,
@@ -46,6 +47,16 @@ DEFAULT_NAME_PREFIXES: tuple[str, ...] = ("URTM",)
 # After one of our own start/stop commands, status events for this long are
 # attributed to us rather than to someone pressing a button on the machine.
 OWN_EVENT_WINDOW_S = 6.0
+
+# Cheap Bluetooth modules drop requests that arrive back to back: leave a
+# gap between subscriptions and between control-point writes.
+SUBSCRIBE_GAP_S = 0.15
+WRITE_GAP_S = 0.4
+
+# Training Status values (second byte of 0x2AD3).
+TRAINING_IDLE = 0x01
+TRAINING_PRE_WORKOUT = 0x0E  # countdown
+TRAINING_POST_WORKOUT = 0x0F  # closing a workout: a start is ignored
 
 
 @dataclass(frozen=True)
@@ -127,6 +138,8 @@ class FtmsTreadmill(Treadmill):
         self._own_stop_until = 0.0
         self._own_start_until = 0.0
         self._coast_until = 0.0  # after any stop/pause: speed reports are the belt running down
+        self._next_write_at = 0.0  # pacing of control-point writes
+        self._top_step_refused = False  # the pad rejected the rounded-up value for its top speed
         self._data = ftms.TreadmillData()
         self.features: ftms.MachineFeatures | None = None
         self.raw_speed_range: ftms.SpeedRange | None = None
@@ -224,16 +237,21 @@ class FtmsTreadmill(Treadmill):
         # Register the indication handler before the first write: some
         # devices indicate before the write call returns.
         await client.subscribe(ftms.CONTROL_POINT, self._on_control_response)
+        await asyncio.sleep(SUBSCRIBE_GAP_S)
         await client.subscribe(ftms.TREADMILL_DATA, self._on_data)
         for uuid, handler in (
             (ftms.FITNESS_MACHINE_STATUS, self._on_status),
             (ftms.TRAINING_STATUS, self._on_training_status),
         ):
             if client.has_characteristic(uuid):
+                await asyncio.sleep(SUBSCRIBE_GAP_S)
                 try:
                     await client.subscribe(uuid, handler)
                 except Exception as exc:
                     log.debug("could not subscribe to %s: %s", uuid, exc)
+        self._next_write_at = time.monotonic() + SUBSCRIBE_GAP_S
+        self._top_step_refused = False
+        self.status.busy = False
 
     def _apply_speed_range(self, speed_range: ftms.SpeedRange | None) -> None:
         status = self.status
@@ -278,6 +296,7 @@ class FtmsTreadmill(Treadmill):
         status.state = BeltState.UNKNOWN
         status.speed_kmh = 0.0
         status.target_kmh = None
+        status.busy = False
         status.detail = detail
         self._has_control = False
         if self._response is not None and not self._response.done():
@@ -352,9 +371,12 @@ class FtmsTreadmill(Treadmill):
             return
         value = data[1]
         status = self.status
-        if value == 0x0E and status.state is not BeltState.RUNNING:  # pre-workout: countdown
+        # After a stop the pad spends a while "post-workout"; a start sent
+        # then is acknowledged and ignored. Tell the governor to wait.
+        status.busy = value == TRAINING_POST_WORKOUT
+        if value == TRAINING_PRE_WORKOUT and status.state is not BeltState.RUNNING:
             status.state = BeltState.STARTING
-        elif value == 0x01 and status.speed_kmh <= 0.05 and status.state is BeltState.UNKNOWN:  # idle
+        elif value == TRAINING_IDLE and status.speed_kmh <= 0.05 and status.state is BeltState.UNKNOWN:
             status.state = BeltState.STOPPED
 
     # ---- commands --------------------------------------------------------------
@@ -371,12 +393,18 @@ class FtmsTreadmill(Treadmill):
         may not have been applied, and the caller must not retry it blindly.
         """
         client = self._require_client()
+        wait = self._next_write_at - time.monotonic()
+        if wait > 0:
+            await asyncio.sleep(min(wait, WRITE_GAP_S))
+            client = self._require_client()
         loop = asyncio.get_running_loop()
         self._response = loop.create_future()
         try:
             await client.write(ftms.CONTROL_POINT, payload, self._write_with_response)
         except Exception as exc:
             raise TreadmillError(f"Bluetooth write failed: {exc}") from exc
+        finally:
+            self._next_write_at = time.monotonic() + WRITE_GAP_S
         try:
             return await asyncio.wait_for(self._response, self.command_timeout_s)
         except asyncio.TimeoutError:
@@ -391,11 +419,12 @@ class FtmsTreadmill(Treadmill):
         if self._has_control:
             return
         response = await self._write(ftms.cmd_request_control())
-        # Some pads never acknowledge Request Control; carry on regardless.
-        if response is None or response.ok:
-            self._has_control = True
-        else:
-            raise TreadmillError(f"treadmill refused control: {response.describe()}")
+        # Some pads never acknowledge Request Control, and some answer it with
+        # a failure yet obey every command that follows. Either way the next
+        # command tells us: "control not permitted" makes us ask again.
+        if response is not None and not response.ok:
+            log.debug("request control answered %s - carrying on", response.describe())
+        self._has_control = True
 
     async def _command(self, payload: bytes) -> None:
         async with self._lock:
@@ -407,7 +436,7 @@ class FtmsTreadmill(Treadmill):
                 await self._ensure_control()
                 response = await self._write(payload)
             if response is not None and not response.ok:
-                raise TreadmillError(f"treadmill rejected command: {response.describe()}")
+                raise CommandRejected(f"treadmill rejected command: {response.describe()}", response.result)
 
     async def start(self) -> None:
         self._own_start_until = time.monotonic() + OWN_EVENT_WINDOW_S
@@ -445,5 +474,21 @@ class FtmsTreadmill(Treadmill):
 
     async def set_speed(self, kmh: float) -> None:
         actual, send = self.quantise(kmh)
-        await self._command(ftms.cmd_set_target_speed(send))
+        raw = self.raw_speed_range
+        try:
+            await self._command(ftms.cmd_set_target_speed(send))
+        except CommandRejected as exc:
+            # On mph firmware the value for the top step is rounded up past
+            # the range the pad advertises (4.0 mph is sent as 6.5 km/h,
+            # advertised maximum 6.43). A pad that refuses it gets the
+            # advertised maximum instead, and one step less from then on.
+            out_of_range = exc.result in (ftms.ResultCode.INVALID_PARAMETER, ftms.ResultCode.OPERATION_FAILED)
+            if raw is None or send <= raw.max_kmh + 1e-9 or not out_of_range or self.status.speed_kmh <= 0.05:
+                raise
+            await self._command(ftms.cmd_set_target_speed(raw.max_kmh))
+            if not self._top_step_refused:
+                self._top_step_refused = True
+                self.status.max_kmh = max(self.status.min_kmh, self.status.max_kmh - self.status.step_kmh)
+                log.info("the treadmill refused its top speed step; maximum is now %.2f km/h", self.status.max_kmh)
+            actual = self.status.max_kmh
         self.status.target_kmh = actual

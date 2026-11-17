@@ -272,8 +272,30 @@ def test_pause_that_never_reaches_the_pad_is_repeated(tmp_path: Path, monkeypatc
         assert rig.pad.writes.count(b"\x08\x02") == 1  # not hammered either
         rig.pad.lose_writes = False
         await rig.run(8, target=3.2, paused=True)
-        assert rig.pad.state == "paused" and rig.pad.speed_kmh == 0
-        assert rig.pad.writes.count(b"\x08\x02") == 2
+        assert rig.pad.speed_kmh == 0
+        assert rig.pad.writes[-1] == b"\x08\x01" and rig.pad.state == "idle"  # the repeat is a full stop
+        await rig.run(40, target=3.2)  # and the session resumes normally afterwards
+        assert rig.pad.speed_kmh == pytest.approx(2.0 * MPH)
+
+    run(scenario())
+
+
+def test_pad_that_does_not_do_pause_is_stopped_instead(tmp_path: Path, monkeypatch):
+    """Unknown firmware: if "pause" (08 02) is refused, the belt must not
+    simply run on through a paused session."""
+    rig = PadRig(tmp_path, monkeypatch)
+    rig.pad.reject_payloads[b"\x08\x02"] = 0x02  # op code not supported
+
+    async def scenario():
+        await rig.session(3.2)
+        await rig.run(4, target=3.2, paused=True)
+        assert rig.pad.state == "running"  # the pause was refused
+        assert any("pause failed" in e["text"] for e in rig.app.events)
+        await rig.run(6, target=3.2, paused=True)
+        assert rig.pad.state == "idle" and rig.pad.speed_kmh == 0
+        assert rig.pad.writes[-1] == b"\x08\x01"
+        await rig.run(40, target=3.2)
+        assert rig.pad.speed_kmh == pytest.approx(2.0 * MPH)
 
     run(scenario())
 

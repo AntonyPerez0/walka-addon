@@ -429,3 +429,23 @@ def test_strip_grab_is_wide_enough_for_the_largest_cell():
     assert STRIP_HEIGHT >= 2
     assert capture.ROW_ORDER[0] == 1  # row 1 is inside the strip for every cell size >= 2
     assert sorted(capture.ROW_ORDER) == list(range(STRIP_HEIGHT))
+
+
+@pytest.mark.parametrize(
+    ("exe", "expected"),
+    [
+        (r"C:\Program Files (x86)\World of Warcraft\_forever_\Wow.exe", True),
+        (r"C:\Program Files (x86)\World of Warcraft\_retail_\Wow.exe", True),
+        ("D:/Games/World of Warcraft/_forever_/Wow-arm64.exe", True),
+        (r"C:\x\Wow.exe", False),  # not inside a game folder
+        (r"C:\Program Files (x86)\World of Warcraft\_forever_\Utils\WowVoiceProxy.exe", False),
+        (r"C:\Program Files (x86)\World of Warcraft\_forever_\BlizzardError.exe", False),
+        (r"C:\__\Wow.exe", False),
+        ("Wow.exe", False),
+        ("", False),
+    ],
+)
+def test_is_game_executable(exe: str, expected: bool):
+    """The game is recognised by where its executable lives, so that it is
+    found even if its window class or title is not what we expect."""
+    assert capture.is_game_executable(exe) is expected

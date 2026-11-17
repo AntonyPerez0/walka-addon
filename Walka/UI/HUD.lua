@@ -75,11 +75,12 @@ end
 ----------------------------------------------------------------------------
 -- Totals cache
 ----------------------------------------------------------------------------
--- Walka:GetTotals() merges the whole session history, which is far too much
--- work for four redraws a second. So the result is kept and recomputed only
--- when the history or the session changes (and once a minute, to notice
--- midnight). GetTotals already counts the session in progress, so between
--- refreshes only what the session has gained *since the snapshot* is added.
+-- Merging the session history (Walka:GetHistory) is far too much work for
+-- four redraws a second. So the totals are kept and recomputed only when the
+-- history or the session changes (and once a minute, to notice midnight),
+-- from one merge each time. GetTotals already counts the session in
+-- progress, so between refreshes only what the session has gained *since
+-- the snapshot* is added.
 
 local TOTALS_MAX_AGE = 60
 
@@ -96,12 +97,11 @@ local cache = {
 }
 
 -- True if any of today's finished sessions is an addon estimate rather than
--- a treadmill measurement.
-local function todayHasEstimates()
+-- a treadmill measurement. `history` is the merged list, newest first.
+local function todayHasEstimates(history)
     local now = ns.Game.Now()
     local dayKey = ns.SessionLog.dayKey
     local today = dayKey(now)
-    local history = Walka:GetHistory()
     for index = 1, #history do
         local entry = history[index]
         local start = tonumber(entry.start) or 0
@@ -118,19 +118,22 @@ end
 
 local function refreshTotals()
     local now = GetTime()
-    if cache.totals and not cache.dirty and now - cache.at < TOTALS_MAX_AGE then
+    if not cache.dirty and now - cache.at < TOTALS_MAX_AGE then
         return
     end
-    cache.totals = Walka:GetTotals()
+    -- Marked clean first: should the history ever fail to add up, one error
+    -- report a minute is enough - not one on every redraw.
     cache.at = now
     cache.dirty = false
+    local history = Walka:GetHistory()
+    cache.totals = Walka:GetTotals(history)
     local session = Walka:GetSession()
     cache.session = session
     cache.steps = session and session.steps or 0
     cache.kcal = session and session.kcal or 0
     cache.distanceM = session and session.distanceM or 0
     cache.seconds = session and session.seconds or 0
-    cache.estimated = session ~= nil or todayHasEstimates()
+    cache.estimated = session ~= nil or todayHasEstimates(history)
 end
 
 -- Today's steps, kcal, metres and seconds, including the session's progress
@@ -275,10 +278,9 @@ local function tooltipBody()
             .. "arrive from the companion app after /reload.",
         COLOR.grey
     )
-    local data = Walka:GetCompanionData()
-    local written = data and tonumber(data.written)
-    if written then
-        lines[#lines + 1] = Widgets.Colorize("Companion data from " .. date("%b %d %H:%M", written) .. ".", COLOR.grey)
+    local synced = Walka:GetSyncTime()
+    if synced then
+        lines[#lines + 1] = Widgets.Colorize("Companion data from " .. date("%b %d %H:%M", synced) .. ".", COLOR.grey)
     else
         lines[#lines + 1] = Widgets.Colorize(
             "No companion data yet - run the companion app, then /reload.",
@@ -320,22 +322,38 @@ end
 -- offsets in UIParent's units (i.e. multiplied by the HUD's scale), so that
 -- changing the HUD's scale later does not move its anchor.
 
+-- A saved offset as a number SetPoint can take, or nil. The saved variables
+-- are a file on disk: whatever is in it, an anchor must not come out as
+-- not-a-number, infinite, or light-years off the screen. (The frame is
+-- clamped to the screen, so anything in this range ends up visible.)
+local MAX_OFFSET = 20000
+
+local function savedOffset(value)
+    value = tonumber(value)
+    if value and value >= -MAX_OFFSET and value <= MAX_OFFSET then
+        return value
+    end
+    return nil
+end
+
 local function applyPosition()
     if frame.walkaMoving then
         return
     end
     local saved = Walka:Get("hud.point")
-    local point = DEFAULT_POINT
-    if type(saved) == "table" and VALID_POINT[saved[1]] and VALID_POINT[saved[2]]
-        and tonumber(saved[3]) and tonumber(saved[4]) then
-        point = saved
+    local point, x, y = DEFAULT_POINT, DEFAULT_POINT[3], DEFAULT_POINT[4]
+    if type(saved) == "table" and VALID_POINT[saved[1]] and VALID_POINT[saved[2]] then
+        local savedX, savedY = savedOffset(saved[3]), savedOffset(saved[4])
+        if savedX and savedY then
+            point, x, y = saved, savedX, savedY
+        end
     end
     local scale = frame:GetScale()
     if not scale or scale <= 0 then
         scale = 1
     end
     frame:ClearAllPoints()
-    frame:SetPoint(point[1], UIParent, point[2], tonumber(point[3]) / scale, tonumber(point[4]) / scale)
+    frame:SetPoint(point[1], UIParent, point[2], x / scale, y / scale)
 end
 
 -- Describe where the HUD is now, anchored to the nearest edge or corner of

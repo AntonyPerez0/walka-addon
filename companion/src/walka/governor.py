@@ -29,7 +29,7 @@ Rules, in priority order:
     was paused after a long signal loss), it waits for the character to start
     moving - or an explicit resume - before starting the belt.
 7.  **A stop is not done until the belt says so.** After a pause or stop of
-    its own the governor watches the reported speed, and asks again every
+    its own the governor watches the reported speed, and sends a stop every
     few seconds for as long as the belt still moves. (Start and speed
     commands are never repeated on a guess.)
 """
@@ -61,16 +61,21 @@ class Limits:
     """Safety limits enforced by the governor (all speeds km/h)."""
 
     max_speed_kmh: float = 6.0
-    accel_kmh_per_s: float = 0.5
-    decel_kmh_per_s: float = 1.0
+    # Research treadmills that change speed under a walker limit themselves
+    # to about 0.1-0.2 m/s^2; these are well inside that (0.06 and 0.11).
+    accel_kmh_per_s: float = 0.2
+    decel_kmh_per_s: float = 0.4
     command_interval_s: float = 1.0
     signal_timeout_s: float = 3.0  # a reading older than this counts as lost
     hold_s: float = 5.0  # after loss: keep the last speed this long
-    safe_speed_kmh: float = 1.6  # then slow to this (0 = pause straight away)
-    loss_pause_s: float = 300.0  # then, after this long at safe speed, pause
+    safe_speed_kmh: float = 1.3  # then slow to this (0 = pause straight away)
+    loss_pause_s: float = 120.0  # then, after this long at safe speed, pause
     resume_requires_movement: bool = True
     start_grace_s: float = 12.0  # how long a belt may take to start moving
     stall_s: float = 4.0  # belt reporting zero this long = it has stopped
+    # A pad that has just been stopped is still closing its workout and
+    # acknowledges - but ignores - a start (seen on the UREVO Strol 2E).
+    restart_holdoff_s: float = 10.0
 
 
 @dataclass(frozen=True)
@@ -95,6 +100,7 @@ class Belt:
     min_kmh: float = 1.0
     max_kmh: float = 6.0
     step_kmh: float = 0.1
+    busy: bool = False  # the treadmill says it is still finishing a workout
 
 
 class Action(str, Enum):
@@ -112,8 +118,10 @@ class Command:
 
 
 _MOVING_EPS_KMH = 0.05
-# A belt that still moves this long after we asked it to stop is asked again.
+# A belt that still moves this long after we asked it to stop - and has not
+# slowed by at least this much meanwhile - is asked again.
 _HALT_RETRY_S = 5.0
+_HALT_SLOWING_KMH = 0.3
 # After a reconnect the belt's speed takes a moment to come in.
 _RECONNECT_SETTLE_S = 3.0
 
@@ -143,8 +151,11 @@ class Governor:
     _want_kmh: float = 0.0
     _halting: Action | None = None  # a PAUSE/STOP the belt has not been seen to obey yet
     _halt_at: float = -math.inf
+    _halt_speed: float | None = None  # belt speed when that stop was asked for
     _orphan: bool = False  # the link dropped while we were driving a running belt
     _settle_until: float | None = None  # reconnected: waiting to learn whether that belt ran on
+    _stop_at: float = -math.inf  # when the belt was last stopped (not paused)
+    _now: float = -math.inf  # time of the latest step
 
     # ---- external events from the treadmill driver ------------------------------
     def notify_external_stop(self) -> None:
@@ -154,6 +165,8 @@ class Governor:
         self.belt_on = False
         self.commanded_kmh = 0.0
         self._zero_since = None
+        # We cannot tell a stop from a pause here; assume the slower case.
+        self._stop_at = self._now
 
     def notify_external_start(self, now: float) -> None:
         """The belt was started at the treadmill: an explicit resume."""
@@ -183,6 +196,16 @@ class Governor:
         # one the user started, not one we stumbled into.
         self._saw_inactive = True
 
+    def end_session(self) -> None:
+        """The session was ended by a STOP on the dashboard. The belt is no
+        longer ours to drive - but unlike a session that simply ends, the
+        stop stays latched, so that another session still running in the
+        background (the game, minimised) cannot bring the belt back."""
+        self.driving = False
+        self._session = None
+        self.needs_act = False
+        self._saw_inactive = False
+
     @property
     def halt_pending(self) -> bool:
         """A stop of ours is on its way: the belt may still be coasting down."""
@@ -193,6 +216,9 @@ class Governor:
         dashboard's STOP button): keep asking until the belt has stopped."""
         self._halting = action
         self._halt_at = now
+        self._halt_speed = None
+        if action is Action.STOP:
+            self._stop_at = now
 
     # ---- helpers ---------------------------------------------------------------
     @property
@@ -252,6 +278,9 @@ class Governor:
         commands.append(Command(action, reason=reason))
         self._halting = action
         self._halt_at = now
+        self._halt_speed = None
+        if action is Action.STOP:
+            self._stop_at = now
 
     def _pause(self, now: float, commands: list[Command], reason: str) -> None:
         if self.belt_on:
@@ -274,6 +303,7 @@ class Governor:
         """Advance the state machine; returns the commands to send, in order."""
         commands: list[Command] = []
         lim = self.limits
+        self._now = now
 
         if not belt.connected:
             if self._was_connected:
@@ -293,9 +323,11 @@ class Governor:
         # (whatever happened to the session while we could not reach it).
         if self._orphan:
             self._orphan = False
-            self._settle_until = now + _RECONNECT_SETTLE_S if self.driving else None
+            self._settle_until = now + _RECONNECT_SETTLE_S if (self.driving or self.user_stopped) else None
         if self._settle_until is not None:
-            if belt.speed_kmh > _MOVING_EPS_KMH and self.driving and not self.belt_on:
+            if self.belt_on or now >= self._settle_until or not (self.driving or self.user_stopped):
+                self._settle_until = None
+            elif belt.speed_kmh > _MOVING_EPS_KMH:
                 self._settle_until = None
                 if self.user_stopped:
                     # STOP was pressed while the belt was out of reach.
@@ -306,16 +338,22 @@ class Governor:
                     self._belt_on_since = now
                     self._zero_since = None
                     self._last_command_at = now - lim.command_interval_s
-            elif now >= self._settle_until or self.belt_on or not self.driving:
-                self._settle_until = None
 
         # Did the belt obey our last stop? This is feedback, not a blind
         # retry: it is only asked again while it reports that it still moves.
-        if self._halting is not None and now - self._halt_at >= _HALT_RETRY_S:
-            if belt.speed_kmh > _MOVING_EPS_KMH:
-                self._halt(now, commands, self._halting, "belt has not stopped - asking again")
-            else:
-                self._halting = None
+        # A pause that did not take is followed by a full stop - the one
+        # command every treadmill understands.
+        if self._halting is not None:
+            if self._halt_speed is None:
+                self._halt_speed = belt.speed_kmh
+            if now - self._halt_at >= _HALT_RETRY_S:
+                if belt.speed_kmh <= _MOVING_EPS_KMH:
+                    self._halting = None
+                elif belt.speed_kmh < self._halt_speed - _HALT_SLOWING_KMH:
+                    # Coasting down, just slowly: give it another period.
+                    self._halt_at, self._halt_speed = now, belt.speed_kmh
+                else:
+                    self._halt(now, commands, Action.STOP, "belt has not stopped - asking again")
 
         fresh = reading.age_s <= lim.signal_timeout_s
 
@@ -446,6 +484,13 @@ class Governor:
 
         if not self.belt_on:
             # Only reachable with a live signal (see the lost branch above).
+            since_stop = now - self._stop_at
+            if since_stop < lim.restart_holdoff_s or (belt.busy and since_stop < 3 * lim.restart_holdoff_s):
+                # Too soon after a stop: the start would be acknowledged and
+                # ignored, and we would then wait for a belt that never moves.
+                self.phase = Phase.STARTING
+                self.reason = "waiting for the treadmill to finish its previous workout"
+                return commands
             commands.append(Command(Action.START, reason="session active"))
             self._halting = None
             self.belt_on = True
@@ -494,13 +539,17 @@ class Governor:
         if not first and abs(delta) < max(belt.step_kmh, 0.01) / 2:
             return commands
         window = lim.command_interval_s
+        # At least one grid step per command, or a rate limit smaller than
+        # the belt's step would mean the speed could never change at all.
+        up = max(lim.accel_kmh_per_s * window, belt.step_kmh)
+        down = max(lim.decel_kmh_per_s * window, belt.step_kmh)
         if delta > 0:
-            nxt = self._toward(current + min(delta, lim.accel_kmh_per_s * window), belt.step_kmh, rising=True)
+            nxt = self._toward(current + min(delta, up), belt.step_kmh, rising=True)
             nxt = min(nxt, want)
             if not first and nxt <= current:
                 return commands
         else:
-            nxt = self._toward(current + max(delta, -lim.decel_kmh_per_s * window), belt.step_kmh, rising=False)
+            nxt = self._toward(current + max(delta, -down), belt.step_kmh, rising=False)
             nxt = max(nxt, want)
             if not first and nxt >= current:
                 return commands

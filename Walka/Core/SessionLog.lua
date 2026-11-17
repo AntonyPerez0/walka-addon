@@ -18,10 +18,39 @@ ns.SessionLog = SessionLog
 
 local date = date or os.date
 local time = time or os.time
-local max, min, floor = math.max, math.min, math.floor
+local max, min, floor, huge = math.max, math.min, math.floor, math.huge
 
+-- A finite number, or `fallback` (default 0). Both sources are files on
+-- disk - the saved variables and a file written by another program - so a
+-- value may be missing, text, or (in a hand-edited file) infinite or
+-- not-a-number, which would spread through every total and can make
+-- table.sort raise.
 local function number(value, fallback)
-    return tonumber(value) or fallback or 0
+    value = tonumber(value)
+    if value and value == value and value ~= huge and value ~= -huge then
+        return value
+    end
+    return fallback or 0
+end
+
+-- For fields that may be absent (heart rate, character distance): a finite
+-- number, or nil.
+local function optionalNumber(value)
+    value = tonumber(value)
+    if value and value == value and value ~= huge and value ~= -huge then
+        return value
+    end
+    return nil
+end
+
+-- Timestamps the game can show. date() is the C library's, and on Windows
+-- it returns nil for a time before 1970 or after the year 3000 - so a
+-- record with such a start cannot be put on the calendar, and formatting
+-- it would be an error in every window that lists it.
+SessionLog.MAX_EPOCH = 32503680000 -- 3000-01-01 00:00 UTC
+
+local function usableTime(epoch)
+    return epoch >= 0 and epoch < SessionLog.MAX_EPOCH
 end
 
 local function overlapSeconds(aStart, aEnd, bStart, bEnd)
@@ -50,8 +79,8 @@ local function fromCompanion(record)
         steps = number(record.steps),
         kcal = number(record.kcal),
         maxKmh = number(record.maxKmh),
-        avgHr = tonumber(record.avgHr),
-        maxHr = tonumber(record.maxHr),
+        avgHr = optionalNumber(record.avgHr),
+        maxHr = optionalNumber(record.maxHr),
         stepsSource = record.stepsSource,
         game = record.source,
         measured = true,
@@ -59,15 +88,19 @@ local function fromCompanion(record)
 end
 
 local function fromOwn(record)
+    local start, finish = number(record.start), number(record["end"])
+    if finish < start or not usableTime(finish) then
+        finish = start -- no usable end: a walk of unknown length
+    end
     return {
-        start = number(record.start),
-        ["end"] = number(record["end"]),
+        start = start,
+        ["end"] = finish,
         seconds = number(record.seconds),
         distanceM = number(record.distanceM),
         steps = number(record.steps),
         kcal = number(record.kcal),
         maxKmh = number(record.maxKmh),
-        yards = tonumber(record.yards),
+        yards = optionalNumber(record.yards),
         character = record.character,
         measured = false,
     }
@@ -76,6 +109,8 @@ end
 --- Merge both sources into one list, newest first. Each entry has: start,
 -- end, seconds, distanceM, steps, kcal, maxKmh, measured (true = from the
 -- treadmill), and when known: yards, character, avgHr, maxHr, stepsSource.
+-- The numbers are finite and `start`/`end` are times date() can format
+-- (end >= start); records that cannot be made to fit are left out.
 function SessionLog.merge(ownSessions, companionData)
     local merged = {}
     local companionSessions = companionData and companionData.sessions
@@ -89,8 +124,9 @@ function SessionLog.merge(ownSessions, companionData)
     if type(ownSessions) == "table" then
         for index, own in ipairs(ownSessions) do
             ownCount = index
-            if type(own) == "table" then
-                ownStart[index], ownEnd[index] = number(own.start), number(own["end"])
+            local start = type(own) == "table" and number(own.start, -1)
+            if start and usableTime(start) then
+                ownStart[index], ownEnd[index] = start, number(own["end"])
             else
                 -- (a damaged saved-variables file can hold anything)
                 used[index] = true
@@ -100,9 +136,10 @@ function SessionLog.merge(ownSessions, companionData)
 
     if type(companionSessions) == "table" then
         for _, record in ipairs(companionSessions) do
-            if type(record) == "table" and number(record["end"]) > number(record.start) then
+            local recordStart = type(record) == "table" and number(record.start, -1)
+            local recordEnd = recordStart and number(record["end"], -1)
+            if recordStart and recordEnd > recordStart and usableTime(recordStart) and usableTime(recordEnd) then
                 local entry = fromCompanion(record)
-                local recordStart, recordEnd = entry.start, entry["end"]
                 for index = 1, ownCount do
                     -- Walks that do not overlap at all cannot be the same
                     -- walk: skip them without the full comparison.
@@ -121,7 +158,7 @@ function SessionLog.merge(ownSessions, companionData)
 
     if type(ownSessions) == "table" then
         for index, own in ipairs(ownSessions) do
-            if not used[index] and type(own) == "table" then
+            if not used[index] then
                 merged[#merged + 1] = fromOwn(own)
             end
         end
@@ -133,9 +170,12 @@ function SessionLog.merge(ownSessions, companionData)
     return merged
 end
 
+-- What dayKey gives for a time date() cannot convert: no real day.
+local UNDATED = "0000-00-00"
+
 --- Local calendar day of a timestamp, as "YYYY-MM-DD".
 function SessionLog.dayKey(epoch)
-    return date("%Y-%m-%d", epoch)
+    return date("%Y-%m-%d", epoch) or UNDATED
 end
 
 local function emptyBucket()
@@ -162,6 +202,9 @@ local SECONDS_PER_DAY = 86400
 -- From noon they always land inside the day meant.
 local function noonOf(epoch)
     local fields = date("*t", epoch)
+    if not fields then
+        return epoch
+    end
     fields.hour, fields.min, fields.sec = 12, 0, 0
     fields.isdst = nil -- let the C library decide; it may differ from `epoch`'s
     return time(fields) or epoch

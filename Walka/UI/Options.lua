@@ -68,14 +68,18 @@ local function speedSetting(key)
     return tonumber(Walka:Get("speed." .. key)) or 0
 end
 
---- Slider range in the display unit: the treadmill's range, rounded to the
--- 0.1 grid. Rounding to the nearest step (rather than inwards) keeps a
--- 4.0 mph belt at "4.0" when its limit arrives as 6.43 km/h; the speed model
--- clamps to the real limits anyway.
+--- Slider range in the display unit: the treadmill's range on the 0.1
+-- grid, rounded inwards - a maximum set at the slider's lowest position must
+-- not come out below what the belt can do, because then the belt would never
+-- start (the maximum wins over the belt's minimum). A limit that misses a
+-- grid value by a hair still counts as that value, so a 4.0 mph belt whose
+-- limit arrives as 6.43 km/h (3.995 mph) keeps "4.0".
+local RANGE_SLACK = 0.02
+
 local function displayRange()
     local limits = Walka:GetBeltLimits()
-    local low = round(Walka:FromKmh(limits.minKmh), 1)
-    local high = round(Walka:FromKmh(limits.maxKmh), 1)
+    local low = math.ceil(Walka:FromKmh(limits.minKmh) * 10 - RANGE_SLACK * 10) / 10
+    local high = floor(Walka:FromKmh(limits.maxKmh) * 10 + RANGE_SLACK * 10) / 10
     if high <= low then
         high = low + 0.1
     end
@@ -122,7 +126,15 @@ local function speedWarning()
     local mount, cap = speedSetting("mountKmh"), speedSetting("maxKmh")
     local notes = {}
     local slack = 0.0005
-    if stand > cap + slack or walk > cap + slack or run > cap + slack or mount > cap + slack then
+    local slowest = Walka:GetBeltLimits().minKmh
+    if cap < slowest - ns.SpeedModel.CAP_TOLERANCE_KMH then
+        -- Possible when the treadmill's range arrives after the maximum was
+        -- chosen. The speed model then keeps the belt stopped.
+        notes[#notes + 1] = string.format(
+            "The maximum is below the slowest speed your treadmill can hold (%s), so the belt will not start.",
+            Walka:FormatSpeed(slowest)
+        )
+    elseif stand > cap + slack or walk > cap + slack or run > cap + slack or mount > cap + slack then
         notes[#notes + 1] = string.format(
             "Paces above the maximum are limited to it: the belt will not go faster than %s.",
             Walka:FormatSpeed(cap)
@@ -310,10 +322,9 @@ local function refreshControls()
     controls.hudAlpha:Display(tonumber(Walka:Get("hud.alpha")) or 0.9)
 
     -- Companion.
-    local data = Walka:GetCompanionData()
-    local written = data and tonumber(data.written)
-    if written then
-        controls.companion:SetText("Last synced " .. date("%b %d, %H:%M", written) .. ".")
+    local synced = Walka:GetSyncTime()
+    if synced then
+        controls.companion:SetText("Last synced " .. date("%b %d, %H:%M", synced) .. ".")
     else
         controls.companion:SetText("Not synced yet - run the companion app, then /reload.")
     end

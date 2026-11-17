@@ -7,6 +7,7 @@ import asyncio
 import logging
 import math
 import sys
+import threading
 import time
 import webbrowser
 from collections.abc import Sequence
@@ -17,6 +18,13 @@ from . import config as config_module
 from .protocol import Flags, Frame, kmh_to_raw, yps_to_raw
 
 log = logging.getLogger("walka")
+
+
+def _open_browser(url: str) -> None:
+    try:
+        webbrowser.open(url)
+    except Exception:
+        pass
 
 
 def _data_dir(args: argparse.Namespace) -> Path:
@@ -178,10 +186,9 @@ async def _run(args: argparse.Namespace) -> int:
             print("  treadmill: SIMULATED (no Bluetooth)")
         print("Press Ctrl+C to quit (the belt is stopped first).")
         if cfg.web.open_browser and not args.no_browser:
-            try:
-                webbrowser.open(url)
-            except Exception:
-                pass
+            # On its own thread: launching a browser can initialise COM on
+            # the calling thread in a mode the Bluetooth stack cannot use.
+            threading.Thread(target=_open_browser, args=(url,), name="walka-browser", daemon=True).start()
         await stop.wait()
     except asyncio.CancelledError:
         pass

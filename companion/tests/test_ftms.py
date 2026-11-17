@@ -517,3 +517,41 @@ def test_probe_report_is_saved(tmp_path):
     path = probe.save_report(["line one", "line two"], tmp_path / "reports")
     assert path.read_text("utf-8") == "line one\nline two\n"
     assert path.name.startswith("walka-probe-") and path.suffix == ".txt"
+
+
+# ---- the pace fields: one byte (FTMS 1.0) or two (current GATT supplement) -----------------------
+
+
+def test_pace_fields_in_the_two_byte_layout_do_not_shift_what_follows():
+    import struct
+
+    from walka import ftms
+
+    # speed, instantaneous pace, average pace, elapsed time
+    flags = 0x0020 | 0x0040 | 0x0400
+    narrow = struct.pack("<HHBBH", flags, 320, 62, 58, 754)
+    wide = struct.pack("<HHHHH", flags, 320, 120, 125, 754)
+    a, b = ftms.parse_treadmill_data(narrow), ftms.parse_treadmill_data(wide)
+    assert a.speed_kmh == b.speed_kmh == 3.2
+    assert a.elapsed_time_s == b.elapsed_time_s == 754
+    assert not a.truncated and not b.truncated
+    assert a.instantaneous_pace_km_per_min == 6.2 and a.average_pace_km_per_min == 5.8
+    assert a.instantaneous_pace_s_per_500m is None
+    assert b.instantaneous_pace_s_per_500m == 120 and b.average_pace_s_per_500m == 125
+    assert b.instantaneous_pace_km_per_min is None
+
+
+def test_pace_width_with_vendor_steps_and_with_an_ambiguous_length():
+    import struct
+
+    from walka import ftms
+
+    flags = 0x0020 | 0x2000  # speed, instantaneous pace, UREVO trailing steps
+    narrow = struct.pack("<HHB", flags, 250, 40) + (1234).to_bytes(3, "little")
+    wide = struct.pack("<HHH", flags, 250, 180) + (1234).to_bytes(3, "little")
+    assert ftms.parse_treadmill_data(narrow).vendor_steps == 1234
+    assert ftms.parse_treadmill_data(wide).vendor_steps == 1234
+    assert ftms.parse_treadmill_data(wide).instantaneous_pace_s_per_500m == 180
+    # A length that fits neither layout falls back to the one-byte layout.
+    odd = struct.pack("<HHB", 0x0020, 250, 40) + b"\x00\x00\x00\x00\x00"
+    assert ftms.parse_treadmill_data(odd).instantaneous_pace_km_per_min == 4.0

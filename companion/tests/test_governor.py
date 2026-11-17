@@ -14,9 +14,9 @@ from walka.governor import Action, Belt, Command, Governor, Limits, Phase, Readi
 class ToyBelt:
     """A belt that starts after a countdown and ramps towards its target."""
 
-    def __init__(self, *, min_kmh=1.0, max_kmh=6.0, step=0.1, countdown=3.0, ramp=0.5):
+    def __init__(self, *, min_kmh=1.0, max_kmh=6.0, step=0.1, countdown=3.0, ramp=0.5, coast=2.0):
         self.min_kmh, self.max_kmh, self.step = min_kmh, max_kmh, step
-        self.countdown, self.ramp = countdown, ramp
+        self.countdown, self.ramp, self.coast = countdown, ramp, coast
         self.connected = True
         self.running = False
         self.speed = 0.0
@@ -52,7 +52,7 @@ class ToyBelt:
             self.count_left -= dt
             return
         goal = self.target if self.running else 0.0
-        rate = self.ramp if self.running else 2.0
+        rate = self.ramp if self.running else self.coast
         if self.speed < goal:
             self.speed = min(goal, self.speed + rate * dt)
         else:
@@ -435,7 +435,7 @@ HALT = (Action.PAUSE, Action.STOP)
 def started_rig(target: float = 3.0, limits: Limits | None = None, **belt_kwargs) -> Rig:
     rig = Rig(limits, **belt_kwargs)
     rig.run(1, IDLE)
-    rig.run(20, live(target))
+    rig.run(45, live(target))  # countdown, then 0.2 km/h per second from the minimum
     assert rig.belt.speed == pytest.approx(target)
     return rig
 
@@ -564,10 +564,10 @@ def test_every_step_of_the_mph_grid_is_reachable_from_below_and_above():
         target = tenths * mph / 10
         rig = Rig(Limits(max_speed_kmh=7.0), min_kmh=0.6 * mph, max_kmh=4.0 * mph, step=0.1 * mph)
         rig.run(1, IDLE)
-        rig.run(25, live(target))
+        rig.run(45, live(target))  # one 0.1 mph step per second
         assert rig.belt.speed == pytest.approx(target, abs=1e-6), f"{tenths / 10} mph not reached from below"
-        rig.run(12, live(4.0 * mph))
-        rig.run(12, live(target))
+        rig.run(40, live(4.0 * mph))
+        rig.run(25, live(target))
         assert rig.belt.speed == pytest.approx(target, abs=1e-6), f"{tenths / 10} mph not reached from above"
         # A target a little off the step settles on the nearest step.
         rig.run(5, live(target + 0.05))
@@ -763,10 +763,10 @@ def test_return_from_safe_speed_climbs_back_gently():
     rig.run(15, None)
     assert rig.belt.speed == pytest.approx(1.6)
     n = len(rig.belt.log)
-    rig.run(12, live(5.0))
+    rig.run(25, live(5.0))
     ups = [c.speed_kmh for c in rig.belt.log[n:]]
     assert all(c.action is Action.SET_SPEED for c in rig.belt.log[n:])
-    assert all(b - a <= 0.5 + 1e-9 for a, b in itertools.pairwise([1.6] + ups))
+    assert all(b - a <= limits.accel_kmh_per_s + 1e-9 for a, b in itertools.pairwise([1.6] + ups))
     assert rig.belt.speed == pytest.approx(5.0)
 
 
@@ -1093,16 +1093,20 @@ def test_lost_pause_command_is_repeated_until_the_belt_stops():
     rig = started_rig(3.0)
     rig.belt.deaf = True
     rig.run(4.75, live(3.0, paused=True))
-    assert rig.actions().count(Action.PAUSE) == 1 and rig.belt.speed == pytest.approx(3.0)
+    assert rig.actions()[-1] is Action.PAUSE and rig.belt.speed == pytest.approx(3.0)
+    n = len(rig.belt.log)
     rig.run(4, live(3.0, paused=True))
-    assert rig.actions().count(Action.PAUSE) == 2  # asked again after 5 s, not every tick
+    # Asked again after 5 s (not every tick) - and this time with a full stop.
+    assert [c.action for c in rig.belt.log[n:]] == [Action.STOP]
     rig.belt.deaf = False
     rig.run(8, live(3.0, paused=True))
     assert rig.belt.speed == 0
-    pauses = rig.actions().count(Action.PAUSE)
+    n = len(rig.belt.log)
     rig.run(60, live(3.0, paused=True))
-    assert rig.actions().count(Action.PAUSE) == pauses  # and not again once it has stopped
+    assert len(rig.belt.log) == n  # and not again once it has stopped
     assert rig.gov.phase is Phase.PAUSED
+    rig.run(25, live(3.0))  # resuming works as usual
+    assert rig.belt.speed == pytest.approx(3.0)
 
 
 def test_lost_stop_command_at_session_end_is_repeated():
@@ -1126,7 +1130,7 @@ def test_lost_pause_on_long_signal_loss_is_repeated():
     rig.belt.deaf = True
     rig.run(12, None)
     assert rig.gov.phase is Phase.WAITING and rig.belt.speed == pytest.approx(3.0)
-    assert rig.actions().count(Action.PAUSE) >= 2
+    assert rig.actions().count(Action.PAUSE) == 1 and rig.actions().count(Action.STOP) >= 1
     rig.belt.deaf = False
     rig.run(8, None)
     assert rig.belt.speed == 0
@@ -1140,6 +1144,49 @@ def test_a_normal_stop_is_not_repeated():
         assert len(rig.belt.log) == n + 1 and rig.belt.log[-1].action in HALT
 
 
+def test_a_belt_that_coasts_down_slowly_is_not_stopped_again():
+    """Some belts take their time: from 6 km/h at 0.4 km/h per second it is
+    15 s to a standstill. That is a pause being obeyed, not one being ignored."""
+    for end in (live(6.0, paused=True), IDLE, live(0.0, moving=False)):
+        rig = started_rig(6.0, coast=0.4)
+        n = len(rig.belt.log)
+        rig.run(13, end)
+        assert rig.belt.speed > 0  # still coasting
+        rig.run(20, end)
+        assert rig.belt.speed == 0
+        assert len(rig.belt.log) == n + 1 and rig.belt.log[-1].action in HALT, rig.actions()[n:]
+
+
+def test_a_belt_that_barely_slows_is_stopped_again():
+    rig = started_rig(6.0, coast=0.02)  # 0.1 km/h in five seconds: that is not stopping
+    n = len(rig.belt.log)
+    rig.run(6, live(6.0, paused=True))
+    assert [c.action for c in rig.belt.log[n:]] == [Action.PAUSE, Action.STOP]
+
+
+def test_ending_the_session_from_the_dashboards_stop_keeps_the_latch():
+    """end_session(): what STOP does when it ends a dashboard session."""
+    rig = started_rig(3.0)
+    rig.belt.apply([Command(Action.STOP)])  # the app's own stop command
+    rig.belt.log.pop()
+    rig.gov.notify_external_stop()
+    rig.gov.user_stopped = True
+    rig.gov.end_session()
+    assert not rig.gov.driving and rig.gov.user_stopped
+    n = len(rig.belt.log)
+    # No session anywhere: hands off, also when someone uses the remote.
+    rig.run(10, stale(math.inf))
+    assert rig.gov.phase is Phase.IDLE
+    # Another session shows up that we did not watch begin: the latch holds.
+    rig.run(20, live(3.0, session=7, moving=False))
+    rig.run(20, live(3.0, session=7, moving=True))
+    assert len(rig.belt.log) == n and rig.gov.phase is Phase.USER_STOPPED
+    # A session we do watch begin is a fresh, explicit start.
+    rig.run(3, IDLE)
+    rig.run(25, live(3.0, session=8))
+    assert rig.belt.speed == pytest.approx(3.0)
+
+
 def test_resume_supersedes_a_pending_stop_check():
     rig = started_rig(3.0)
     rig.belt.deaf = True
@@ -1147,7 +1194,9 @@ def test_resume_supersedes_a_pending_stop_check():
     rig.belt.deaf = False
     rig.run(20, live(2.0))  # resumed before we would have asked again
     assert rig.belt.speed == pytest.approx(2.0) and rig.gov.phase is Phase.FOLLOWING
-    assert rig.actions().count(Action.PAUSE) == 1  # no late pause lands on the resumed belt
+    assert (
+        rig.actions().count(Action.PAUSE) == 1 and Action.STOP not in rig.actions()
+    )  # nothing lands on the resumed belt
 
 
 def test_start_at_the_machine_cancels_a_pending_stop_check():
@@ -1471,3 +1520,79 @@ def test_soak_random_events_never_break_the_invariants(seed: int):
                 ),
             )
         check(before_log, before_speed)
+
+
+# ---- restart hold-off after a stop ------------------------------------------------------------------
+# A UREVO pad that has just been stopped is still closing its workout: it
+# acknowledges a start and ignores it. The governor therefore waits before
+# starting a belt it (or someone at the machine) stopped moments ago.
+
+
+def test_new_session_right_after_a_stop_waits_out_the_hold_off():
+    limits = Limits(restart_holdoff_s=10)
+    rig = started_rig(3.0, limits)
+    rig.run(2, IDLE)  # session ends: STOP
+    assert rig.actions()[-1] is Action.STOP
+    starts = rig.actions().count(Action.START)
+    rig.run(6, live(3.0, session=2))
+    assert rig.actions().count(Action.START) == starts
+    assert rig.gov.phase is Phase.STARTING and "previous workout" in rig.gov.reason
+    rig.run(30, live(3.0, session=2))
+    assert rig.actions().count(Action.START) == starts + 1
+    assert rig.belt.speed == pytest.approx(3.0)
+
+
+def test_pause_and_resume_is_not_held_off():
+    rig = started_rig(3.0, Limits(restart_holdoff_s=10))
+    rig.run(2, live(3.0, paused=True))
+    assert rig.actions()[-1] is Action.PAUSE
+    starts = rig.actions().count(Action.START)
+    rig.run(1, live(3.0))
+    assert rig.actions().count(Action.START) == starts + 1  # a pause keeps the workout: resume at once
+
+
+def test_treadmill_that_reports_it_is_busy_is_given_longer():
+    class BusyBelt(ToyBelt):
+        busy = True
+
+        def view(self) -> Belt:
+            base = super().view()
+            return Belt(base.connected, base.speed_kmh, base.min_kmh, base.max_kmh, base.step_kmh, busy=self.busy)
+
+    rig = Rig(Limits(restart_holdoff_s=5))
+    rig.belt = BusyBelt()
+    rig.run(1, IDLE)
+    rig.run(30, live(3.0))
+    rig.run(2, IDLE)
+    starts = rig.actions().count(Action.START)
+    rig.run(9, live(3.0, session=2))
+    assert rig.actions().count(Action.START) == starts  # past the hold-off, but still busy
+    rig.belt.busy = False
+    rig.run(2, live(3.0, session=2))
+    assert rig.actions().count(Action.START) == starts + 1
+
+
+def test_a_stuck_busy_flag_cannot_block_the_belt_for_ever():
+    class BusyBelt(ToyBelt):
+        def view(self) -> Belt:
+            base = super().view()
+            return Belt(base.connected, base.speed_kmh, base.min_kmh, base.max_kmh, base.step_kmh, busy=True)
+
+    rig = Rig(Limits(restart_holdoff_s=5))
+    rig.belt = BusyBelt()
+    rig.run(1, IDLE)
+    rig.run(30, live(3.0))
+    assert rig.belt.speed == pytest.approx(3.0)  # the very first start is not held back
+    rig.run(2, IDLE)
+    rig.run(40, live(3.0, session=2))
+    assert rig.belt.speed == pytest.approx(3.0)
+
+
+def test_a_rate_limit_smaller_than_the_belts_step_still_moves():
+    mph = 1.609344
+    rig = Rig(Limits(accel_kmh_per_s=0.05, decel_kmh_per_s=0.1), min_kmh=0.6 * mph, max_kmh=4.0 * mph, step=0.1 * mph)
+    rig.run(1, IDLE)
+    rig.run(60, live(2.0 * mph))
+    assert rig.belt.speed == pytest.approx(2.0 * mph, abs=1e-6)
+    rig.run(40, live(1.0 * mph))
+    assert rig.belt.speed == pytest.approx(1.0 * mph, abs=1e-6)

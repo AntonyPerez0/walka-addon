@@ -271,6 +271,22 @@ def enable_dpi_awareness() -> None:
             pass
 
 
+def _is_wow_executable(exe_path: str) -> bool:
+    name = exe_path.replace("/", "\\").rsplit("\\", 1)[-1].lower()
+    return name.startswith(WOW_EXE_PREFIXES) and name.endswith(".exe")
+
+
+def is_game_executable(exe_path: str) -> bool:
+    """Is this the game's executable inside a game folder
+    (``...\\_forever_\\Wow.exe``)? That identifies the game whatever its
+    window happens to be called."""
+    parts = exe_path.replace("/", "\\").split("\\")
+    if len(parts) < 2 or not _is_wow_executable(exe_path):
+        return False
+    folder = parts[-2]
+    return len(folder) > 2 and folder.startswith("_") and folder.endswith("_")
+
+
 def is_wow_window(title: str, exe_path: str, class_name: str = "") -> bool:
     """Is this top-level window the game?
 
@@ -281,8 +297,13 @@ def is_wow_window(title: str, exe_path: str, class_name: str = "") -> bool:
         return False
     if not exe_path:
         return True
-    name = exe_path.replace("/", "\\").rsplit("\\", 1)[-1].lower()
-    return name.startswith(WOW_EXE_PREFIXES) and name.endswith(".exe")
+    return _is_wow_executable(exe_path)
+
+
+# Process id -> executable path, so that the once-a-second window search
+# does not open every process on the desktop each time.
+_EXE_CACHE: dict[int, str] = {}
+MIN_GAME_WINDOW = (320, 240)
 
 
 def _window_rank(window: GameWindow) -> tuple[bool, bool, int]:
@@ -340,18 +361,24 @@ def find_wow_window() -> GameWindow | None:
     def exe_of(hwnd: int) -> str:
         pid = wintypes.DWORD()
         user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        cached = _EXE_CACHE.get(pid.value)
+        if cached is not None:
+            return cached
+        path = ""
         # PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
         handle = kernel32.OpenProcess(0x1000, False, pid.value)
-        if not handle:
-            return ""
-        try:
-            size = wintypes.DWORD(1024)
-            buffer = ctypes.create_unicode_buffer(size.value)
-            if kernel32.QueryFullProcessImageNameW(handle, 0, buffer, ctypes.byref(size)):
-                return buffer.value
-            return ""
-        finally:
-            kernel32.CloseHandle(handle)
+        if handle:
+            try:
+                size = wintypes.DWORD(1024)
+                buffer = ctypes.create_unicode_buffer(size.value)
+                if kernel32.QueryFullProcessImageNameW(handle, 0, buffer, ctypes.byref(size)):
+                    path = buffer.value
+            finally:
+                kernel32.CloseHandle(handle)
+        if len(_EXE_CACHE) > 512:
+            _EXE_CACHE.clear()
+        _EXE_CACHE[pid.value] = path
+        return path
 
     def callback(hwnd: int, _lparam: int) -> bool:
         if not user32.IsWindowVisible(hwnd):
@@ -365,15 +392,23 @@ def find_wow_window() -> GameWindow | None:
             buffer = ctypes.create_unicode_buffer(length + 1)
             user32.GetWindowTextW(hwnd, buffer, length + 1)
             title = buffer.value
-        # Cheap test first; only then look up the owning process.
-        if not is_wow_window(title, "", class_name):
-            return True
-        exe = exe_of(hwnd)
-        if not is_wow_window(title, exe, class_name):
-            return True
         rect = wintypes.RECT()
         if not user32.GetClientRect(hwnd, ctypes.byref(rect)):
             return True
+        minimized = bool(user32.IsIconic(hwnd))
+        exe = exe_of(hwnd)
+        if is_wow_window(title, "", class_name):
+            # Looks like the game by class or title: the executable, when it
+            # can be read, must agree.
+            if not is_wow_window(title, exe, class_name):
+                return True
+        else:
+            # Unknown class and title (they are not confirmed for every
+            # client): accept the main window of a Wow*.exe that runs from a
+            # game folder. Small helper windows are not it.
+            big_enough = rect.right - rect.left >= MIN_GAME_WINDOW[0] and rect.bottom - rect.top >= MIN_GAME_WINDOW[1]
+            if not is_game_executable(exe) or not (big_enough or minimized):
+                return True
         point = wintypes.POINT(0, 0)
         if not user32.ClientToScreen(hwnd, ctypes.byref(point)):
             return True
@@ -385,7 +420,7 @@ def find_wow_window() -> GameWindow | None:
                 width=rect.right - rect.left,
                 height=rect.bottom - rect.top,
                 exe_path=exe,
-                minimized=bool(user32.IsIconic(hwnd)),
+                minimized=minimized,
             )
         )
         return True

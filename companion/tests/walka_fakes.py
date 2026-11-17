@@ -241,6 +241,7 @@ class FakePad:
         self.fail_writes = False  # the GATT write itself errors
         self.lose_writes = False  # the write "succeeds" but never reaches the pad
         self.reject: dict[int, int] = {}  # opcode -> result code to answer with
+        self.reject_payloads: dict[bytes, int] = {}  # exact command -> result code
         self.speed_range_override: bytes | None = None
 
         self.client: FakeClient | None = None
@@ -273,6 +274,7 @@ class FakePad:
                 table[ftms.SUPPORTED_SPEED_RANGE] = ["read"]
             if self.has_status:
                 table[ftms.FITNESS_MACHINE_STATUS] = ["notify"]
+                table[ftms.TRAINING_STATUS] = ["read", "notify"]
         return table
 
     def read(self, uuid: str) -> bytes:
@@ -306,6 +308,11 @@ class FakePad:
     def _status(self, *payload: int) -> None:
         self._send(ftms.FITNESS_MACHINE_STATUS, bytes(payload))
 
+    def send_training_status(self, status: int) -> None:
+        """Training Status notification: flags byte, then the status code
+        (0x01 idle, 0x0D manual mode, 0x0E pre-workout, 0x0F post-workout)."""
+        self._send(ftms.TRAINING_STATUS, bytes([0x00, status]))
+
     def send_stray_indication(self, op: int, result: int) -> None:
         """An indication nobody asked for (e.g. a late answer to an old command)."""
         self._send(ftms.CONTROL_POINT, bytes([0x80, op, result]))
@@ -327,8 +334,8 @@ class FakePad:
         if self.lose_writes or not data:
             return
         op = data[0]
-        if op in self.reject:
-            self._indicate(op, self.reject[op])
+        if op in self.reject or bytes(data) in self.reject_payloads:
+            self._indicate(op, self.reject_payloads.get(bytes(data), self.reject.get(op, 0x04)))
             return
         if op == 0x00:  # request control
             self.has_control = True

@@ -384,15 +384,52 @@ define("print", function(...)
     log.printed[#log.printed + 1] = table.concat(parts, " ")
 end)
 
+-- date() and time() are Lua's os.date and os.time, and the game runs on
+-- Windows. Its C runtime cannot convert a time before 1970 or after the
+-- year 3000: localtime() fails, and Lua 5.1 then returns nil from os.date
+-- (and from os.time for such a date) instead of a string. The tests run on
+-- other systems, whose C library is more forgiving, so the Windows limits
+-- are applied here: code that does `"..." .. date(format, when)` on a
+-- timestamp it did not check must fail in the tests as it would in the game.
+local WINDOWS_MAX_TIME = 32535215999     -- 3000-12-31 23:59:59 UTC
+M.max_time = WINDOWS_MAX_TIME
+
+local function convertibleTime(when)
+    return when == when and when >= 0 and when <= WINDOWS_MAX_TIME
+end
+
 define("date", function(pattern, when)
     if isSecret(when) or isSecret(pattern) then
         fail("secret value passed to date()", 2)
+    end
+    if pattern ~= nil and type(pattern) ~= "string" then
+        error("bad argument #1 to 'date' (string expected, got " .. type(pattern) .. ")", 2)
+    end
+    if when ~= nil then
+        local number = tonumber(when)
+        if not number then
+            error("bad argument #2 to 'date' (number expected, got " .. type(when) .. ")", 2)
+        end
+        if not convertibleTime(number) then
+            return nil
+        end
+        when = floor(number)
     end
     return os.date(pattern or "%c", when or floor(state.clock))
 end)
 define("time", function(fields)
     if fields ~= nil then
-        return os.time(fields)
+        if type(fields) ~= "table" then
+            error("bad argument #1 to 'time' (table expected, got " .. type(fields) .. ")", 2)
+        end
+        local ok, result = pcall(os.time, fields)
+        if not ok then
+            error(result, 2)        -- "field 'day' missing in date table"
+        end
+        if result == nil or not convertibleTime(result) then
+            return nil
+        end
+        return result
     end
     return floor(state.clock)
 end)
@@ -1121,6 +1158,20 @@ local naturalSize   -- FontString's text size, defined with FontString
 --- left, bottom, width, height in screen units, or nil if not resolvable.
 local function rectOf(widget, visiting)
     local s = W[widget]
+    local parentState = s.parent and W[s.parent]
+    if parentState and parentState.scrollChild == widget then
+        -- A scroll child is placed by its scroll frame, whatever anchors it
+        -- has: top-left corners together, moved by the scroll offsets.
+        local parentLeft, parentBottom, _, parentHeight = rectOf(s.parent, visiting)
+        if not parentLeft then
+            return nil
+        end
+        local scale = effectiveScale(widget)
+        local width, height = (s.width or 0) * scale, (s.height or 0) * scale
+        local left = parentLeft - (parentState.horizontalScroll or 0) * scale
+        local top = parentBottom + parentHeight + (parentState.verticalScroll or 0) * scale
+        return left, top - height, width, height
+    end
     local points = s.points
     if #points == 0 then
         return nil
@@ -1190,6 +1241,17 @@ local function rectOf(widget, visiting)
             else
                 return nil
             end
+        end
+    end
+    if s.clamped then
+        -- SetClampedToScreen: wherever its anchors put it, the client keeps
+        -- the frame's rectangle inside the screen.
+        local screenWidth, screenHeight = screenSize()
+        if width <= screenWidth then
+            left = math.max(0, math.min(screenWidth - width, left))
+        end
+        if height <= screenHeight then
+            bottom = math.max(0, math.min(screenHeight - height, bottom))
         end
     end
     return left, bottom, width, height
@@ -2968,6 +3030,7 @@ do
         end
         return callbacks
     end
+    local ownerSerial = 0
     function CallbackRegistry:OnLoad() registry(self) end
     function CallbackRegistry:RegisterCallback(event, callback, owner, ...)
         if type(event) ~= "string" then
@@ -2980,6 +3043,16 @@ do
         if type(events) == "table" and events[event] == nil then
             fail("RegisterCallback(): this object has no \"" .. event .. "\" callback event", 2)
         end
+        if owner == nil then
+            -- The client makes up an owner, and hands it to the callback
+            -- like any other: the first argument is never the event's.
+            ownerSerial = ownerSerial + 1
+            owner = ownerSerial
+        elseif type(owner) == "number" then
+            fail("RegisterCallback(): a number as owner is reserved for the client", 2)
+        end
+        -- One callback per owner and event: registering again replaces it.
+        CallbackRegistry.UnregisterCallback(self, event, owner)
         local callbacks = registry(self)
         callbacks[event] = callbacks[event] or {}
         table.insert(callbacks[event], { callback = callback, owner = owner, n = select("#", ...), ... })
@@ -2999,10 +3072,16 @@ do
             return
         end
         for _, entry in ipairs({ unpack(list) }) do
-            if entry.owner ~= nil then
-                entry.callback(entry.owner, ...)
+            if entry.n > 0 then
+                -- Registered with extra arguments: owner, those, the event's.
+                local args = { entry.owner, unpack(entry, 1, entry.n) }
+                local count = entry.n + 1
+                for index = 1, select("#", ...) do
+                    args[count + index] = (select(index, ...))
+                end
+                entry.callback(unpack(args, 1, count + select("#", ...)))
             else
-                entry.callback(...)
+                entry.callback(entry.owner, ...)
             end
         end
     end
@@ -3250,10 +3329,108 @@ define("GameTooltip_Hide", function()
 end)
 
 -- Settings (the options window). Categories are registered by ID.
+--
+-- The window is laid out as Blizzard_SettingsPanel.xml lays it out: 920 x
+-- 724 in the middle of the screen, the page area (Container.SettingsCanvas,
+-- 665 x 601) to the right of the category list. An addon's canvas frame is
+-- handled the way SettingsPanelMixin handles it:
+--
+--   * opening the window always selects its first (Blizzard) category,
+--     which takes whatever canvas was showing off the page - SetParent(nil),
+--     ClearAllPoints, Hide - and then calls OnRefresh on every canvas;
+--   * selecting a canvas category parents the frame to the page area,
+--     SetAllPoints, Show, OnRefresh - and only then shows the page area, so
+--     OnRefresh can run before the frame is visible;
+--   * selecting the category that is already showing does nothing.
 local Settings = {}
 do
     local categories, nextID = {}, 1
     M.settings_categories = categories
+
+    local PANEL_WIDTH, PANEL_HEIGHT = 920, 724
+    local CANVAS_LEFT, CANVAS_TOP, CANVAS_RIGHT, CANVAS_BOTTOM = 233, -76, -22, 47
+
+    local panel, canvas   -- SettingsPanel and its Container.SettingsCanvas
+    local current         -- the category whose page is showing
+
+    local function settingsPanel()
+        if not panel then
+            panel = G.SettingsPanel
+            local s = W[panel]
+            s.width, s.height = PANEL_WIDTH, PANEL_HEIGHT
+            s.points = { { point = "CENTER", relativeTo = G.UIParent, relativePoint = "CENTER", x = 0, y = 0 } }
+            local container = newWidget("Frame", nil, panel)
+            rawset(panel, "Container", container)
+            W[container].parentKey = "Container"
+            W[container].points = {
+                { point = "TOPLEFT", relativeTo = panel, relativePoint = "TOPLEFT", x = CANVAS_LEFT, y = CANVAS_TOP },
+                { point = "BOTTOMRIGHT", relativeTo = panel, relativePoint = "BOTTOMRIGHT", x = CANVAS_RIGHT, y = CANVAS_BOTTOM },
+            }
+            canvas = newWidget("Frame", nil, container)
+            rawset(container, "SettingsCanvas", canvas)
+            W[canvas].parentKey = "SettingsCanvas"
+            ScriptRegion.SetAllPoints(canvas, container)
+            W[canvas].shown = false
+        end
+        return panel
+    end
+
+    -- The client calls these under xpcall with its error handler.
+    local function callRefresh(frame)
+        local refresh = frame.OnRefresh
+        if refresh ~= nil then
+            local ok, err = pcall(refresh, frame)
+            if not ok then
+                currentErrorHandler(err)
+            end
+        end
+    end
+
+    local function refreshAllCanvases()
+        for id = 1, nextID - 1 do
+            local category = categories[id]
+            if category.registered and category.frame then
+                callRefresh(category.frame)
+            end
+        end
+    end
+
+    local function clearCurrentCanvas()
+        local frame = current and current.frame
+        current = nil
+        if frame then
+            ScriptRegion.SetParent(frame, nil)
+            ScriptRegion.ClearAllPoints(frame)
+            setShown(frame, false)
+        end
+    end
+
+    local function openPanel()
+        settingsPanel()
+        if not W[panel].shown then
+            setShown(panel, true)
+            clearCurrentCanvas()
+            setShown(canvas, false)
+            refreshAllCanvases()
+        end
+    end
+
+    local function selectCategory(category)
+        openPanel()
+        if current ~= category then
+            clearCurrentCanvas()
+            current = category
+            local frame = category.frame
+            if frame then
+                ScriptRegion.SetParent(frame, canvas)
+                ScriptRegion.ClearAllPoints(frame)
+                ScriptRegion.SetAllPoints(frame, canvas)
+                setShown(frame, true)
+                callRefresh(frame)
+                setShown(canvas, true)
+            end
+        end
+    end
 
     function Settings.RegisterCanvasLayoutCategory(frame, name)
         if not (isWidget(frame) and infoOf(W[frame].type).isA.Frame) then
@@ -3293,17 +3470,40 @@ do
             fail("Settings.OpenToCategory(): no registered category with ID " .. tostring(categoryID), 2)
         end
         log.settings_opened[#log.settings_opened + 1] = categoryID
-        local panel = G.SettingsPanel
-        setShown(panel, true)
-        if category.frame then
-            ScriptRegion.SetParent(category.frame, panel)
-            ScriptRegion.SetAllPoints(category.frame, panel)
-            -- Selecting a category shows its canvas, even one shown before.
-            if W[category.frame].shown then
-                W[category.frame].shown = false
-            end
-            setShown(category.frame, true)
+        selectCategory(category)
+    end
+
+    --- The player opens the Settings window by hand (Esc > Options): it
+    -- shows its first category, not an addon's page.
+    function M.settings_open()
+        openPanel()
+    end
+
+    --- The player closes the Settings window (Escape or its Close button).
+    -- The page that was showing stays where it is, hidden with the window.
+    function M.settings_close()
+        if panel and W[panel].shown then
+            setShown(panel, false)
         end
+    end
+
+    --- The player picks one of Blizzard's own categories in the open
+    -- Settings window, which takes an addon's page off it.
+    function M.settings_select_other()
+        if panel and W[panel].shown then
+            clearCurrentCanvas()
+            setShown(canvas, false)
+        end
+    end
+
+    --- The player picks a registered addon category in the category list
+    -- (which, unlike an addon's Settings.OpenToCategory, works in combat).
+    function M.settings_select(categoryID)
+        local category = categories[categoryID]
+        if not (category and category.registered) then
+            fail("settings_select: no registered category with ID " .. tostring(categoryID), 2)
+        end
+        selectCategory(category)
     end
 end
 
@@ -3745,15 +3945,20 @@ function M.drag(widget, dx, dy)
 end
 
 --- Type into an edit box as the user would (focus, text, optional Enter).
+-- Returns false for a disabled box: it does not take the keyboard focus.
 function M.type_text(editBox, text, pressEnter)
     if not isA(editBox, "EditBox") then
         fail("type_text: " .. describe(editBox) .. " is not an edit box", 2)
+    end
+    if W[editBox].disabled then
+        return false
     end
     M.call(EditBox.SetFocus, editBox)
     M.call(editSetText, editBox, text, true)
     if pressEnter then
         M.fire_script(editBox, "OnEnterPressed")
     end
+    return true
 end
 
 --- Move a slider's thumb as the user would.

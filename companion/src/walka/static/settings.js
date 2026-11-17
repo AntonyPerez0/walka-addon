@@ -507,7 +507,7 @@ const FORMS = {
         kind: "speed",
         path: "limits.max_speed_kmh",
         min: 0.8,
-        max: 12,
+        max: 6.5,
         label: "Max speed",
         help: "The hard cap. Nothing - the game, manual mode or a glitch - can drive the belt faster than this.",
       },
@@ -561,6 +561,14 @@ const FORMS = {
         path: "limits.resume_requires_movement",
         label: "After a pause, the belt restarts only when the character moves",
         help: "On: a belt paused by a lost signal - or a session Walka did not watch begin - waits for your character to move, or for Resume. Off: it restarts as soon as the signal is back.",
+      },
+      {
+        type: "text",
+        path: "stop_hotkey",
+        optional: true,
+        label: "STOP hotkey",
+        placeholder: "Off",
+        help: "A key combination that stops the belt from anywhere on this PC, even while the game has focus (Windows only). Use ctrl, alt, shift or win plus a key, for example ctrl+alt+x. The key press is not passed on to the game. Empty turns it off.",
       },
     ],
     advanced: [

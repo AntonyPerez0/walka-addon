@@ -44,8 +44,10 @@ local LIST_WIDTH = INNER - 12   -- room for the scroll bar
 local METERS_PER_YARD = ns.Metrics and ns.Metrics.METERS_PER_YARD or 0.9144
 
 -- While a session runs the totals change all the time; redraw them this
--- often (each redraw merges the whole history, so not on every tick).
+-- often. (That is a pass over the whole list, so not on every tick.)
 local LIVE_REFRESH_SECONDS = 10
+-- Without a session they only change at midnight, when "today" moves on.
+local IDLE_REFRESH_SECONDS = 60
 
 -- x and width in the list's own units; they add up to LIST_WIDTH.
 local COLUMNS = {
@@ -415,8 +417,11 @@ end
 -- Refresh
 ----------------------------------------------------------------------------
 
+-- Totals over `sessions`, the list merged at the last refresh, plus the
+-- session in progress. The list only changes when "HISTORY" fires (which
+-- marks the window stale), so nothing is merged again here.
 local function showTotals()
-    local totals = Walka:GetTotals()
+    local totals = Walka:GetTotals(sessions)
     lastTotalsAt = GetTime()
     fillCard(cards.today, totals.today)
     fillCard(cards.week, totals.week)
@@ -473,7 +478,6 @@ local EMPTY_TEXT = "No walks yet.\n\nStart one with /walka start or the play but
 local EMPTY_TEXT_WALKING = "Your first session is under way.\n\nIt shows up here when you stop it."
 
 local function showSessions()
-    sessions = Walka:GetHistory() or {}
     local count = #sessions
     parts.empty:SetShown(count == 0)
     if count == 0 then
@@ -490,6 +494,8 @@ local function refresh()
         return
     end
     stale = false
+    -- The one merge of a refresh; the totals and the list both use it.
+    sessions = Walka:GetHistory() or {}
     showTotals()
     showSessions()
 end
@@ -650,7 +656,7 @@ end
 -- session fires "HISTORY" and "SESSION"; dragging a slider in the options
 -- fires "SETTINGS" many times a second). So events only mark the window as
 -- stale, and the next UI tick - at most a quarter of a second later - redraws
--- it once.
+-- it once, with one merge.
 
 local shownUnits, shownGoal
 
@@ -676,7 +682,7 @@ Walka:On("TICK", function()
     end
     if stale then
         refresh()
-    elseif Walka:GetSession() and GetTime() - lastTotalsAt >= LIVE_REFRESH_SECONDS then
+    elseif GetTime() - lastTotalsAt >= (Walka:GetSession() and LIVE_REFRESH_SECONDS or IDLE_REFRESH_SECONDS) then
         -- The session in progress is part of the totals: keep them moving.
         showTotals()
     end

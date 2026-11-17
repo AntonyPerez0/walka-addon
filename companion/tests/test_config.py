@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from walka import config as config_module
-from walka.config import _BOUNDS, CONFIG_FILE, Config, apply_update, load, save
+from walka.config import _BOUNDS, CONFIG_FILE, MAX_SPEED_CAP_KMH, Config, apply_update, load, save
 from walka.governor import Limits
 from walka.metrics import KMH_PER_MPH
 
@@ -20,9 +20,10 @@ def test_defaults_are_conservative():
     # 3.0 mph cap out of the box.
     assert config.limits.max_speed_kmh == pytest.approx(3.0 * KMH_PER_MPH, abs=0.005)
     assert config.limits.max_speed_kmh < Limits().max_speed_kmh
-    assert config.limits.accel_kmh_per_s == 0.5 and config.limits.decel_kmh_per_s == 1.0
+    assert config.limits.accel_kmh_per_s == 0.2 and config.limits.decel_kmh_per_s == 0.4
     assert config.limits.resume_requires_movement is True
-    assert config.limits.safe_speed_kmh == pytest.approx(1.6)
+    assert config.limits.safe_speed_kmh == pytest.approx(1.3)
+    assert config.limits.loss_pause_s == 120.0
     assert config.profile.weight_kg == 75.0 and config.profile.height_cm == 172.0
     assert config.profile.age is None and config.profile.sex is None
     assert config.treadmill.kind == "ftms" and config.treadmill.units == "auto"
@@ -79,7 +80,7 @@ def test_a_typo_cannot_configure_a_dangerous_belt():
         },
     )
     limits = config.limits
-    assert limits.max_speed_kmh == 12.0
+    assert limits.max_speed_kmh == MAX_SPEED_CAP_KMH
     assert limits.accel_kmh_per_s == 1.0
     assert limits.decel_kmh_per_s == 0.1  # the belt can always slow down
     assert limits.command_interval_s == 0.5
@@ -186,7 +187,7 @@ def test_partial_updates_leave_everything_else_alone():
     apply_update(config, {"limits": {"max_speed_kmh": 5.0}})
     apply_update(config, {})
     assert config.profile.weight_kg == 82.5 and config.profile.height_cm == 172.0
-    assert config.limits.max_speed_kmh == 5.0 and config.limits.accel_kmh_per_s == 0.5
+    assert config.limits.max_speed_kmh == 5.0 and config.limits.accel_kmh_per_s == 0.2
 
 
 def test_update_mutates_the_limits_object_in_place():
@@ -340,8 +341,8 @@ def test_hand_edited_file_with_out_of_range_and_junk_values(tmp_path: Path):
     )
     config = load(tmp_path)  # must not raise: a typo cannot stop the companion from starting
     assert config.units == "kmh"
-    assert config.limits.max_speed_kmh == 12.0
-    assert config.limits.accel_kmh_per_s == 0.5
+    assert config.limits.max_speed_kmh == MAX_SPEED_CAP_KMH
+    assert config.limits.accel_kmh_per_s == 0.2
     assert config.limits.stall_s == 2.0
     assert config.profile.weight_kg == 250.0 and config.profile.age is None
     assert isinstance(config.web.port, int) and 1 <= config.web.port <= 65535

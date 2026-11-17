@@ -13,6 +13,7 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from test_app import Rig
 from walka import web
+from walka.config import MAX_SPEED_CAP_KMH
 from walka.governor import Phase
 from walka.session import SessionRecord
 from walka.treadmill import BeltState, TreadmillError
@@ -548,12 +549,12 @@ def test_config_read_and_clamped_update(rig: Rig):
         assert response.status == 200
         body = await response.json()
         assert body["ok"] is True
-        assert body["config"]["limits"]["max_speed_kmh"] == 12.0  # clamped, not obeyed
+        assert body["config"]["limits"]["max_speed_kmh"] == MAX_SPEED_CAP_KMH  # clamped, not obeyed
         assert body["config"]["limits"]["accel_kmh_per_s"] == 1.0
         assert body["config"]["limits"]["signal_timeout_s"] == 1.0
         assert body["config"]["profile"] == {"weight_kg": 82.5, "height_cm": 172.0, "age": 41, "sex": "female"}
         assert body["config"]["units"] == "kmh" and "bogus" not in body["config"]
-        assert rig.app.governor.limits.max_speed_kmh == 12.0  # the governor sees it at once
+        assert rig.app.governor.limits.max_speed_kmh == MAX_SPEED_CAP_KMH  # the governor sees it at once
         saved = json.loads((rig.app.data_dir / "config.json").read_text("utf-8"))
         assert saved == body["config"]
 
@@ -580,7 +581,7 @@ def test_config_update_with_bad_input_never_breaks_the_limits(rig: Rig, raw: str
         response = await client.post("/api/config", data=raw, headers=JSON)
         assert response.status == status, await response.text()
         limits = rig.config.limits
-        assert 0.8 <= limits.max_speed_kmh <= 12.0
+        assert 0.8 <= limits.max_speed_kmh <= MAX_SPEED_CAP_KMH
         assert isinstance(rig.config.web.port, int) and 1 <= rig.config.web.port <= 65535
         assert rig.config.profile.age is None
         assert rig.config.wow.origin is None and rig.config.treadmill.name_prefixes == ["URTM"]

@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .governor import Limits
+from .hotkey import parse_hotkey
 from .metrics import KMH_PER_MPH, Profile
 
 log = logging.getLogger(__name__)
@@ -85,15 +86,23 @@ class Config:
     wow: WowConfig = field(default_factory=WowConfig)
     web: WebConfig = field(default_factory=WebConfig)
     manual: ManualConfig = field(default_factory=ManualConfig)
+    # System-wide key combination that stops the belt from inside a game
+    # (Windows only). Empty = off.
+    stop_hotkey: str = "ctrl+alt+x"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
+# The highest speed cap that can be configured: a little over 4.0 mph, the
+# top of a walking pad's desk mode. Walka changes belt speed by itself, under
+# someone who is looking at a game - running speeds are not for that.
+MAX_SPEED_CAP_KMH = 6.5
+
 # Sanity bounds applied to anything loaded from disk or sent by the dashboard,
 # so a typo cannot configure a dangerous belt.
 _BOUNDS: dict[tuple[str, str], tuple[float, float]] = {
-    ("limits", "max_speed_kmh"): (0.8, 12.0),
+    ("limits", "max_speed_kmh"): (0.8, MAX_SPEED_CAP_KMH),
     ("limits", "accel_kmh_per_s"): (0.05, 1.0),
     ("limits", "decel_kmh_per_s"): (0.1, 2.0),
     ("limits", "command_interval_s"): (0.5, 5.0),
@@ -103,9 +112,10 @@ _BOUNDS: dict[tuple[str, str], tuple[float, float]] = {
     ("limits", "loss_pause_s"): (0.0, 3600.0),
     ("limits", "start_grace_s"): (5.0, 60.0),
     ("limits", "stall_s"): (2.0, 30.0),
+    ("limits", "restart_holdoff_s"): (0.0, 60.0),
     ("profile", "weight_kg"): (30.0, 250.0),
     ("profile", "height_cm"): (120.0, 230.0),
-    ("manual", "speed_kmh"): (0.5, 12.0),
+    ("manual", "speed_kmh"): (0.5, MAX_SPEED_CAP_KMH),
     ("wow", "capture_fps"): (2.0, 60.0),
     ("web", "port"): (1.0, 65535.0),
 }
@@ -207,7 +217,11 @@ def _update(target: Any, data: dict[str, Any], section: str = "") -> None:
 
 def apply_update(config: Config, data: dict[str, Any]) -> Config:
     """Merge a partial dict (from disk or the dashboard) into ``config``."""
+    previous_hotkey = config.stop_hotkey
     _update(config, data)
+    config.stop_hotkey = config.stop_hotkey.strip().lower()
+    if config.stop_hotkey and parse_hotkey(config.stop_hotkey) is None:
+        config.stop_hotkey = previous_hotkey  # not a usable combination: keep the old one
     if config.units not in ("mph", "kmh"):
         config.units = "mph"
     if config.treadmill.kind not in ("ftms", "simulated"):

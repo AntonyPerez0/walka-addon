@@ -151,6 +151,16 @@ function Walka:GetCompanionData()
     return nil
 end
 
+--- When the companion wrote its data (seconds since the epoch), or nil if
+-- it has not - or if the timestamp is not one date() can format, so that
+-- callers can pass the result straight to date(). (On Windows date()
+-- returns nil for a time before 1970 or after the year 3000, and
+-- `"..." .. nil` is an error.)
+function Walka:GetSyncTime()
+    local data = self:GetCompanionData()
+    return data and numberWithin(data.written, 0, SessionLog.MAX_EPOCH - 1)
+end
+
 --- Body profile used for the live estimates: the companion's if it has
 -- one (so both sides compute the same), otherwise the addon's own.
 function Walka:GetProfile()
@@ -355,6 +365,14 @@ function Walka:GetGameState()
     return self.gameState
 end
 
+-- The windows redraw on the "SESSION" event, which comes before the next
+-- tick. Work out now what that tick is going to ask for, so that they do
+-- not show a stopped belt ("waiting") for a moment after every start and
+-- resume. A model update over zero seconds does exactly that.
+local function primeTarget(self)
+    self.targetKmh = self.model:update(0, self.gameState)
+end
+
 function Walka:StartSession()
     if self.session then
         if self.session.paused then
@@ -378,7 +396,7 @@ function Walka:StartSession()
     }
     self.model:reset(nil)
     self.estimator:reset(0)
-    self.targetKmh = 0
+    primeTarget(self)
     if db.settings.announce then
         self:Print("session started - the belt follows your character. /walka stop to finish.")
     end
@@ -420,6 +438,7 @@ function Walka:ResumeSession()
     session.pauseReason = nil
     -- The belt restarts at its minimum speed.
     self.model:reset(nil)
+    primeTarget(self)
     if self.db.settings.announce then
         self:Print("session resumed.")
     end
@@ -493,10 +512,12 @@ function Walka:GetHistory()
 end
 
 --- Totals for today / the last 7 days / all time (see SessionLog.totals).
--- The session in progress is included.
-function Walka:GetTotals()
+-- The session in progress is included. Merging the history is the
+-- expensive part: a caller that already holds the list from GetHistory()
+-- passes it as `history` instead of having it merged a second time.
+function Walka:GetTotals(history)
     local data = self:GetCompanionData()
-    return SessionLog.totals(self:GetHistory(), Game.Now(), self.session, data and data.older)
+    return SessionLog.totals(history or self:GetHistory(), Game.Now(), self.session, data and data.older)
 end
 
 --- Forget the addon's own session history (the companion's is untouched).
@@ -760,9 +781,9 @@ local function slash(message)
             self:FormatSpeed(target),
             self:FormatSpeed(belt)
         ))
-        local data = self:GetCompanionData()
-        if data and tonumber(data.written) then
-            self:Print("companion data from " .. date("%Y-%m-%d %H:%M", tonumber(data.written)) .. ".")
+        local synced = self:GetSyncTime()
+        if synced then
+            self:Print("companion data from " .. date("%Y-%m-%d %H:%M", synced) .. ".")
         else
             self:Print("no companion data yet - run the Walka companion app, then /reload.")
         end

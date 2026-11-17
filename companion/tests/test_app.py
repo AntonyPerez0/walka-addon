@@ -10,7 +10,7 @@ import pytest
 
 from walka import addon_sync
 from walka.app import TICK_S, App
-from walka.config import Config
+from walka.config import MAX_SPEED_CAP_KMH, Config
 from walka.governor import Phase
 from walka.protocol import Flags, Frame, kmh_to_raw
 from walka.sources import BeaconSource
@@ -147,7 +147,7 @@ def test_signal_loss_slows_then_game_returns(rig: Rig):
         await rig.run(30, signal=False)
         assert rig.app.governor.phase is Phase.SAFE
         assert rig.treadmill.status.speed_kmh < fast
-        assert rig.treadmill.status.speed_kmh == pytest.approx(1.6, abs=0.09)
+        assert rig.treadmill.status.speed_kmh == pytest.approx(rig.config.limits.safe_speed_kmh, abs=0.09)
         await rig.run(40, target=4.0)
         assert rig.app.governor.phase is Phase.FOLLOWING
         assert rig.treadmill.status.speed_kmh == pytest.approx(fast, abs=0.01)
@@ -466,7 +466,7 @@ def test_failed_pause_is_repeated_until_the_belt_stops(rig: Rig):
         rig.treadmill.fail_commands = False
         await rig.run(10, target=3.2, paused=True)
         assert rig.treadmill.status.speed_kmh == 0, "the belt ran on under a session shown as paused"
-        assert rig.treadmill.status.state is BeltState.PAUSED
+        assert rig.treadmill.status.state is BeltState.STOPPED  # (the repeat is a full stop)
         await rig.run(30, target=3.2)
         assert rig.treadmill.status.speed_kmh > 2.5
 
@@ -912,6 +912,81 @@ def test_emergency_stop_during_a_manual_session_over_an_active_game_session(rig:
     run(scenario())
 
 
+def test_emergency_stop_of_a_dashboard_session_with_the_game_minimised(rig: Rig):
+    """A game session is active but the game is minimised; a dashboard
+    session runs the belt; STOP. Bringing the game back and moving the
+    character must not restart the belt - the game session was there all
+    along, it is not something the user just started."""
+
+    async def scenario():
+        await rig.connect()
+        await rig.run(1, active=False)
+        await rig.run(5, target=3.0)  # game session starts ...
+        rig.app.manual_start(2.5)  # ... the dashboard takes over, the game is minimised
+        await rig.run(40, signal=False)
+        assert rig.treadmill.status.speed_kmh > 2.0
+        await rig.app.emergency_stop()
+        sent = commands_sent(rig)
+        await rig.run(20, signal=False)
+        assert rig.treadmill.status.speed_kmh == 0
+        # The game window comes back with its session still running.
+        await rig.run(10, target=3.0, moving=False)
+        await rig.run(30, target=3.0, moving=True)
+        await rig.run(5, target=3.0, moving=False)
+        await rig.run(30, target=3.0, moving=True)
+        assert sent == [], f"commands after STOP: {sent}"
+        assert rig.app.governor.phase is Phase.USER_STOPPED
+        rig.app.resume()
+        await rig.run(30, target=3.0)
+        assert sent[0] == "start" and rig.treadmill.status.speed_kmh > 2.5
+
+    run(scenario())
+
+
+def test_after_emergency_stop_of_a_dashboard_session_the_belt_is_not_ours(rig: Rig):
+    """No game at all: after STOP the companion is hands-off again. Someone
+    walking with the remote later is left alone (not slowed, not paused)."""
+
+    async def scenario():
+        await rig.connect()
+        rig.app.manual_start(3.0)
+        await rig.run(40, signal=False)
+        await rig.app.emergency_stop()
+        await rig.run(10, signal=False)
+        assert rig.treadmill.status.speed_kmh == 0
+        assert not rig.app.governor.driving and rig.app.governor.phase is Phase.IDLE
+        sent = commands_sent(rig)
+        rig.treadmill.press_start()  # the remote
+        await rig.run(400, signal=False)  # longer than the hold + safe-speed stages would take
+        assert sent == []
+        assert rig.treadmill.status.state is BeltState.RUNNING and rig.treadmill.status.speed_kmh > 0.9
+        assert rig.app.recorder is not None and rig.app.recorder.source == "free"
+        rig.treadmill.press_stop()
+        await rig.run(5, signal=False)
+        # A new dashboard session is an explicit start.
+        rig.app.manual_start(2.0)
+        await rig.run(30, signal=False)
+        assert rig.treadmill.status.speed_kmh > 1.5 and "start" in sent
+
+    run(scenario())
+    assert [r.source for r in rig.app.store.records][:2] == ["manual", "free"]
+
+
+def test_new_game_session_after_emergency_stop_of_a_dashboard_session(rig: Rig):
+    async def scenario():
+        await rig.connect()
+        rig.app.manual_start(3.0)
+        await rig.run(30, signal=False)
+        await rig.app.emergency_stop()
+        await rig.run(5, signal=False)
+        # The user goes to the game: no session there, then presses Start in the HUD.
+        await rig.run(5, active=False)
+        await rig.run(30, target=3.2)
+        assert rig.treadmill.status.speed_kmh > 2.5
+
+    run(scenario())
+
+
 def test_emergency_stop_whose_command_fails_keeps_trying(rig: Rig):
     async def scenario():
         await session_running(rig, 3.2)
@@ -1012,6 +1087,26 @@ def test_emergency_stop_while_the_treadmill_is_unreachable(rig: Rig):
     run(scenario())
 
 
+def test_emergency_stop_of_a_dashboard_session_while_the_treadmill_is_unreachable(rig: Rig):
+    async def scenario():
+        await rig.connect()
+        rig.app.manual_start(3.0)
+        await rig.run(40, signal=False)
+        speed = drop_link(rig, belt_keeps_running=True)
+        await rig.run(2, signal=False)
+        await rig.app.emergency_stop()
+        assert any("not connected" in e["text"] for e in rig.app.events)
+        await rig.run(10, signal=False)
+        restore_link(rig)
+        await rig.run(1, signal=False)
+        rig.treadmill.status.speed_kmh = speed
+        await rig.run(5, signal=False)
+        assert rig.treadmill.status.state is BeltState.STOPPED, "the belt ran on after STOP was pressed"
+        assert rig.treadmill.status.speed_kmh == 0
+
+    run(scenario())
+
+
 def test_emergency_stop_without_a_treadmill_or_session_is_harmless(rig: Rig):
     async def scenario():
         await rig.app.emergency_stop()  # not connected
@@ -1054,7 +1149,7 @@ def test_lowering_the_cap_mid_session_takes_effect(rig: Rig):
         assert rig.treadmill.status.target_kmh <= 2.0 * MPH + 1e-6
         rig.app.update_config({"limits": {"max_speed_kmh": 999}})  # clamped to the allowed range
         await rig.run(60, target=40.0)
-        assert rig.config.limits.max_speed_kmh == 12.0
+        assert rig.config.limits.max_speed_kmh == MAX_SPEED_CAP_KMH
         assert rig.treadmill.status.speed_kmh == pytest.approx(4.0 * MPH, abs=0.01)  # the pad's own maximum
 
     run(scenario())
@@ -1062,7 +1157,7 @@ def test_lowering_the_cap_mid_session_takes_effect(rig: Rig):
     data = load_companion_data(rig)
     assert data.limits.maxKmh == pytest.approx(4.0 * MPH, abs=1e-3)
     saved = json.loads((rig.app.data_dir / "config.json").read_text("utf-8"))
-    assert saved["limits"]["max_speed_kmh"] == 12.0
+    assert saved["limits"]["max_speed_kmh"] == MAX_SPEED_CAP_KMH
 
 
 def test_cap_below_the_pads_minimum_keeps_the_belt_off(rig: Rig):
@@ -1130,7 +1225,8 @@ def test_addon_data_after_several_walks(rig: Rig):
     assert data.profile.weightKg == 75 and data.profile.heightCm == 172
     assert data.limits.mphGrid is True
     assert data.limits.stepKmh == pytest.approx(0.1 * MPH, abs=1e-4)
-    assert data.limits.accelKmhPerS == 0.5 and data.limits.decelKmhPerS == 1.0
+    assert data.limits.accelKmhPerS == rig.config.limits.accel_kmh_per_s
+    assert data.limits.decelKmhPerS == rig.config.limits.decel_kmh_per_s
     assert data.older is None
     # The dashboard's totals agree with what was synced - and the belt
     # coasting down after the last stop is not a "walk in progress".
@@ -1225,7 +1321,8 @@ def test_abandoned_session_is_closed_and_saved(rig: Rig):
 
     run(scenario())
     assert len(rig.app.store.records) == 1
-    assert rig.app.store.records[0].seconds > 300
+    # Two minutes of session plus the hold and safe-speed stages.
+    assert rig.app.store.records[0].seconds > 200
 
 
 # ---- heart rate -------------------------------------------------------------------------------------
@@ -1376,3 +1473,102 @@ def test_soak_random_events_never_exceed_the_cap_or_crash(tmp_path: Path, seed: 
     for record in rig.app.store.records:
         assert record.seconds >= 20 and record.end >= record.start
         assert record.max_kmh <= max(12.0, 4.0 * MPH) + 1e-6
+
+
+# ---- reconnect only on demand, treadmill switching, STOP hotkey ---------------------------------------
+
+
+def test_connection_is_wanted_eagerly_at_start_then_only_on_demand(rig: Rig):
+    """A connection attempt wakes a pad that was switched off, so after the
+    first connection a dropped link is only chased while something needs it."""
+
+    async def scenario():
+        app = rig.app
+        assert app.connection_wanted()  # start-up: keep trying
+        await rig.connect()
+        await rig.run(2, active=False)
+        assert not app._eager_connect
+        await rig.treadmill.disconnect()  # the user switched the pad off
+        await rig.run(2, active=False)
+        assert not app.connection_wanted()
+        # A session starting in the game is a reason to reconnect ...
+        await rig.run(1, target=3.0)
+        assert app.connection_wanted()
+        await rig.run(2, active=False)
+        assert not app.connection_wanted()
+        # ... so is a dashboard session, and so is pressing Connect.
+        app.manual_start(3.0)
+        assert app.connection_wanted()
+        app.manual_stop()
+        await rig.run(1, signal=False)
+        assert not app.connection_wanted()
+        app.connect()
+        assert app.connection_wanted()
+        # "Disconnect" on the dashboard wins over everything.
+        await app.disconnect()
+        app.manual_start(3.0)
+        assert not app.connection_wanted()
+
+    run(scenario())
+
+
+def test_link_lost_mid_session_keeps_trying(rig: Rig):
+    async def scenario():
+        await session_running(rig, 3.0, seconds=30)
+        await rig.treadmill.disconnect()
+        await rig.run(5, target=3.0)
+        assert rig.app.connection_wanted()
+
+    run(scenario())
+
+
+def test_switching_treadmill_is_refused_while_the_belt_moves(rig: Rig):
+    async def scenario():
+        await session_running(rig, 3.0, seconds=30)
+        rig.treadmill.status.address = "AA:AA:AA:AA:AA:AA"
+        rig.app.connect("BB:BB:BB:BB:BB:BB")
+        assert rig.config.treadmill.address != "BB:BB:BB:BB:BB:BB"
+        assert not rig.app._switch_treadmill
+        assert any("Stop the belt" in e["text"] for e in rig.app.events)
+        await rig.run(3, active=False)
+        await rig.run(8, active=False)
+        rig.app.connect("BB:BB:BB:BB:BB:BB")
+        assert rig.config.treadmill.address == "BB:BB:BB:BB:BB:BB" and rig.app._switch_treadmill
+
+    run(scenario())
+
+
+def test_hotkey_press_stops_the_belt_like_the_dashboard_button(rig: Rig):
+    async def scenario():
+        app = rig.app
+        app._loop = asyncio.get_running_loop()
+        await session_running(rig, 3.0, seconds=30)
+        assert rig.treadmill.status.speed_kmh > 2.5
+        app._hotkey_pressed()  # as the hotkey thread would
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        await rig.run(10, target=3.0)
+        assert rig.treadmill.status.speed_kmh == 0
+        assert app.governor.user_stopped
+        # ... and stays stopped until an explicit resume.
+        await rig.run(30, target=3.0)
+        assert rig.treadmill.status.speed_kmh == 0
+
+    run(scenario())
+
+
+def test_snapshot_reports_the_hotkey(rig: Rig):
+    async def scenario():
+        rig.app._loop = asyncio.get_running_loop()
+        rig.app.register_hotkey()
+        info = rig.app.snapshot()["hotkey"]
+        assert info["combination"] == "Ctrl+Alt+X"
+        assert info["active"] or info["error"]  # registered (Windows) or says why not
+        rig.app.update_config({"stop_hotkey": "x"})  # unusable: a bare letter
+        assert rig.config.stop_hotkey == "ctrl+alt+x"
+        rig.app.update_config({"stop_hotkey": ""})  # off
+        assert rig.app.snapshot()["hotkey"]["combination"] == ""
+        if rig.app.hotkey is not None:
+            rig.app.hotkey.stop()
+
+    run(scenario())

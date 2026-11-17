@@ -48,6 +48,13 @@ function updateChrome(s, summary, links, online) {
       );
     }
   }
+  const hotkey = online && s && s.hotkey && s.hotkey.active ? s.hotkey.combination : "";
+  setAttr(
+    $("stop"),
+    "aria-label",
+    hotkey ? `STOP - stop the belt now (also ${hotkey}, from anywhere on this PC)` : "STOP - stop the belt now",
+  );
+  setAttr($("stop"), "title", hotkey ? `${hotkey} also stops the belt - even from inside the game` : null);
   let title = "Walka";
   if (online && s) {
     const speed = s.treadmill.connected ? `${fmt.speedU(s.treadmill.speed_kmh)} · ` : "";

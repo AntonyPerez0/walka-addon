@@ -64,6 +64,10 @@ class TreadmillData:
     negative_elevation_gain_m: float | None = None
     instantaneous_pace_km_per_min: float | None = None
     average_pace_km_per_min: float | None = None
+    # The same two fields in the layout of the current GATT supplement
+    # (uint16, seconds per 500 m) - see _pace_width().
+    instantaneous_pace_s_per_500m: int | None = None
+    average_pace_s_per_500m: int | None = None
     total_energy_kcal: int | None = None
     energy_per_hour_kcal: int | None = None
     energy_per_minute_kcal: int | None = None
@@ -90,6 +94,41 @@ class TreadmillData:
         merged.flags = newer.flags
         merged.truncated = newer.truncated
         return merged
+
+
+# Sizes of the optional fields other than speed and pace, by flag bit.
+_FIELD_SIZES = (
+    (0x0002, 2),  # average speed
+    (0x0004, 3),  # total distance
+    (0x0008, 4),  # inclination + ramp angle
+    (0x0010, 4),  # elevation gain
+    (0x0080, 5),  # expended energy
+    (0x0100, 1),  # heart rate
+    (0x0200, 1),  # metabolic equivalent
+    (0x0400, 2),  # elapsed time
+    (0x0800, 2),  # remaining time
+    (0x1000, 4),  # force on belt + power output
+)
+
+
+def _pace_width(flags: int, length: int) -> int:
+    """Width in bytes of each pace field in a packet of this length.
+
+    The specifications disagree: FTMS 1.0 (and every treadmill firmware seen
+    so far) uses one byte in 0.1 km/min, the current GATT Specification
+    Supplement two bytes in seconds per 500 m. The packet length settles it;
+    when it does not, the one-byte layout is assumed.
+    """
+    paces = bool(flags & 0x0020) + bool(flags & 0x0040)
+    if not paces:
+        return 1
+    base = 2 + (0 if flags & 0x0001 else 2) + sum(size for bit, size in _FIELD_SIZES if flags & bit)
+    base += 3 if flags & VENDOR_STEPS_FLAG else 0
+    if length == base + paces:
+        return 1
+    if length == base + 2 * paces:
+        return 2
+    return 1
 
 
 def parse_treadmill_data(data: bytes) -> TreadmillData:
@@ -146,11 +185,18 @@ def parse_treadmill_data(data: bytes) -> TreadmillData:
         if (v := take("<HH")) is not None:
             out.positive_elevation_gain_m = v[0] / 10.0
             out.negative_elevation_gain_m = v[1] / 10.0
-    if flags & 0x0020:  # instantaneous pace (0.1 km/min)
-        if (v := take("<B")) is not None:
+    wide_pace = _pace_width(flags, len(data)) == 2
+    if flags & 0x0020:  # instantaneous pace
+        if wide_pace:
+            if (v := take("<H")) is not None:
+                out.instantaneous_pace_s_per_500m = v[0]
+        elif (v := take("<B")) is not None:
             out.instantaneous_pace_km_per_min = v[0] / 10.0
-    if flags & 0x0040:  # average pace (0.1 km/min)
-        if (v := take("<B")) is not None:
+    if flags & 0x0040:  # average pace
+        if wide_pace:
+            if (v := take("<H")) is not None:
+                out.average_pace_s_per_500m = v[0]
+        elif (v := take("<B")) is not None:
             out.average_pace_km_per_min = v[0] / 10.0
     if flags & 0x0080:  # expended energy: total, per hour, per minute (kcal)
         if (v := take("<HHB")) is not None:
