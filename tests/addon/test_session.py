@@ -6,9 +6,16 @@ import pytest
 from walka import beacon
 from walka.protocol import Flags
 
+from .conftest import KMH_PER_MPH, nearest_step
 from .harness import lua_dict, lua_list, lua_plain
 
-KMH_PER_MPH = 1.609344
+
+def pace(rt, key: str) -> float:
+    """What a session settles at for one of the paces of the speed mapping
+    ("standKmh", "runKmh", ...) as it is set right now: the pace on the
+    treadmill's speed grid (0.1 mph unless a test changes the units)."""
+    walka = rt.walka
+    return nearest_step(walka.Get(walka, "speed." + key), walka.GetBeltLimits(walka).stepKmh)
 
 
 def session(rt):
@@ -62,12 +69,16 @@ def test_full_session_lifecycle(rt):
         belts.append(belt)
         targets.append(target)
         samples.append(session(rt))
+    running, standing = pace(rt, "runKmh"), pace(rt, "standKmh")
+    assert running > standing + 1.0, "running asks for a clearly faster belt than standing"
     assert set(belts[:28]) == {0}, "the treadmill counts down for three seconds first"
     accel = rt.ns.Metrics.Estimator.DEFAULTS.accelKmhPerS
     assert belts[40] == pytest.approx(0.6 * KMH_PER_MPH + accel * 1.0, abs=0.1)
     assert belts == sorted(belts)
-    assert belts[-1] == pytest.approx(2.0 * KMH_PER_MPH, abs=0.01)
-    assert targets[-1] == pytest.approx(2.0 * KMH_PER_MPH, abs=0.01)
+    assert belts[-1] == pytest.approx(running, abs=1e-6)
+    assert targets[0] == pytest.approx(standing, abs=1e-6), "the target starts at the standing pace"
+    assert targets == sorted(targets) and len(set(round(target, 6) for target in targets)) > 3, "and ramps up"
+    assert targets[-1] == pytest.approx(running, abs=1e-6)
     assert all(belt <= target + 1e-9 for belt, target in zip(belts, targets, strict=True))
     # Steps, distance, calories and time only ever grow.
     for key in ("seconds", "distanceM", "steps", "kcal", "yards"):
@@ -77,10 +88,20 @@ def test_full_session_lifecycle(rt):
     after_minute = session(rt)
     assert after_minute["seconds"] == pytest.approx(57, abs=0.5)        # 60 s less the countdown
     assert after_minute["yards"] == pytest.approx(7.0 * 60, rel=0.01)
-    assert 35 <= after_minute["distanceM"] <= 55                        # ~57 s at up to 2 mph
-    assert 70 <= after_minute["steps"] <= 100
-    assert 2.5 <= after_minute["kcal"] <= 4.5
-    assert after_minute["maxKmh"] == pytest.approx(2.0 * KMH_PER_MPH, abs=0.01)
+    # ~57 s of belt time: about ten seconds of getting up to speed, the
+    # rest at the running pace. So a little less than a minute at that pace
+    # would give - and more than a minute at the standing pace.
+    metrics = rt.ns.Metrics
+    profile = metrics.DEFAULT_PROFILE
+    for key, per_minute in [
+        ("distanceM", lambda kmh: kmh / 3.6 * 60),
+        ("steps", lambda kmh: metrics.stepsPerMinute(kmh, profile.heightCm)),
+        ("kcal", lambda kmh: metrics.kcalPerMinute(kmh, profile.weightKg)),
+    ]:
+        at_running_pace = per_minute(running) * after_minute["seconds"] / 60
+        assert 0.85 * at_running_pace <= after_minute[key] < at_running_pace, key
+        assert after_minute[key] > per_minute(standing) * after_minute["seconds"] / 60, key
+    assert after_minute["maxKmh"] == pytest.approx(running, abs=1e-6)
 
     # Pause: the target drops at once, the belt estimate coasts to zero.
     rt.slash("/walka pause")
@@ -101,7 +122,7 @@ def test_full_session_lifecycle(rt):
     rt.tick(20)
     assert live_speed(rt)[0] == 0 and live_speed(rt)[1] > 0
     rt.tick(280)
-    assert live_speed(rt)[0] == pytest.approx(2.0 * KMH_PER_MPH, abs=0.01)
+    assert live_speed(rt)[0] == pytest.approx(running, abs=1e-6)
     assert session(rt)["seconds"] > frozen["seconds"] + 20
 
     # Stop: one record in the saved history.
@@ -123,7 +144,7 @@ def test_full_session_lifecycle(rt):
     assert record["steps"] == round(before_stop["steps"])
     assert record["kcal"] == pytest.approx(before_stop["kcal"], abs=0.051)
     assert record["yards"] == round(before_stop["yards"])
-    assert record["maxKmh"] == pytest.approx(2.0 * KMH_PER_MPH, abs=0.01)
+    assert record["maxKmh"] == pytest.approx(running, abs=0.005)        # stored to two decimals
     assert record["character"] == "Tester-Azeroth"
     # Everything stored is a whole number except kcal (one decimal) and maxKmh (two).
     for key in ("seconds", "distanceM", "steps", "yards", "start", "end"):
@@ -137,7 +158,8 @@ def test_standing_still_walks_at_the_standing_pace(rt):
     rt.slash("/walka start")
     rt.tick(200)
     belt, target = live_speed(rt)
-    assert target == pytest.approx(1.0 * KMH_PER_MPH, abs=0.01)
+    assert target == pytest.approx(pace(rt, "standKmh"), abs=1e-6)
+    assert target >= rt.walka.GetBeltLimits(rt.walka).minKmh, "a pace the belt can hold"
     assert belt == pytest.approx(target)
     assert session(rt)["yards"] == 0
     assert session(rt)["steps"] > 10
@@ -226,27 +248,147 @@ def test_announcements_can_be_turned_off(rt):
 # ---- AFK ------------------------------------------------------------------------------
 
 
-def test_afk_pauses_and_coming_back_resumes(rt):
-    events = collect_events(rt)
+AFK_PAUSED = Flags.ACTIVE | Flags.PAUSED | Flags.AFK
+
+
+def afk_paused_session(rt, events=None):
+    """A session that paused itself because the player went AFK."""
     rt.set(speed=7.0)
     rt.slash("/walka start")
     rt.tick(100)
+    rt.clear_printed()
     rt.set(afk=True, speed=0)
     rt.tick()
     assert rt.walka.IsPaused(rt.walka)
     assert session(rt)["pauseReason"] == "afk"
-    assert ("SESSION", "pause") in events
-    assert any("AFK" in line for line in rt.printed)
-    assert flags(rt) & Flags.PAUSED and flags(rt) & Flags.AFK
+    if events is not None:
+        assert events.count(("SESSION", "pause")) == 1
+    assert rt.printed == [
+        rt.walka.PREFIX + "you are AFK - session paused. It resumes when your character moves."
+    ]
+    assert flags(rt) == AFK_PAUSED
     rt.tick(100)
     assert live_speed(rt) == (0, 0)
+    assert flags(rt) == AFK_PAUSED
 
-    rt.set(afk=False, speed=7.0)
+
+def test_afk_pauses_and_moving_again_resumes(rt):
+    events = collect_events(rt)
+    afk_paused_session(rt, events)
+
+    rt.set(afk=False, speed=7.0)            # back, and off again at once
     rt.tick()
     assert not rt.walka.IsPaused(rt.walka)
     assert session(rt).get("pauseReason") is None
-    assert ("SESSION", "resume") in events
-    assert not flags(rt) & Flags.PAUSED
+    assert events.count(("SESSION", "resume")) == 1
+    assert any("session resumed" in line for line in rt.printed)
+    assert flags(rt) == Flags.ACTIVE | Flags.MOVING
+    assert live_speed(rt)[1] > 0
+
+
+def test_afk_ending_alone_does_not_resume_the_session(rt):
+    """Back at the keyboard, but the character stands still - typing a chat
+    line, say. That must not start the belt: the session stays paused, and
+    the beacon goes on calling it the automatic (AFK) pause, although the
+    game's own AFK state is gone."""
+    events = collect_events(rt)
+    afk_paused_session(rt, events)
+    frozen = session(rt)
+
+    rt.set(afk=False)                       # the first key press clears AFK
+    for _ in range(300):
+        rt.tick()
+        assert rt.walka.IsPaused(rt.walka)
+        assert flags(rt) == AFK_PAUSED, "still paused, still flagged as the AFK pause"
+        assert beacon.cells_to_frame(rt.beacon_cells()).target_raw == 0
+    assert session(rt) == frozen and frozen["pauseReason"] == "afk"
+    assert live_speed(rt) == (0, 0)
+    assert ("SESSION", "resume") not in events
+    assert not any("resumed" in line for line in rt.printed)
+    # Things that are not the character moving leave it paused as well.
+    rt.set(combat=True, resting=True, mounted=True)
+    rt.tick(20)
+    assert rt.walka.IsPaused(rt.walka)
+    assert flags(rt) == AFK_PAUSED | Flags.COMBAT | Flags.RESTING | Flags.MOUNTED
+
+
+def test_the_session_resumes_when_the_character_moves_after_afk(rt):
+    events = collect_events(rt)
+    afk_paused_session(rt, events)
+    rt.set(afk=False)
+    rt.tick(50)
+    assert rt.walka.IsPaused(rt.walka)
+
+    rt.set(speed=2.5)                       # a few steps are enough
+    rt.tick()
+    assert not rt.walka.IsPaused(rt.walka)
+    assert session(rt).get("pauseReason") is None
+    assert events.count(("SESSION", "resume")) == 1
+    assert any("session resumed" in line for line in rt.printed)
+    assert flags(rt) == Flags.ACTIVE | Flags.MOVING, "neither PAUSED nor AFK any more"
+    assert live_speed(rt)[1] > 0
+    # ... and it is an ordinary session again: it follows the character,
+    rt.tick(300)
+    belt, target = live_speed(rt)
+    assert belt == pytest.approx(target) and target == pytest.approx(pace(rt, "walkKmh"), abs=1e-6)
+    # also when the character stops (no second automatic pause without AFK).
+    rt.set(speed=0)
+    rt.tick(300)
+    assert not rt.walka.IsPaused(rt.walka)
+    assert flags(rt) == Flags.ACTIVE
+    assert live_speed(rt)[1] == pytest.approx(pace(rt, "standKmh"), abs=1e-6)
+
+
+def test_moving_while_still_afk_does_not_resume(rt):
+    # Both conditions are needed: AFK over, and the character moving. (Being
+    # pushed, or on a boat, with the AFK state still set is not coming back.)
+    afk_paused_session(rt)
+    rt.set(speed=7.0)
+    rt.tick(20)
+    assert rt.walka.IsPaused(rt.walka)
+    assert flags(rt) == AFK_PAUSED | Flags.MOVING, "the AFK flag is set once, not twice"
+    rt.set(afk=False)
+    rt.tick()
+    assert not rt.walka.IsPaused(rt.walka)
+    assert flags(rt) == Flags.ACTIVE | Flags.MOVING
+
+
+def test_a_second_afk_pauses_again(rt):
+    events = collect_events(rt)
+    afk_paused_session(rt, events)
+    rt.set(afk=False, speed=7.0)
+    rt.tick(50)
+    assert not rt.walka.IsPaused(rt.walka)
+    rt.set(afk=True, speed=0)
+    rt.tick()
+    assert rt.walka.IsPaused(rt.walka) and session(rt)["pauseReason"] == "afk"
+    assert events.count(("SESSION", "pause")) == 2
+    assert flags(rt) == AFK_PAUSED
+
+
+def test_an_afk_pause_survives_a_reload_and_still_waits_for_movement(rt):
+    afk_paused_session(rt)
+    rt.set(afk=False)
+    fresh = rt.reload()
+    assert fresh.walka.IsPaused(fresh.walka) and session(fresh)["pauseReason"] == "afk"
+    fresh.tick(30)
+    assert fresh.walka.IsPaused(fresh.walka)
+    assert flags(fresh) == AFK_PAUSED
+    fresh.set(speed=7.0)
+    fresh.tick()
+    assert not fresh.walka.IsPaused(fresh.walka)
+    assert flags(fresh) == Flags.ACTIVE | Flags.MOVING
+
+
+def test_resuming_by_hand_ends_an_afk_pause_without_moving(rt):
+    afk_paused_session(rt)
+    rt.set(afk=False)
+    rt.tick(10)
+    rt.slash("/walka resume")
+    rt.tick()
+    assert not rt.walka.IsPaused(rt.walka)
+    assert flags(rt) == Flags.ACTIVE, "the AFK flag goes with the pause"
+    assert live_speed(rt)[1] == pytest.approx(pace(rt, "standKmh"), abs=1e-6)
 
 
 def test_a_pause_by_hand_is_not_undone_by_afk_ending(rt):
@@ -255,9 +397,16 @@ def test_a_pause_by_hand_is_not_undone_by_afk_ending(rt):
     rt.set(afk=True)
     rt.tick(5)
     assert session(rt)["pauseReason"] == "user"
+    assert flags(rt) == AFK_PAUSED, "the game's own AFK state is still reported"
     rt.set(afk=False)
     rt.tick(5)
     assert rt.walka.IsPaused(rt.walka), "only an AFK pause resumes by itself"
+    assert flags(rt) == Flags.ACTIVE | Flags.PAUSED
+    rt.set(speed=7.0)
+    rt.tick(50)
+    assert rt.walka.IsPaused(rt.walka), "... and moving does not undo it either"
+    assert flags(rt) == Flags.ACTIVE | Flags.PAUSED | Flags.MOVING
+    assert live_speed(rt) == (0, 0)
 
 
 def test_afk_pause_can_be_switched_off(rt):
@@ -376,11 +525,28 @@ def test_settings_and_history_survive_reloads(rt):
     assert fresh.db.version == 1
 
 
+def test_settings_of_a_fresh_install(rt):
+    assert lua_plain(rt.db.settings) == {
+        "units": "mph",                                     # an enUS client
+        "speed": lua_plain(rt.ns.SpeedModel.DEFAULTS),      # (pinned in test_speed_model.py)
+        "profile": {"weightKg": 75, "heightCm": 172},
+        "beacon": {"enabled": True, "cellPx": 4},
+        "hud": {"shown": True, "locked": False, "scale": 1.0, "alpha": 0.9},
+        "autoPauseAFK": True,
+        "dailyStepGoal": 6000,
+        "announce": True,
+    }, "exactly these settings: nothing that no code reads (such as the old netCalories)"
+    # The speed settings are a copy: changing one leaves the model's defaults alone.
+    rt.db.settings.speed.runKmh = 9.9
+    assert rt.ns.SpeedModel.DEFAULTS.runKmh != 9.9
+
+
 def test_saved_variables_from_an_older_or_damaged_file_are_repaired(make_rt):
     rt = make_rt(saved_variables={"WalkaDB": '{settings={units="kmh",speed="oops",hud=false},sessions=7,sessionCounter="x"}'})
     settings = lua_plain(rt.db.settings)
     assert settings["units"] == "kmh"                       # kept
-    assert settings["speed"]["runKmh"] == 3.2               # rebuilt from defaults
+    assert settings["speed"] == lua_plain(rt.ns.SpeedModel.DEFAULTS)    # rebuilt from defaults
+    assert settings["speed"]["runKmh"] > 0
     assert settings["hud"]["shown"] is True
     assert settings["profile"] == {"weightKg": 75, "heightCm": 172}
     assert lua_plain(rt.db.sessions) in ([], {})
@@ -400,6 +566,8 @@ def test_saved_variables_from_an_older_or_damaged_file_are_repaired(make_rt):
         '{settings={profile={weightKg="x",heightCm={}}}}',
         '{settings={units=5,beacon={cellPx="big",enabled="yes"},hud={scale="x",alpha=false,shown=1}}}',
         "{settings={autoPauseAFK=0,announce='no',dailyStepGoal='many'}}",
+        # settings an older version saved and this one no longer has
+        "{settings={netCalories=true,speed={sprintKmh=5.5}}}",
         # a half-written session in progress
         "{active={savedAt=1794999990,session={}}}",
         '{active={savedAt=1794999990,session={id=1,start=1794999000,seconds="a"}}}',
@@ -415,7 +583,9 @@ def test_any_saved_value_loads(make_rt, saved):
     rt.slash("/walka start")
     rt.tick(300)
     rt.slash("/walka status")
-    assert live_speed(rt)[1] == pytest.approx(2.0 * KMH_PER_MPH, abs=0.01) or rt.db.settings.units == "kmh"
+    # Whatever was damaged is a default again: the default running pace.
+    assert rt.db.settings.speed.runKmh == rt.ns.SpeedModel.DEFAULTS.runKmh
+    assert live_speed(rt)[1] == pytest.approx(pace(rt, "runKmh"), abs=1e-6)
     rt.slash("/walka stop")
     assert len(history(rt)) == 1
     rt.reload()
@@ -503,7 +673,9 @@ def test_an_error_in_a_subscriber_reaches_the_error_handler_and_does_not_stop_th
 
 def test_pausing_by_hand_during_an_afk_pause_makes_it_stick(rt):
     # Away from the keyboard the session pauses itself. If the player then
-    # pauses it explicitly, coming back must not restart the belt.
+    # pauses it explicitly, coming back must not restart the belt - not when
+    # AFK ends and not when the character moves.
+    events = collect_events(rt)
     rt.slash("/walka start")
     rt.tick(50)
     rt.set(afk=True)
@@ -511,12 +683,41 @@ def test_pausing_by_hand_during_an_afk_pause_makes_it_stick(rt):
     assert session(rt)["pauseReason"] == "afk"
     rt.slash("/walka pause")
     assert session(rt)["pauseReason"] == "user"
+    assert events.count(("SESSION", "pause")) == 1, "it was paused already"
     rt.set(afk=False)
     rt.tick(20)
     assert rt.walka.IsPaused(rt.walka)
     assert live_speed(rt) == (0, 0)
+    # The player's own pause now: the beacon no longer calls it the AFK one.
+    assert flags(rt) == Flags.ACTIVE | Flags.PAUSED
+    rt.set(speed=7.0)
+    rt.tick(50)
+    assert rt.walka.IsPaused(rt.walka), "moving does not resume a pause made by hand"
+    assert session(rt)["pauseReason"] == "user"
+    assert live_speed(rt) == (0, 0)
+    assert flags(rt) == Flags.ACTIVE | Flags.PAUSED | Flags.MOVING
+    assert ("SESSION", "resume") not in events
     rt.slash("/walka resume")
     assert not rt.walka.IsPaused(rt.walka)
+    rt.tick()
+    assert flags(rt) == Flags.ACTIVE | Flags.MOVING
+
+
+def test_pausing_by_hand_after_afk_has_ended_also_makes_it_stick(rt):
+    # The same, with the pause typed after coming back (AFK already over,
+    # the character not yet moving).
+    afk_paused_session(rt)
+    rt.set(afk=False)
+    rt.tick(10)
+    assert flags(rt) == AFK_PAUSED
+    rt.slash("/walka pause")
+    rt.tick()
+    assert session(rt)["pauseReason"] == "user"
+    assert flags(rt) == Flags.ACTIVE | Flags.PAUSED
+    rt.set(speed=7.0)
+    rt.tick(50)
+    assert rt.walka.IsPaused(rt.walka)
+    assert live_speed(rt) == (0, 0)
 
 
 # ---- formatting helpers (used by every window) ----------------------------------------------------
@@ -565,6 +766,8 @@ def test_format_number(rt, value, text):
 def test_set_and_get_by_path(rt):
     walka = rt.walka
     events = collect_events(rt)
+    default_run = rt.ns.SpeedModel.DEFAULTS.runKmh
+    assert walka.Get(walka, "speed.runKmh") == default_run != 3.5
     walka.Set(walka, "speed.runKmh", 3.5)
     assert walka.Get(walka, "speed.runKmh") == 3.5
     assert rt.db.settings.speed.runKmh == 3.5
@@ -575,11 +778,11 @@ def test_set_and_get_by_path(rt):
     assert walka.Get(walka, "brand.new.key") == 1
     assert events.count(("SETTINGS",)) == 2
     walka.ResetSpeedSettings(walka)
-    assert walka.Get(walka, "speed.runKmh") == 3.2
+    assert walka.Get(walka, "speed.runKmh") == default_run
     assert lua_plain(rt.db.settings.speed) == lua_plain(rt.ns.SpeedModel.DEFAULTS)
     # The defaults table itself must not be handed out for editing.
     walka.Set(walka, "speed.runKmh", 9.9)
-    assert rt.ns.SpeedModel.DEFAULTS.runKmh == 3.2
+    assert rt.ns.SpeedModel.DEFAULTS.runKmh == default_run
 
 
 def test_settings_reach_the_speed_model_live(rt):
@@ -588,10 +791,14 @@ def test_settings_reach_the_speed_model_live(rt):
     rt.slash("/walka units kmh")
     rt.slash("/walka start")
     rt.tick(300)
-    assert live_speed(rt)[1] == pytest.approx(3.2)
-    walka.Set(walka, "speed.runKmh", 2.5)
+    before = pace(rt, "runKmh")
+    assert live_speed(rt)[1] == pytest.approx(before)
+    assert before + 0.5 < 3.5 < walka.Get(walka, "speed.maxKmh"), "a clearly faster pace, still below the cap"
+    walka.Set(walka, "speed.runKmh", 3.5)
     rt.tick(600)
-    assert live_speed(rt)[1] == pytest.approx(2.5)
+    assert live_speed(rt)[1] == pytest.approx(3.5)
     walka.Set(walka, "speed.maxKmh", 2.0)
     rt.tick(5)
     assert live_speed(rt)[1] <= 2.0 + 1e-9
+    rt.tick(100)
+    assert live_speed(rt)[1] == pytest.approx(2.0), "at the cap, not stopped"

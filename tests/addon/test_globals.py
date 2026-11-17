@@ -138,7 +138,10 @@ def test_getters_the_addon_relies_on_are_really_implemented(busy_rt):
 
 def test_toc_metadata(rt, snapshot):
     meta = rt.toc.metadata
-    assert meta["Interface"] == "16001"
+    # The client the addon is written for, then the next patch (listed ahead
+    # of its release, so that the addon is not flagged as out of date).
+    assert meta["Interface"] == "16001, 16002"
+    assert rt.run("return (select(4, GetBuildInfo()))") == 16001
     assert meta["SavedVariables"] == "WalkaDB"
     assert rt.global_(meta["AddonCompartmentFunc"]) is not None
     assert rt.toc.files[0] == "CompanionData.lua", "the companion's data must be loaded before the code that reads it"

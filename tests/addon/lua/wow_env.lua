@@ -665,14 +665,20 @@ define("PlaySound", function(soundKitID, channel)
     return true, #log.sounds
 end)
 
--- ReloadUI() (Blizzard_SharedXML/InterfaceUtil.lua) throws the whole Lua
--- state away and loads the interface again. The mock only records that it
--- was asked to: the state stays alive, so a test can count the calls and
--- look at what the addon did before them. A test that wants what a reload
--- does (saved variables through the serialiser into a fresh state) calls
--- WowRuntime.reload() in harness.py.
-define("ReloadUI", function()
+-- C_UI.Reload() throws the whole Lua state away and loads the interface
+-- again. The mock only records that it was asked to: the state stays alive,
+-- so a test can count the calls and look at what the addon did before them.
+-- A test that wants what a reload does (saved variables through the
+-- serialiser into a fresh state) calls WowRuntime.reload() in harness.py.
+local C_UI = {}
+function C_UI.Reload()
     log.reloads[#log.reloads + 1] = state.clock
+end
+
+-- ReloadUI() is Blizzard Lua (Blizzard_SharedXML/InterfaceUtil.lua) and
+-- does just this.
+define("ReloadUI", function()
+    G.C_UI.Reload()
 end)
 
 -- C_Secrets: predicates that say whether a class of API returns secrets.
@@ -775,6 +781,7 @@ local namespaceImpl = {
     C_Secrets = C_Secrets,
     C_Timer = C_Timer,
     C_AddOns = C_AddOns,
+    C_UI = C_UI,
 }
 M.namespace_impl = namespaceImpl
 
@@ -2890,12 +2897,26 @@ local function createChild(parent, shape)
     return child
 end
 
+-- <Size> of a template in Blizzard's XML: a frame made from it has that
+-- size until the addon gives it another. The snapshot does not carry sizes,
+-- so this lists only the templates whose own size the addon's layout relies
+-- on (it sets the size of everything else itself), each with its source.
+local templateSize = {
+    -- Blizzard_SharedXML/Mainline/SharedUIPanelTemplates.xml: <Size x="24" y="24"/>
+    UIPanelCloseButtonNoScripts = { 24, 24 },
+}
+M.template_size = templateSize
+
 local function applyTemplate(widget, templateName, seen)
     if seen[templateName] then
         return
     end
     seen[templateName] = true
     local shape = templateShape(templateName)
+    local size = templateSize[templateName]
+    if size and not (W[widget].width or W[widget].height) then
+        W[widget].width, W[widget].height = size[1], size[2]
+    end
     if shape then
         buildShape(widget, shape, seen)
     elseif host.is_font(templateName) then

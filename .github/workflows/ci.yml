@@ -1,8 +1,10 @@
 name: CI
 
-# Manual runs only until the tests for the new defaults have landed; the
-# next commit switches this to run on every push.
 on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
   workflow_dispatch:
 
 permissions:

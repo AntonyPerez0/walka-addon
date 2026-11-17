@@ -68,7 +68,14 @@ What it cannot prove
   ordering, clipping, pixel snapping, the exact timing of OnUpdate, taint
   and protected-action blocking (only Settings.OpenToCategory in combat is
   modelled), and what Blizzard's own Lua does inside templates and mixins
-  (those are stubs unless ``wow_env.lua`` gives them behaviour).
+  (those are stubs unless ``wow_env.lua`` gives them behaviour). The
+  snapshot has no sizes either: a frame made from a template is 0 x 0 until
+  the addon sizes it, except for the templates listed with their ``<Size>``
+  in ``wow_env.lua`` (the close button, which the history window's Sync
+  button is placed against).
+* A reload asked for by the addon: ``ReloadUI()`` is only recorded
+  (``rt.reload_requests``). What a reload does to the addon is tested with
+  ``rt.reload()``.
 * Secret-value rules that Lua 5.1 cannot observe from the outside. In the
   game, comparing a secret with ``==``/``~=``, using it as a table key and
   testing its truthiness (``if secret then``, ``secret and x``, ``not

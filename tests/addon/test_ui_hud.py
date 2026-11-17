@@ -10,10 +10,10 @@ import re
 import pytest
 
 from . import ui_driver as ui
+from .conftest import KMH_PER_MPH, MPH_STEP, nearest_step
 from .harness import lua_list, lua_plain
 from .test_ui import COMPANION, NOW, history_saved
 
-KMH_PER_MPH = 1.609344
 STATES = {"Off", "Starting", "Waiting", "Walking", "Paused", "Paused (AFK)"}
 HUD_WIDTH = 224
 BAR_WIDTH = HUD_WIDTH - 18
@@ -33,6 +33,14 @@ def full_rt(ui_rt, make_rt):
         saved_variables={"WalkaDB": history_saved(60)},
         state={"clock": NOW},
     )
+
+
+def pace_shown(rt, key: str, unit: str = "mph") -> str:
+    """One of the default paces ("standKmh", "runKmh", ...) as the HUD
+    shows it once the belt is there: on the treadmill's 0.1 mph grid (the
+    belt assumed for an enUS client), in mph or in km/h."""
+    kmh = nearest_step(rt.ns.SpeedModel.DEFAULTS[key], MPH_STEP)
+    return f"{kmh / KMH_PER_MPH:.1f}" if unit == "mph" else f"{kmh:.1f}"
 
 
 def redraw(rt):
@@ -129,7 +137,9 @@ def test_a_session_from_start_to_stop(rt):
     started = view(rt)
     assert started["state"] == "Starting" and started["caption"] == "This session"
     assert started["estimate_mark"] and started["speed"] == "0.0"
-    assert started["heading_for"] == "1.0", "the pace the belt will start at is shown as the target"
+    standing, running = pace_shown(rt, "standKmh"), pace_shown(rt, "runKmh")
+    assert 0.6 <= float(standing) < float(running)
+    assert started["heading_for"] == standing, "the pace the belt will start at is shown as the target"
     assert (started["steps"], started["time"]) == ("~0 steps", "0:00")
 
     rt.tick(20)
@@ -138,13 +148,14 @@ def test_a_session_from_start_to_stop(rt):
     rt.tick(40)                 # 6 s in: the belt is moving and speeding up
     moving = view(rt)
     assert moving["state"] == "Walking"
-    assert 0.6 <= float(moving["speed"]) < 2.0
-    assert moving["heading_for"] is not None and float(moving["heading_for"]) > float(moving["speed"])
+    assert 0.6 <= float(moving["speed"]) < float(running)
+    assert moving["heading_for"] is not None
+    assert float(moving["speed"]) < float(moving["heading_for"]) <= float(running)
 
     rt.tick(600)                # a minute later it has settled at the running pace
     redraw(rt)
     settled = view(rt)
-    assert settled["state"] == "Walking" and settled["speed"] == "2.0"
+    assert settled["state"] == "Walking" and settled["speed"] == running
     assert settled["heading_for"] is None, "no target hint once the belt is where it should be"
     assert {key: settled[key] for key in ("steps", "kcal", "distance", "time")} == session_texts(rt)
     assert settled["time"] == "1:03"
@@ -201,6 +212,9 @@ def test_paused_by_hand(rt):
     assert view(rt)["state"] == "Walking"
 
 
+AFK_HELP = "You went AFK, so the session is paused. It resumes when your character moves."
+
+
 def test_paused_because_afk(rt):
     rt.set(speed=7.0)
     rt.slash("/walka start")
@@ -208,14 +222,59 @@ def test_paused_because_afk(rt):
     rt.set(afk=True, speed=0)
     rt.tick(3)
     assert view(rt)["state"] == "Paused (AFK)"
-    assert any("AFK" in line for line in ui.tooltip(rt, ui.hud(rt)))
+    assert ui.tooltip(rt, ui.hud(rt))[1] == AFK_HELP
     rt.tick(50)
     assert view(rt)["state"] == "Paused (AFK)"
     rt.set(afk=False, speed=7.0)
     rt.tick(3)
     assert view(rt)["state"] in ("Starting", "Walking")
+    assert AFK_HELP not in ui.tooltip(rt, ui.hud(rt))
     rt.tick(60)
     assert view(rt)["state"] == "Walking"
+
+
+def test_still_paused_for_afk_until_the_character_moves(rt):
+    frame = ui.hud(rt)
+    rt.set(speed=7.0)
+    rt.slash("/walka start")
+    rt.tick(100)
+    rt.set(afk=True, speed=0)
+    rt.tick(30)
+    rt.set(afk=False)               # back at the keyboard, the character still standing
+    rt.tick(100)
+    redraw(rt)
+    waiting = view(rt)
+    assert waiting["state"] == "Paused (AFK)" and waiting["speed"] == "0.0" and waiting["heading_for"] is None
+    assert ui.tooltip(rt, frame)[1] == AFK_HELP, "the HUD says what will resume the session"
+    play = ui.button_by_tooltip(rt, frame, "Resume")
+    assert ui.tooltip(rt, play)[0] == "Resume", "... and the button still offers to do it by hand"
+
+    rt.set(speed=7.0)               # the character moves
+    rt.tick(3)
+    assert view(rt)["state"] == "Starting"
+    assert AFK_HELP not in ui.tooltip(rt, frame)
+    rt.tick(60)
+    assert view(rt)["state"] == "Walking"
+
+
+def test_a_pause_by_hand_during_an_afk_pause_shows_as_paused(rt):
+    frame = ui.hud(rt)
+    rt.set(speed=7.0)
+    rt.slash("/walka start")
+    rt.tick(100)
+    rt.set(afk=True, speed=0)
+    rt.tick(30)
+    assert view(rt)["state"] == "Paused (AFK)"
+    rt.slash("/walka pause")        # now it is the player's own pause
+    rt.tick(3)                      # (no event for that: the HUD catches up on its next redraw)
+    assert view(rt)["state"] == "Paused"
+    assert AFK_HELP not in ui.tooltip(rt, frame)
+    rt.set(afk=False, speed=7.0)
+    rt.tick(100)
+    redraw(rt)
+    assert view(rt)["state"] == "Paused", "moving does not resume it"
+    rt.click(ui.button_by_tooltip(rt, frame, "Resume"))
+    assert view(rt)["state"] == "Starting"
 
 
 def test_waiting_when_the_belt_stops_for_a_standing_character(rt):
@@ -266,11 +325,12 @@ def test_units(rt):
     rt.slash("/walka start")
     rt.tick(700)
     redraw(rt)
-    assert (view(rt)["unit"], view(rt)["speed"]) == ("mph", "2.0")
+    assert (view(rt)["unit"], view(rt)["speed"]) == ("mph", pace_shown(rt, "runKmh"))
     assert view(rt)["distance"].endswith(" mi")
     rt.slash("/walka units kmh")
     metric = view(rt)       # at once: a settings change redraws the HUD
-    assert (metric["unit"], metric["speed"]) == ("km/h", "3.2")
+    assert pace_shown(rt, "runKmh", "km/h") != pace_shown(rt, "runKmh"), "the same belt speed reads differently"
+    assert (metric["unit"], metric["speed"]) == ("km/h", pace_shown(rt, "runKmh", "km/h"))
     assert metric["distance"].endswith(" km")
     assert "mph" not in ui.page(rt, ui.hud(rt))
 

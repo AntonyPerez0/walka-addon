@@ -8,10 +8,10 @@ from __future__ import annotations
 import pytest
 
 from . import ui_driver as ui
+from .conftest import KMH_PER_MPH
 from .harness import AddonError, lua_list, lua_plain
 from .test_ui import COMPANION, NOW
 
-KMH_PER_MPH = 1.609344
 SPEED_ROWS = {
     "standing still": "standKmh",
     "walking": "walkKmh",
@@ -38,6 +38,13 @@ def setting(rt, path):
 
 def speeds_shown(rt, panel) -> dict[str, str]:
     return {key: ui.slider_text(rt, ui.slider(rt, panel, row)) for row, key in SPEED_ROWS.items()}
+
+
+def default_shown(rt, key: str, units: str = "mph") -> str:
+    """A default of the speed mapping ("runKmh", ...) as its slider shows
+    it: in the display unit, to one decimal."""
+    kmh = rt.ns.SpeedModel.DEFAULTS[key]
+    return f"{kmh / KMH_PER_MPH:.1f} mph" if units == "mph" else f"{kmh:.1f} km/h"
 
 
 def scroll_frame(rt, panel):
@@ -123,7 +130,7 @@ def test_page_opened_by_hand_in_combat_works(rt):
 
 def test_settings_window_closed_reopened_and_switched(rt):
     panel = ui.options(rt)
-    assert ui.slider_text(rt, ui.slider(rt, panel, "running")) == "2.0 mph"
+    assert ui.slider_text(rt, ui.slider(rt, panel, "running")) == default_shown(rt, "runKmh")
     rt.M.settings_close()
     assert not ui.is_visible(rt, panel)
     # Things change while the window is closed ...
@@ -156,18 +163,29 @@ def test_settings_window_closed_reopened_and_switched(rt):
 def test_units_switch_converts_what_is_shown_not_what_is_stored(rt):
     panel = ui.options(rt)
     stored = lua_plain(rt.db.settings.speed)
-    assert speeds_shown(rt, panel) == {
-        "standKmh": "1.0 mph", "walkKmh": "1.5 mph", "runKmh": "2.0 mph", "mountKmh": "2.5 mph", "maxKmh": "3.0 mph",
+    assert stored == lua_plain(rt.ns.SpeedModel.DEFAULTS)
+    # The defaults are whole tenths of a mph, stored in km/h to 0.001 - a
+    # hair off them (the maximum, 4.023 for 4.02336, a hair under). Shown,
+    # they are the whole tenths again.
+    in_mph = {
+        "standKmh": "0.8 mph", "walkKmh": "1.2 mph", "runKmh": "1.6 mph", "mountKmh": "2.0 mph", "maxKmh": "2.5 mph",
     }
+    assert speeds_shown(rt, panel) == in_mph
+    for row, key in SPEED_ROWS.items():
+        control = ui.slider(rt, panel, row)
+        assert control.GetValue(control) == pytest.approx(float(in_mph[key].split()[0])), "the thumb is where the text says"
+        assert in_mph[key] == default_shown(rt, key)
     assert ui.box_text(ui.edit_box(rt, panel, "Weight")) == "165" and "lb" in ui.texts(rt, panel)
     assert ui.box_text(ui.edit_box(rt, panel, "Height")) == "5'8\""
     assert "Treadmill range: 0.6 to 4.0 mph (assumed until the companion app has synced)." in ui.texts(rt, panel)
 
     rt.click(ui.button(rt, panel, "km/h / km"))
     assert setting(rt, "units") == "kmh"
-    assert speeds_shown(rt, panel) == {
-        "standKmh": "1.6 km/h", "walkKmh": "2.4 km/h", "runKmh": "3.2 km/h", "mountKmh": "4.0 km/h", "maxKmh": "4.8 km/h",
+    in_kmh = {
+        "standKmh": "1.3 km/h", "walkKmh": "1.9 km/h", "runKmh": "2.6 km/h", "mountKmh": "3.2 km/h", "maxKmh": "4.0 km/h",
     }
+    assert speeds_shown(rt, panel) == in_kmh
+    assert all(in_kmh[key] == default_shown(rt, key, "kmh") for key in in_kmh)
     assert lua_plain(rt.db.settings.speed) == stored, "speeds are stored in km/h whatever the display unit"
     assert ui.box_text(ui.edit_box(rt, panel, "Weight")) == "75" and "kg" in ui.texts(rt, panel)
     assert ui.box_text(ui.edit_box(rt, panel, "Height")) == "172" and "cm" in ui.texts(rt, panel)
@@ -182,7 +200,7 @@ def test_units_switch_converts_what_is_shown_not_what_is_stored(rt):
     assert setting(rt, "units") == "mph" and lua_plain(rt.db.settings.speed) == stored
     low, high = ui.slider(rt, panel, "running").GetMinMaxValues(ui.slider(rt, panel, "running"))
     assert (low, high) == pytest.approx((0.6, 4.0))
-    assert speeds_shown(rt, panel)["runKmh"] == "2.0 mph"
+    assert speeds_shown(rt, panel) == in_mph
 
 
 # ---- speed mapping ------------------------------------------------------------------------------
@@ -195,10 +213,11 @@ def test_speed_sliders_round_trip(rt, units):
     factor = KMH_PER_MPH if units == "mph" else 1.0
     suffix = " mph" if units == "mph" else " km/h"
     # Raise the maximum first so that every pace can be set freely below it.
-    values = {"Never faster than": 3.7, "mounted": 3.4, "running": 2.9, "walking": 2.1, "standing still": 1.3}
+    values = {"Never faster than": 3.7, "mounted": 3.4, "running": 2.9, "walking": 2.1, "standing still": 1.4}
     for row, value in values.items():
         key = SPEED_ROWS[row]
         control = ui.slider(rt, panel, row)
+        assert ui.slider_text(rt, control) != f"{value:.1f}{suffix}", "a value the slider is not at already"
         assert ui.slide(rt, control, value)
         assert setting(rt, "speed." + key) == pytest.approx(value * factor, abs=0.0006), row
         assert setting(rt, "speed." + key) == round(setting(rt, "speed." + key), 3), "stored rounded, not as float noise"
@@ -270,20 +289,41 @@ def test_a_maximum_below_the_treadmills_minimum_is_pointed_out(crt):
 def test_a_pace_cannot_be_set_above_the_maximum(rt):
     panel = ui.options(rt)
     walking = ui.slider(rt, panel, "walking")
+    maximum = rt.ns.SpeedModel.DEFAULTS.maxKmh
+    assert 3.8 * KMH_PER_MPH > maximum + 1.0, "well above the (default) maximum"
     ui.slide(rt, walking, 3.8)
-    assert setting(rt, "speed.walkKmh") == setting(rt, "speed.maxKmh") == 4.8
-    assert ui.slider_text(rt, walking) == "3.0 mph", "the slider snaps back to the maximum"
-    assert walking.GetValue(walking) == pytest.approx(3.0)
+    assert setting(rt, "speed.walkKmh") == setting(rt, "speed.maxKmh") == maximum
+    assert ui.slider_text(rt, walking) == default_shown(rt, "maxKmh"), "the slider snaps back to the maximum"
+    assert ui.slider_text(rt, walking) == ui.slider_text(rt, ui.slider(rt, panel, "Never faster than"))
+    assert walking.GetValue(walking) == pytest.approx(maximum / KMH_PER_MPH, abs=0.001)
+    assert "limited" not in ui.page(rt, panel), "a pace at the maximum is not above it"
+    # A pace below the maximum is taken as it is.
+    ui.slide(rt, walking, 2.4)
+    assert setting(rt, "speed.walkKmh") == pytest.approx(2.4 * KMH_PER_MPH, abs=0.001) and ui.slider_text(rt, walking) == "2.4 mph"
 
 
 def test_lowering_the_maximum_leaves_the_paces_and_says_so(rt):
     panel = ui.options(rt)
     assert "limited" not in ui.page(rt, panel)
-    ui.slide(rt, ui.slider(rt, panel, "Never faster than"), 1.8)
-    assert setting(rt, "speed.maxKmh") == pytest.approx(1.8 * KMH_PER_MPH, abs=0.001)
-    assert setting(rt, "speed.runKmh") == 3.2 and setting(rt, "speed.mountKmh") == 4.0, "the paces are not touched"
+    defaults = rt.ns.SpeedModel.DEFAULTS
+    cap = ui.slider(rt, panel, "Never faster than")
+    # Below the running and the mounted pace, above the others.
+    assert defaults.walkKmh < 1.4 * KMH_PER_MPH < defaults.runKmh < defaults.mountKmh
+    ui.slide(rt, cap, 1.4)
+    assert setting(rt, "speed.maxKmh") == pytest.approx(1.4 * KMH_PER_MPH, abs=0.001)
+    for key in ("standKmh", "walkKmh", "runKmh", "mountKmh"):
+        assert setting(rt, "speed." + key) == defaults[key], "the paces are not touched"
+    assert speeds_shown(rt, panel)["runKmh"] == default_shown(rt, "runKmh"), "... and are still shown as they are set"
+    assert "Paces above the maximum are limited to it: the belt will not go faster than 1.4 mph." in ui.page(rt, panel)
+    # Between the two: the mounted pace is still above it.
+    assert defaults.runKmh < 1.8 * KMH_PER_MPH < defaults.mountKmh
+    ui.slide(rt, cap, 1.8)
     assert "Paces above the maximum are limited to it: the belt will not go faster than 1.8 mph." in ui.page(rt, panel)
-    ui.slide(rt, ui.slider(rt, panel, "Never faster than"), 3.0)
+    # A maximum equal to the fastest pace limits nothing.
+    ui.slide(rt, cap, float(default_shown(rt, "mountKmh").split()[0]))
+    assert ui.slider_text(rt, cap) == default_shown(rt, "mountKmh")
+    assert "limited" not in ui.page(rt, panel)
+    ui.slide(rt, cap, 3.0)
     assert "limited" not in ui.page(rt, panel)
 
 
@@ -329,9 +369,10 @@ def test_unticking_stop_when_standing_after_a_reload_restores_a_usable_pace(rt):
     assert ui.checked(fresh, box) and not ui.slider_enabled(fresh, ui.slider(fresh, panel, "standing still"))
     fresh.click(box)
     limits = lua_plain(fresh.walka.GetBeltLimits(fresh.walka))
-    assert setting(fresh, "speed.standKmh") == pytest.approx(1.6)
+    # The pace before the reload is not known any more: the default one.
+    assert setting(fresh, "speed.standKmh") == fresh.ns.SpeedModel.DEFAULTS.standKmh
     assert setting(fresh, "speed.standKmh") >= limits["minKmh"]
-    assert ui.slider_text(fresh, ui.slider(fresh, panel, "standing still")) == "1.0 mph"
+    assert ui.slider_text(fresh, ui.slider(fresh, panel, "standing still")) == default_shown(fresh, "standKmh")
 
 
 def test_live_line_follows_the_session(rt):
@@ -339,14 +380,17 @@ def test_live_line_follows_the_session(rt):
     assert "Start a session (/walka start) to try these settings live." in ui.texts(rt, panel)
     rt.set(speed=7.0)
     rt.slash("/walka start")
-    assert "Right now: target 1.0 mph, belt about 0.0 mph." in ui.texts(rt, panel)
+    # (The default paces are whole tenths of a mph, which is this belt's grid.)
+    standing, running = default_shown(rt, "standKmh"), default_shown(rt, "runKmh")
+    assert f"Right now: target {standing}, belt about 0.0 mph." in ui.texts(rt, panel)
     rt.tick(700)
     rt.walka.Fire(rt.walka, "TICK")
-    assert "Right now: target 2.0 mph, belt about 2.0 mph." in ui.texts(rt, panel)
-    ui.slide(rt, ui.slider(rt, panel, "running"), 2.6)      # try a setting live
+    assert f"Right now: target {running}, belt about {running}." in ui.texts(rt, panel)
+    assert running != "2.3 mph" != default_shown(rt, "maxKmh")
+    ui.slide(rt, ui.slider(rt, panel, "running"), 2.3)      # try a setting live
     rt.tick(700)
     rt.walka.Fire(rt.walka, "TICK")
-    assert "Right now: target 2.6 mph, belt about 2.6 mph." in ui.texts(rt, panel)
+    assert "Right now: target 2.3 mph, belt about 2.3 mph." in ui.texts(rt, panel)
     rt.slash("/walka pause")
     assert "The session is paused." in ui.texts(rt, panel)
     rt.slash("/walka stop")
@@ -584,8 +628,10 @@ def test_body_fields_can_be_edited_without_companion_profile(rt):
 def test_beacon_square_size(rt):
     panel = ui.options(rt)
     control = ui.slider(rt, panel, "Square size")
-    assert control.GetMinMaxValues(control) == (2, 8) and ui.slider_text(rt, control) == "3 px"
-    for value, pixels in ((5, 5), (8, 8), (2, 2), (4.4, 4), (99, 8), (-3, 2)):
+    default = rt.ns.Beacon.DEFAULT_CELL_PX
+    assert control.GetMinMaxValues(control) == (2, 8) and ui.slider_text(rt, control) == f"{default} px"
+    assert control.GetValue(control) == default == setting(rt, "beacon.cellPx") == rt.ns.Beacon.GetCellSize()
+    for value, pixels in ((5, 5), (8, 8), (2, 2), (4.4, 4), (3, 3), (99, 8), (-3, 2)):
         ui.slide(rt, control, value)
         assert setting(rt, "beacon.cellPx") == pixels and rt.ns.Beacon.GetCellSize() == pixels
         assert ui.slider_text(rt, control) == f"{pixels} px"
@@ -621,7 +667,10 @@ def test_hud_size_and_opacity(rt):
 def test_reset_speed_settings(rt):
     panel = ui.options(rt)
     defaults = lua_plain(rt.ns.SpeedModel.DEFAULTS)
+    shown = speeds_shown(rt, panel)
+    ui.slide(rt, ui.slider(rt, panel, "Never faster than"), 3.5)
     ui.slide(rt, ui.slider(rt, panel, "running"), 2.7)
+    assert speeds_shown(rt, panel) == {**shown, "maxKmh": "3.5 mph", "runKmh": "2.7 mph"}
     rt.click(ui.button(rt, panel, "Steady"))
     rt.click(ui.button(rt, panel, "Follow real speed"))
     rt.click(ui.checkbox(rt, panel, "In combat, never drop below running pace"))
@@ -634,7 +683,7 @@ def test_reset_speed_settings(rt):
     rt.click(reset)
     assert lua_plain(rt.db.settings.speed) == defaults
     assert any("defaults" in line for line in rt.printed)
-    assert speeds_shown(rt, panel)["runKmh"] == "2.0 mph"
+    assert speeds_shown(rt, panel) == shown == {key: default_shown(rt, key) for key in SPEED_ROWS.values()}
     assert not ui.checked(rt, ui.checkbox(rt, panel, "Stop the belt when my character stands still"))
     assert ui.slider_enabled(rt, ui.slider(rt, panel, "standing still"))
     assert setting(rt, "dailyStepGoal") == 9000, "only the speed settings are reset"

@@ -75,6 +75,19 @@ def test_render_row_geometry():
     assert len(render_row(FRAME, 2.5)) == 215
 
 
+def test_default_cell_size_is_the_addons():
+    # Walka/Beacon.lua paints 4 px squares unless told otherwise (the addon
+    # tests compare the two constants); the simulator renders the same.
+    assert beacon.DEFAULT_CELL_PX == 4
+    row = render_row(FRAME)
+    assert len(row) == TOTAL_CELLS * 4
+    assert row[:16] == bytes([255] * 4 + [0] * 4 + [255] * 4 + [0] * 4)
+    decoded = decode_row(row + bytes(8))
+    assert decoded is not None and decoded.frame == FRAME
+    assert decoded.cell_px == pytest.approx(4, abs=0.05)
+    assert beacon.MIN_CELL_PX < beacon.DEFAULT_CELL_PX < beacon.MAX_CELL_PX
+
+
 # ---- cell sizes, pitches, offsets -------------------------------------------------
 
 

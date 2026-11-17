@@ -207,6 +207,23 @@ def wheel(rt, frame, notches: int):
     rt.check_errors()
 
 
+def window_buttons(rt, frame) -> list:
+    """The window's own buttons: everything that can be clicked, except
+    the rows of the list."""
+    listed = row_buttons(rt, frame)
+    return [
+        button for button in rt.descendants(frame, "Button", visible=True)
+        if rt.M.script_set(button, "OnClick") and not any(ui.same(rt, button, row) for row in listed)
+    ]
+
+
+def close_button(rt, frame):
+    """The cross in the corner: the one window button without a caption."""
+    crosses = [button for button in window_buttons(rt, frame) if not ui.plain(rt.inspect(button).get("text"))]
+    assert len(crosses) == 1, "one close button"
+    return crosses[0]
+
+
 def scroll_bar(rt, frame):
     """(track, thumb) of the list's scroll bar."""
     tracks = [
@@ -679,13 +696,167 @@ def test_escape_and_the_close_button_close_it(rt):
     rt.ns.History.Show()
     assert lua_list(rt.global_("UISpecialFrames")).count(name) == 1, "listed once, however often it is opened"
 
-    close = [button for button in rt.descendants(frame, "Button", visible=True) if not row_buttons(rt, frame).count(button)]
-    close = [button for button in close if rt.M.script_set(button, "OnClick")]
-    assert len(close) == 1, "one close button"
-    box, window = ui.rect(rt, close[0]), ui.rect(rt, frame)
+    close = close_button(rt, frame)
+    box, window = ui.rect(rt, close), ui.rect(rt, frame)
     assert box[0] + box[2] > window[0] + window[2] - 40 and box[1] + box[3] > window[1] + window[3] - 40, "top right"
-    rt.click(close[0])
+    rt.click(close)
     assert not ui.is_visible(rt, frame)
+    assert rt.reload_requests == 0, "closing the window is not a reload"
+
+
+# ---- the Sync button --------------------------------------------------------------------------------
+# An addon gets the companion's measured walks only when the interface
+# loads; the button reloads it.
+
+
+def sync_button(rt, frame):
+    return ui.button(rt, frame, "Sync")
+
+
+def test_the_window_has_a_close_button_and_a_sync_button(rt):
+    frame = ui.history(rt)
+    sync = sync_button(rt, frame)
+    assert ui.is_visible(rt, sync) and sync.IsEnabled(sync)
+    assert not ui.same(rt, sync, close_button(rt, frame))
+    assert [ui.plain(rt.inspect(button).get("text")) for button in window_buttons(rt, frame)].count("Sync") == 1
+    assert ui.same(rt, ui.button_by_tooltip(rt, frame, "Load measured walks"), sync)
+
+
+def test_sync_reloads_the_interface_once_per_click(rt):
+    frame = ui.history(rt)
+    sync = sync_button(rt, frame)
+    assert rt.reload_requests == 0
+    ui.tooltip(rt, sync)                # looking at it is not asking for it
+    rt.tick(20)
+    assert rt.reload_requests == 0
+    assert rt.click(sync) is True
+    assert rt.reload_requests == 1, "one click, one ReloadUI()"
+    rt.tick(20)
+    assert rt.reload_requests == 1
+    # Nothing else happened: the window is as it was (the game would be
+    # showing its loading screen now).
+    assert ui.is_visible(rt, frame) and rt.printed == []
+    rt.click(sync)
+    assert rt.reload_requests == 2
+
+
+def test_sync_is_not_asked_for_by_anything_else_in_the_window(full_rt):
+    rt = full_rt
+    frame = ui.history(rt)
+    sync = sync_button(rt, frame)
+    for widget in rt.descendants(frame, visible=True):
+        if rt.M.script_set(widget, "OnEnter"):
+            ui.tooltip(rt, widget)
+    for button in rt.descendants(frame, "Button", visible=True):
+        if not ui.same(rt, button, sync) and not ui.same(rt, button, close_button(rt, frame)):
+            rt.click(button)
+    wheel(rt, frame, -5)
+    rt.slash("/walka history")
+    rt.slash("/walka history")
+    rt.tick(700)                        # past the window's once-a-minute refresh
+    assert rt.reload_requests == 0
+
+
+def test_sync_tooltip_without_companion_data(rt):
+    frame = ui.history(rt)
+    assert rt.walka.GetSyncTime(rt.walka) is None
+    tip = ui.tooltip(rt, sync_button(rt, frame))
+    assert tip[0] == "Load measured walks"
+    assert tip[-1] == "No companion data loaded yet."
+    assert not any(line.startswith("Companion data from") for line in tip)
+    # What the click does, before the player makes it.
+    assert any("Reloads the interface" in line for line in tip)
+    assert "A session in progress carries on." in tip
+
+
+def test_sync_tooltip_with_companion_data(full_rt):
+    rt = full_rt
+    frame = ui.history(rt)
+    written = rt.walka.GetSyncTime(rt.walka)
+    assert written == NOW - 600
+    tip = ui.tooltip(rt, sync_button(rt, frame))
+    assert tip[0] == "Load measured walks"
+    when = time.strftime("%b %d %H:%M", time.localtime(written))
+    assert tip[-1] == f"Companion data from {when}."
+    assert "No companion data loaded yet." not in tip
+
+
+@pytest.mark.parametrize("written", ["nil", "'yesterday'", "-5", "0/0", "1e300", "99999999999"])
+def test_sync_tooltip_with_a_timestamp_the_game_cannot_show(ui_rt, make_rt, written):
+    rt = make_rt(files={"CompanionData.lua": f"WalkaCompanionData = {{ written = {written} }}"}, state={"clock": NOW})
+    tip = ui.tooltip(rt, sync_button(rt, ui.history(rt)))
+    assert tip[0] == "Load measured walks" and tip[-1] == "No companion data loaded yet."
+
+
+def test_sync_button_sits_between_the_title_and_the_close_button(full_rt):
+    rt = full_rt
+    frame = ui.history(rt)
+    sync, close = sync_button(rt, frame), close_button(rt, frame)
+    window, box, cross = ui.rect(rt, frame), ui.rect(rt, sync), ui.rect(rt, close)
+    assert ui.inside(box, window, slack=0), "inside the window"
+    assert box[2] >= 40 and box[3] >= 18, "big enough to read and to hit"
+    assert not sync.GetFontString(sync).IsTruncated(sync.GetFontString(sync)), "the caption fits"
+    assert not ui.overlap(box, cross)
+    assert box[0] + box[2] <= cross[0], "left of the close button"
+    assert ui.middle(rt, sync) == pytest.approx(ui.middle(rt, close), abs=1), "on the same line as it"
+    for text in ("Walka", "walking history"):
+        title = ui.rect(rt, ui.label(rt, frame, text))
+        assert not ui.overlap(box, title), f"over the title ({text!r})"
+        assert title[0] + title[2] <= box[0], "right of the title"
+    # ... and clear of everything else in the window, whatever it shows.
+    for widget in rt.descendants(frame, visible=True):
+        if ui.same(rt, widget, sync) or ui.same(rt, widget, frame) or ui.same(rt, rt.inspect(widget).get("parent"), sync):
+            continue
+        other = ui.rect(rt, widget)
+        if other is None or other[2] <= 0 or other[3] <= 0 or ui.inside(window, other, slack=4):
+            continue                    # not laid out, or the window's own backdrop
+        assert not ui.overlap(box, other), f"the Sync button overlaps {rt.inspect(widget)['type']} {rt.inspect(widget).get('text')!r}"
+
+
+def test_sync_button_stays_in_the_window_when_it_is_moved(rt):
+    frame = ui.history(rt)
+    rt.M.drag(frame, 5000, 5000)
+    assert ui.inside(ui.rect(rt, sync_button(rt, frame)), ui.rect(rt, frame), slack=0)
+    screen_width, screen_height = rt.M.screen_size()
+    box = ui.rect(rt, sync_button(rt, frame))
+    assert box[0] + box[2] <= screen_width and box[1] + box[3] <= screen_height
+
+
+def test_what_sync_promises_a_reload_delivers(ui_rt, make_rt):
+    """The click only asks the game for a reload. What the reload then does
+    is the addon's business again: the companion's walks are listed, and
+    the session in progress carries on."""
+    rt = make_rt(saved_variables={"WalkaDB": history_saved(3)}, state={"clock": NOW})
+    rt.set(speed=7.0)
+    rt.slash("/walka start")
+    rt.tick(300)
+    frame = ui.history(rt)
+    assert not any(cells(row)["measured"] for row in rows(rt, frame))
+    before = lua_plain(rt.walka.GetSession(rt.walka))
+    rt.click(sync_button(rt, frame))
+    assert rt.reload_requests == 1
+    assert rt.walka.IsActive(rt.walka), "the click itself does not touch the session"
+
+    rt.files["CompanionData.lua"] = COMPANION       # written by the companion app meanwhile
+    fresh = rt.reload()
+    assert fresh.reload_requests == 0
+    assert fresh.walka.IsActive(fresh.walka) and lua_plain(fresh.walka.GetSession(fresh.walka)) == before
+    frame = ui.history(fresh)
+    assert cells(rows(fresh, frame)[0])["measured"], "the measured walk replaced the estimate"
+    assert ui.tooltip(fresh, sync_button(fresh, frame))[-1].startswith("Companion data from ")
+
+
+def test_sync_works_in_combat_with_secret_values(full_rt):
+    rt = full_rt
+    rt.enter_combat()
+    rt.set(speed=7.0, chatLockdown=True, nameSecret=True)
+    rt.slash("/walka start")
+    frame = ui.history(rt)
+    rt.tick(50)
+    assert ui.tooltip(rt, sync_button(rt, frame))[0] == "Load measured walks"
+    rt.click(sync_button(rt, frame))
+    assert rt.reload_requests == 1
+    assert rt.find_secrets() == [] and lua_list(rt.log.blocked) == []
 
 
 def test_window_can_be_moved_and_stays_on_screen(rt):

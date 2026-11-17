@@ -8,12 +8,11 @@ from __future__ import annotations
 import pytest
 from walka import beacon
 
-from .conftest import local_noon
+from .conftest import KMH_PER_MPH, MPH_STEP, local_noon, nearest_step
 from .harness import lua_dict, lua_list, lua_plain
 
 NOW = local_noon(2026, 11, 17)
 DAY = 86400
-KMH_PER_MPH = 1.609344
 
 
 def merge(rt, own_source: str, companion_source: str = "nil"):
@@ -158,8 +157,11 @@ def test_target_is_known_as_soon_as_a_session_starts(rt):
     rt.tick(3)
     rt.slash("/walka start")
     # The windows redraw on this event - before any tick. They must see the
-    # pace the belt is about to be asked for, not a stopped belt.
-    assert seen == [("start", pytest.approx(1.0 * KMH_PER_MPH, abs=0.01))]
+    # pace the belt is about to be asked for (a session starts out at the
+    # standing pace, on the belt's 0.1 mph grid), not a stopped belt.
+    standing = nearest_step(rt.ns.SpeedModel.DEFAULTS.standKmh, MPH_STEP)
+    assert standing >= 0.6 * KMH_PER_MPH
+    assert seen == [("start", pytest.approx(standing, abs=1e-6))]
     primed = walka.GetLiveSpeed(walka)[1]
     rt.tick(1)
     sent = beacon.cells_to_frame(rt.beacon_cells()).target_kmh
@@ -191,12 +193,16 @@ def test_afk_resume_also_knows_its_target(rt):
     rt.set(speed=7.0)
     rt.slash("/walka start")
     rt.tick(100)
-    rt.set(afk=True)
+    rt.set(afk=True, speed=0)
     rt.tick(20)
-    rt.set(afk=False)
+    rt.set(afk=False)                       # back, but not moving yet: still paused
+    rt.tick(20)
+    assert [name for name, _ in seen] == ["start", "pause"]
+    assert seen[-1] == ("pause", 0)
+    rt.set(speed=7.0)                       # the character moves: the session resumes
     rt.tick(1)
     assert [name for name, _ in seen] == ["start", "pause", "resume"]
-    assert seen[-1][1] > 0
+    assert seen[-1][1] >= 0.6 * KMH_PER_MPH - 0.01
 
 
 def test_starting_while_falling_or_on_a_flight_path(rt):

@@ -137,8 +137,15 @@ def test_toc_uses_backslashes_and_known_fields(snapshot):
         assert key in CLIENT_TOC_DIRECTIVES or key in snapshot.toc_fields or key.startswith("X-"), (
             f"## {key}: is not a TOC field this client reads"
         )
+    # "## Interface:" is a comma-separated list of client versions. The one
+    # the API snapshot was taken from comes first; the next patch is listed
+    # too, ahead of its release, so that the game does not flag the addon as
+    # out of date on patch day.
     major, minor, patch = (int(part) for part in snapshot.meta["client_version"].split(".")[:3])
-    assert toc.metadata["Interface"] == str(major * 10000 + minor * 100 + patch)
+    current = major * 10000 + minor * 100 + patch
+    assert re.fullmatch(r"\d+(, \d+)*", toc.metadata["Interface"]), "numbers separated by ', '"
+    interfaces = [int(part) for part in toc.metadata["Interface"].split(",")]
+    assert interfaces == [current, current + 1] == [16001, 16002]
 
 
 def test_toc_load_order_respects_dependencies():

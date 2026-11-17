@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 from walka import beacon
 
+from .conftest import KMH_PER_MPH, MPH_STEP, nearest_step
 from .harness import lua_plain
 
 LB = 0.45359237
@@ -155,15 +156,23 @@ def test_bad_units_are_refused(rt, text):
 def test_units_change_the_belt_grid(rt):
     walka = rt.walka
     limits = lua_plain(walka.GetBeltLimits(walka))
-    assert limits["stepKmh"] == pytest.approx(0.1609344)
-    assert limits["minKmh"] == pytest.approx(0.6 * 1.609344)
-    rt.slash("/walka units kmh")
-    limits = lua_plain(walka.GetBeltLimits(walka))
-    assert (limits["minKmh"], limits["maxKmh"], limits["stepKmh"]) == (1.0, 6.0, 0.1)
+    assert limits["stepKmh"] == pytest.approx(MPH_STEP)
+    assert limits["minKmh"] == pytest.approx(0.6 * KMH_PER_MPH)
     rt.set(speed=7.0)
     rt.slash("/walka start")
     rt.tick(400)
-    assert walka.GetLiveSpeed(walka)[1] == pytest.approx(3.2)
+    # The running pace in whole tenths of a mph ...
+    running = walka.Get(walka, "speed.runKmh")
+    in_mph, in_kmh = nearest_step(running, MPH_STEP), nearest_step(running, 0.1)
+    assert abs(in_mph - in_kmh) > 0.01, "the two grids give different targets for this pace"
+    assert walka.GetLiveSpeed(walka)[1] == pytest.approx(in_mph, abs=1e-6)
+    rt.slash("/walka units kmh")
+    limits = lua_plain(walka.GetBeltLimits(walka))
+    assert (limits["minKmh"], limits["maxKmh"], limits["stepKmh"]) == (1.0, 6.0, 0.1)
+    # ... and in whole tenths of a km/h; the setting itself is untouched.
+    rt.tick(100)
+    assert walka.GetLiveSpeed(walka)[1] == pytest.approx(in_kmh, abs=1e-6)
+    assert walka.Get(walka, "speed.runKmh") == running
 
 
 def test_default_units_follow_the_client_language(make_rt):
@@ -224,7 +233,9 @@ def test_status_during_a_session_and_in_combat(rt):
     rt.tick(300)
     rt.clear_printed()
     rt.slash("/walka status")
-    assert "session active" in rt.printed[0] and "target 2.0 mph" in rt.printed[0]
+    running_mph = nearest_step(rt.ns.SpeedModel.DEFAULTS.runKmh, MPH_STEP) / KMH_PER_MPH
+    assert "session active" in rt.printed[0]
+    assert f"target {running_mph:.1f} mph | belt (est.) {running_mph:.1f} mph" in rt.printed[0]
     rt.enter_combat()
     rt.tick()
     rt.slash("/walka pause")

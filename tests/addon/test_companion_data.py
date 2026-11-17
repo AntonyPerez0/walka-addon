@@ -7,7 +7,7 @@ import pytest
 from walka import addon_sync
 from walka.session import SessionRecord
 
-from .conftest import local_noon
+from .conftest import KMH_PER_MPH, MPH_STEP, local_noon, nearest_step
 from .harness import lua_dict, lua_list, lua_plain
 
 DAY = 86400
@@ -98,6 +98,8 @@ def test_belt_limits_come_from_the_companion(crt):
 
 def test_targets_respect_the_treadmills_range_and_grid(crt):
     assert crt.db.settings.units == "mph"       # the display unit no longer decides the grid
+    defaults = crt.ns.SpeedModel.DEFAULTS
+    assert defaults.mountKmh > 3.0 + 0.1, "the mounted pace asks for more than this treadmill's 3.0 km/h"
     crt.set(speed=14.0, mounted=True)
     crt.slash("/walka start")
     targets = set()
@@ -106,7 +108,29 @@ def test_targets_respect_the_treadmills_range_and_grid(crt):
         targets.add(round(crt.walka.GetLiveSpeed(crt.walka)[1], 6))
     assert max(targets) == 3.0, "never ask for more than the treadmill can do"
     assert all(abs(target * 10 - round(target * 10)) < 1e-6 for target in targets), "0.1 km/h steps"
-    assert crt.db.settings.speed.maxKmh == 4.8, "the user's own cap is kept for a faster treadmill"
+    assert crt.db.settings.speed.maxKmh == defaults.maxKmh > 3.0, "the user's own cap is kept for a faster treadmill"
+
+
+def test_default_paces_on_a_us_pad_reported_by_the_companion(make_rt):
+    """A 0.6-4.0 mph pad as the companion writes it: km/h rounded to a few
+    decimals, the top limited to the companion's own 3.0 mph. The default
+    paces are whole tenths of a mph; on this belt's grid they must come out
+    as exactly those - the cap too, although it is stored a hair under."""
+    limits = "{ minKmh = 0.9656, maxKmh = 4.83, stepKmh = 0.16093, accelKmhPerS = 0.2, decelKmhPerS = 0.4, mphGrid = true }"
+    rt = make_rt(files={"CompanionData.lua": f"WalkaCompanionData = {{ limits = {limits} }}"})
+    walka, defaults = rt.walka, rt.ns.SpeedModel.DEFAULTS
+    assert lua_dict(walka.GetBeltLimits(walka))["fromCompanion"] is True
+    rt.slash("/walka start")
+    for speed, key in [(0, "standKmh"), (2.5, "walkKmh"), (7.0, "runKmh"), (14.0, "mountKmh")]:
+        rt.set(speed=speed)
+        rt.tick(600)
+        mph = round(defaults[key] / KMH_PER_MPH, 1)
+        assert walka.GetLiveSpeed(walka)[1] / KMH_PER_MPH == pytest.approx(mph, abs=0.0005), key
+    walka.Set(walka, "speed.mountKmh", 6.0)             # above the cap: now the cap decides
+    rt.tick(600)
+    cap_mph = round(defaults.maxKmh / KMH_PER_MPH, 1)
+    assert walka.GetLiveSpeed(walka)[1] / KMH_PER_MPH == pytest.approx(cap_mph, abs=0.0005)
+    assert walka.GetLiveSpeed(walka)[1] <= defaults.maxKmh + rt.ns.SpeedModel.CAP_TOLERANCE_KMH
 
 
 def test_belt_estimate_uses_the_companions_ramp_rates(crt):
@@ -119,8 +143,9 @@ def test_belt_estimate_uses_the_companions_ramp_rates(crt):
 def test_assumed_limits_without_companion_data(rt):
     limits = lua_dict(rt.walka.GetBeltLimits(rt.walka))
     assert "fromCompanion" not in limits
-    assert limits["minKmh"] == pytest.approx(0.6 * 1.609344)
-    assert limits["maxKmh"] == pytest.approx(4.0 * 1.609344)
+    assert limits["minKmh"] == pytest.approx(0.6 * KMH_PER_MPH)
+    assert limits["maxKmh"] == pytest.approx(4.0 * KMH_PER_MPH)
+    assert limits["stepKmh"] == pytest.approx(MPH_STEP)
 
 
 @pytest.mark.parametrize(
@@ -133,7 +158,9 @@ def test_incomplete_limits_fall_back_to_the_assumed_ones(make_rt, limits):
     rt.set(speed=7.0)
     rt.slash("/walka start")
     rt.tick(300)
-    assert rt.walka.GetLiveSpeed(rt.walka)[1] == pytest.approx(2.0 * 1.609344, abs=0.01)
+    # The running pace on the assumed belt's grid: whole tenths of a mph.
+    running = nearest_step(rt.ns.SpeedModel.DEFAULTS.runKmh, MPH_STEP)
+    assert rt.walka.GetLiveSpeed(rt.walka)[1] == pytest.approx(running, abs=1e-6)
 
 
 # ---- history and totals -----------------------------------------------------------------------
@@ -278,7 +305,6 @@ def test_damaged_own_records_do_not_break_the_merge(make_rt):
 # for a speed above the user's cap, or put a number into its saved variables
 # that the client cannot write back.
 
-KMH_PER_MPH = 1.609344
 ASSUMED = (0.6 * KMH_PER_MPH, 4.0 * KMH_PER_MPH)
 
 
@@ -328,7 +354,9 @@ def test_nonsense_limits_never_reach_the_belt(make_rt, limits, accepted):
         assert value == value and abs(value) != float("inf"), "not a number"
         assert value == 0 or low - 1e-6 <= value <= cap + 0.005 + 1e-6
     assert max(belts) > 0, "the estimate must still move"
-    assert max(belts) >= min(3.0, cap) - 0.2, "... and get up to speed"
+    # (drive() rides mounted for twelve seconds: most of the way to that pace)
+    fastest = min(rt.db.settings.speed.mountKmh, cap)
+    assert fastest > 2.5 and max(belts) >= fastest - 0.4, "... and get up to speed"
     rt.slash("/walka stop")
     rt.reload()
 

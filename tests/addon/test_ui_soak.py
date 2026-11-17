@@ -71,6 +71,11 @@ class Play:
             assert frame.has(Flags.ACTIVE) == bool(walka.IsActive(walka))
             assert frame.has(Flags.PAUSED) == bool(walka.IsPaused(walka))
             assert frame.target_kmh == pytest.approx(target, abs=0.006)
+            # AFK: the game's own state (hidden during a chat lockdown), or
+            # a session still in its automatic AFK pause.
+            current = walka.GetSession(walka)
+            afk_pause = current is not None and current.paused and current.pauseReason == "afk"
+            assert frame.has(Flags.AFK) == bool((rt.game.afk and not rt.game.chatLockdown) or afk_pause)
             self.frames_decoded += 1
         # A session only ever grows.
         session = walka.GetSession(walka)
@@ -180,8 +185,11 @@ def test_ten_minutes_of_mixed_play(full_rt):
     rt.set(speed=0, afk=True)
     play.run(30)
     assert walka.IsPaused(walka) and "Paused (AFK)" in ui.texts(rt, hud)
-    rt.set(afk=False, speed=7.0)
-    play.run(15)
+    rt.set(afk=False)                                             # back: a line typed in chat, standing
+    play.run(5)
+    assert walka.IsPaused(walka) and "Paused (AFK)" in ui.texts(rt, hud), "the belt stays off until the character moves"
+    rt.set(speed=7.0)
+    play.run(10)
     assert not walka.IsPaused(walka)
 
     # -- pause by hand, a long hitch (loading screen), resume ----------------------------------
@@ -251,6 +259,10 @@ def test_ten_minutes_of_mixed_play(full_rt):
     assert rt.undefined_globals() == {name: count for name, count in rt.undefined_globals().items() if name in ALLOWED_UNDEFINED}
     assert sorted(rt.keys(rt.log.unimplemented)) == [] and lua_dict(rt.log.lod) == {}
 
+    # The reload is asked for with the history window's Sync button.
+    assert rt.reload_requests == 0, "nothing so far has asked the game to reload"
+    rt.click(ui.button(rt, ui.history(rt), "Sync"))
+    assert rt.reload_requests == 1
     rt = rt.reload()
     play.rt, play.last_session = rt, None
     walka, hud = rt.walka, ui.hud(rt)
@@ -300,6 +312,7 @@ def test_ten_minutes_of_mixed_play(full_rt):
     assert play.frames_decoded > 500
 
     # -- afterwards: clean in every respect -------------------------------------------------------------
+    assert (full_rt.reload_requests, rt.reload_requests) == (1, 0), "the one click on Sync, and nothing else"
     for client in (full_rt, rt):
         client.check_errors()
         assert client.find_secrets() == []

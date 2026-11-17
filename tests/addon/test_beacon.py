@@ -13,6 +13,7 @@ import pytest
 from walka import beacon, protocol
 from walka.protocol import Flags, Frame, FrameError
 
+from .conftest import MPH_STEP, nearest_step
 from .harness import lua_list
 
 
@@ -145,8 +146,9 @@ def test_target_speed_is_walkas_target(rt):
         assert frame.target_kmh == pytest.approx(target, abs=0.005)
         seen.add(frame.target_raw)
     assert len(seen) > 3, "the target should ramp, not jump"
-    # Default (enUS) settings: running maps to 2.0 mph.
-    assert decode(rt).target_kmh == pytest.approx(2.0 * 1.609344, abs=0.005)
+    # Default (enUS) settings: the running pace, on the belt's 0.1 mph grid.
+    running = nearest_step(rt.ns.SpeedModel.DEFAULTS.runKmh, MPH_STEP)
+    assert decode(rt).target_kmh == pytest.approx(running, abs=0.005)
 
 
 def test_no_target_without_a_session(rt):
@@ -192,7 +194,7 @@ def busy_background(width: int, seed: int = 3) -> list[int]:
 
 
 @pytest.mark.parametrize("height, width", [(1080, 1920), (1440, 2560), (2160, 3840), (768, 1024), (900, 1600), (1200, 1920)])
-@pytest.mark.parametrize("cell_px", [2, 3, 5, 8])
+@pytest.mark.parametrize("cell_px", [2, 3, 4, 5, 8])
 def test_rendered_strip_decodes_at_any_resolution(make_rt, height, width, cell_px):
     rt = make_rt(state={"physicalWidth": width, "physicalHeight": height})
     rt.walka.Set(rt.walka, "beacon.cellPx", cell_px)
@@ -215,7 +217,7 @@ def test_rendered_strip_decodes_at_any_resolution(make_rt, height, width, cell_p
 
 
 @pytest.mark.parametrize("height, width", [(1080, 1920), (1440, 2560), (2160, 3840)])
-@pytest.mark.parametrize("cell_px", [2, 3, 8])
+@pytest.mark.parametrize("cell_px", [2, 3, 4, 8])
 def test_one_cell_is_exactly_cell_px_physical_pixels(make_rt, height, width, cell_px):
     rt = make_rt(state={"physicalWidth": width, "physicalHeight": height})
     rt.walka.Set(rt.walka, "beacon.cellPx", cell_px)
@@ -252,13 +254,26 @@ def test_strip_is_independent_of_the_ui_scale_and_survives_alt_z(rt):
     assert beacon.decode_row(rt.render_beacon_row(0)) is not None
 
 
-def test_strip_follows_a_resolution_change(rt):
+def test_default_cell_size(rt):
+    # 4 physical pixels: what the companion expects when it is not told.
+    assert rt.ns.Beacon.DEFAULT_CELL_PX == beacon.DEFAULT_CELL_PX == 4
+    assert rt.walka.Get(rt.walka, "beacon.cellPx") == 4 and rt.ns.Beacon.GetCellSize() == 4
     rt.tick()
-    assert beacon.decode_row(rt.render_beacon_row(0)).cell_px == pytest.approx(3)
+    pixels = rt.render_beacon_row(0, background=128)
+    assert beacon.decode_row(pixels).cell_px == pytest.approx(4)
+    # The whole strip, its quiet zone included, and then the game world.
+    assert set(pixels[: (beacon.TOTAL_CELLS + 1) * 4]) <= {0, 255}
+    assert pixels[(beacon.TOTAL_CELLS + 1) * 4] == 128
+
+
+def test_strip_follows_a_resolution_change(rt):
+    cell_px = rt.ns.Beacon.DEFAULT_CELL_PX
+    rt.tick()
+    assert beacon.decode_row(rt.render_beacon_row(0)).cell_px == pytest.approx(cell_px)
     rt.M.set_screen(3840, 2160)             # fires DISPLAY_SIZE_CHANGED
     rt.tick()
     decoded = beacon.decode_row(rt.render_beacon_row(0))
-    assert decoded is not None and decoded.cell_px == pytest.approx(3, abs=0.02)
+    assert decoded is not None and decoded.cell_px == pytest.approx(cell_px, abs=0.02)
     assert rt.inspect(rt.beacon_frame())["scale"] == pytest.approx(768 / 2160)
 
 

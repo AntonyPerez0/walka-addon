@@ -16,7 +16,7 @@ import pytest
 from walka import beacon
 from walka.protocol import Flags
 
-from .conftest import local_noon
+from .conftest import KMH_PER_MPH, local_noon
 from .harness import lua_dict, lua_list, lua_plain
 
 NOW = local_noon(2026, 11, 17)
@@ -698,13 +698,32 @@ def test_the_cap_set_on_the_options_page_is_the_cap_the_belt_gets(ui_rt):
             cap_slider = slider
             break
     assert cap_slider is not None, "no slider on the options page changes the speed cap"
-    walka.ResetSpeedSettings(walka)         # undo what the search moved (mounted pace: 2.5 mph)
+    walka.ResetSpeedSettings(walka)         # undo what the search moved
     rt.tick(3)
+    defaults = rt.ns.SpeedModel.DEFAULTS
+    default_cap_mph = round(defaults.maxKmh / KMH_PER_MPH, 1)       # what the page shows for it
+    assert cap_slider.GetValue(cap_slider) == pytest.approx(default_cap_mph)
 
+    # A mounted pace above every cap tried here, so that the cap decides.
+    walka.Set(walka, "speed.mountKmh", 6.0)
     rt.set(speed=14.0, mounted=True)
     rt.slash("/walka start")
-    for mph in (1.0, 1.5, 2.3, 0.8):
+    rt.tick(900)
+    target_mph = rt.walka.GetLiveSpeed(walka)[1] / KMH_PER_MPH
+    assert target_mph == pytest.approx(default_cap_mph, abs=0.005), "the default cap, as the page shows it"
+    for mph in (1.0, 1.5, 2.3, 0.8, 3.1):
         rt.M.slide(cap_slider, mph)
         rt.check_errors()
         rt.tick(900)
-        assert rt.walka.GetLiveSpeed(walka)[1] / 1.609344 == pytest.approx(mph, abs=0.005), f"cap {mph} mph"
+        assert rt.walka.GetLiveSpeed(walka)[1] / KMH_PER_MPH == pytest.approx(mph, abs=0.005), f"cap {mph} mph"
+
+    # With the default paces the cap only matters once it is below one.
+    walka.ResetSpeedSettings(walka)
+    mounted_mph = round(defaults.mountKmh / KMH_PER_MPH, 1)
+    assert mounted_mph < default_cap_mph
+    rt.tick(900)
+    assert rt.walka.GetLiveSpeed(walka)[1] / KMH_PER_MPH == pytest.approx(mounted_mph, abs=0.005)
+    rt.M.slide(cap_slider, mounted_mph - 0.3)
+    rt.check_errors()
+    rt.tick(900)
+    assert rt.walka.GetLiveSpeed(walka)[1] / KMH_PER_MPH == pytest.approx(mounted_mph - 0.3, abs=0.005)

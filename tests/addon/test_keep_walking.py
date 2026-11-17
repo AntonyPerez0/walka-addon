@@ -7,14 +7,21 @@ import pytest
 
 from .test_speed_model import MPH_GRID, Model
 
-DEFAULT_WALK = 2.4
-DEFAULT_STAND = 1.6
+
+def default_walk(rt) -> float:
+    return rt.ns.SpeedModel.DEFAULTS.walkKmh
+
+
+def default_stand(rt) -> float:
+    return rt.ns.SpeedModel.DEFAULTS.standKmh
 
 
 def test_off_by_default(rt):
     assert rt.ns.SpeedModel.DEFAULTS.keepWalking is False
+    # (The setting only means something while standing is slower than walking.)
+    assert 0 < default_stand(rt) < default_walk(rt)
     model = Model(rt)
-    assert model.sm.curve(model.settings, 0) == pytest.approx(DEFAULT_STAND)
+    assert model.sm.curve(model.settings, 0) == pytest.approx(default_stand(rt))
 
 
 def test_curve_floor_is_the_walking_pace(rt):
@@ -44,7 +51,7 @@ def test_without_it_the_belt_drops_to_the_standing_pace(rt):
     model = Model(rt)
     model.run(60, speed=7.0)
     outputs = model.run(120, speed=0.0)
-    assert outputs[-1] == pytest.approx(DEFAULT_STAND, abs=0.051)
+    assert outputs[-1] == pytest.approx(default_stand(rt), abs=0.051)
 
 
 def test_overrides_stop_the_belt_when_standing(rt):

@@ -426,6 +426,13 @@ class WowRuntime:
         for index in range(len(self.log.printed), 0, -1):
             self.log.printed[index] = None
 
+    @property
+    def reload_requests(self) -> int:
+        """How often the addon has called ReloadUI(). The mock records the
+        call and carries on in the same Lua state; ``reload()`` is what does
+        to the addon what a reload does."""
+        return len(self.log.reloads)
+
     def global_(self, name: str) -> Any:
         return self.M.get_global(name)
 

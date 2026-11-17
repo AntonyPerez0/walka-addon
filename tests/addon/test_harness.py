@@ -100,6 +100,23 @@ def test_known_but_unimplemented_functions_fail_loudly_when_called(bare):
     assert "C_Timer.NoSuchFunction" in bare.undefined_globals()
 
 
+def test_reload_ui_is_recorded_and_the_lua_state_lives_on(bare, snapshot):
+    assert snapshot.knows_global("ReloadUI")
+    assert bare.reload_requests == 0
+    bare.run("KeptAcrossTheCall = 5 ReloadUI()")
+    assert bare.reload_requests == 1
+    bare.run("ReloadUI()")
+    assert bare.reload_requests == 2
+    assert lua_list(bare.log.reloads) == [bare.game.clock] * 2, "when it was asked for"
+    # Nothing was torn down: a test can look at what the addon did before.
+    assert bare.run("return KeptAcrossTheCall") == 5
+    assert "ReloadUI" not in bare.keys(bare.log.unimplemented)
+    # ReloadUI() is Blizzard Lua around the client's own C_UI.Reload().
+    bare.run("C_UI.Reload()")
+    assert bare.reload_requests == 3
+    assert bare.keys(bare.log.unimplemented) == set() and bare.undefined_globals() == {}
+
+
 def test_load_on_demand_names_are_not_there_at_login(bare, snapshot):
     name = next(name for name, addon in snapshot.lod.items() if addon == "Blizzard_AuctionHouseUI")
     assert bare.run(f"return {name} == nil") is True
@@ -168,6 +185,22 @@ def test_templates_build_their_keyed_children_and_mixins(bare):
         "local c = CreateFrame('CheckButton', nil, UIParent, 'UICheckButtonTemplate') "
         "return c.Text:GetObjectType(), c:GetChecked()"
     ) == ("FontString", False)
+
+
+def test_a_template_with_a_size_of_its_own_gives_it_to_the_frame(bare, snapshot):
+    # The close button is 24 x 24 in Blizzard's XML; other frames are placed against it.
+    made = "local b = CreateFrame('Button', nil, UIParent, '{}') "
+    assert bare.run(made.format("UIPanelCloseButtonNoScripts") + "return b:GetWidth(), b:GetHeight()") == (24, 24)
+    assert bare.run(made.format("UIPanelCloseButton") + "return b:GetSize()") == (24, 24), "inherited as well"
+    # A size the addon sets replaces it.
+    assert bare.run(made.format("UIPanelCloseButtonNoScripts") + "b:SetSize(30, 20) return b:GetSize()") == (30, 20)
+    # It has a rectangle as soon as it is anchored, like any sized frame.
+    assert bare.run(
+        made.format("UIPanelCloseButtonNoScripts")
+        + "b:SetPoint('TOPRIGHT', UIParent, 'TOPRIGHT', -3, -3) return UIParent:GetRight() - b:GetLeft(), b:GetRight() - b:GetLeft()"
+    ) == (27, 24)
+    for name in bare.M.template_size.keys():
+        assert name in snapshot.templates, f"{name} is not a template of this client"
 
 
 def test_script_handlers_are_checked_per_widget_type(bare):
