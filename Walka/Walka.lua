@@ -271,6 +271,21 @@ function Walka:Get(path)
     return node
 end
 
+--- Turn "keep walking" on or off: with it on, the belt holds the walking
+-- pace whenever the character stands still, instead of slowing down.
+function Walka:SetKeepWalking(enabled)
+    enabled = enabled and true or false
+    self:Set("speed.keepWalking", enabled)
+    if self.db.settings.announce then
+        if enabled then
+            self:Print("keep walking is on - the belt holds your walking pace ("
+                .. self:FormatSpeed(self.db.settings.speed.walkKmh) .. ") when your character stops.")
+        else
+            self:Print("keep walking is off - the belt slows down when your character stops.")
+        end
+    end
+end
+
 --- Restore every speed setting to its default.
 function Walka:ResetSpeedSettings()
     self.db.settings.speed = copyTable(SpeedModel.DEFAULTS)
@@ -731,6 +746,7 @@ local HELP = {
     "/walka status - what the addon is doing right now",
     "/walka weight 180lb (or 82kg) - your weight, for calorie estimates",
     "/walka height 5'11 (or 180cm) - your height, for step estimates",
+    "/walka keepwalking on | off - hold the walking pace when your character stops",
     "/walka units mph | kmh",
     "/walka beacon on | off | size <2-8>",
 }
@@ -831,6 +847,15 @@ local function slash(message)
         end
         self:Set("profile.heightCm", math.floor(value + 0.5))
         self:Print(string.format("height set to %d cm.", math.floor(value + 0.5)))
+    elseif command == "keepwalking" or command == "keep" then
+        local arg = string.lower(rest)
+        if arg == "" then
+            self:SetKeepWalking(not self:Get("speed.keepWalking"))
+        elseif arg == "on" or arg == "off" then
+            self:SetKeepWalking(arg == "on")
+        else
+            self:Print("usage: /walka keepwalking on  or  /walka keepwalking off")
+        end
     elseif command == "units" then
         rest = string.lower(rest)
         if rest == "mph" or rest == "kmh" or rest == "km/h" then

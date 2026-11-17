@@ -245,6 +245,13 @@ local function refreshLive()
     controls.live:SetText(text)
 end
 
+-- Grey out a checkbox (and its label) that currently has no effect.
+local function setCheckEnabled(box, enabled)
+    box:SetEnabled(enabled)
+    local color = enabled and COLOR.white or COLOR.grey
+    box.Text:SetTextColor(color[1], color[2], color[3])
+end
+
 local function refreshControls()
     local mph = Walka:IsMph()
     controls.units:SetValue(mph and "mph" or "kmh")
@@ -255,10 +262,15 @@ local function refreshControls()
     if stand > 0 then
         rememberedStandKmh = stand
     end
+    local keepWalking = Walka:Get("speed.keepWalking") == true
     for _, key in ipairs(SPEED_KEYS) do
         local slider = controls[key]
         slider:Setup(low, high, 0.1)
-        if key == "standKmh" and stand <= 0 then
+        if key == "standKmh" and keepWalking then
+            -- Keep walking: standing still uses the walking pace.
+            slider:Display(Walka:FromKmh(speedSetting("walkKmh")))
+            slider:SetEnabled(false)
+        elseif key == "standKmh" and stand <= 0 then
             -- The belt stops when standing: show what unticking would restore.
             slider:Display(Walka:FromKmh(restoreStandKmh()))
             slider:SetEnabled(false)
@@ -267,7 +279,10 @@ local function refreshControls()
             slider:SetEnabled(true)
         end
     end
-    controls.stopStanding:SetChecked(stand <= 0)
+    controls.keepWalking:SetChecked(keepWalking)
+    -- "Stop the belt" is overridden while keep walking is on.
+    controls.stopStanding:SetChecked(stand <= 0 and not keepWalking)
+    setCheckEnabled(controls.stopStanding, not keepWalking)
     controls.warning:SetText(speedWarning())
     refreshLive()
 
@@ -529,6 +544,18 @@ local function build()
     controls.standKmh = sliderRow("standing still", function(value)
         setSpeed("standKmh", value)
     end, formatSpeed)
+    controls.keepWalking = checkRow("Keep walking when my character stands still", function(checked)
+        Walka:Set("speed.keepWalking", checked)
+    end, CONTROL_X)
+    y = y + 2
+    local keepNote = Widgets.Text(
+        content,
+        "GameFontHighlightSmall",
+        "Stops cost no steps: the belt holds your walking pace.",
+        "LEFT"
+    )
+    keepNote:SetTextColor(COLOR.grey[1], COLOR.grey[2], COLOR.grey[3])
+    place(keepNote, CONTROL_X + 26, 12, 8)
     controls.stopStanding = checkRow("Stop the belt when my character stands still", function(checked)
         Walka:Set("speed.standKmh", checked and 0 or restoreStandKmh())
     end, CONTROL_X)

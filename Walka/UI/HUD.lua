@@ -317,6 +317,12 @@ local function tooltipBody()
             COLOR.amber
         )
     end
+    if Walka:Get("speed.keepWalking") == true then
+        lines[#lines + 1] = Widgets.Colorize(
+            "Keep walking is on: the belt holds your walking pace when your character stops.",
+            COLOR.grey
+        )
+    end
 
     lines[#lines + 1] = ""
     if Walka:Get("hud.locked") then
@@ -452,6 +458,11 @@ local function openMenu(owner)
             return Walka:Get("hud.locked") == true
         end, function()
             Walka:Set("hud.locked", not Walka:Get("hud.locked"))
+        end)
+        root:CreateCheckbox("Keep walking when standing", function()
+            return Walka:Get("speed.keepWalking") == true
+        end, function()
+            Walka:SetKeepWalking(not Walka:Get("speed.keepWalking"))
         end)
         root:CreateButton("History", function()
             if ns.History then
