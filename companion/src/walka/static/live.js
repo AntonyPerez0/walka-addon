@@ -301,6 +301,9 @@ function updateTreadmill(s, link) {
   const disconnect = $("tm-disconnect");
   setShown(disconnect, t.connected || searching);
   setText(disconnect, t.connected ? "Disconnect" : "Stop searching");
+  // Walka is tied to the first treadmill it connected to (so that a second
+  // pad in range can never be driven by mistake). Offer the way out.
+  setShown($("tm-forget"), !!t.pinned && !t.in_use);
   setShown($("tm-sim"), t.kind === "simulated");
 }
 
@@ -518,13 +521,22 @@ export function initLive() {
     run(event.currentTarget, () => post("/api/treadmill/connect", {})),
   );
   $("tm-disconnect").addEventListener("click", (event) => {
-    // Cutting the link to a moving belt would leave it running with nobody steering.
-    if (last && last.treadmill.connected && last.treadmill.speed_kmh > 0.05) {
-      toast("Stop the belt first: disconnecting now would leave it running without Walka.", "warn");
-      return;
+    // Cutting the link to a belt in use would leave it running with nobody
+    // steering, so Walka stops the belt first (and says so in the activity log).
+    if (last && last.treadmill.connected && last.treadmill.in_use) {
+      toast("The belt is in use: Walka stops it first, then disconnects.", "warn");
     }
     run(event.currentTarget, () => post("/api/treadmill/disconnect"));
   });
+  $("tm-forget").addEventListener("click", (event) =>
+    run(event.currentTarget, () => post("/api/treadmill/forget")),
+  );
+  $("sim-slower").addEventListener("click", (event) =>
+    run(event.currentTarget, () => post("/api/treadmill/press", { button: "slower" })),
+  );
+  $("sim-faster").addEventListener("click", (event) =>
+    run(event.currentTarget, () => post("/api/treadmill/press", { button: "faster" })),
+  );
   $("sim-start").addEventListener("click", (event) =>
     run(event.currentTarget, () => post("/api/treadmill/press", { button: "start" })),
   );

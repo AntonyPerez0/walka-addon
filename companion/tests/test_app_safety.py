@@ -285,7 +285,9 @@ def test_app_stop_stops_a_belt_whose_stop_did_not_get_through(rig: Rig, what: st
         rig.treadmill.fail_commands = True
         if what == "stop_button":
             await rig.app.emergency_stop()
-        frames = {"hud_pause": dict(target=3.2, paused=True), "session_end": dict(active=False)}.get(what, dict(target=3.2))
+        frames = {"hud_pause": dict(target=3.2, paused=True), "session_end": dict(active=False)}.get(
+            what, dict(target=3.2)
+        )
         await rig.run(2, **frames)
         assert rig.treadmill.status.speed_kmh > 2.5
         rig.treadmill.fail_commands = False
@@ -561,7 +563,10 @@ def test_walk_that_cannot_be_written_is_kept_and_saved_later(rig: Rig):
         # ... and while a new walk is being recorded it is not overwritten.
         await rig.run(15, active=False)
         await rig.run(CHECKPOINT_EVERY_S + 5, target=3.0, session=2)
-        assert json.loads((rig.app.data_dir / "active-session.json").read_text("utf-8"))["seconds"] == checkpoint["seconds"]
+        assert (
+            json.loads((rig.app.data_dir / "active-session.json").read_text("utf-8"))["seconds"]
+            == checkpoint["seconds"]
+        )
         full["disk"] = False
         await rig.run(CHECKPOINT_EVERY_S + 5, target=3.0, session=2)
         assert [round(r.seconds) for r in rig.app.store.records] == [round(checkpoint["seconds"])]
