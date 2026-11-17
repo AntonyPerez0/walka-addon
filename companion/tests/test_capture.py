@@ -118,15 +118,18 @@ def test_window_origin_is_tried_before_the_monitors():
     assert result.decoded is not None and result.decoded.frame == other and result.where == "window"
 
 
-def test_minimised_or_empty_windows_are_not_candidates():
+def test_a_minimised_game_has_no_strip_and_nothing_else_is_looked_at():
+    """Windows knows the game and says it is not on screen. Then there is
+    no strip to find - only things that could be mistaken for one, like the
+    picture that happens to sit in the monitor's corner here."""
     screen = FakeScreen([(0, 0, 1000, 140)])
     screen.paint_strip(FRAME, 0, 0, 3)
     for window in (wow_window(500, 50, minimized=True), wow_window(500, 50, width=0)):
         screen.grabs.clear()
         reader = BeaconReader(screen, Finder(window), clock=Clock())
         result = reader.read()
-        assert result.where == "monitor"
-        assert (500, 50, STRIP_WIDTH, STRIP_HEIGHT) not in screen.grabs
+        assert result.decoded is None and result.where == ""
+        assert screen.grabs == []
 
 
 def test_falls_back_to_a_full_scan_when_the_strip_is_somewhere_else():

@@ -124,11 +124,40 @@ def test_decodes_bytes_lists_and_bytearrays(cell: int):
         assert decoded is not None and decoded.frame == FRAME
 
 
-def test_strip_filling_the_row_exactly_needs_one_trailing_pixel():
-    """The addon always paints a quiet zone, so a strip that ends exactly at
-    the edge of the capture is the one geometry we do not require."""
+def test_the_quiet_cell_must_be_in_the_picture():
+    """The addon keeps one cell black to the right of the strip, and the
+    decoder insists on seeing it: a row of text rarely ends that cleanly. So
+    a strip cut off at the edge of the capture is not read."""
     row = render_row(FRAME, 3)
-    assert decode_row(row + b"\x00") is not None
+    assert decode_row(row) is None
+    assert decode_row(row + b"\x00") is None
+    assert decode_row(row + bytes(3)) is not None
+
+
+def test_something_bright_in_the_quiet_cell_is_not_a_strip():
+    row = bytearray(render_row(FRAME, 4) + bytes(8))
+    assert decode_row(bytes(row)) is not None
+    row[len(row) - 6] = 255  # in the quiet cell, right after the strip
+    assert decode_row(bytes(row)) is None
+
+
+def test_a_stat_the_addon_never_sends_is_not_read_off_the_screen():
+    """The codec decodes any stat id; the screen reader only believes the
+    ones the addon really sends (a frame with random bits everywhere is
+    what text decoded by accident looks like)."""
+    unknown = StatFrame(seq=5, stat_id=40, value=123)
+    assert unknown.stat is None
+    assert beacon.decode_cells(beacon.frame_to_cells(unknown)) == unknown
+    assert decode_row(render_row(unknown, 4) + bytes(8)) is None
+
+
+def test_reserved_bits_and_unassigned_flags_are_not_read_off_the_screen():
+    for odd in (
+        Frame(seq=1, session=2, flags=Flags.ACTIVE, target_raw=100, char_speed_raw=50, reserved=1),
+        Frame(seq=1, session=2, flags=Flags(0x2000 | int(Flags.ACTIVE)), target_raw=100, char_speed_raw=50),
+    ):
+        assert beacon.decode_cells(beacon.frame_to_cells(odd)) == odd  # a valid frame as far as the codec goes
+        assert decode_row(render_row(odd, 4) + bytes(8)) is None
 
 
 # ---- brightness, contrast, gamma, noise -------------------------------------------
@@ -398,7 +427,7 @@ def test_bad_guard_cells_are_refused_for_either_kind():
 def test_a_stat_strip_decodes_into_its_own_slot(cell: float):
     rng = random.Random(int(cell * 100))
     for _ in range(25):
-        stat = StatFrame(seq=rng.randrange(256), stat_id=rng.randrange(64), value=rng.getrandbits(40))
+        stat = StatFrame(seq=rng.randrange(256), stat_id=rng.choice(list(Stat)), value=rng.getrandbits(40))
         decoded = decode_row(render_row(stat, cell) + bytes(int(cell) + 2))
         assert decoded is not None, f"cell {cell}: {stat}"
         assert decoded.stat == stat

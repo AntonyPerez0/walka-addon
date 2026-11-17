@@ -372,6 +372,37 @@ def decode_bits(bits: Sequence[int]) -> Frame | StatFrame:
     return decode(bits_to_bytes(bits))
 
 
+# Every flag the addon can set (bits 0-12). The three bits above them are not
+# assigned.
+FLAGS_DEFINED = sum(int(flag) for flag in Flags)
+
+
+def not_from_the_addon(frame: Frame | StatFrame) -> str | None:
+    """Why the addon cannot have drawn this frame, or None if it can have.
+
+    ``decode`` reads any ten bytes with the right CRC, version and type: it
+    is a codec. A strip read off a screen has to pass this as well. Text,
+    tables and window decorations pass a 16-bit CRC by chance - about one
+    screenful of source code in a hundred did - and what comes out of such
+    an accident has random bits everywhere. The addon, though, always writes
+    zeros into the reserved bits, sets only the flags it knows and sends
+    only the stats it knows (``Protocol.packBits`` / ``packStatBits``), so
+    most accidents are told apart by looking.
+
+    The price: a new flag or stat needs a companion that knows it. An older
+    companion takes such a frame for a picture without a strip in it.
+    """
+    if frame.reserved != 0:
+        return "reserved bits are set"
+    if isinstance(frame, StatFrame):
+        if frame.stat is None:
+            return f"stat id {frame.stat_id} is not assigned"
+        return None
+    if int(frame.flags) & ~FLAGS_DEFINED:
+        return "flag bits that are not assigned are set"
+    return None
+
+
 def bytes_to_bits(data: bytes) -> list[int]:
     return [(byte >> (7 - i)) & 1 for byte in data for i in range(8)]
 

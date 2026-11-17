@@ -4,14 +4,20 @@ The companion never touches the game: it takes a small screenshot of the
 top-left corner of the game window (the same thing OBS or a screenshot tool
 does) and decodes the strip the addon paints there.
 
-Where to look, in order:
+Where to look:
 
-1. the game window's client area, found through the Win32 API;
-2. the top-left corner of every monitor (a borderless full-screen game);
-3. as a last resort, an occasional scan of the whole screen for the strip.
+* When Windows can tell us where the game window is, the strip is at the
+  top-left corner of that window's client area or it is nowhere. Nothing
+  else on the screen is looked at - so nothing else on the screen can be
+  mistaken for the strip.
+* Only where there is no way to ask (other platforms, or a window search
+  that has never found the game on this computer) the reader falls back to
+  the top-left corner of every monitor (a borderless full-screen game) and,
+  now and then, a scan of the whole screen. What is found that way has to
+  prove itself for longer before it is believed (``trust.py``), and a place
+  whose picture does not move is given up again.
 
-Once the strip has been seen its position is remembered, so normal
-operation is one ~700x10 pixel grab per frame.
+Normal operation is one ~700x12 pixel grab per frame.
 """
 
 from __future__ import annotations
@@ -30,12 +36,22 @@ log = logging.getLogger(__name__)
 
 # Enough for 86 cells at the largest cell size plus slack.
 STRIP_WIDTH = int(beacon.TOTAL_CELLS * 8 + 24)
+# The strip (up to 8 rows), the black row under it that marks its lower
+# edge, and the row a lock found by the scan keeps above it.
 STRIP_HEIGHT = 12
 # Rows tried within a grab: row 1 first (inside the strip for any cell size
 # >= 2), then its neighbours.
 ROW_ORDER = (1, 0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)
 
 FULL_SCAN_INTERVAL_S = 5.0
+# A strip redraws ten times a second. A picture of one whose counter has not
+# moved for this long is not being drawn by a running game.
+LOCK_STALL_S = 1.5
+# How many such pictures are remembered, so that they are not picked again.
+MAX_FROZEN_PLACES = 64
+# Rows of one strip are at most this far apart (the tallest cell, and the
+# row the scan keeps above its hit).
+_SAME_STRIP_ROWS = int(beacon.MAX_CELL_PX) + 2
 
 
 @dataclass(frozen=True)
@@ -50,6 +66,22 @@ class Shot:
         """Green channel of row ``y`` (the strip is grey, any channel will do)."""
         start = y * self.width * 4 + 1
         return self.bgra[start : start + self.width * 4 : 4]
+
+
+class _GreenRows(Sequence[bytes]):
+    """The rows of a shot, cut out when asked for (a whole monitor has a
+    thousand of them and the scan looks closely at very few)."""
+
+    def __init__(self, shot: Shot) -> None:
+        self._shot = shot
+
+    def __len__(self) -> int:
+        return self._shot.height
+
+    def __getitem__(self, y):  # type: ignore[override]
+        if not 0 <= y < self._shot.height:
+            raise IndexError(y)
+        return self._shot.green_row(y)
 
 
 class Grabber(Protocol):
@@ -88,7 +120,11 @@ class ReadResult:
 
 
 class BeaconReader:
-    """Finds the strip on screen and decodes it; remembers where it was."""
+    """Finds the strip on screen and decodes it; remembers where it was.
+
+    What it returns is what one look at the screen showed, nothing more:
+    whether that is believed is decided by ``trust.TrustGate``.
+    """
 
     def __init__(
         self,
@@ -105,9 +141,18 @@ class BeaconReader:
         self.window: GameWindow | None = None
         self.locked: tuple[int, int] | None = None  # where the strip was last decoded
         self.locked_where = ""
+        self._lock_seq: int | None = None  # the counter last seen at the lock ...
+        self._lock_ticked_at = -1e9  # ... and when it last changed
+        # Places that showed a strip whose counter would not move (a paused
+        # video, a screenshot, text that decodes by accident), with that
+        # counter. They are passed over for as long as they show it.
+        self._frozen: dict[tuple[int, int], int] = {}
         self._window_checked_at = -1e9
         self._last_full_scan = -1e9
         self.window_supported = window_finder is not None
+        # The window finder has found the game at least once: from then on,
+        # "no window" means the game is not on screen, not that we are blind.
+        self.window_finder_works = False
 
     # ---- helpers ---------------------------------------------------------------
     def _refresh_window(self, force: bool = False) -> None:
@@ -122,6 +167,15 @@ class BeaconReader:
         except Exception as exc:  # never let a Win32 hiccup kill the reader
             log.debug("window lookup failed: %s", exc)
             self.window = None
+        if self.window is not None:
+            self.window_finder_works = True
+
+    def _window_origin(self) -> tuple[int, int] | None:
+        """Where the strip is if the game window is on screen, else None."""
+        window = self.window
+        if window is None or window.minimized or window.width <= 0 or window.height <= 0:
+            return None
+        return (window.left, window.top)
 
     def _decode_at(self, left: int, top: int) -> Decoded | None:
         try:
@@ -131,20 +185,57 @@ class BeaconReader:
             return None
         if shot is None or shot.width <= 0:
             return None
+        rows = [shot.green_row(y) for y in range(shot.height)]
         for y in ROW_ORDER:
-            if y >= shot.height:
+            if y >= len(rows):
                 continue
-            decoded = beacon.decode_row(shot.green_row(y), max_start=8)
+            decoded = beacon.strip_in(rows, y, max_start=8)
             if decoded is not None:
                 return decoded
         return None
+
+    def _lock(self, origin: tuple[int, int], where: str, decoded: Decoded, now: float) -> None:
+        self.locked, self.locked_where = origin, where
+        self._lock_seq, self._lock_ticked_at = decoded.seq, now
+
+    def _unlock(self) -> None:
+        self.locked, self.locked_where, self._lock_seq = None, "", None
+
+    def _ticking(self, decoded: Decoded, now: float) -> bool:
+        """Is the strip at the lock being redrawn? (True for the first
+        ``LOCK_STALL_S`` after its counter last moved.)"""
+        if decoded.seq != self._lock_seq:
+            self._lock_seq, self._lock_ticked_at = decoded.seq, now
+            return True
+        return now - self._lock_ticked_at < LOCK_STALL_S
+
+    def _is_frozen(self, origin: tuple[int, int], decoded: Decoded) -> bool:
+        """Is this the unmoving picture that was given up on at ``origin``?
+
+        The scan meets one and the same strip on each of its rows, so a
+        place a few rows up or down that shows the same counter is that
+        picture again - not a new one to wait a second and a half for.
+        """
+        x, y = origin
+        for (fx, fy), seq in self._frozen.items():
+            if seq == decoded.seq and abs(fx - x) <= 2 and abs(fy - y) <= _SAME_STRIP_ROWS:
+                return True
+        self._frozen.pop(origin, None)  # something else is there now
+        return False
+
+    def _give_up(self, origin: tuple[int, int], decoded: Decoded) -> None:
+        self._frozen.pop(origin, None)
+        while len(self._frozen) >= MAX_FROZEN_PLACES:
+            del self._frozen[next(iter(self._frozen))]  # the oldest
+        self._frozen[origin] = decoded.seq
 
     def _full_scan(self) -> tuple[Decoded, tuple[int, int]] | None:
         """Search every monitor for the strip (slow; used sparingly).
 
         Returns the decoded strip and where to grab next time: one row above
         the hit (but not above its monitor, whose top may well be negative),
-        so that row 1 of the grab is on the strip.
+        so that row 1 of the grab is on the strip. Pictures that were given
+        up on are passed over.
         """
         try:
             monitors = self.grabber.monitors()
@@ -159,13 +250,16 @@ class BeaconReader:
                 continue
             if shot is None:
                 continue
+            rows = _GreenRows(shot)
             for y in range(shot.height):
-                row = shot.green_row(y)
-                if not beacon.row_may_contain_beacon(row):
+                if not beacon.row_may_contain_beacon(rows[y]):
                     continue
-                decoded = beacon.decode_row(row)
-                if decoded is not None:
-                    return decoded, (left + decoded.x0, top + max(0, y - 1))
+                decoded = beacon.strip_in(rows, y)
+                if decoded is None:
+                    continue
+                origin = (left + decoded.x0, top + max(0, y - 1))
+                if not self._is_frozen(origin, decoded):
+                    return decoded, origin
         return None
 
     # ---- the read --------------------------------------------------------------
@@ -174,40 +268,81 @@ class BeaconReader:
         if self.manual_origin is not None:
             decoded = self._decode_at(self.manual_origin[0], self.manual_origin[1])
             return ReadResult(decoded, self.manual_origin if decoded else None, "manual")
+        now = self.clock()
 
-        # Fast path: where it was last time.
+        # Fast path: the strip was at the game window a moment ago and is
+        # still being redrawn there, so the window has not gone anywhere.
+        tried: tuple[int, int] | None = None
+        decoded: Decoded | None = None
+        if self.locked is not None and self.locked_where == "window":
+            tried = self.locked
+            decoded = self._decode_at(*tried)
+            if decoded is not None and self._ticking(decoded, now):
+                return ReadResult(decoded, tried, "window")
+
+        # Not there, or a picture that does not move: where is the game now?
+        self._refresh_window()
+        origin = self._window_origin()
+        if origin is not None:
+            # The game window is on screen: its corner, and nowhere else.
+            if origin != tried:
+                # (The window moved - or the lock was a place found by
+                # searching, which counts for nothing now.)
+                self._unlock()
+                decoded = self._decode_at(*origin)
+                if decoded is not None:
+                    self._lock(origin, "window", decoded, now)
+            if decoded is None:
+                return ReadResult(None, None, "")
+            # (If its counter stands still this is a frozen game: reported
+            # as it is, the source knows what to make of it.)
+            return ReadResult(decoded, origin, "window")
+        if self.window_finder_works:
+            # Windows knows the game and says it is not on screen (closed or
+            # minimised): there is no strip to find, only things to mistake
+            # for one.
+            self._unlock()
+            return ReadResult(None, None, "")
+        return self._read_anywhere(now)
+
+    def _read_anywhere(self, now: float) -> ReadResult:
+        """No way to ask where the game is: try where the strip was, then the
+        monitor corners, then - rate-limited - everything."""
+        last_resort: ReadResult | None = None
         if self.locked is not None:
             decoded = self._decode_at(*self.locked)
             if decoded is not None:
-                return ReadResult(decoded, self.locked, self.locked_where)
+                result = ReadResult(decoded, self.locked, self.locked_where)
+                if self._ticking(decoded, now):
+                    return result
+                # It does not move: whatever it is, the game's strip may be
+                # somewhere else. Look - and only if there is nothing better
+                # report this one (as the frozen picture it is).
+                self._give_up(self.locked, decoded)
+                last_resort = result
 
-        self._refresh_window()
-        candidates: list[tuple[tuple[int, int], str]] = []
-        if self.window is not None and not self.window.minimized and self.window.width > 0:
-            candidates.append(((self.window.left, self.window.top), "window"))
+        candidates: list[tuple[int, int]] = []
         try:
-            for left, top, _w, _h in self.grabber.monitors():
-                candidates.append(((left, top), "monitor"))
+            candidates = [(left, top) for left, top, _w, _h in self.grabber.monitors()]
         except Exception as exc:
             log.debug("monitor enumeration failed: %s", exc)
-        for origin, where in candidates:
+        for origin in candidates:
             if origin == self.locked:
                 continue
             decoded = self._decode_at(*origin)
-            if decoded is not None:
-                self.locked, self.locked_where = origin, where
-                return ReadResult(decoded, origin, where)
+            if decoded is not None and not self._is_frozen(origin, decoded):
+                self._lock(origin, "monitor", decoded, now)
+                return ReadResult(decoded, origin, "monitor")
 
         # Slow path, rate-limited.
-        now = self.clock()
         if now - self._last_full_scan >= FULL_SCAN_INTERVAL_S:
             self._last_full_scan = now
             found = self._full_scan()
             if found is not None:
                 decoded, origin = found
-                self.locked, self.locked_where = origin, "scan"
-                return ReadResult(decoded, self.locked, "scan")
-        return ReadResult(None, None, "")
+                self._lock(origin, "scan", decoded, now)
+                return ReadResult(decoded, origin, "scan")
+        return last_resort or ReadResult(None, None, "")
 
     def close(self) -> None:
         try:

@@ -407,18 +407,24 @@ def _beacon(args: argparse.Namespace) -> int:
     print("Looking for the Walka beacon (top-left corner of the game window). Ctrl+C to stop.")
     deadline = time.monotonic() + args.seconds
     seen = 0
+    counters: set[int] = set()
     last_line = ""
+    window = None
     try:
         while time.monotonic() < deadline:
             result = reader.read()
             decoded = result.decoded
+            window = reader.window or window
             if decoded is None:
-                window = reader.window
+                found = reader.window
                 line = "no beacon" + (
-                    f" (game window found: {window.width}x{window.height})" if window else " (game window not found)"
+                    f" (game window found: {found.width}x{found.height} at {found.left},{found.top})"
+                    if found
+                    else " (game window not found)"
                 )
             else:
                 seen += 1
+                counters.add(decoded.seq)
                 line = (
                     f"OK via {result.where} at {result.origin} cell={decoded.cell_px:.2f}px "
                     f"contrast={decoded.white - decoded.black} | {_frame_text(decoded)}"
@@ -432,7 +438,37 @@ def _beacon(args: argparse.Namespace) -> int:
     finally:
         reader.close()
     print(f"{seen} frame(s) decoded.")
+    if seen and len(counters) < 3:
+        print(
+            "The strip was read, but its counter did not move: the companion only follows a strip that ticks. "
+            "Is the game frozen, or on a loading screen?"
+        )
+    if not seen and window is not None:
+        _beacon_elsewhere(window)
     return 0 if seen else 1
+
+
+def _beacon_elsewhere(window: capture.GameWindow) -> None:
+    """The game window was found but no strip at its corner. The companion
+    looks nowhere else, so say whether there is a strip somewhere else on
+    screen: that would mean the window's position is being worked out wrong
+    (worth reporting), rather than the addon not drawing."""
+    searcher = capture.BeaconReader(capture.MssGrabber(), None)
+    try:
+        result = searcher.read()
+    finally:
+        searcher.close()
+    if result.decoded is None:
+        print(
+            "No strip anywhere on screen either. Is the Walka addon enabled, and is the top-left corner of the "
+            "game window uncovered? (In game, /walka status should print a line.)"
+        )
+    else:
+        print(
+            f"A strip was found on screen at {result.origin}, but the game window's corner is at "
+            f"({window.left}, {window.top}). Walka only reads that corner, so it will not follow this strip. "
+            "Please report these two positions, your display scaling and whether the game is windowed."
+        )
 
 
 def _install_addon(args: argparse.Namespace) -> int:

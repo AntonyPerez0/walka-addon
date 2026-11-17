@@ -18,7 +18,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from . import stat_route
+from . import stat_route, trust
 from .capture import BeaconReader, GameWindow
 from .governor import Reading
 from .protocol import Flags, Frame
@@ -90,6 +90,9 @@ class BeaconSource:
         self._had_active = False
         self._closed = False  # the game was closed, and no frame has been seen since
         self.status = BeaconStatus()
+        # What is read off the screen is believed only once it has been seen
+        # ticking (trust.py). Frames fed with ``inject`` do not pass here.
+        self._trust = trust.TrustGate()
         # Stat frames (journey numbers) go to this callback as (stat id, value)
         # and nowhere else; the live reading never sees them. See stat_route.py.
         self.on_stat: stat_route.StatHandler | None = None
@@ -144,6 +147,7 @@ class BeaconSource:
             reader.close()
 
     def _ingest(self, now: float, reader: BeaconReader, result: Any) -> None:
+        result = self._trust.admit(now, result)  # one decoded frame proves nothing: see trust.py
         result = stat_route.live_only(result, self.on_stat)  # a stat frame is no news for the belt
         with self._lock:
             self._window = reader.window

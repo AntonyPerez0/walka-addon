@@ -10,6 +10,7 @@ import time
 
 import pytest
 
+from walka import trust
 from walka.beacon import Decoded
 from walka.capture import GameWindow, ReadResult
 from walka.governor import Reading
@@ -17,6 +18,15 @@ from walka.protocol import Flags, Frame
 from walka.sources import WINDOW_GONE_S, BeaconSource, BeaconStatus, ManualSource
 
 WINDOW = GameWindow("World of Warcraft", 10, 20, 1280, 720, r"C:\WoW\_forever_\WowForever.exe")
+
+
+@pytest.fixture(autouse=True)
+def believed(monkeypatch):
+    """These tests are about what the source does with frames it believes.
+    Whether a frame read off the screen is believed at all is trust.py's
+    business and has its own tests (test_trust.py), so here the gate lets
+    everything through."""
+    monkeypatch.setattr(trust.TrustGate, "admit", lambda self, now, result: result)
 
 
 class Clock:

@@ -128,25 +128,72 @@ off for every texture).
 
 ### Reading it (companion)
 
-The decoder works on one row of pixel brightness values and does not assume
-a cell size:
+The decoder works on rows of pixel brightness values and does not assume a
+cell size. A frame is only accepted if the picture is what the addon draws:
 
-1. Find a rising edge near the left of the row and measure the first three
-   runs (white, black, white). They must be roughly equal; their average is
-   the first estimate of the cell pitch, and their brightness gives the
-   white and black reference levels. A row with less than about 20% contrast
-   is not a beacon.
-2. Sample the centre of each of the 86 cells at that pitch. If the guard
-   cells or the CRC do not match, retry with pitches up to ±0.4 px either
-   side in fine steps (this is what makes fractional cell sizes work, e.g.
-   when the game window is being scaled).
-3. Accept the frame only if the preamble, the postamble and the CRC-16 all
-   match, and the version and the frame type are ones this build
-   understands.
+1. **The opening.** Every frame begins the same way: the preamble, the
+   protocol version and the first bit of the frame type - as runs of pixels:
+   a white, a black and a white cell, four cells of black, a white cell. The
+   decoder looks for that pattern (cells of one width, at least about 1.9 px
+   wide) and measures the cell pitch and the black and white levels from it.
+   "Bright" is judged from the pixels right there, not from the whole row,
+   so a strip whose white is dimmer than highlights in the game world next
+   to it (HDR, Auto-HDR) is still found.
+2. **The cells.** The centre of each of the 86 cells is sampled at that
+   pitch; pitches a fraction of a pixel either side are tried too (this is
+   what makes fractional cell sizes work, e.g. when the game window is being
+   scaled). Preamble, postamble and CRC-16 must match.
+3. **The content.** The frame must be one the addon can have sent: a known
+   frame type, reserved bits zero, no unassigned flag bits, and for a stat
+   frame a known stat id.
+4. **The surroundings.** To the right of the last white cell it must be
+   black for two cells (the last cell and the quiet margin). The rows next
+   to the row that decoded must show the very same cells over a height of
+   one cell - the cells are squares - and right under them it must be black
+   across the strip's width.
 
-Where to look: first the game window's client-area origin (found through the
-Win32 API), then the top-left corner of each monitor, and - at most every few
-seconds - a scan of the whole screen. Once found, the position is remembered.
+Text, tables and window decorations are rows of light and dark runs too, and
+a 16-bit CRC by itself does not keep them out: before these checks, about
+one screenful of source code in a hundred "decoded". They make that rare.
+What makes it harmless is the next rule.
+
+### Believing it
+
+**One decoded frame is never acted on.** The addon redraws the strip ten
+times a second and every redraw carries the next value of `seq`. A place on
+the screen is believed only after it has been watched ticking:
+
+* frames decoded at the same place with the same cell size,
+* whose `seq` goes up by no more than the time between two looks allows
+  (one step per tenth of a second, plus a little for a hitch),
+* agreeing on the session id,
+* for three frames in a row at the game window's corner, six anywhere else.
+
+Until then the companion behaves exactly as if nothing had been decoded.
+Belief is lost when `seq` has not moved for 1.5 seconds or the strip turns
+up somewhere else, and has to be earned again (about a quarter of a second
+for the real strip). A still picture never passes - a screenshot, a paused
+video, text that decodes by accident - because its counter does not move;
+two pictures taking turns do not either, because the counter would have to
+run backwards.
+
+### Where it looks
+
+When Windows can say where the game window is, the strip is at the top-left
+corner of that window's client area or it is nowhere: nothing else on the
+screen is looked at, so nothing else on the screen can be mistaken for the
+strip. If the game is minimised or closed, nothing is read.
+
+Only where the window cannot be asked for (other platforms, or a window
+search that has never found the game since the companion started) the
+reader falls back to the top-left corner of each monitor and, at most every
+few seconds, a search of the whole screen. A place found that way has to
+tick for twice as long before it is believed, and a place whose picture does
+not move is given up and remembered.
+
+`walka beacon` prints what the reader sees; if the game window is found but
+no strip is at its corner, it says whether there is a strip anywhere else
+on screen.
 
 ### When the strip is not visible
 
