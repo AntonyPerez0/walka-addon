@@ -263,12 +263,23 @@ local STATE_HELP = {
     afk = "You are AFK, so the session is paused. It resumes when you come back.",
 }
 
+-- "Waiting" although the character is moving: it is the settings that keep
+-- the belt stopped - a standing pace of zero on a flight path, or a maximum
+-- below what the treadmill can do. Say so, rather than "standing still".
+local WAITING_BY_SETTINGS = "The belt is stopped although your character is moving: your speed settings "
+    .. "ask for no belt speed right now. Check the speed mapping and the maximum in the options."
+
 local function tooltipBody()
     local lines = {}
     local session = Walka:GetSession()
     local beltKmh, targetKmh = Walka:GetLiveSpeed()
     local state = currentState(session, beltKmh or 0, targetKmh or 0)
-    lines[#lines + 1] = Widgets.Colorize(STATE_HELP[state], COLOR.white)
+    local help = STATE_HELP[state]
+    local gameState = Walka:GetGameState()
+    if state == "waiting" and gameState and gameState.moving then
+        help = WAITING_BY_SETTINGS
+    end
+    lines[#lines + 1] = Widgets.Colorize(help, COLOR.white)
 
     if session and not session.paused then
         lines[#lines + 1] = "Target speed: " .. Walka:FormatSpeed(targetKmh or 0) .. "."
@@ -300,7 +311,6 @@ local function tooltipBody()
         )
     end
 
-    local gameState = Walka:GetGameState()
     if gameState and gameState.estimated then
         lines[#lines + 1] = Widgets.Colorize(
             "In combat the game hides your character's real speed from addons, so Walka is estimating it.",

@@ -236,6 +236,7 @@ def test_window_is_built_on_first_use_and_toggles(rt):
     box, (screen_width, screen_height) = ui.rect(rt, frame), rt.M.screen_size()
     assert box[2:] == (560, 440)
     assert box[0] + box[2] / 2 == pytest.approx(screen_width / 2), "it opens in the middle of the screen"
+    assert box[1] + box[3] / 2 == pytest.approx(screen_height / 2 + 30), "... a little above the centre"
 
 
 def test_empty_state(rt):

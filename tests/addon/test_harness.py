@@ -408,3 +408,151 @@ def test_the_core_runs_without_the_ui_files(tmp_path, make_rt, addon_dir):
     fresh = rt.reload()
     fresh.tick(5)
     assert fresh.undefined_globals() == {} and rt.undefined_globals() == {}
+
+
+# ---- behaviour the windows depend on --------------------------------------------------------------
+
+
+def test_date_and_time_have_the_limits_of_the_windows_c_runtime(bare):
+    """The game runs on Windows: date() returns nil - not a string - for a
+    time before 1970 or after the year 3000, whatever this machine can do."""
+    assert bare.run("return date('%Y', 0)") in ("1969", "1970")
+    assert bare.run("return date('%Y', 1795000000)") == "2026"
+    assert bare.run("return date('%Y', '1795000000')") == "2026"            # numeric strings are numbers
+    for when in ("-1", "-1e9", "1e300", "99999999999", "0/0", "1/0", "-1/0"):
+        assert bare.run(f"return date('%Y-%m-%d', {when})") is None, when
+        assert bare.run(f"return date('*t', {when})") is None, when
+    raises(bare, "return 'synced ' .. date('%H:%M', 1e300)", "attempt to concatenate")
+    raises(bare, "return date('%Y', 'soon')", "number expected")
+    raises(bare, "return date('%Y', {})", "number expected")
+    assert bare.run("return type(date())") == "string"
+    assert bare.run("return time({ year = 2026, month = 11, day = 17, hour = 12 })") is not None
+    assert bare.run("return time({ year = 1900, month = 1, day = 1 })") is None
+    assert bare.run("return time({ year = 5000, month = 1, day = 1 })") is None
+    raises(bare, "return time({ year = 2026 })", "missing")
+    assert bare.run("return time()") == 1795000000
+    # Only conversions every C library has: an unknown one is fatal on Windows.
+    assert bare.run("return date('%a %A %b %B %d %H:%M:%S %p %Y-%m-%d %y %j %%', 1795000000)") is not None
+    assert bare.run("return date('!%H:%M', 0)") == "00:00"
+    assert bare.run("return date('!*t', 86400).day") == 2
+    for bad in ("%e", "%T", "%F", "%s", "%k", "%-d", "%D", "100%"):
+        raises(bare, f"return date('{bad}')", "not an ISO C89 strftime conversion")
+
+
+def test_callback_registry_owners_as_in_the_client(bare):
+    result = bare.run(
+        "local slider = CreateFrame('Frame', nil, UIParent, 'MinimalSliderWithSteppersTemplate') "
+        "local seen = {} "
+        "local event = MinimalSliderWithSteppersMixin.Event.OnValueChanged "
+        # With an owner: the callback gets (owner, value).
+        "slider:RegisterCallback(event, function(owner, value) seen[#seen + 1] = (owner == slider) and value end, slider) "
+        # Registering again for the same owner replaces the first callback.
+        "slider:RegisterCallback(event, function(owner, value) seen[#seen + 1] = 'second' .. value end, slider) "
+        # Without an owner the client makes one up - and still passes it first.
+        "slider:RegisterCallback(event, function(owner, value) seen[#seen + 1] = type(owner) .. tostring(value) end) "
+        # Extra arguments come between the owner and the event's.
+        "local other = {} "
+        "slider:RegisterCallback(event, function(owner, extra, value) seen[#seen + 1] = extra .. value end, other, 'x') "
+        "slider:Init(1, 0, 10, 10) slider.Slider:SetValue(4) "
+        "table.sort(seen) return table.concat(seen, ' ')"
+    )
+    assert result == "number4 second4 x4"
+    raises(bare, "CreateFrame('Frame', nil, UIParent, 'MinimalSliderWithSteppersTemplate')"
+                 ":RegisterCallback('OnValueChanged', print, 5)", "reserved")
+    raises(bare, "CreateFrame('Frame', nil, UIParent, 'MinimalSliderWithSteppersTemplate')"
+                 ":RegisterCallback('OnValueChnaged', print)", "no \"OnValueChnaged\" callback event")
+
+
+def test_settings_window_handles_a_canvas_the_way_the_client_does(bare):
+    bare.run(
+        "log = {} "
+        "page = CreateFrame('Frame', 'WalkaTestPage') page:Hide() "
+        "page:SetScript('OnShow', function() log[#log + 1] = 'show' end) "
+        "page:SetScript('OnHide', function() log[#log + 1] = 'hide' end) "
+        "function page:OnRefresh() log[#log + 1] = 'refresh:' .. tostring(self:IsVisible()) end "
+        "category = Settings.RegisterCanvasLayoutCategory(page, 'Test') "
+    )
+    raises(bare, "Settings.OpenToCategory(category:GetID())", "no registered category")
+    raises(bare, "Settings.OpenToCategory(category)", "category ID")
+    bare.run("Settings.RegisterAddOnCategory(category)")
+    page = bare.global_("page")
+
+    def seen():
+        entries = lua_list(bare.global_("log"))
+        bare.run("log = {}")
+        return entries
+
+    # Opening: every canvas is refreshed (the page is not on screen yet),
+    # then the page is put into the window - refreshed before it is visible.
+    bare.run("Settings.OpenToCategory(category:GetID())")
+    assert seen() == ["refresh:false", "refresh:false", "show"]
+    info = bare.inspect(page)
+    assert (info["width"], info["height"]) == pytest.approx((665, 601)), "the Settings window's page area"
+    screen_width, screen_height = bare.M.screen_size()
+    assert info["left"] == pytest.approx((screen_width - 920) / 2 + 233)
+    assert info["bottom"] == pytest.approx((screen_height - 724) / 2 + 47)
+    assert bare.run("return page:GetParent() == SettingsPanel.Container.SettingsCanvas") is True
+
+    bare.run("Settings.OpenToCategory(category:GetID())")       # already showing: nothing happens
+    assert seen() == []
+
+    bare.M.settings_close()
+    assert seen() == ["hide"] and bare.run("return page:IsShown(), page:IsVisible()") == (True, False)
+    # Reopened by hand: the window shows its own first category, which takes
+    # the page off (no parent, no anchors, hidden), and refreshes all canvases.
+    bare.M.settings_open()
+    assert seen() == ["show", "hide", "refresh:false"]
+    assert bare.run("return page:GetParent(), page:GetNumPoints(), page:IsShown()") == (None, 0, False)
+    bare.M.settings_select(1)
+    assert seen() == ["refresh:false", "show"]
+    bare.M.settings_select_other()
+    assert seen() == ["hide"]
+
+    # In combat an addon may not open the window; the player still can.
+    bare.enter_combat()
+    raises(bare, "Settings.OpenToCategory(category:GetID())", "combat")
+    assert lua_list(bare.log.blocked) == ["Settings.OpenToCategory"]
+    bare.M.settings_select(1)
+    assert seen() == ["refresh:false", "show"]
+    # An error in OnRefresh goes to the error handler, as under the client's xpcall.
+    bare.run("function page:OnRefresh() error('refresh failed') end")
+    bare.M.settings_close()
+    bare.M.settings_open()
+    with pytest.raises(Exception, match="refresh failed"):
+        bare.check_errors()
+
+
+def test_frames_clamped_to_the_screen_stay_on_it(bare):
+    result = bare.run(
+        "local free = CreateFrame('Frame', nil, UIParent) free:SetSize(100, 50) free:SetPoint('LEFT', 5000, 0) "
+        "local kept = CreateFrame('Frame', nil, UIParent) kept:SetSize(100, 50) kept:SetClampedToScreen(true) "
+        "kept:SetPoint('BOTTOMLEFT', 5000, -3000) "
+        "local child = kept:CreateTexture() child:SetAllPoints(kept) "
+        "return free:GetLeft(), kept:GetRight(), kept:GetBottom(), child:GetRight()"
+    )
+    screen_width, _ = bare.M.screen_size()
+    assert result == (5000, pytest.approx(screen_width), 0, pytest.approx(screen_width))
+
+
+def test_a_scroll_child_is_placed_by_its_scroll_frame(bare):
+    result = bare.run(
+        "local scroll = CreateFrame('ScrollFrame', nil, UIParent) scroll:SetSize(300, 200) scroll:SetPoint('TOPLEFT', 100, -100) "
+        "local content = CreateFrame('Frame', nil, scroll) content:SetSize(280, 900) scroll:SetScrollChild(content) "
+        "local item = CreateFrame('Frame', nil, content) item:SetSize(50, 20) item:SetPoint('TOPLEFT', 10, -400) "
+        "local before = { content:GetLeft(), content:GetTop(), item:GetTop(), scroll:GetVerticalScrollRange() } "
+        "scroll:SetVerticalScroll(350) "
+        "return before[1], before[2], before[3], before[4], content:GetTop(), item:GetTop(), item:GetLeft()"
+    )
+    assert result == (100, 668, 268, 700, 1018, 618, 110)
+
+
+def test_a_disabled_edit_box_takes_no_typing(bare):
+    bare.run(
+        "box = CreateFrame('EditBox', nil, UIParent) typed = {} "
+        "box:SetScript('OnTextChanged', function(self) typed[#typed + 1] = self:GetText() end) box:Disable()"
+    )
+    assert bare.M.type_text(bare.global_("box"), "82", True) is False
+    assert lua_list(bare.global_("typed")) == [] and bare.run("return box:HasFocus()") is False
+    bare.run("box:Enable()")
+    assert bare.M.type_text(bare.global_("box"), "82", True) is True
+    assert lua_list(bare.global_("typed")) == ["82"]

@@ -109,18 +109,26 @@ class Belt:
         return speeds
 
 
+def default_rates(rt):
+    """The companion's default rate limits (km/h per second up, down) - the
+    estimator's defaults follow them, see Estimator.DEFAULTS."""
+    defaults = rt.ns.Metrics.Estimator.DEFAULTS
+    return defaults.accelKmhPerS, defaults.decelKmhPerS
+
+
 def test_countdown_then_minimum_then_ramp(rt):
     belt = Belt(rt)
-    speeds = belt.run(12, 3.2)
+    accel, _ = default_rates(rt)
+    speeds = belt.run(3 + (3.2 - 1.0) / accel + 2, 3.2)
     # Three seconds of countdown with the belt still ...
     assert set(speeds[:29]) == {0}
     started = next(index for index, value in enumerate(speeds) if value > 0)
     assert 29 <= started <= 31
     # ... then it appears at its minimum speed ...
     assert speeds[started] == pytest.approx(1.0)
-    # ... and speeds up at 0.5 km/h per second to the target.
-    assert speeds[started + 10] == pytest.approx(1.5, abs=0.06)
-    assert speeds[started + 20] == pytest.approx(2.0, abs=0.06)
+    # ... and speeds up at the companion's rate limit to the target.
+    assert speeds[started + 10] == pytest.approx(1.0 + accel * 1.0, abs=0.06)
+    assert speeds[started + 20] == pytest.approx(1.0 + accel * 2.0, abs=0.06)
     assert speeds[-1] == pytest.approx(3.2)
     assert max(speeds) <= 3.2 + 1e-9
     assert speeds == sorted(speeds)
@@ -128,10 +136,11 @@ def test_countdown_then_minimum_then_ramp(rt):
 
 def test_slows_at_the_deceleration_limit_and_coasts_to_a_stop(rt):
     belt = Belt(rt)
-    belt.run(20, 4.0)
+    accel, decel = default_rates(rt)
+    belt.run(3 + (4.0 - 1.0) / accel + 2, 4.0)
     slowing = belt.run(1, 2.0)
-    assert slowing[-1] == pytest.approx(3.0, abs=0.01)          # 1 km/h per second
-    belt.run(5, 2.0)
+    assert slowing[-1] == pytest.approx(4.0 - decel * 1.0, abs=0.01)
+    belt.run(2.0 / decel, 2.0)
     stopping = belt.run(2, 0)
     assert stopping[3] == pytest.approx(2.0 - 2.5 * 0.4, abs=0.01)   # 2.5 km/h per second
     assert stopping[-1] == 0
@@ -200,4 +209,4 @@ def test_reset(rt):
     assert belt.estimator.beltKmh == 0
     assert belt.run(1, 3.0)[-1] == 0                    # a new countdown
     belt.estimator.reset(belt.estimator, 2.5)           # e.g. after /reload
-    assert belt.run(0.1, 3.0)[-1] == pytest.approx(2.55)
+    assert belt.run(0.1, 3.0)[-1] == pytest.approx(2.5 + default_rates(rt)[0] * 0.1)

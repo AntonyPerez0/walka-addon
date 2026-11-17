@@ -63,7 +63,8 @@ def test_full_session_lifecycle(rt):
         targets.append(target)
         samples.append(session(rt))
     assert set(belts[:28]) == {0}, "the treadmill counts down for three seconds first"
-    assert belts[40] == pytest.approx(0.6 * KMH_PER_MPH + 0.5 * 1.0, abs=0.3)
+    accel = rt.ns.Metrics.Estimator.DEFAULTS.accelKmhPerS
+    assert belts[40] == pytest.approx(0.6 * KMH_PER_MPH + accel * 1.0, abs=0.1)
     assert belts == sorted(belts)
     assert belts[-1] == pytest.approx(2.0 * KMH_PER_MPH, abs=0.01)
     assert targets[-1] == pytest.approx(2.0 * KMH_PER_MPH, abs=0.01)

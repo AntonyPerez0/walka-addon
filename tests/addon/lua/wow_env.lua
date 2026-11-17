@@ -405,6 +405,21 @@ define("date", function(pattern, when)
     if pattern ~= nil and type(pattern) ~= "string" then
         error("bad argument #1 to 'date' (string expected, got " .. type(pattern) .. ")", 2)
     end
+    if pattern then
+        -- The format goes straight to the C library's strftime. Only the
+        -- conversions of ISO C89 exist everywhere; with others (%e, %T, %F,
+        -- %s ...) the result differs between systems, and the Windows
+        -- runtime treats an unknown one as a fatal error.
+        local body = pattern:gsub("^!", "")
+        if body:sub(1, 2) ~= "*t" then
+            for specifier in body:gmatch("%%(.?)") do
+                if not specifier:find("^[aAbBcdHIjmMpSUwWxXyYZ%%]$") then
+                    fail("date(\"" .. pattern .. "\"): %" .. specifier .. " is not an ISO C89 strftime conversion; "
+                        .. "it is not safe on the Windows C runtime the game uses", 2)
+                end
+            end
+        end
+    end
     if when ~= nil then
         local number = tonumber(when)
         if not number then

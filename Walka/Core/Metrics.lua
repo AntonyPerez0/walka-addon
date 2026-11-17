@@ -94,10 +94,14 @@ local Estimator = {}
 Estimator.__index = Estimator
 Metrics.Estimator = Estimator
 
---- How the companion and the treadmill move the belt.
+--- How the companion and the treadmill move the belt. The two rate limits
+-- are the companion's defaults (walka.governor.Limits) and must stay equal
+-- to them - a test in companion/tests compares the two - or the HUD's
+-- estimate drifts from the belt until the companion's own figures arrive
+-- in CompanionData.lua.
 Estimator.DEFAULTS = {
-    accelKmhPerS = 0.5,   -- companion's limit on speeding up
-    decelKmhPerS = 1.0,   -- ... and on slowing down
+    accelKmhPerS = 0.2,   -- companion's limit on speeding up
+    decelKmhPerS = 0.4,   -- ... and on slowing down
     stopKmhPerS = 2.5,    -- belt coasting to a halt when paused/stopped
     countdownSeconds = 3, -- treadmill's countdown before the belt starts
     minBeltKmh = 1.0,     -- speed the belt starts at

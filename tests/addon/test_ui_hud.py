@@ -237,6 +237,30 @@ def test_waiting_when_the_belt_stops_for_a_standing_character(rt):
     assert view(rt)["state"] == "Waiting"
 
 
+def test_waiting_because_of_the_settings_is_not_blamed_on_standing_still(ui_rt, make_rt):
+    # A maximum below what the treadmill can do keeps the belt stopped
+    # however fast the character runs.
+    rt = make_rt(files={"CompanionData.lua": COMPANION}, state={"clock": NOW})
+    rt.walka.Set(rt.walka, "speed.maxKmh", 0.8)
+    rt.set(speed=7.0)
+    rt.slash("/walka start")
+    rt.tick(100)
+    assert view(rt)["state"] == "Waiting"
+    explanation = ui.tooltip(rt, ui.hud(rt))[1]
+    assert "standing still" not in explanation and "speed settings" in explanation
+    # The same on a flight path ridden at a standing pace of zero.
+    rt.walka.Set(rt.walka, "speed.maxKmh", 4.8)
+    rt.walka.Set(rt.walka, "speed.standKmh", 0)
+    rt.walka.Set(rt.walka, "speed.taxiMode", "stand")
+    rt.set(taxi=True, speed=30.0)
+    rt.tick(600)
+    assert view(rt)["state"] == "Waiting"
+    assert "speed settings" in ui.tooltip(rt, ui.hud(rt))[1]
+    rt.set(taxi=False, speed=0)
+    rt.tick(30)
+    assert "standing still" in ui.tooltip(rt, ui.hud(rt))[1]
+
+
 def test_units(rt):
     rt.set(speed=7.0)
     rt.slash("/walka start")
