@@ -310,6 +310,19 @@ makes sure it can never be mistaken for a frame that does:
 The frame type is covered by the CRC like every other bit, so a misread
 pixel cannot turn one kind of frame into the other.
 
+### Putting a round together
+
+The companion reads the strip through a screen capture, so it sees most
+frames twice and now and then misses one - also the CHAR_KEY of a character
+who has just logged in. To be sure that two characters' numbers are never
+mixed, it keeps a round only if the CHAR_KEY that ends it is the one that
+began it, every other stat was seen in between, and the strip never went
+away for more than a few seconds meanwhile (a loading screen, a frozen
+picture). Anything else is dropped and the next round is waited for, so the
+numbers it holds are about eight seconds old. Each value is checked against
+what can be true, and the name is treated as text from a stranger.
+
 Implementations: `Protocol.packStatBits` in the addon; `protocol.decode`,
-`beacon.Decoded` (which keeps the two kinds in separate fields) and
-`stat_route.py` in the companion.
+`beacon.Decoded` (which keeps the two kinds in separate fields),
+`stat_route.py` and `journey.py` (the rounds, and the cache of every
+character's latest numbers) in the companion.

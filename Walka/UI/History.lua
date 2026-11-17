@@ -559,6 +559,20 @@ local function create()
     end, "ANCHOR_BOTTOMRIGHT")
     parts.sync = sync
 
+    -- The character's journey has its own window (UI/Journey.lua).
+    local journey = Widgets.Button(frame, "Journey", 68, function()
+        if ns.JourneyWindow then
+            ns.JourneyWindow.Show()
+        end
+    end)
+    journey:SetPoint("RIGHT", sync, "LEFT", -6, 0)
+    Widgets.Tooltip(
+        journey,
+        "Your character's journey",
+        "Level, time played, and how far you and your character have walked - with a line on how to share it.",
+        "ANCHOR_BOTTOMRIGHT"
+    )
+
     -- Summary cards.
     local cardTitles = { { "today", "Today" }, { "week", "Last 7 days" }, { "all", "All time" } }
     for index, info in ipairs(cardTitles) do

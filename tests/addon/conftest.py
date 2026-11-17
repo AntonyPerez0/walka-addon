@@ -43,7 +43,8 @@ def ns(rt):
 
 
 def ui_files_present() -> bool:
-    return all((ADDON_DIR / "UI" / name).is_file() for name in ("Widgets.lua", "HUD.lua", "History.lua", "Options.lua"))
+    names = ("Widgets.lua", "HUD.lua", "History.lua", "Journey.lua", "Options.lua")
+    return all((ADDON_DIR / "UI" / name).is_file() for name in names)
 
 
 @pytest.fixture

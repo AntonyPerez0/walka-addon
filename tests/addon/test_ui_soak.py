@@ -52,6 +52,7 @@ class Play:
         self.seconds = 0.0
         self.last_session = None
         self.frames_decoded = 0
+        self.stats_decoded = 0
 
     def check(self) -> None:
         rt = self.rt
@@ -59,15 +60,26 @@ class Play:
         assert rt.find_secrets() == [], f"a secret value is being kept (t={self.seconds:.0f}s)"
         settings_are_finite(rt)
         walka = rt.walka
+        # What the companion would read off the screen right now. Every
+        # fifth redraw it is one number of the character's journey (a stat
+        # frame); the belt goes by the live frame a tenth of a second later.
+        frame = None
+        if rt.db.settings.beacon.enabled:
+            decoded = beacon.decode_row(rt.render_beacon_row(0))
+            assert decoded is not None, f"the beacon is unreadable (t={self.seconds:.0f}s)"
+            if decoded.stat is not None:
+                assert decoded.stat.stat is not None, "a stat the companion does not know"
+                self.stats_decoded += 1
+                rt.tick()
+                self.seconds += 0.1
+                decoded = beacon.decode_row(rt.render_beacon_row(0))
+            frame = decoded.frame
+            assert frame is not None, "two stat frames in a row"
         belt, target = walka.GetLiveSpeed(walka)
         limits = lua_dict(walka.GetBeltLimits(walka))
         assert target == 0 or limits["minKmh"] - 1e-6 <= target <= limits["maxKmh"] + 1e-6
         assert 0 <= belt <= limits["maxKmh"] + 1e-6
-        # What the companion would read off the screen right now.
-        if rt.db.settings.beacon.enabled:
-            decoded = beacon.decode_row(rt.render_beacon_row(0))
-            assert decoded is not None, f"the beacon is unreadable (t={self.seconds:.0f}s)"
-            frame = decoded.frame
+        if frame is not None:
             assert frame.has(Flags.ACTIVE) == bool(walka.IsActive(walka))
             assert frame.has(Flags.PAUSED) == bool(walka.IsPaused(walka))
             assert frame.target_kmh == pytest.approx(target, abs=0.006)
@@ -127,6 +139,13 @@ def test_ten_minutes_of_mixed_play(full_rt):
     assert ui.is_visible(rt, history)
     play.run(15)
 
+    # -- how far have we come? (the game prints the time played once, as it is asked) ------------
+    rt.click(ui.button(rt, history, "Journey"))
+    journey = ui.journey(rt, open_it=False)
+    assert ui.is_visible(rt, journey)
+    play.run(5)
+    assert sum("ime played" in line for line in rt.printed) == 2
+
     # -- mount up (the frame rate dips to 20 fps in town) --------------------------------------
     rt.set(speed=14.0, mounted=True, resting=True)
     play.run(25, step=0.05)
@@ -145,9 +164,10 @@ def test_ten_minutes_of_mixed_play(full_rt):
     ui.menu_click(rt, "Lock position")
     ui.context_menu(rt, hud)
     ui.menu_click(rt, "Lock position")
-    for widget in rt.descendants(history, visible=True):
+    for widget in rt.descendants(history, visible=True) + rt.descendants(journey, visible=True):
         if rt.M.script_set(widget, "OnEnter"):
             ui.tooltip(rt, widget)
+    rt.click(ui.button(rt, journey, "Screenshot"))
     rt.set(falling=False)
     rt.leave_combat()
     rt.set(chatLockdown=False, nameSecret=False, speed=7.0)
@@ -231,6 +251,7 @@ def test_ten_minutes_of_mixed_play(full_rt):
 
     # -- windows closed and opened, HUD hidden and shown, moved, rescaled -------------------------
     rt.ns.History.Hide()
+    rt.ns.JourneyWindow.Hide()
     rt.M.settings_close()
     rt.slash("/walka hide")
     play.run(10)
@@ -244,6 +265,8 @@ def test_ten_minutes_of_mixed_play(full_rt):
     rt.M.set_ui_scale(1.0)
     rt.slash("/walka units kmh")
     rt.slash("/walka history")
+    rt.slash("/walka journey")
+    rt.M.drag(journey, -250, 100)
     play.run(10)
     rt.slash("/walka units mph")
     rt.slash("/walka status")
@@ -273,10 +296,11 @@ def test_ten_minutes_of_mixed_play(full_rt):
 
     # -- the rest of the ten minutes: walk, with every window open ---------------------------------
     history = ui.history(rt)
+    journey = ui.journey(rt)
     panel = ui.options(rt)
     play.run(5)
     # Everything is built now; from here on nothing new may be created.
-    for widget in rt.descendants(history, visible=True) + rt.descendants(hud, visible=True):
+    for widget in rt.descendants(history, visible=True) + rt.descendants(hud, visible=True) + rt.descendants(journey, visible=True):
         if rt.M.script_set(widget, "OnEnter"):
             ui.tooltip(rt, widget)
     rt.click(ui.button_by_tooltip(rt, hud, "Pause"))
@@ -296,20 +320,28 @@ def test_ten_minutes_of_mixed_play(full_rt):
             ui.slide(rt, ui.slider(rt, panel, "walking"), 1.2 + (index % 5) / 10)
             rt.M.scroll_wheel(rt.descendants(panel, "ScrollFrame")[0], -1 if index % 2 else 1)
         if index % 5 == 2:
-            for widget in rt.descendants(history, "Button", visible=True):
+            for widget in rt.descendants(history, "Button", visible=True) + rt.descendants(journey, visible=True):
                 if rt.M.script_set(widget, "OnEnter"):
                     ui.tooltip(rt, widget)
         play.run(10)
     rt.leave_combat()
     play.run(600 - play.seconds)
-    assert play.seconds == pytest.approx(600)
+    assert play.seconds == pytest.approx(600, abs=0.15)     # (a check may let one more tick pass)
     assert ui.widget_count(rt) == widgets, "frames, textures or font strings were created during plain play"
     assert merges.calls <= 12, f"{merges.calls} history merges in the last minutes"
 
     rt.click(ui.button_by_tooltip(rt, hud, "Stop"))
     play.run(2)
     assert len(lua_list(rt.db.sessions)) == sessions_before + 1
-    assert play.frames_decoded > 500
+    assert play.frames_decoded > 500 and play.stats_decoded > 0, "the checks met live frames and stat frames"
+
+    # The journey of these ten minutes: every yard and both walks, on the card.
+    travelled = lua_dict(rt.ns.Tracker.GetSummary())
+    assert 1500 < travelled["footYd"] < travelled["travelYd"] < 600 * 32
+    assert travelled["walks"] >= 62 and travelled["estimated"] is True
+    assert ui.is_visible(rt, journey) and "Tester" in ui.texts(rt, journey)
+    asked = lua_list(full_rt.log.played_requests) + lua_list(rt.log.played_requests)
+    assert len(asked) == 1, "the game was asked for the time played once - not again after the /reload"
 
     # -- afterwards: clean in every respect -------------------------------------------------------------
     assert (full_rt.reload_requests, rt.reload_requests) == (1, 0), "the one click on Sync, and nothing else"

@@ -143,16 +143,31 @@ function Beacon.SetVisible(visible)
     frame:SetAlpha(visible and 1 or 0)
 end
 
---- Paint a protocol frame (see Protocol.packBits for the fields).
+-- Paint the 80 bits in `bits` between the guard cells.
+local function paintBits()
+    local offset = #PREAMBLE
+    for index = 1, FRAME_BITS do
+        paint(offset + index, bits[index])
+    end
+end
+
+--- Paint a live frame (see Protocol.packBits for the fields).
 function Beacon.Send(protocolFrame)
     if not frame then
         return
     end
     Protocol.packBits(protocolFrame, bits)
-    local offset = #PREAMBLE
-    for index = 1, FRAME_BITS do
-        paint(offset + index, bits[index])
+    paintBits()
+end
+
+--- Paint a stat frame: one number of the character's journey in place of
+-- a live frame (see Protocol.packStatBits and docs/PROTOCOL.md, section 4).
+function Beacon.SendStat(seq, statId, value)
+    if not frame then
+        return
     end
+    Protocol.packStatBits(seq, statId, value, bits)
+    paintBits()
 end
 
 --- The cell values currently painted (1 = white, 0 = black), for tests.

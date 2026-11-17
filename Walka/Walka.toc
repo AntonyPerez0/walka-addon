@@ -13,10 +13,13 @@ Core\Protocol.lua
 Core\SpeedModel.lua
 Core\Metrics.lua
 Core\SessionLog.lua
+Core\Journey.lua
 Game.lua
 Beacon.lua
+Tracker.lua
 Walka.lua
 UI\Widgets.lua
 UI\HUD.lua
 UI\History.lua
+UI\Journey.lua
 UI\Options.lua

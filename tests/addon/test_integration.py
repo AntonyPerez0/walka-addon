@@ -6,7 +6,6 @@ history that is already merged, and garbage on the tick."""
 from __future__ import annotations
 
 import pytest
-from walka import beacon
 
 from .conftest import KMH_PER_MPH, MPH_STEP, local_noon, nearest_step
 from .harness import lua_dict, lua_list, lua_plain
@@ -164,7 +163,7 @@ def test_target_is_known_as_soon_as_a_session_starts(rt):
     assert seen == [("start", pytest.approx(standing, abs=1e-6))]
     primed = walka.GetLiveSpeed(walka)[1]
     rt.tick(1)
-    sent = beacon.cells_to_frame(rt.beacon_cells()).target_kmh
+    sent = rt.live_frame().target_kmh
     assert sent == pytest.approx(primed, abs=0.17), "the first frame asks for (about) what was announced"
 
     rt.tick(100)

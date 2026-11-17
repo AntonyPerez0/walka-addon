@@ -22,6 +22,8 @@ from pathlib import Path
 from typing import Any
 
 from lupa.lua51 import LuaRuntime
+from walka import beacon
+from walka.protocol import Frame, StatFrame
 
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent.parent
@@ -510,6 +512,27 @@ class WowRuntime:
                 raise AssertionError(f"beacon cell is not pure black or white: {(red, green, blue, alpha)}")
             values.append(int(red))
         return values
+
+    def shown_frame(self) -> Frame | StatFrame:
+        """What the strip shows right now, decoded with the companion's
+        decoder: a live frame or - on every fifth redraw - a stat frame."""
+        return beacon.decode_cells(self.beacon_cells())
+
+    def live_frame(self) -> Frame:
+        """The live frame on the strip, as the companion's belt control
+        reads it.
+
+        Every fifth redraw carries one number of the character's journey
+        instead (a stat frame, docs/PROTOCOL.md section 4), which the belt
+        control ignores: it goes by the next live frame, a tenth of a second
+        later. So does this - if a stat frame is showing, one more tick is
+        let pass. (Two stat frames never follow each other.)"""
+        frame = self.shown_frame()
+        if isinstance(frame, StatFrame):
+            self.tick()
+            frame = self.shown_frame()
+        assert isinstance(frame, Frame), "two stat frames in a row"
+        return frame
 
     def render_beacon_row(
         self,

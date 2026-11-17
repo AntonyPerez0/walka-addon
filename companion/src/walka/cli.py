@@ -19,6 +19,7 @@ from pathlib import Path
 
 from . import __version__, addon_sync, capture
 from . import config as config_module
+from .journey import DemoJourney
 from .protocol import Flags, Frame, kmh_to_raw, yps_to_raw
 
 log = logging.getLogger("walka")
@@ -66,6 +67,7 @@ def _build_beacon(cfg: config_module.Config, *, read_screen: bool = True):
 
 
 DEMO_SESSION_STARTS_AFTER_S = 2.0
+DEMO_REDRAW_S = 0.1  # the addon redraws its strip ten times a second
 
 
 async def _demo_character(beacon, stop: asyncio.Event) -> None:
@@ -75,15 +77,25 @@ async def _demo_character(beacon, stop: asyncio.Event) -> None:
     Like a real player it first stands there with no session, then starts
     one: a session that is already running when the companion first sees it
     would (rightly) not start the belt until the character starts moving.
+
+    And like the addon it shows, every few redraws, one number of the
+    character's journey in place of its live state: the Share page gets a
+    made-up character to make a picture of.
     """
     seq = 0
     started = time.monotonic()
+    journey = DemoJourney()
     while not stop.is_set():
         t = time.monotonic() - started
+        seq = (seq + 1) % 256
+        stat = journey.frame(seq, t)
+        if stat is not None:
+            beacon.inject(stat)
+            await asyncio.sleep(DEMO_REDRAW_S)
+            continue
         if t < DEMO_SESSION_STARTS_AFTER_S:
-            seq = (seq + 1) % 256
             beacon.inject(Frame(seq=seq, session=0, flags=Flags(0)))
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(DEMO_REDRAW_S)
             continue
         t -= DEMO_SESSION_STARTS_AFTER_S
         phase = t % 120
@@ -105,7 +117,6 @@ async def _demo_character(beacon, stop: asyncio.Event) -> None:
         else:
             target = 3.2 + (4.0 - 3.2) * min(1.0, (yps - 7.0) / 7.0)
         target += 0.05 * math.sin(t / 7.0)
-        seq = (seq + 1) % 256
         beacon.inject(
             Frame(
                 seq=seq,
@@ -115,7 +126,7 @@ async def _demo_character(beacon, stop: asyncio.Event) -> None:
                 char_speed_raw=yps_to_raw(yps),
             )
         )
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(DEMO_REDRAW_S)
 
 
 # ---- the console, and being closed from outside --------------------------------------
@@ -286,6 +297,9 @@ async def _run(args: argparse.Namespace) -> int:
         beacon = _build_beacon(cfg)
     heart_rate = None if simulate else HeartRateMonitor(enabled=cfg.heart_rate.enabled, address=cfg.heart_rate.address)
     app = App(cfg, data_dir, treadmill=treadmill, beacon=beacon, heart_rate=heart_rate)
+    if args.demo:
+        # The demo's made-up character must not turn up among the real ones later.
+        app.journeys.use_memory_only(demo=True)
 
     stop = asyncio.Event()
     stopped = threading.Event()  # set once app.stop() has run: belt stopped, walk saved

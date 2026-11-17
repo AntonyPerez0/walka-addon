@@ -111,7 +111,12 @@ end
 -- treadmill), and when known: yards, character, avgHr, maxHr, stepsSource.
 -- The numbers are finite and `start`/`end` are times date() can format
 -- (end >= start); records that cannot be made to fit are left out.
-function SessionLog.merge(ownSessions, companionData)
+--
+-- `absorbed` (optional) is a table to fill in: for each of the addon's
+-- records that went into a measured walk, absorbed[its index] is that
+-- walk's entry. The journey uses it to take over the measured numbers
+-- (Core/Journey.lua).
+function SessionLog.merge(ownSessions, companionData, absorbed)
     local merged = {}
     local companionSessions = companionData and companionData.sessions
     local used = {}
@@ -147,6 +152,9 @@ function SessionLog.merge(ownSessions, companionData)
                         and SessionLog.sameWalk(ownSessions[index], record) then
                         local own = ownSessions[index]
                         used[index] = true
+                        if absorbed then
+                            absorbed[index] = entry
+                        end
                         entry.yards = (entry.yards or 0) + number(own.yards)
                         entry.character = entry.character or own.character
                     end

@@ -589,3 +589,74 @@ def test_a_disabled_edit_box_takes_no_typing(bare):
     bare.run("box:Enable()")
     assert bare.M.type_text(bare.global_("box"), "82", True) is True
     assert lua_list(bare.global_("typed")) == ["82"]
+
+
+# ---- the character, time played, screenshots ---------------------------------------------------------
+
+
+def test_character_apis_answer_from_the_game_state(bare, snapshot):
+    for name in ("UnitLevel", "GetMaxPlayerLevel", "UnitClass", "UnitFactionGroup", "RequestTimePlayed", "Screenshot"):
+        assert snapshot.knows_global(name), name
+    assert "TIME_PLAYED_MSG" in snapshot.events and "PLAYER_LEVEL_UP" in snapshot.events
+    assert bare.run("return UnitLevel('player'), GetMaxPlayerLevel()") == (17, 60)
+    assert bare.run("return UnitClass('player')") == ("Rogue", "ROGUE", 4)
+    assert bare.run("return UnitFactionGroup('player')") == ("Alliance", "Alliance")
+    bare.set(level=60, classId=8, classFile="MAGE", className="Mage", faction="Horde")
+    assert bare.run("return UnitLevel('player'), (select(3, UnitClass('player'))), (UnitFactionGroup('player'))") == (60, 8, "Horde")
+    raises(bare, "UnitLevel('target')", "only models the player")
+    raises(bare, "UnitClass()", "Usage")
+
+
+def test_unit_class_is_secret_while_unit_identity_is_restricted(bare, snapshot):
+    assert snapshot.secret["UnitClass"] == ["SecretWhenUnitIdentityRestricted"]
+    assert "UnitLevel" not in snapshot.secret and "UnitFactionGroup" not in snapshot.secret
+    bare.set(identitySecret=True)
+    values = lua_list(bare.run("return { UnitClass('player') }"))
+    assert len(values) == 3 and all(bare.M.is_secret(value) for value in values)
+    assert bare.run("return type((select(3, UnitClass('player'))))") == "number"
+    assert bare.run("return UnitLevel('player')") == 17, "the level is not hidden in this client"
+
+
+def test_time_played_is_only_told_when_asked_and_the_chat_prints_every_answer(bare):
+    heard = bare.run(
+        "local heard = {} local f = CreateFrame('Frame') f:RegisterEvent('TIME_PLAYED_MSG') "
+        "f:SetScript('OnEvent', function(_, _, total, thisLevel) heard[#heard + 1] = { total, thisLevel } end) "
+        "return heard"
+    )
+    bare.advance(10)
+    assert lua_list(heard) == [] and bare.printed == []
+    bare.run("RequestTimePlayed()")
+    assert lua_list(heard) == [], "the answer comes from the server, not at once"
+    bare.frame(0.1)
+    assert [lua_list(answer) for answer in lua_list(heard)] == [[77110, 4010]]
+    # What ChatFrameUtil.DisplayTimePlayed puts in the chat - for anybody's request.
+    assert bare.printed == [
+        "Total time played: 0 days, 21 hours, 25 minutes, 10 seconds",
+        "Time played this level: 0 days, 1 hours, 6 minutes, 50 seconds",
+    ]
+    assert len(lua_list(bare.log.played_requests)) == 1
+    bare.advance(100)                       # time in the game is time played
+    bare.run("RequestTimePlayed() RequestTimePlayed()")
+    bare.frame(0.1)
+    assert [lua_list(answer)[0] for answer in lua_list(heard)] == [77110, 77210, 77210]
+    assert len(bare.printed) == 6
+
+
+def test_time_played_does_not_grow_while_logged_out(make_rt):
+    rt = make_rt()
+    rt.advance(50)
+    later = rt.reload(gap=3600)
+    assert later.game.played == pytest.approx(77150) and later.game.clock == pytest.approx(rt.game.clock + 3600)
+
+
+def test_a_server_that_does_not_answer(make_rt):
+    rt = make_rt(load=False, state={"playedAnswers": False})
+    rt.run("RequestTimePlayed()")
+    rt.advance(5)
+    assert rt.printed == [] and len(lua_list(rt.log.played_requests)) == 1
+
+
+def test_screenshot_is_recorded(bare):
+    assert lua_list(bare.log.screenshots) == []
+    bare.run("Screenshot()")
+    assert lua_list(bare.log.screenshots) == [bare.game.clock]

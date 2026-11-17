@@ -886,7 +886,7 @@ def test_history_window_in_combat_with_secret_values(full_rt):
     rt.tick(3)
     assert position_text(rt, frame) == "13-20 of 62", "a refresh keeps the place in the list"
     wheel(rt, frame, 6)
-    assert cells(rows(rt, frame)[0])["Character"] == "?", "the character's name was hidden when the session began"
+    assert cells(rows(rt, frame)[0])["Character"] == "Tester", "the name read at login, though hidden as the session began"
     assert rt.find_secrets() == []
 
 

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-from walka import beacon
 from walka.protocol import Flags
 
 from .conftest import KMH_PER_MPH, nearest_step
@@ -32,7 +31,9 @@ def live_speed(rt):
 
 
 def flags(rt):
-    return beacon.cells_to_frame(rt.beacon_cells()).flags
+    """The flags of the live frame on the strip (one tick later if a stat
+    frame is showing: every fifth redraw carries a number of the journey)."""
+    return rt.live_frame().flags
 
 
 def collect_events(rt):
@@ -137,7 +138,7 @@ def test_full_session_lifecycle(rt):
     record = records[0]
     assert record["id"] == 1
     assert record["start"] == started["start"]
-    assert record["end"] == rt.game.clock
+    assert record["end"] == int(rt.game.clock)      # (the addon's clock counts whole seconds)
     assert record["end"] - record["start"] == pytest.approx(103, abs=1)
     assert record["seconds"] == round(before_stop["seconds"])
     assert record["distanceM"] == round(before_stop["distanceM"])
@@ -300,7 +301,7 @@ def test_afk_ending_alone_does_not_resume_the_session(rt):
         rt.tick()
         assert rt.walka.IsPaused(rt.walka)
         assert flags(rt) == AFK_PAUSED, "still paused, still flagged as the AFK pause"
-        assert beacon.cells_to_frame(rt.beacon_cells()).target_raw == 0
+        assert rt.live_frame().target_raw == 0
     assert session(rt) == frozen and frozen["pauseReason"] == "afk"
     assert live_speed(rt) == (0, 0)
     assert ("SESSION", "resume") not in events
@@ -446,7 +447,7 @@ def test_reload_in_mid_session_restores_it(rt):
     fresh.tick()
     assert live_speed(fresh)[1] == pytest.approx(target_before)
     assert flags(fresh) == Flags.ACTIVE | Flags.MOVING
-    assert beacon.cells_to_frame(fresh.beacon_cells()).session == before["id"]
+    assert fresh.live_frame().session == before["id"]
     fresh.tick(100)
     assert session(fresh)["seconds"] == pytest.approx(before["seconds"] + 10, abs=0.3)
     fresh.slash("/walka stop")
@@ -668,7 +669,7 @@ def test_an_error_in_a_subscriber_reaches_the_error_handler_and_does_not_stop_th
     with pytest.raises(AddonError, match="boom from a window"):
         rt.tick(10)
     # The beacon kept going regardless.
-    assert beacon.cells_to_frame(rt.beacon_cells()).seq == 10
+    assert rt.shown_frame().seq == 10
 
 
 def test_pausing_by_hand_during_an_afk_pause_makes_it_stick(rt):

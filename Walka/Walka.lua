@@ -3,7 +3,8 @@
 -- This file is the addon's core: saved settings, the walking session
 -- (start / pause / resume / stop), and the ten-times-a-second tick that
 -- reads the character's state, runs the speed model and paints the beacon
--- for the companion app. The windows live in UI/.
+-- for the companion app. The windows live in UI/; the character's journey
+-- is kept by Tracker.lua, which this file drives.
 
 local ADDON_NAME, ns = ...
 
@@ -13,6 +14,7 @@ local Metrics = ns.Metrics
 local SessionLog = ns.SessionLog
 local Game = ns.Game
 local Beacon = ns.Beacon
+local Tracker = ns.Tracker
 
 local Walka = {}
 ns.Walka = Walka
@@ -414,7 +416,9 @@ function Walka:StartSession()
         yards = 0,
         maxKmh = 0,
         paused = false,
-        character = Game.CharacterName(),
+        -- (The name as read at login, should the game be hiding it now:
+        -- the walk is this character's either way.)
+        character = Tracker.CharacterName(),
     }
     self.model:reset(nil)
     self.estimator:reset(0)
@@ -509,8 +513,10 @@ function Walka:StopSession(endTime)
         local sessions = self.db.sessions
         table.insert(sessions, record)
         while #sessions > Walka.MAX_SESSIONS do
-            table.remove(sessions, 1)
+            -- (The character's journey keeps what the walk added to it.)
+            Tracker.Forget(table.remove(sessions, 1))
         end
+        Tracker.HistoryChanged()
         if self.db.settings.announce then
             self:Print(string.format(
                 "session finished: %s, %s, %s steps, %d kcal (estimates - /reload to load the companion's numbers).",
@@ -543,9 +549,14 @@ function Walka:GetTotals(history)
     return SessionLog.totals(history or self:GetHistory(), Game.Now(), self.session, data and data.older)
 end
 
---- Forget the addon's own session history (the companion's is untouched).
+--- Forget the addon's own session history (the companion's is untouched,
+-- and so is what the walks added to each character's journey).
 function Walka:ClearHistory()
+    for _, record in ipairs(self.db.sessions) do
+        Tracker.Forget(record)
+    end
     self.db.sessions = {}
+    Tracker.HistoryChanged()
     self:Fire("HISTORY")
 end
 
@@ -575,6 +586,8 @@ end
 function Walka:Tick(dt)
     local state = Game.Read()
     self.gameState = state
+    -- The journey counts every yard, with or without a session.
+    Tracker.Travel(state, dt)
     local session = self.session
     local flags = stateFlags(state)
     local target = 0
@@ -610,6 +623,12 @@ function Walka:Tick(dt)
     self.targetKmh = target
 
     beaconFrame.seq = (beaconFrame.seq + 1) % 256
+    -- Every fifth redraw shows one number of the character's journey in
+    -- place of the live frame (docs/PROTOCOL.md, section 4). Everything
+    -- above has run as on any other tick; only the picture differs.
+    if Tracker.SendStat(beaconFrame.seq) then
+        return
+    end
     beaconFrame.session = session and session.id or 0
     beaconFrame.flags = flags
     beaconFrame.target = Protocol.kmhToRaw(target)
@@ -706,10 +725,14 @@ function Walka:OnLoad()
     self.estimator = Metrics.Estimator.new(self.estimatorLimits)
     self.targetKmh = 0
     self.gameState = Game.Read()
+    -- Before a saved session is restored: closing an old one files it in
+    -- the history, which the tracker has to hear about.
+    Tracker.Load(self)
 
     Beacon.Create()
     self:ApplySettings()
     restoreSession(self)
+    Tracker.Settle()
     Beacon.GetFrame():SetScript("OnUpdate", onUpdate)
     self.loaded = true
     self:Fire("LOADED")
@@ -757,6 +780,7 @@ local HELP = {
     "/walka - show or hide the HUD",
     "/walka start | pause | resume | stop - control the walking session",
     "/walka history - past sessions and totals",
+    "/walka journey - your character's journey so far: level, time played, your steps and its steps",
     "/walka options - settings",
     "/walka status - what the addon is doing right now",
     "/walka weight 180lb (or 82kg) - your weight, for calorie estimates",
@@ -799,6 +823,10 @@ local function slash(message)
     elseif command == "history" or command == "log" then
         if ns.History then
             ns.History.Toggle()
+        end
+    elseif command == "journey" or command == "card" then
+        if ns.JourneyWindow then
+            ns.JourneyWindow.Toggle()
         end
     elseif command == "options" or command == "config" or command == "settings" then
         if ns.Options then

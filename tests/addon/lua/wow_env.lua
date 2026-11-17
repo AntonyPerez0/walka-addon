@@ -48,6 +48,8 @@ local log = {
     settings_opened = {},
     blocked = {},
     reloads = {},        -- ReloadUI() calls: the clock (state.clock) at each
+    played_requests = {},-- RequestTimePlayed() calls: the clock at each
+    screenshots = {},    -- Screenshot() calls: the clock at each
 }
 M.log = log
 
@@ -76,6 +78,7 @@ local state = {
     statsSecret = false,     -- unit stats restricted: GetUnitSpeed is secret
     chatLockdown = false,    -- chat messaging lockdown: UnitIsAFK is secret
     nameSecret = false,      -- unit name identity restricted: UnitName is secret
+    identitySecret = false,  -- unit identity restricted: UnitClass is secret
     predicateErrors = false, -- C_Secrets.ShouldUnitStatsBeSecret() raises
     predicateLies = false,   -- ... or says "not secret" while values are
     -- client
@@ -84,6 +87,16 @@ local state = {
     locale = "enUS",
     name = "Tester",
     realm = "Azeroth",
+    -- the character
+    level = 17,
+    maxLevel = 60,           -- GetMaxPlayerLevel()
+    className = "Rogue",     -- UnitClass("player"): localised name, file name, id
+    classFile = "ROGUE",
+    classId = 4,
+    faction = "Alliance",    -- UnitFactionGroup("player"): "Alliance", "Horde" or "Neutral"
+    played = 77100,          -- /played total in seconds; grows while the game runs
+    playedThisLevel = 4000,
+    playedAnswers = true,    -- false: the server never answers RequestTimePlayed()
     cursorX = 0,
     cursorY = 0,
     shift = false,
@@ -635,6 +648,22 @@ end)
 define("UnitExists", function(unit)
     return unitArgument("UnitExists", unit) == "player"
 end)
+define("UnitLevel", function(unit)
+    playerOnly("UnitLevel", unitArgument("UnitLevel", unit))
+    return state.level
+end)
+define("GetMaxPlayerLevel", function() return state.maxLevel end)
+define("UnitClass", function(unit)
+    playerOnly("UnitClass", unitArgument("UnitClass", unit))
+    if state.identitySecret then
+        return makeSecret("string"), makeSecret("string"), makeSecret("number")
+    end
+    return state.className, state.classFile, state.classId
+end)
+define("UnitFactionGroup", function(unit)
+    playerOnly("UnitFactionGroup", unitArgument("UnitFactionGroup", unit))
+    return state.faction, state.faction
+end)
 define("GetRealmName", function() return state.realm end)
 define("GetNormalizedRealmName", function() return (string.gsub(state.realm, "[%s%-]", "")) end)
 define("GetLocale", function() return state.locale end)
@@ -663,6 +692,23 @@ define("PlaySound", function(soundKitID, channel)
     end
     log.sounds[#log.sounds + 1] = soundKitID
     return true, #log.sounds
+end)
+
+-- RequestTimePlayed() asks the server; the answer comes back a moment later
+-- as TIME_PLAYED_MSG (see M.run_frame). Nothing else gives an addon the
+-- time played.
+local playedAnswersDue = 0
+define("RequestTimePlayed", function()
+    log.played_requests[#log.played_requests + 1] = state.clock
+    if state.playedAnswers ~= false then
+        playedAnswersDue = playedAnswersDue + 1
+    end
+end)
+
+-- Screenshot() saves a picture of the whole screen to the Screenshots
+-- folder. The mock only records that it was asked to.
+define("Screenshot", function()
+    log.screenshots[#log.screenshots + 1] = state.clock
 end)
 
 -- C_UI.Reload() throws the whole Lua state away and loads the interface
@@ -3912,12 +3958,37 @@ function M.fire_event(event, ...)
     return count
 end
 
+-- "1 days, 2 hours, 3 minutes, 4 seconds", as ChatFrameUtil.TimeBreakDown
+-- and TIME_DAYHOURMINUTESECOND put it.
+local function timeBreakDown(seconds)
+    return sformat("%d days, %d hours, %d minutes, %d seconds",
+        floor(seconds / 86400), floor(seconds % 86400 / 3600), floor(seconds % 3600 / 60), seconds % 60)
+end
+
+--- The server's answer to RequestTimePlayed(). Every chat window that
+-- shows system messages prints it (ChatFrameMixin:SystemEventHandler ->
+-- ChatFrameUtil.DisplayTimePlayed) - there is no telling who asked - and
+-- every frame registered for TIME_PLAYED_MSG gets the event.
+function M.time_played_message()
+    local total, thisLevel = floor(state.played), floor(state.playedThisLevel)
+    log.printed[#log.printed + 1] = "Total time played: " .. timeBreakDown(total)
+    log.printed[#log.printed + 1] = "Time played this level: " .. timeBreakDown(thisLevel)
+    M.fire_event("TIME_PLAYED_MSG", total, thisLevel)
+end
+
 --- One rendered frame: advance the clocks, run timers, OnUpdate and animations.
 function M.run_frame(elapsed)
     -- Rounded to the microsecond so that thousands of 0.1 s steps do not
     -- drift (the epoch is a large number to keep adding small ones to).
     state.clock = floor((state.clock + elapsed) * 1e6 + 0.5) / 1e6
     state.uptime = floor((state.uptime + elapsed) * 1e6 + 0.5) / 1e6
+    -- Time in the game is time played.
+    state.played = floor((state.played + elapsed) * 1e6 + 0.5) / 1e6
+    state.playedThisLevel = floor((state.playedThisLevel + elapsed) * 1e6 + 0.5) / 1e6
+    while playedAnswersDue > 0 do
+        playedAnswersDue = playedAnswersDue - 1
+        M.time_played_message()
+    end
     M.call(runTimers)
     local count = #allWidgets
     for index = 1, count do

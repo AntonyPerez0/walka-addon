@@ -31,12 +31,6 @@ local MIN_ALPHA, MAX_ALPHA = 0.3, 1.0
 -- middle - clear of the unit frames, the chat and the action bars.
 local DEFAULT_POINT = { "LEFT", "LEFT", 40, 80 }
 
-local VALID_POINT = {
-    TOPLEFT = true, TOP = true, TOPRIGHT = true,
-    LEFT = true, CENTER = true, RIGHT = true,
-    BOTTOMLEFT = true, BOTTOM = true, BOTTOMRIGHT = true,
-}
-
 local frame          -- the HUD; nil until the core has loaded
 local parts = {}     -- its font strings, textures and buttons
 
@@ -346,72 +340,17 @@ end
 ----------------------------------------------------------------------------
 -- Position
 ----------------------------------------------------------------------------
--- Saved as { point, relativePoint, x, y } relative to UIParent, with the
--- offsets in UIParent's units (i.e. multiplied by the HUD's scale), so that
--- changing the HUD's scale later does not move its anchor.
-
--- A saved offset as a number SetPoint can take, or nil. The saved variables
--- are a file on disk: whatever is in it, an anchor must not come out as
--- not-a-number, infinite, or light-years off the screen. (The frame is
--- clamped to the screen, so anything in this range ends up visible.)
-local MAX_OFFSET = 20000
-
-local function savedOffset(value)
-    value = tonumber(value)
-    if value and value >= -MAX_OFFSET and value <= MAX_OFFSET then
-        return value
-    end
-    return nil
-end
+-- Remembered in the settings as Widgets.Placement describes it.
 
 local function applyPosition()
     if frame.walkaMoving then
         return
     end
-    local saved = Walka:Get("hud.point")
-    local point, x, y = DEFAULT_POINT, DEFAULT_POINT[3], DEFAULT_POINT[4]
-    if type(saved) == "table" and VALID_POINT[saved[1]] and VALID_POINT[saved[2]] then
-        local savedX, savedY = savedOffset(saved[3]), savedOffset(saved[4])
-        if savedX and savedY then
-            point, x, y = saved, savedX, savedY
-        end
-    end
-    local scale = frame:GetScale()
-    if not scale or scale <= 0 then
-        scale = 1
-    end
-    frame:ClearAllPoints()
-    frame:SetPoint(point[1], UIParent, point[2], x / scale, y / scale)
-end
-
--- Describe where the HUD is now, anchored to the nearest edge or corner of
--- the screen so that it stays there if the resolution changes.
-local function currentPoint()
-    local scale = frame:GetScale() or 1
-    local left, right, top, bottom = frame:GetLeft(), frame:GetRight(), frame:GetTop(), frame:GetBottom()
-    local width, height = UIParent:GetWidth(), UIParent:GetHeight()
-    if not (left and right and top and bottom and width and height) or width <= 0 or height <= 0 then
-        return nil
-    end
-    -- Frame edges in UIParent's units, relative to UIParent's bottom-left.
-    local originX, originY = UIParent:GetLeft() or 0, UIParent:GetBottom() or 0
-    left, right = left * scale - originX, right * scale - originX
-    top, bottom = top * scale - originY, bottom * scale - originY
-    local centreX, centreY = (left + right) / 2, (top + bottom) / 2
-
-    local horizontal = centreX < width / 3 and "LEFT" or centreX > width * 2 / 3 and "RIGHT" or ""
-    local vertical = centreY > height * 2 / 3 and "TOP" or centreY < height / 3 and "BOTTOM" or ""
-    local point = vertical .. horizontal
-    if point == "" then
-        point = "CENTER"
-    end
-    local x = horizontal == "LEFT" and left or horizontal == "RIGHT" and right - width or centreX - width / 2
-    local y = vertical == "TOP" and top - height or vertical == "BOTTOM" and bottom or centreY - height / 2
-    return { point, point, math.floor(x + 0.5), math.floor(y + 0.5) }
+    Widgets.Place(frame, Walka:Get("hud.point"), DEFAULT_POINT)
 end
 
 local function savePosition()
-    local point = currentPoint()
+    local point = Widgets.Placement(frame)
     if point then
         -- Fires "SETTINGS", which re-anchors the frame to the saved point.
         Walka:Set("hud.point", point)
@@ -467,6 +406,11 @@ local function openMenu(owner)
         root:CreateButton("History", function()
             if ns.History then
                 ns.History.Show()
+            end
+        end)
+        root:CreateButton("Journey", function()
+            if ns.JourneyWindow then
+                ns.JourneyWindow.Show()
             end
         end)
         root:CreateButton("Options", function()

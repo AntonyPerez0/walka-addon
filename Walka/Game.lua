@@ -162,6 +162,74 @@ function Game.CharacterName()
     return name
 end
 
+--- `value` if it is an ordinary, finite number - nil if it is hidden, not a
+-- number at all, infinite or not-a-number. For numbers that arrive from
+-- the game by another road than this file (event arguments).
+function Game.PlainNumber(value)
+    if isSecret(value) or type(value) ~= "number" then
+        return nil
+    end
+    if value ~= value or value == math.huge or value == -math.huge then
+        return nil
+    end
+    return value
+end
+
+-- A whole number from 1 to 255, or 0 for "the game did not say": nil, a
+-- hidden value, text, or a number out of range.
+local function smallCount(value)
+    value = Game.PlainNumber(value)
+    if value and value >= 1 and value <= 255 then
+        return math.floor(value)
+    end
+    return 0
+end
+
+local FACTION = ns.Protocol.FACTION
+local FACTION_BY_TAG = { Alliance = FACTION.ALLIANCE, Horde = FACTION.HORDE }
+
+local character = { level = 0, maxLevel = 0, classId = 0, faction = 0 }
+
+--- Level, level cap, class id and faction (Protocol.FACTION) of the
+-- character, each a plain whole number - 0 where the game does not say, or
+-- hides it. Returns a table that is reused between calls.
+function Game.CharacterInfo()
+    local level = UnitLevel and UnitLevel("player")
+    character.level = smallCount(level)
+
+    -- The cap as this client reports it for the character.
+    local cap = GetMaxPlayerLevel and GetMaxPlayerLevel()
+    character.maxLevel = smallCount(cap)
+
+    local classId
+    if UnitClass then
+        local _, _, id = UnitClass("player")
+        classId = id
+    end
+    character.classId = smallCount(classId)
+
+    -- "Alliance", "Horde" or - for a character that has not chosen yet -
+    -- "Neutral": the tag, which is the same in every language.
+    local tag = UnitFactionGroup and UnitFactionGroup("player")
+    if isSecret(tag) or type(tag) ~= "string" then
+        character.faction = FACTION.UNKNOWN
+    else
+        character.faction = FACTION_BY_TAG[tag] or FACTION.UNKNOWN
+    end
+    return character
+end
+
+--- Ask the game for the character's time played. The answer comes as a
+-- TIME_PLAYED_MSG event - which the game's own chat window prints, too.
+-- Returns true if the question was asked.
+function Game.RequestTimePlayed()
+    if RequestTimePlayed then
+        RequestTimePlayed()
+        return true
+    end
+    return false
+end
+
 --- Seconds since the epoch on this computer's clock. The companion app
 -- stamps its sessions with the same clock, which is how the two are matched.
 function Game.Now()

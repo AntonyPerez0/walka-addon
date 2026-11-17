@@ -18,7 +18,9 @@ from .harness import lua_list
 
 
 def decode(rt) -> Frame:
-    return beacon.cells_to_frame(rt.beacon_cells())
+    """The live frame on the strip. Every fifth redraw shows a stat frame
+    instead; then this lets one more tick pass (WowRuntime.live_frame)."""
+    return rt.live_frame()
 
 
 # ---- cells ------------------------------------------------------------------------
@@ -43,13 +45,17 @@ def test_no_valid_frame_before_the_first_tick(rt):
 
 def test_every_tick_is_a_valid_frame_and_seq_advances_by_one(rt):
     previous = None
+    kinds = []
     for _ in range(300):                    # past the wrap at 256
         rt.tick()
-        frame = decode(rt)                  # checks preamble, postamble, CRC, version
-        assert frame.frame_type == protocol.TYPE_LIVE and frame.reserved == 0
+        frame = rt.shown_frame()            # checks preamble, postamble, CRC, version
+        assert frame.frame_type in (protocol.TYPE_LIVE, protocol.TYPE_STAT) and frame.reserved == 0
         if previous is not None:
-            assert frame.seq == (previous + 1) % 256
+            assert frame.seq == (previous + 1) % 256, "live and stat frames share one counter"
         previous = frame.seq
+        kinds.append(frame.frame_type)
+    # Four live frames, then one that carries a number of the journey.
+    assert kinds == ([protocol.TYPE_LIVE] * 4 + [protocol.TYPE_STAT]) * 60
 
 
 def test_seq_does_not_advance_between_ticks(rt):
@@ -180,9 +186,10 @@ def test_only_changed_cells_are_repainted_but_the_result_is_always_right(rt):
         rt.tick()
         cells = rt.beacon_cells()
         assert [int(value) for value in lua_list(rt.ns.Beacon.GetCells())] == cells
-        frame = beacon.cells_to_frame(cells)
-        assert frame.has(Flags.MOUNTED) == bool(rt.game.mounted)
-        assert frame.has(Flags.COMBAT) == bool(rt.game.combat)
+        frame = beacon.decode_cells(cells)
+        if isinstance(frame, Frame):        # (a stat frame says nothing of the state)
+            assert frame.has(Flags.MOUNTED) == bool(rt.game.mounted)
+            assert frame.has(Flags.COMBAT) == bool(rt.game.combat)
 
 
 # ---- pixels -------------------------------------------------------------------------

@@ -494,7 +494,7 @@ def test_right_click_menu(rt):
     walka = rt.walka
     assert ui.context_menu(rt, frame) == [
         "title:Walka", "checkbox:Lock position:false", "checkbox:Keep walking when standing:false",
-        "button:History", "button:Options", "divider:", "button:Hide",
+        "button:History", "button:Journey", "button:Options", "divider:", "button:Hide",
     ]
     ui.menu_click(rt, "Lock position")
     assert walka.Get(walka, "hud.locked") is True
@@ -505,6 +505,10 @@ def test_right_click_menu(rt):
     ui.context_menu(rt, frame)
     ui.menu_click(rt, "History")
     assert ui.is_visible(rt, rt.global_("WalkaHistoryFrame"))
+
+    ui.context_menu(rt, frame)
+    ui.menu_click(rt, "Journey")
+    assert ui.is_visible(rt, rt.global_("WalkaJourneyFrame"))
 
     ui.context_menu(rt, frame)
     ui.menu_click(rt, "Options")

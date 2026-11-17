@@ -290,6 +290,11 @@ def create_app(app: App) -> web.Application:
         app.sync_addon()
         return ok()
 
+    # ---- journey (the Share page) ------------------------------------------------
+    @routes.get("/api/journey")
+    async def journey(_request: web.Request) -> web.Response:
+        return web.json_response(app.journeys.to_api())
+
     # ---- addon -----------------------------------------------------------------
     @routes.get("/api/addon/locations")
     async def addon_locations(_request: web.Request) -> web.Response:

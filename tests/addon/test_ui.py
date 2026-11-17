@@ -44,11 +44,12 @@ def same(rt, a, b) -> bool:
 
 
 def window(rt, which):
-    """The HUD, the history window or the options page.
+    """The HUD, the history window, the journey window or the options page.
 
     The options page is the frame registered with the Settings window; of
-    the others, the HUD is the one created first (it exists from login) and
-    the history window the one created after it.
+    the others, the HUD is the one created first (it exists from login),
+    the history window the one created after it and the journey window the
+    one after that (the tests here open them in that order).
     """
     categories = list(rt.M.settings_categories.values())
     options = categories[0].frame if categories else None
@@ -56,7 +57,7 @@ def window(rt, which):
         return options
     others = [frame for frame in windows(rt) if options is None or not same(rt, frame, options)]
     others.sort(key=lambda frame: rt.inspect(frame)["serial"])
-    index = {"WalkaHUD": 0, "WalkaHistoryFrame": 1}[which]
+    index = {"WalkaHUD": 0, "WalkaHistoryFrame": 1, "WalkaJourneyFrame": 2}[which]
     return others[index] if len(others) > index else None
 
 
@@ -127,15 +128,17 @@ def full_rt(ui_rt, make_rt):
 
 def test_every_file_in_the_toc_loads(ui_rt):
     assert ui_rt.skipped_files == []
-    assert [name for name in ("Widgets", "HUD", "History", "Options") if ui_rt.ns[name] is None] == []
+    modules = ("Widgets", "HUD", "History", "JourneyWindow", "Options")
+    assert [name for name in modules if ui_rt.ns[name] is None] == []
     ui_rt.tick(20)
 
 
 def test_windows_have_walka_names_and_sit_under_uiparent(ui_rt):
     ui_rt.slash("/walka history")
+    ui_rt.slash("/walka journey")
     ui_rt.slash("/walka options")
-    assert len(windows(ui_rt)) >= 3, "HUD, history window and options page"
-    for name in ("WalkaHUD", "WalkaHistoryFrame"):
+    assert len(windows(ui_rt)) >= 4, "HUD, history window, journey window and options page"
+    for name in ("WalkaHUD", "WalkaHistoryFrame", "WalkaJourneyFrame"):
         frame = window(ui_rt, name)
         assert frame is not None, name
         assert ui_rt.inspect(frame)["name"].startswith("Walka")
@@ -156,7 +159,10 @@ def rt_parent_chain_has_uiparent(rt, frame) -> bool:
 
 def test_frames_closed_with_escape_exist(ui_rt):
     ui_rt.slash("/walka history")
-    for name in lua_list(ui_rt.global_("UISpecialFrames")):
+    ui_rt.slash("/walka journey")
+    listed = lua_list(ui_rt.global_("UISpecialFrames"))
+    assert len(listed) == 2
+    for name in listed:
         assert ui_rt.global_(name) is not None, f"UISpecialFrames lists {name}, which is not a frame"
 
 
@@ -575,10 +581,11 @@ def test_ui_keeps_working_with_secret_values(full_rt):
     rt.set(speed=7.0)
     rt.slash("/walka start")
     rt.slash("/walka history")
+    rt.slash("/walka journey")
     open_options(rt)
     rt.tick(50)
     rt.enter_combat()
-    rt.set(chatLockdown=True, nameSecret=True)
+    rt.set(chatLockdown=True, nameSecret=True, identitySecret=True)
     for step in range(120):
         rt.set(speed=[7.0, 0, 3.0, 14.0][step % 4], mounted=step % 4 == 3)
         rt.tick(5)
@@ -587,7 +594,7 @@ def test_ui_keeps_working_with_secret_values(full_rt):
         for widget in rt.descendants(frame, visible=True):
             if rt.M.script_set(widget, "OnEnter"):
                 rt.hover(widget)
-    for name in ("WalkaHUD", "WalkaHistoryFrame"):
+    for name in ("WalkaHUD", "WalkaHistoryFrame", "WalkaJourneyFrame"):
         for button in rt.descendants(window(rt, name), "Button", visible=True):
             if rt.inspect(button)["visible"]:
                 rt.click(button)
@@ -601,7 +608,8 @@ def test_ui_keeps_working_with_secret_values(full_rt):
 
 
 SLASHES = [
-    "/walka", "/walka start", "/walka pause", "/walka resume", "/walka stop", "/walka history", "/walka options",
+    "/walka", "/walka start", "/walka pause", "/walka resume", "/walka stop", "/walka history", "/walka journey",
+    "/walka options",
     "/walka status", "/walka units mph", "/walka units kmh", "/walka beacon off", "/walka beacon on",
     "/walka beacon size 2", "/walka beacon size 8", "/walka weight 60kg", "/walka height 190cm", "/walka show",
 ]
@@ -613,6 +621,7 @@ def test_random_use_never_breaks_anything(full_rt, seed):
     rt = full_rt
     rng = random.Random(seed)
     rt.slash("/walka history")
+    rt.slash("/walka journey")
     rt.slash("/walka options")
     rt.tick()
     used: set[str] = set()
@@ -672,8 +681,7 @@ def test_random_use_never_breaks_anything(full_rt, seed):
             assert rt.find_secrets() == []
             settings_are_sane(rt)
             if rt.db.settings.beacon.enabled:
-                frame = beacon.cells_to_frame(rt.beacon_cells())
-                assert frame.has(Flags.ACTIVE) == bool(rt.walka.IsActive(rt.walka))
+                assert rt.live_frame().has(Flags.ACTIVE) == bool(rt.walka.IsActive(rt.walka))
     assert lua_list(rt.log.blocked) == []
     # The run really did use the controls, not just look at them.
     assert {"Button", "CheckButton", "Slider", "EditBox"} <= used, used

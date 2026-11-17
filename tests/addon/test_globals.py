@@ -28,17 +28,20 @@ def busy_rt(make_rt):
     )
     rt = make_rt(files={"CompanionData.lua": companion})
     rt.set(speed=7.0)
-    for command in ("start", "status", "pause", "resume", "history", "options", "weight 80kg", "height 180cm",
-                    "units kmh", "units mph", "beacon size 4", "beacon off", "beacon on", "help", "hide", "show"):
+    for command in ("start", "status", "pause", "resume", "history", "journey", "options", "weight 80kg",
+                    "height 180cm", "units kmh", "units mph", "beacon size 4", "beacon off", "beacon on", "help",
+                    "hide", "show"):
         rt.slash("/walka " + command)
         rt.tick(3)
     rt.tick(250)
     rt.enter_combat()
-    rt.set(chatLockdown=True, nameSecret=True, mounted=True, afk=True)
+    rt.set(chatLockdown=True, nameSecret=True, identitySecret=True, mounted=True, afk=True)
+    rt.fire_event("PLAYER_LEVEL_UP", 18)
+    rt.fire_event("PLAYER_ENTERING_WORLD", False, False)
     rt.tick(30)
     rt.slash("/walka options")          # refused in combat
     rt.leave_combat()
-    rt.set(chatLockdown=False, nameSecret=False, mounted=False, afk=False, taxi=True)
+    rt.set(chatLockdown=False, nameSecret=False, identitySecret=False, mounted=False, afk=False, taxi=True)
     rt.tick(30)
     rt.M.set_screen(2560, 1440)
     rt.M.set_ui_scale(0.8)
@@ -153,11 +156,12 @@ def test_toc_metadata(rt, snapshot):
 
 
 def test_core_files_do_not_need_the_wow_api(addon_dir):
-    # Protocol, SpeedModel, Metrics and SessionLog promise to be pure Lua 5.1
-    # so that other tools can run them: load each in a bare Lua state.
+    # Protocol, SpeedModel, Metrics, SessionLog and Journey promise to be
+    # pure Lua 5.1 so that other tools can run them: load each in a bare Lua
+    # state.
     from lupa.lua51 import LuaRuntime
 
-    for name in ("Protocol", "SpeedModel", "Metrics", "SessionLog"):
+    for name in ("Protocol", "SpeedModel", "Metrics", "SessionLog", "Journey"):
         lua = LuaRuntime(unpack_returned_tuples=True)
         lua.execute(
             "for _, name in ipairs({'CreateFrame', 'GetTime', 'date', 'time', 'print', 'wipe', 'tinsert', 'format'}) do _G[name] = nil end"

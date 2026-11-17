@@ -45,6 +45,15 @@ def history(rt: WowRuntime, *, open_it: bool = True) -> Any:
     return frame
 
 
+def journey(rt: WowRuntime, *, open_it: bool = True) -> Any:
+    if open_it and not is_visible(rt, rt.global_("WalkaJourneyFrame")):
+        rt.ns.JourneyWindow.Show()
+        rt.check_errors()
+    frame = rt.global_("WalkaJourneyFrame")
+    assert frame is not None, "the journey window does not exist"
+    return frame
+
+
 def options(rt: WowRuntime, *, open_it: bool = True) -> Any:
     """The options page (opened through the Settings window)."""
     if open_it:

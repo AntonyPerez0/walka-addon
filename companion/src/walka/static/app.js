@@ -10,8 +10,9 @@ import { OFFLINE, describe, health } from "./status.js";
 import { initLive, updateLive } from "./live.js";
 import { historyUnitsChanged, initHistory, updateHistory } from "./history.js";
 import { initSettings, settingsUnitsChanged, updateSettings } from "./settings.js";
+import { initShare, shareUnitsChanged, updateShare } from "./share.js";
 
-const VIEWS = ["live", "history", "settings"];
+const VIEWS = ["live", "history", "share", "settings"];
 const STALE_AFTER_MS = 3000; // snapshots arrive every 500 ms
 const CONNECTING = {
   tone: "idle",
@@ -75,6 +76,7 @@ function render() {
   if (view === "live") updateLive(s, summary, links, online);
   else if (s && view === "history") updateHistory(s);
   else if (s && view === "settings") updateSettings(s, links);
+  else if (s && view === "share") updateShare(s);
 }
 
 function unitsChanged(units) {
@@ -82,6 +84,7 @@ function unitsChanged(units) {
   state.units = units;
   historyUnitsChanged();
   settingsUnitsChanged();
+  shareUnitsChanged();
   render();
 }
 
@@ -184,6 +187,7 @@ async function stop(button) {
 
 initLive();
 initHistory();
+initShare();
 initSettings({
   onUnits: (units) => {
     unitsLockedUntil = performance.now() + 1500;

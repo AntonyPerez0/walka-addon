@@ -124,6 +124,7 @@ the session resumes when your character next moves.
 | `/walka start` · `pause` · `resume` · `stop` | control the session |
 | `/walka keepwalking on` \| `off` | hold the walking pace when your character stops |
 | `/walka history` | past sessions, totals, 7-day chart |
+| `/walka journey` | your character's journey so far (see [below](#your-journey-and-a-picture-to-share)) |
 | `/walka options` | settings |
 | `/walka status` | what the addon is doing right now |
 | `/walka weight 180lb` · `/walka height 5'11` | your body, if you do not run the companion |
@@ -192,6 +193,65 @@ Each walk can be downloaded as a **TCX** file (dashboard → *History* → a
 walk → *TCX*) and imported by hand: on connect.garmin.com, *Activities* →
 *Import*. Imported walks show time, distance, calories and heart rate.
 Garmin does not add their steps to your daily step total.
+
+## Your journey, and a picture to share
+
+Walka keeps a record for every character you play: the level it has
+reached, its time played and how far it has travelled on foot - and next to
+that the real walking *you* did while playing it. `/walka journey` shows it
+in game, and the dashboard's **Share** page turns it into a picture you can
+post.
+
+1. Log in with the companion running. The character's numbers reach the
+   companion within about ten seconds (over the same strip as everything
+   else) and are remembered there, so the picture can also be made later,
+   with the game closed.
+2. Dashboard → *Share*. Pick the character if you have several, change the
+   words, tick what should be on the picture, and choose a theme (Sapphire,
+   Ember, Wildwood, Frost or Parchment) and a size: portrait 1080×1350,
+   square 1080×1080, story 1080×1920 or wide 1200×675.
+3. **Download PNG** - or **Copy image** and paste it straight into a post or
+   a chat. (Copying works when the dashboard is open on the PC itself;
+   downloading works everywhere, also from your phone.)
+
+What is on it:
+
+| On the picture | What it is |
+|---|---|
+| **My steps** | Your real-world steps, and under them the distance you walked. With *This character's walks* these are the walks you did while playing that character, as the addon counts them; with *All my walks* they are everything the companion has recorded, with any game or none. |
+| **Character level** | The level, and the level cap of the game. |
+| **Time played** | The game's own `/played` for this character. |
+| **Character steps** | How far the character has gone on foot since Walka began tracking it, as steps, with the in-game distance under it. |
+| **Calories** | The same estimate as everywhere else in Walka (see [Calories and steps](#calories-and-steps)), rounded. |
+| *Totals through ...* | The day the numbers were last received from the game. |
+
+A `~` in front of a number means "about":
+
+* **Character steps are a convention.** The game does not count steps, so
+  Walka says a character takes 2,000 steps to the in-game mile of 1,760
+  yards - 0.88 yards a step. "On foot" is moving while not mounted, not on
+  a flight path, not flying and not swimming; running back as a ghost and
+  jumping count. In combat, where the game hides the exact speed, the
+  addon's estimate is used. Distance is counted from the day the addon was
+  installed, not from level 1.
+* **Calories** are always an estimate.
+* **Your own steps** carry a `~` only while part of them is still the
+  addon's estimate, until the game has loaded what the treadmill measured
+  (*Sync*, or the next login).
+
+Private by default:
+
+* The picture is drawn in your browser from numbers that are already on
+  your PC. Nothing is uploaded and nothing is posted for you.
+* Your character's name, and the small line with your weight and average
+  pace, are **off** until you tick them. The realm never leaves the game:
+  the companion is only sent a number that tells your characters apart.
+* The downloaded file is named after the date, never after the character.
+* The design is Walka's own and is drawn by the page itself: no game
+  artwork, logos or fonts are used.
+
+`py -m walka --demo` has a made-up character to try the page with; it is
+never saved.
 
 ## Other games, or no game
 
@@ -292,7 +352,9 @@ py -m pytest          # companion tests + addon tests (the addon runs under a mo
 * `companion/src/walka/` - `governor.py` (the safety rules), `treadmill/`
   (Bluetooth FTMS driver and a simulator), `capture.py` + `beacon.py`
   (reading the strip), `session.py`, `addon_sync.py`, `web.py` + `static/`
-  (dashboard), `app.py` (wiring), `cli.py`.
+  (dashboard), `app.py` (wiring), `cli.py`; `journey.py` (each character's
+  journey, put together from the strip) and `static/share.js`, `card.js`,
+  `cardmodel.js` (the Share page and the picture it draws).
 * `tests/addon/` - loads the real addon files into a mock of the game's
   API that is checked against Blizzard's published API documentation for
   this client build (`tools/gen_api_snapshot.py` regenerates the snapshot).

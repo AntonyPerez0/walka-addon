@@ -43,6 +43,7 @@
     <nav class="tabs" aria-label="Views">
       <a href="#live" data-view="live">Live</a>
       <a href="#history" data-view="history">History</a>
+      <a href="#share" data-view="share">Share</a>
       <a href="#settings" data-view="settings">Settings</a>
     </nav>
   </header>
@@ -315,6 +316,96 @@
     <p class="empty" id="sessions-error" role="alert" hidden></p>
     <div class="btn-row center"><button class="btn" id="sessions-more" type="button" hidden>Show older walks</button></div>
   </section>
+</section>
+
+<!-- ===================================================================== SHARE -->
+<section id="view-share" class="view" aria-label="Share" hidden>
+  <div class="share-grid">
+
+    <section class="card share-stage" id="share-stage" aria-labelledby="share-stage-h">
+      <header class="card-head">
+        <h2 id="share-stage-h">Your picture</h2>
+        <span class="badge quiet" id="share-demo" hidden>Demo character - made-up numbers</span>
+        <span class="muted num" id="share-dim"></span>
+      </header>
+      <p class="muted" id="share-loading">Looking for your character's numbers...</p>
+      <p class="empty" id="share-error" role="alert" hidden></p>
+      <div class="share-empty" id="share-empty" hidden>
+        <h3>No character yet</h3>
+        <p>Log in to World of Warcraft with the Walka addon enabled while this companion is running. Your character's numbers arrive here within about ten seconds.</p>
+        <p>They are remembered, so you can come back and make a picture later with the game closed.</p>
+        <p class="muted" id="share-empty-walks" hidden>Until then, the picture below is made from the walks this companion has recorded.</p>
+      </div>
+      <div class="share-frame" id="share-frame" hidden>
+        <canvas id="share-canvas" width="1080" height="1350" role="img" aria-label="Preview of your picture"></canvas>
+      </div>
+      <div class="btn-row">
+        <button class="btn primary" id="share-download" type="button" disabled>Download PNG</button>
+        <button class="btn" id="share-copy" type="button" disabled>Copy image</button>
+        <span class="share-status" id="share-status" role="status"></span>
+      </div>
+      <p class="muted small" id="share-copy-note" hidden>Copy image needs this page to be open on the PC that runs the companion (address 127.0.0.1). Download PNG works everywhere.</p>
+      <p class="muted small">The picture is made in this browser. Nothing is uploaded: you choose where to post it.</p>
+    </section>
+
+    <div class="stack" id="share-options">
+      <section class="card" aria-labelledby="share-numbers-h">
+        <header class="card-head"><h2 id="share-numbers-h">Numbers</h2></header>
+        <div class="field" id="share-character-field" hidden>
+          <label for="share-character">Character</label>
+          <select id="share-character"></select>
+        </div>
+        <p class="link-detail" id="share-character-line" hidden></p>
+        <div class="field" role="group" aria-labelledby="share-source-h">
+          <span class="legend" id="share-source-h">Steps, distance and calories from</span>
+          <div class="segmented" role="radiogroup" aria-labelledby="share-source-h">
+            <label><input type="radio" name="share-source" value="character"><span>This character's walks</span></label>
+            <label><input type="radio" name="share-source" value="all"><span>All my walks</span></label>
+          </div>
+          <p class="help" id="share-source-help"></p>
+        </div>
+        <div class="field" role="group" aria-labelledby="share-units-h">
+          <span class="legend" id="share-units-h">Distance in</span>
+          <div class="segmented" role="radiogroup" aria-labelledby="share-units-h">
+            <label><input type="radio" name="share-units" value="mi"><span>Miles</span></label>
+            <label><input type="radio" name="share-units" value="km"><span>Kilometres</span></label>
+          </div>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="share-words-h">
+        <header class="card-head">
+          <h2 id="share-words-h">Words</h2>
+          <button class="btn quiet small" id="share-words-reset" type="button">Reset words</button>
+        </header>
+        <div class="form" id="share-words"></div>
+        <p class="help">Empty a line to leave it off the picture.</p>
+      </section>
+
+      <section class="card" aria-labelledby="share-show-h">
+        <header class="card-head"><h2 id="share-show-h">What to show</h2></header>
+        <div class="form share-checks" id="share-tiles"></div>
+        <h3 class="sub">Off unless you turn them on</h3>
+        <div class="form share-checks">
+          <label class="check"><input id="share-name" type="checkbox"><strong>My character's name</strong><span class="help">Shown under the character level.</span></label>
+          <label class="check"><input id="share-footnote" type="checkbox"><strong>My weight and average pace</strong><span class="help">A small line under the calories, for example "165 lb · 2.0 mph average".</span></label>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="share-look-h">
+        <header class="card-head"><h2 id="share-look-h">Look</h2></header>
+        <div class="field" role="group" aria-labelledby="share-theme-h">
+          <span class="legend" id="share-theme-h">Theme</span>
+          <div class="segmented share-picks" id="share-themes" role="radiogroup" aria-labelledby="share-theme-h"></div>
+        </div>
+        <div class="field" role="group" aria-labelledby="share-size-h">
+          <span class="legend" id="share-size-h">Size</span>
+          <div class="segmented share-picks" id="share-sizes" role="radiogroup" aria-labelledby="share-size-h"></div>
+        </div>
+      </section>
+    </div>
+
+  </div>
 </section>
 
 <!-- ================================================================== SETTINGS -->

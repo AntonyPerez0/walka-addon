@@ -12,7 +12,6 @@ cannot see `==` against a plain value, truth tests or table-key use.)
 from __future__ import annotations
 
 import pytest
-from walka import beacon
 from walka.protocol import Flags
 
 from .conftest import MPH_STEP, nearest_step
@@ -20,7 +19,8 @@ from .harness import lua_dict, lua_list, lua_plain
 
 
 def frame(rt):
-    return beacon.cells_to_frame(rt.beacon_cells())
+    """The live frame on the strip (one tick later if a stat frame is showing)."""
+    return rt.live_frame()
 
 
 def tick_checked(rt, count=1):
@@ -282,19 +282,49 @@ def test_afk_status_hidden_by_chat_lockdown(rt):
 
 def test_character_name_hidden(rt):
     rt.set(nameSecret=True)
+    assert rt.ns.Game.CharacterName() == "?-Azeroth"
     rt.slash("/walka start")
-    assert rt.walka.GetSession(rt.walka).character == "?-Azeroth"
+    # The session is this character's all the same: its name was read at login.
+    assert rt.walka.GetSession(rt.walka).character == "Tester-Azeroth"
     tick_checked(rt, 3)
     rt.slash("/walka stop")
     rt.set(nameSecret=False, realm="")
     assert rt.ns.Game.CharacterName() == "Tester"
 
 
+def test_character_name_hidden_from_login_on(make_rt):
+    rt = make_rt(state={"nameSecret": True})
+    rt.slash("/walka start")
+    assert rt.walka.GetSession(rt.walka).character == "?-Azeroth", "nobody's walk, rather than a guess"
+    tick_checked(rt, 3)
+    rt.set(nameSecret=False)
+    tick_checked(rt, 10)
+    rt.slash("/walka stop")
+    rt.slash("/walka start")
+    assert rt.walka.GetSession(rt.walka).character == "Tester-Azeroth"
+
+
+def test_character_class_hidden(rt):
+    # UnitClass is secret when "unit identity" is restricted. The class is
+    # only read for the journey record (Game.CharacterInfo).
+    game = rt.ns.Game
+    assert lua_dict(game.CharacterInfo()) == {"level": 17, "maxLevel": 60, "classId": 4, "faction": 1}
+    rt.set(identitySecret=True)
+    assert all(rt.M.is_secret(value) for value in lua_list(rt.run("return { UnitClass('player') }")))
+    info = lua_dict(game.CharacterInfo())
+    assert info == {"level": 17, "maxLevel": 60, "classId": 0, "faction": 1}, "a hidden class reads as not known"
+    rt.fire_event("PLAYER_ENTERING_WORLD", False, False)         # the tracker reads the character again
+    tick_checked(rt, 20)
+    record, _ = rt.ns.Tracker.GetRecord()
+    assert record.classId == 4, "what the journey already knew is kept"
+    rt.reload()                                                 # nothing hidden reached the saved variables
+
+
 def test_everything_secret_at_once_for_a_long_fight(rt):
     rt.set(speed=7.0, mounted=False)
     rt.slash("/walka start")
     rt.enter_combat()
-    rt.set(chatLockdown=True, nameSecret=True)
+    rt.set(chatLockdown=True, nameSecret=True, identitySecret=True)
     states = [
         {"speed": 7.0}, {"speed": 0}, {"speed": 9.0, "falling": True}, {"speed": 4.0, "swimming": True},
         {"speed": 14.0, "mounted": True, "swimming": False, "falling": False}, {"speed": 0, "dead": True},
@@ -316,7 +346,7 @@ def test_every_secret_capable_api_the_addon_calls_is_exercised_here(rt, snapshot
     # If Game.lua starts calling another API that can return secrets, this
     # test names it so that the mock (and the tests above) learn about it.
     source = (rt.addon_dir / "Game.lua").read_text(encoding="utf-8")
-    covered = {"GetUnitSpeed", "UnitIsAFK", "UnitName"}
+    covered = {"GetUnitSpeed", "UnitIsAFK", "UnitName", "UnitClass"}
     for name, tags in snapshot.secret.items():
         bare = name.split(".")[-1]
         if bare + "(" in source and "." not in name:

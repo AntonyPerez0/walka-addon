@@ -29,12 +29,24 @@ What a green run proves
   tables, its widgets or the upvalues of its functions.
 * The logic: protocol, speed model, calorie/step estimates, session
   lifecycle, history merge and totals, slash commands.
+* A character's journey: distance on foot and in all (walking, riding,
+  flying, swimming, as a ghost, in combat with the speed hidden), level-up,
+  the bookkeeping of /played, and the real-world totals - which include the
+  session in progress, count no walk twice and do not shrink when the
+  history is pruned or the companion's file drops old walks
+  (test_journey.py). Every fifth redraw of the beacon carries one of these
+  numbers as a stat frame, never two in a row, and a whole round read off
+  the screen decodes to the journey with the companion's decoder
+  (test_stat_frames.py).
 * The windows (once Walka/UI exists) survive every control being clicked,
   dragged, typed into and scrolled, in and out of combat - and do what they
   say: the HUD shows each session state and drives the session, the history
   window lists the merged sessions and totals, every control of the options
   page reads and writes its setting (test_ui_hud.py, test_ui_history.py,
   test_ui_options.py; controls are found by their labels, ui_driver.py).
+  The journey window shows the card's numbers with their marks, remembers
+  its position, and asks the game for the time played once per login
+  (test_ui_journey.py).
 * Ten simulated minutes of mixed play with every window in use raise no
   error, keep no secret, read no undefined global, create no widget after
   start-up and merge the history only when it changed (test_ui_soak.py).
@@ -75,7 +87,16 @@ What it cannot prove
   button is placed against).
 * A reload asked for by the addon: ``ReloadUI()`` is only recorded
   (``rt.reload_requests``). What a reload does to the addon is tested with
-  ``rt.reload()``.
+  ``rt.reload()``. ``Screenshot()`` is only recorded, too.
+* What the game's chat window really does with the time played. The mock
+  answers ``RequestTimePlayed()`` a frame later with ``TIME_PLAYED_MSG`` and
+  prints the two lines Blizzard's chat frame prints for every answer, so
+  the tests can count them; that the addon leaves the chat frames alone is
+  a property of its source (it never touches them), not something the mock
+  enforces.
+* What the client reports for a real character: the mock's ``UnitLevel``,
+  ``GetMaxPlayerLevel``, ``UnitClass`` and ``UnitFactionGroup`` answer from
+  the test's game state.
 * Secret-value rules that Lua 5.1 cannot observe from the outside. In the
   game, comparing a secret with ``==``/``~=``, using it as a table key and
   testing its truthiness (``if secret then``, ``secret and x``, ``not

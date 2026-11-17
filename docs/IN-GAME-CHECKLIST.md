@@ -81,8 +81,8 @@ used.
       target arrow are triangles, not rectangles; no text is clipped
       ("Paused (AFK)" fits beside the four buttons, in mph and in km/h).
 - [ ] Right-click the HUD: a menu with *Lock position*, *Keep walking when
-      standing*, *History*, *Options* and *Hide*. All of them work, also in
-      combat.
+      standing*, *History*, *Journey*, *Options* and *Hide*. All of them
+      work, also in combat.
 - [ ] Drag the HUD into a corner, then `/reload`: it is back in the same
       place.
 - [ ] *Keep walking*: tick it (menu, options or `/walka keepwalking on`),
@@ -103,7 +103,77 @@ used.
 - [ ] Minimap addon compartment: left-click toggles the HUD, right-click
       opens the options.
 
-## 7. With the treadmill (after the checks in the README)
+## 7. The journey
+
+Walka keeps a record for each character - level, time played, how far it
+has travelled - next to the walking you did while playing it, and sends the
+numbers to the companion for the picture on its *Share* page.
+
+First, what the game says about your character. Compare with the character
+pane:
+
+```
+/run print(UnitLevel("player"), GetMaxPlayerLevel(), select(3, UnitClass("player")), UnitFactionGroup("player"))
+```
+
+- [ ] It prints your level, the level cap (60), a class number and
+      `Alliance` or `Horde`. If the cap is not 60, or anything is `nil`,
+      tell me what it printed.
+
+Time played. The game tells an addon the time played only when asked, and
+prints every answer in the chat; Walka therefore asks only when you open the
+Journey window.
+
+- [ ] Log in and play for a minute without opening the Journey window: the
+      chat shows **no** "Total time played" lines.
+- [ ] `/walka journey` (or `/walka card`): the window opens in the middle of
+      the screen. The chat shows the game's two lines ("Total time played",
+      "Time played this level") **once**, and *TIME PLAYED* in the window
+      agrees with the first of them.
+- [ ] Close the window and open it again, several times: no further lines
+      in the chat.
+- [ ] `/reload`, open the window: still no new lines, and the time played is
+      right (within a few seconds).
+- [ ] Type `/played` yourself: the two lines appear as always - Walka has
+      not broken the game's own command - and the window agrees.
+- [ ] Log out and in again; open the window after ten minutes of play: one
+      new pair of lines, and the figures agree.
+
+The window:
+
+- [ ] It shows your character's name, *LEVEL* as `17 / 60`, *TIME PLAYED*,
+      *MY STEPS* with the distance walked, *CHARACTER STEPS* with in-game
+      miles, *CALORIES*, *TIME ON THE BELT*, *WALKS* and "Totals through"
+      with today's date. No text is clipped or overlaps, also with
+      `/walka units kmh` (the distances switch to km).
+- [ ] Run 100 yards in a straight line (a target dummy's range ring, or
+      count seconds: 100 yards is about 14 seconds of running): *CHARACTER
+      STEPS* goes up by about 114. Mount up and ride: it does not move.
+      Swim, take a flight path: it does not move. Jump while running, run
+      as a ghost: it moves.
+- [ ] In combat the character steps still count, and nothing errors.
+- [ ] Level up (or check after your next level): the window shows the new
+      level without a reload.
+- [ ] Walk a session of a minute: *MY STEPS* starts counting about twenty
+      seconds in, with a `~`. After the walk, *Sync* in the history window:
+      the `~` goes away once every walk of this character is measured.
+- [ ] Escape and the X close the window. Drag it somewhere, `/reload`,
+      open it: it is where you left it. It opens from the HUD's right-click
+      menu and from the *Journey* button of the history window, also in
+      combat.
+- [ ] *Screenshot*: the game says "Screen Captured" and a picture of the
+      whole screen is in `World of Warcraft\_forever_\Screenshots`.
+- [ ] Log in on a second character: its window starts from zero; the first
+      character's numbers are unchanged when you go back.
+
+And the companion:
+
+- [ ] With the Journey numbers on screen, the dashboard's *Share* page shows
+      the same character, level and steps within about ten seconds, and the
+      belt keeps following the character as before (the *Game signal* stays
+      green).
+
+## 8. With the treadmill (after the checks in the README)
 
 - [ ] Stand on the pad, `/walka start`: countdown, belt starts at minimum
       speed, then follows.

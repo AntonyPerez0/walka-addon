@@ -23,6 +23,7 @@ from . import config as config_module
 from .config import Config
 from .governor import ABANDONED_AFTER_S, Action, Belt, Command, Governor, Reading
 from .hotkey import GlobalHotkey
+from .journey import attach as attach_journeys
 from .metrics import Profile
 from .protocol import Flags
 from .session import SessionRecord, SessionRecorder, SessionStore
@@ -89,6 +90,9 @@ class App:
         self.treadmill = treadmill
         self.treadmill.on_event = self._on_treadmill_event
         self.heart_rate = heart_rate
+        # The numbers behind the Share page's picture. They arrive in stat frames,
+        # which never reach the governor (stat_route.py, journey.py).
+        self.journeys = attach_journeys(self.data_dir, beacon, wall=wall_clock, mono=mono_clock)
 
         self.recorder: SessionRecorder | None = None
         self.last_record: SessionRecord | None = None
@@ -748,6 +752,7 @@ class App:
             "hotkey": self.hotkey.to_dict() if self.hotkey is not None else None,
             "config": self.config.to_dict(),
             "events": list(self.events)[:30],
+            "journey": self.journeys.summary(),
         }
 
     # ---- lifecycle ---------------------------------------------------------------
@@ -804,6 +809,7 @@ class App:
             self._tasks.append(asyncio.create_task(self.heart_rate.run(), name="walka-heart-rate"))
         self._tasks.append(asyncio.create_task(self._control_loop(), name="walka-control"))
         self._tasks.append(asyncio.create_task(self._connect_loop(), name="walka-connect"))
+        self._tasks.append(asyncio.create_task(self.journeys.run(), name="walka-journey"))
         self.sync_addon()
 
     async def stop(self) -> None:
@@ -838,4 +844,5 @@ class App:
             log.debug("disconnect on exit failed: %s", exc)
         if self.beacon is not None:
             self.beacon.stop()
+        self.journeys.save()
         self.save_config()

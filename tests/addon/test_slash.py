@@ -260,8 +260,12 @@ def test_unknown_command_prints_help(rt):
     rt.slash("/walka frobnicate")
     assert len(rt.printed) >= 8
     assert all(line.startswith("|cff4fc3f7Walka|r: /walka") for line in rt.printed)
-    for word in ("start", "history", "options", "status", "weight", "height", "units", "beacon"):
+    for word in ("start", "history", "journey", "options", "status", "weight", "height", "units", "beacon"):
         assert any(word in line for line in rt.printed), word
+    assert (
+        "|cff4fc3f7Walka|r: /walka journey - your character's journey so far: level, time played, "
+        "your steps and its steps"
+    ) in rt.printed
 
 
 @pytest.mark.parametrize("command", ["help", "?"])
