@@ -9,6 +9,8 @@ companion can be exercised (and demoed) without hardware:
 * With ``us_firmware=True`` speeds live on a 0.1 mph grid and commands are
   truncated the way the real US firmware does it.
 * Stop ends the workout and zeroes the machine's counters; pause keeps them.
+* The remote's start, stop and speed buttons can be "pressed" (tests, and
+  the dashboard's simulator controls).
 """
 
 from __future__ import annotations
@@ -148,6 +150,31 @@ class SimulatedTreadmill(Treadmill):
             return
         self._halt(BeltState.STOPPED)
         self._emit(TreadmillEvent.EXTERNAL_STOP)
+
+    def press_speed(self, kmh: float) -> None:
+        """Simulate the user changing the speed with the remote's + and -
+        buttons: the belt goes to the step nearest ``kmh``. Like a real pad,
+        nothing announces it (but the pad's own target says so)."""
+        status = self.status
+        if status.state not in (BeltState.RUNNING, BeltState.STARTING):
+            return
+        if self.us_firmware:
+            kmh = kmh_to_mph_tenths(kmh) / 10.0 * KMH_PER_MPH
+        else:
+            kmh = round(kmh, 1)
+        status.target_kmh = max(status.min_kmh, min(status.max_kmh, kmh))
+
+    def press_faster(self) -> None:
+        """The remote's + button: two firmware steps, like the pad's console."""
+        self._nudge(+2)
+
+    def press_slower(self) -> None:
+        self._nudge(-2)
+
+    def _nudge(self, steps: int) -> None:
+        status = self.status
+        if status.target_kmh is not None:
+            self.press_speed(status.target_kmh + steps * status.step_kmh)
 
     # ---- behaviour -------------------------------------------------------------
     def _firmware_speed(self, kmh: float) -> float:

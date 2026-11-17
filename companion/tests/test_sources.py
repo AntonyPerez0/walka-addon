@@ -237,11 +237,20 @@ def test_game_window_closing_ends_the_session():
     reading = source.reading(t)
     assert reading == Reading(age_s=0.0, active=False)  # a *fresh* "no session": the governor stops the belt
     assert source.status.state == "game_closed"
-    # It is said once; afterwards there is simply no signal.
-    t += 0.2
-    after = source.reading(t)
-    assert not after.active and math.isinf(after.age_s)
+    # It is a state, not a moment: said again on every reading, so that a
+    # governor that could not act on the first one (the treadmill out of
+    # reach) still gets to hear it.
+    for _ in range(50):
+        t += 60.0
+        ingest(source, reader, t, None)
+        assert source.reading(t) == Reading(age_s=0.0, active=False)
+        assert source.status.state == "game_closed"
     assert source.frame is None
+    # ... until the game is seen again.
+    reader.window = WINDOW
+    t += 1.0
+    ingest(source, reader, t, frame(77))
+    assert source.reading(t).active and source.status.state == "ok"
 
 
 def test_game_closed_rule_needs_a_window_finder_that_has_proven_itself():

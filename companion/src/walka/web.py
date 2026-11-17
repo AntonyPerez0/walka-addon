@@ -206,7 +206,17 @@ def create_app(app: App) -> web.Application:
 
     @routes.post("/api/treadmill/disconnect")
     async def disconnect(_request: web.Request) -> web.Response:
-        await app.disconnect()
+        # (A belt in use is stopped first - see App.disconnect.)
+        if not await app.disconnect():
+            error = "The belt could not be stopped, so Walka stays connected. Stop it at the treadmill itself."
+            return web.json_response({"ok": False, "error": error}, status=409)
+        return ok()
+
+    @routes.post("/api/treadmill/forget")
+    async def forget(_request: web.Request) -> web.Response:
+        if not app.forget_treadmill():
+            error = "Stop the belt first: Walka must not lose track of a treadmill that is in use."
+            return web.json_response({"ok": False, "error": error}, status=409)
         return ok()
 
     @routes.post("/api/treadmill/press")
@@ -219,6 +229,10 @@ def create_app(app: App) -> web.Application:
             treadmill.press_start()
         elif button == "stop" and hasattr(treadmill, "press_stop"):
             treadmill.press_stop()
+        elif button == "faster" and hasattr(treadmill, "press_faster"):
+            treadmill.press_faster()
+        elif button == "slower" and hasattr(treadmill, "press_slower"):
+            treadmill.press_slower()
         else:
             raise web.HTTPBadRequest(text="not available on this treadmill")
         return ok()
