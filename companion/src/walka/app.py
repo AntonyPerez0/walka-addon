@@ -253,16 +253,20 @@ class App:
         if self._stopping.is_set() and command.action in (Action.START, Action.SET_SPEED):
             return  # the companion is closing: nothing that moves the belt goes out any more
         try:
-            async with self._command_lock:
-                if command.action is Action.START:
-                    await treadmill.start()
-                elif command.action is Action.SET_SPEED:
-                    assert command.speed_kmh is not None
-                    await treadmill.set_speed(command.speed_kmh)
-                elif command.action is Action.PAUSE:
-                    await treadmill.pause()
-                elif command.action is Action.STOP:
-                    await treadmill.stop()
+            if command.action is Action.PAUSE:
+                # A pause or stop never queues behind another command: the
+                # driver lets it overtake whatever is in flight (which may
+                # be waiting seconds for an answer that never comes).
+                await treadmill.pause()
+            elif command.action is Action.STOP:
+                await treadmill.stop()
+            else:
+                async with self._command_lock:
+                    if command.action is Action.START:
+                        await treadmill.start()
+                    elif command.action is Action.SET_SPEED:
+                        assert command.speed_kmh is not None
+                        await treadmill.set_speed(command.speed_kmh)
         except TreadmillError as exc:
             self.log_event(f"Treadmill command {command.action.value} failed: {exc}", "warning")
             if command.action is Action.SET_SPEED:
@@ -511,20 +515,25 @@ class App:
             # (not the ordinary "session over" path, which would lift the latch)
             self._manual_was_active = False
             self.governor.end_session()
-        self.log_event(text, "warning")
         if not self.treadmill.status.connected:
+            self.log_event(text, "warning")
             self.log_event(
                 "The treadmill is not connected, so STOP could not be sent - "
                 "if the belt is moving, stop it at the treadmill itself!",
                 "error",
             )
             return False
+        # The stop goes out before anything else happens - before it is even
+        # logged - and without waiting for the command lock: the driver lets
+        # a stop overtake a command in flight, which may be waiting seconds
+        # for an answer.
         try:
-            async with self._command_lock:
-                await self.treadmill.stop()
+            await self.treadmill.stop()
         except TreadmillError as exc:
+            self.log_event(text, "warning")
             self.log_event(f"Stop command failed: {exc} - use the treadmill's own stop button!", "error")
             return False
+        self.log_event(text, "warning")
         return True
 
     def _belt_in_use(self) -> bool:

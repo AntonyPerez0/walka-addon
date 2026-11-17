@@ -288,11 +288,6 @@ def test_stop_is_written_at_once_whatever_is_in_flight(monkeypatch, first_comman
         assert list(pad.writes) == [bytes.fromhex("024a01"), STOP]
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason="needs the belt-control team's change to App.emergency_stop: it must call treadmill.stop() "
-    "without first waiting for App._command_lock, which the command in flight holds until it is answered",
-)
 def test_the_dashboard_stop_is_written_at_once_too(tmp_path: Path, monkeypatch):
     """The same through App.emergency_stop (hotkey, dashboard STOP)."""
     monkeypatch.setattr(ftms_ble, "WRITE_GAP_S", 0.4)
