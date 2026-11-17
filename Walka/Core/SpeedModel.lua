@@ -114,6 +114,7 @@ function SpeedModel:reset(kmh)
     self.holdLeft = 0
     self.holdRaw = nil
     self.effectiveYps = 0
+    self.combatMoved = false
 end
 
 --- Character speed after applying the state rules (taxi, falling, combat).
@@ -136,7 +137,16 @@ function SpeedModel:effectiveSpeed(input)
         return self.effectiveYps
     end
 
-    if input.combat and settingOf(settings, "combatHold") and yps < SpeedModel.RUN_YPS then
+    -- "In combat, never drop below running pace" is for the fight you ran
+    -- into and now stand in, casting. It must not make a belt speed up - or
+    -- start - because something attacked a character nobody is steering:
+    -- the hold only applies once the character has moved during this fight.
+    if not input.combat then
+        self.combatMoved = false
+    elseif yps > 0 then
+        self.combatMoved = true
+    end
+    if input.combat and self.combatMoved and settingOf(settings, "combatHold") and yps < SpeedModel.RUN_YPS then
         return SpeedModel.RUN_YPS
     end
     return yps
@@ -212,14 +222,19 @@ function SpeedModel:update(dt, input)
     end
 
     local minBelt = settingOf(settings, "minBeltKmh")
-    if output < minBelt then
+    -- (The limits come from the companion's file, rounded to a few decimals:
+    -- the belt's minimum and the grid point it sits on can differ in the
+    -- fifth place. A hundredth of a step of slack keeps the slowest speed
+    -- reachable instead of bumping it one step up.)
+    local slack = step * 0.01
+    if output < minBelt - slack then
         if raw <= 0 then
             -- Heading for a stop (stand speed 0): once the smoothed speed
             -- falls below what the belt can do, stop it.
             output = 0
         else
             -- Smallest grid value the belt can hold.
-            output = floor(minBelt / step + 1 - 1e-6) * step
+            output = math.ceil(minBelt / step - 0.01) * step
         end
     end
 

@@ -13,7 +13,7 @@ import pytest
 from . import ui_driver as ui
 from .conftest import local_noon
 from .harness import lua_list, lua_plain
-from .test_ui import COMPANION, DAY, NOW, history_saved
+from .test_ui import COMPANION, DAY, NOW, SYNCED, history_saved
 
 ROWS = 8
 COLUMNS = ["When", "Time", "Distance", "Steps", "kcal", "Avg speed", "Character"]
@@ -332,6 +332,26 @@ def test_row_tooltips(full_rt):
     estimated_tip = ui.tooltip(rt, shown[1]["button"])
     assert estimated_tip[1].startswith("Estimated by the addon")
     assert not any("heart rate" in line for line in estimated_tip)
+
+
+def test_a_session_that_does_not_count(make_rt, ui_rt):
+    """The companion has synced since this session and has no walk for it
+    (it was not running, the pad was off, or the walk was deleted there):
+    the row is dimmed, says why, and is left out of the cards."""
+    companion = COMPANION.replace(f"written = {SYNCED}", f"written = {NOW - 600}")
+    assert companion != COMPANION
+    rt = make_rt(
+        files={"CompanionData.lua": companion},
+        saved_variables={"WalkaDB": history_saved(3)},
+        state={"clock": NOW},
+    )
+    frame = ui.history(rt)
+    shown = rows(rt, frame)
+    assert len(shown) >= 3
+    tip = ui.tooltip(rt, shown[1]["button"])
+    assert tip[1].startswith("Not counted.")
+    totals = lua_plain(rt.walka.GetTotals(rt.walka))
+    assert totals["today"]["steps"] == 2710, "only the walk the treadmill measured"
 
 
 def test_scrolling_a_long_history(long_rt):
@@ -773,7 +793,7 @@ def test_sync_tooltip_with_companion_data(full_rt):
     rt = full_rt
     frame = ui.history(rt)
     written = rt.walka.GetSyncTime(rt.walka)
-    assert written == NOW - 600
+    assert written == SYNCED
     tip = ui.tooltip(rt, sync_button(rt, frame))
     assert tip[0] == "Load measured walks"
     when = time.strftime("%b %d %H:%M", time.localtime(written))

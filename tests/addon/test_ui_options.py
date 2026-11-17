@@ -5,12 +5,14 @@ Controls are found by the text next to them (ui_driver.py)."""
 
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from . import ui_driver as ui
 from .conftest import KMH_PER_MPH
 from .harness import AddonError, lua_list, lua_plain
-from .test_ui import COMPANION, NOW
+from .test_ui import COMPANION, NOW, SYNCED
 
 SPEED_ROWS = {
     "standing still": "standKmh",
@@ -249,7 +251,8 @@ def test_sliders_cover_the_treadmills_range(crt):
         control = ui.slider(rt, panel, row)
         assert control.GetMinMaxValues(control) == pytest.approx((0.7, 3.7)), row
     assert "Treadmill range: 0.6 to 3.7 mph (reported by the companion app)." in ui.texts(rt, panel)
-    assert "Last synced Nov 17, 11:50." in ui.texts(rt, panel)
+    synced = time.strftime("%b %d, %H:%M", time.localtime(SYNCED))
+    assert f"Last synced {synced}." in ui.texts(rt, panel)
 
 
 def test_the_lowest_maximum_still_lets_the_belt_run(crt):

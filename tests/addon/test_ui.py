@@ -96,9 +96,16 @@ def history_saved(count: int) -> str:
     return "{sessions={" + records + "}}"
 
 
+# When the companion last wrote its file: before the addon's long history
+# begins. The addon's own sessions since then are estimates still waiting
+# for the treadmill's numbers (a session from *before* the companion's last
+# look that it has no walk for would count for nothing: see
+# SessionLog.unconfirmed, and test_ui_history.test_a_session_that_does_not_count).
+SYNCED = NOW - 70 * 20000
+
 COMPANION = f"""
 WalkaCompanionData = {{
-    version = 1, written = {NOW - 600},
+    version = 1, written = {SYNCED},
     profile = {{ weightKg = 80, heightCm = 178 }},
     limits = {{ minKmh = 1.0, maxKmh = 6.0, stepKmh = 0.1, accelKmhPerS = 0.5, decelKmhPerS = 1.0 }},
     treadmill = "UREVO Strol 2E",

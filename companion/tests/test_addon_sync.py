@@ -335,6 +335,9 @@ def test_older_sessions_are_folded_into_a_summary():
         "distanceM": round(sum(r.distance_m for r in oldest)),
         "steps": sum(r.steps for r in oldest),
         "kcal": round(sum(r.kcal for r in oldest), 1),
+        # ... up to where the list begins, so the addon knows which of its
+        # own records are in the sum already.
+        "until": int(min(r.start for r in sorted(records, key=lambda r: r.start)[7:])),
     }
     # Nothing is lost between the two: all-time steps are exact.
     listed_steps = sum(s["steps"] for s in payload["sessions"])

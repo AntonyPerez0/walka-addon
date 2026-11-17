@@ -257,11 +257,15 @@ end
 --- One of the addon's records is leaving the history list (it was pruned,
 -- or the history was cleared). If the treadmill never confirmed it, its
 -- estimate is settled as it stands.
-function Journey.forget(journeys, own, now)
+function Journey.forget(journeys, own, now, written)
     if type(own) ~= "table" or own.banked or not Journey.isCharacter(own.character) then
         return
     end
-    settle(Journey.open(journeys, own.character, now), own, 1, true)
+    -- (A session the companion has looked for and not found was no walk:
+    -- it adds nothing - see SessionLog.unconfirmed.)
+    if not ns.SessionLog.unconfirmed(own, written) then
+        settle(Journey.open(journeys, own.character, now), own, 1, true)
+    end
     own.banked = true
 end
 
@@ -269,13 +273,17 @@ end
 -- waiting for the companion's numbers. Fills and returns `out`: walks,
 -- seconds, distanceM, steps, kcal, and `first` - when the earliest of them
 -- began (nil if there is none).
-function Journey.unbanked(ownSessions, key, out)
+function Journey.unbanked(ownSessions, key, out, written)
     out.walks, out.seconds, out.distanceM, out.steps, out.kcal, out.first = 0, 0, 0, 0, 0, nil
     if type(ownSessions) ~= "table" then
         return out
     end
+    local unconfirmed = ns.SessionLog.unconfirmed
     for _, own in ipairs(ownSessions) do
-        if type(own) == "table" and own.character == key and not own.banked then
+        -- (`written`: when the companion last wrote its file. A session
+        -- that ended before then and that it has no walk for is not an
+        -- estimate waiting for numbers - there was no walk.)
+        if type(own) == "table" and own.character == key and not own.banked and not unconfirmed(own, written) then
             out.walks = out.walks + 1
             out.seconds = out.seconds + count(own.seconds)
             out.distanceM = out.distanceM + count(own.distanceM)

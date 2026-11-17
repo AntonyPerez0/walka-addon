@@ -463,6 +463,7 @@ function Walka:ResumeSession()
     end
     session.paused = false
     session.pauseReason = nil
+    session.afkStill = nil
     -- The belt restarts at its minimum speed.
     self.model:reset(nil)
     primeTarget(self)
@@ -594,12 +595,18 @@ function Walka:Tick(dt)
 
     if session then
         if session.paused and session.pauseReason == "afk" then
-            -- Back from AFK: the session resumes when the character moves,
-            -- not on the first key press - typing a chat line should not
-            -- start a belt. (Also when the automatic pause has been switched
-            -- off meanwhile: this pause was automatic, so is its end.)
-            if not state.afk and state.moving then
+            -- Back from AFK: the session resumes when the character *starts*
+            -- moving - it stood still on the tick before, and moves now -
+            -- not on the first key press: typing a chat line should not
+            -- start a belt. A character that is being carried along anyway
+            -- (a flight path, auto-run, /follow) pressed no key for anyone:
+            -- it has to stand first, and a flight path never counts. (Also
+            -- when the automatic pause has been switched off meanwhile: this
+            -- pause was automatic, so is its end.)
+            if not state.afk and state.moving and session.afkStill and not state.taxi then
                 self:ResumeSession()
+            else
+                session.afkStill = not state.moving
             end
         elseif self.db.settings.autoPauseAFK and state.afk and not session.paused then
             self:PauseSession("afk")
@@ -608,11 +615,16 @@ function Walka:Tick(dt)
         flags = flags + FLAG.ACTIVE
         if session.paused then
             flags = flags + FLAG.PAUSED
-            if session.pauseReason == "afk" and not state.afk then
-                -- Still the automatic pause: keep telling the companion so,
-                -- or it would take this for a pause the player asked for
-                -- (which acknowledges a stop made at the treadmill).
+            -- On a paused frame the AFK flag says *why* it is paused: set
+            -- for the automatic pause and only for it. The companion takes
+            -- a pause without it for one the player asked for (which
+            -- acknowledges a stop made at the treadmill) - also when the
+            -- player pauses by hand while the game still shows them AFK.
+            local automatic = session.pauseReason == "afk"
+            if automatic and not state.afk then
                 flags = flags + FLAG.AFK
+            elseif state.afk and not automatic then
+                flags = flags - FLAG.AFK
             end
         else
             target = self.model:update(dt, state)
@@ -669,6 +681,12 @@ local function initDatabase()
     local db = WalkaDB
     db.version = 1
     db.settings = applyDefaults(type(db.settings) == "table" and db.settings or {}, buildDefaults())
+    -- The body profile feeds every step and calorie: a height of zero from a
+    -- damaged or hand-edited file would put inf into the saved sessions,
+    -- and the game cannot read such a file back.
+    local profile = db.settings.profile
+    profile.weightKg = numberWithin(profile.weightKg, 30, 250) or Metrics.DEFAULT_PROFILE.weightKg
+    profile.heightCm = numberWithin(profile.heightCm, 120, 230) or Metrics.DEFAULT_PROFILE.heightCm
     if type(db.sessions) ~= "table" then
         db.sessions = {}
     end
@@ -692,6 +710,14 @@ local function restoreSession(self)
             return
         end
     end
+    -- The rest is made sound rather than checked (a top speed that is text
+    -- would raise on every tick, with the beacon frozen meanwhile).
+    session.maxKmh = tonumber(session.maxKmh) or 0
+    session.paused = session.paused and true or false
+    if session.pauseReason ~= "afk" and session.pauseReason ~= "user" then
+        session.pauseReason = session.paused and "user" or nil
+    end
+    session.afkStill = nil  -- (who was standing before the reload proves nothing now)
     local savedAt = tonumber(saved.savedAt) or 0
     if Game.Now() - savedAt <= Walka.RESUME_WINDOW_SECONDS then
         self.session = session
@@ -869,6 +895,10 @@ local function slash(message)
         end
         self:Set("profile.weightKg", math.floor(value * 10 + 0.5) / 10)
         self:Print(string.format("weight set to %.1f kg (%.0f lb).", value, value / 0.45359237))
+        if self:GetProfile().fromCompanion then
+            self:Print("note: your body profile comes from the companion app (Settings -> Body profile), "
+                .. "so this value is only used when the companion's file is not there.")
+        end
     elseif command == "height" then
         local value, unit = parseMeasure(rest, self:IsMph() and "in" or "cm")
         if not value then
@@ -890,6 +920,10 @@ local function slash(message)
         end
         self:Set("profile.heightCm", math.floor(value + 0.5))
         self:Print(string.format("height set to %d cm.", math.floor(value + 0.5)))
+        if self:GetProfile().fromCompanion then
+            self:Print("note: your body profile comes from the companion app (Settings -> Body profile), "
+                .. "so this value is only used when the companion's file is not there.")
+        end
     elseif command == "keepwalking" or command == "keep" then
         local arg = string.lower(rest)
         if arg == "" then

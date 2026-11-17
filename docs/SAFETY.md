@@ -143,14 +143,24 @@ with no I/O, so every rule below is covered by automated tests.
   side. *Stop* ends the session and stops the belt.
 * Going AFK pauses the session (and the belt) automatically. Coming back
   does not restart it by itself: the session resumes when your character
-  next *moves*, so typing a chat line does not start a belt. You can turn
+  next *starts moving* - it must be seen standing still and then move - so
+  typing a chat line does not start a belt, and neither does a character
+  that is being carried along anyway (a flight path never counts; with
+  auto-run or /follow, stop and go again, or press Resume). You can turn
   the automatic pause off.
+* Inside dungeons, raids and battlegrounds the game hides its AFK flag from
+  addons. There Walka keeps its own clock: five minutes without your
+  character moving or fighting count as away, and the first movement
+  after that as back.
 * By default the belt never stops while a session runs: when your character
   stands still it drops to the *standing* pace (0.8 mph). Two options
   change that: *Keep walking* holds your walking pace instead, and *Stop
   the belt when my character stands still* pauses it - every restart then
   costs the treadmill's countdown, and the belt starts when your character
   moves.
+* The option *In combat, never drop below running pace* only applies once
+  your character has moved in that fight: something attacking a character
+  that stands still never speeds the belt up, and never starts it.
 * During combat the game hides the character's exact speed from addons.
   Walka then estimates it (moving or not, plus your last known run speed),
   so the belt keeps a sensible pace; it does not try to read the hidden

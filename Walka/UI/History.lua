@@ -285,6 +285,12 @@ local function rowTooltipBody(self)
     local lines = {}
     if entry.measured then
         lines[#lines + 1] = Widgets.Colorize("Measured by the treadmill (from the companion app).", COLOR.green)
+    elseif entry.unconfirmed then
+        lines[#lines + 1] = Widgets.Colorize(
+            "Not counted. The companion app has synced since this session and has no walk on the "
+                .. "treadmill for it: it was not running, the pad was off, or the walk was deleted there.",
+            COLOR.grey
+        )
     else
         lines[#lines + 1] = Widgets.Colorize(
             "Estimated by the addon. The treadmill's measured numbers replace it once the "
@@ -373,8 +379,9 @@ local function fillRow(row, entry)
     cells.speed:SetText(speed and Walka:FormatSpeed(speed) or "-")
     cells.who:SetText(shortName(entry.character))
 
-    -- Estimates are shown a little dimmer than measurements.
-    local shade = entry.measured and 1 or 0.8
+    -- Estimates are shown a little dimmer than measurements, and sessions
+    -- that count for nothing dimmer still.
+    local shade = entry.measured and 1 or (entry.unconfirmed and 0.5 or 0.8)
     for _, cell in pairs(cells) do
         cell:SetTextColor(shade, shade, shade)
     end

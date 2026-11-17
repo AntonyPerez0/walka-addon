@@ -106,9 +106,35 @@ local state = {
     dead = false,
     combat = false,
     afk = false,
+    afkHidden = false,  -- true when the game hides its AFK flag (see readAfk)
     falling = false,
     resting = false,
 }
+
+-- Away from the keyboard?
+--
+-- The game's own flag is the best answer - but inside dungeons, raids and
+-- battlegrounds (and during encounters) this client hides it from addons.
+-- "Hidden" must not be read as "not AFK": a belt would then run on with
+-- nobody on it for the whole raid break. There the addon keeps its own
+-- clock instead: no movement and no fight for AFK_IDLE_SECONDS counts as
+-- away, and the first movement or fight after that as back.
+Game.AFK_IDLE_SECONDS = 300
+local lastActive    -- GetTime() of the last movement or fight seen
+
+local function readAfk(moving, combat)
+    local now = GetTime and GetTime() or 0
+    if moving or combat or not lastActive then
+        lastActive = now
+    end
+    local flag = UnitIsAFK and UnitIsAFK("player")
+    if isSecret(flag) then
+        state.afkHidden = true
+        return now - lastActive >= Game.AFK_IDLE_SECONDS
+    end
+    state.afkHidden = false
+    return flag and true or false
+end
 
 --- Sample the character's state. Returns a table that is reused between
 -- calls; copy anything you need to keep.
@@ -137,8 +163,7 @@ function Game.Read()
     state.flying = plainBool(IsFlying and IsFlying(), false)
     state.dead = dead
     state.combat = plainBool(UnitAffectingCombat and UnitAffectingCombat("player"), false)
-    -- UnitIsAFK is hidden inside dungeons/raids/battlegrounds.
-    state.afk = plainBool(UnitIsAFK and UnitIsAFK("player"), false)
+    state.afk = readAfk(state.moving, state.combat)
     state.falling = plainBool(IsFalling and IsFalling(), false)
     state.resting = plainBool(IsResting and IsResting(), false)
     return state

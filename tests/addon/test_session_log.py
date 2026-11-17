@@ -389,3 +389,41 @@ def test_merging_a_long_history_does_not_compare_every_pair_in_full(rt):
     assert len(entries) == 400
     assert sum(1 for entry in entries if entry["measured"]) == 300
     assert counter() <= 3 * (400 + 300), f"{counter()} full comparisons for 400 x 300 records"
+
+
+# ---- a walk that runs past midnight -------------------------------------------------------
+
+
+def test_a_walk_past_midnight_is_shared_between_the_two_days(rt):
+    """Started at 23:40, ended at 00:20: a third... half of it is today's.
+    (Booked whole on the day it began, today's goal and streak would show
+    nothing for the steps walked after midnight.)"""
+    midnight = NOW - 12 * 3600
+    walk = rt.to_lua({
+        "start": midnight - 1200, "end": midnight + 1200, "seconds": 2400,
+        "distanceM": 2000, "steps": 3000, "kcal": 120, "yards": 9000, "measured": True,
+    })
+    result = lua_plain(rt.ns.SessionLog.totals(rt.to_lua([walk]), NOW))
+    assert result["today"]["steps"] == pytest.approx(1500) and result["today"]["sessions"] == 0
+    assert result["today"]["kcal"] == pytest.approx(60)
+    yesterday, today = result["days"][-2], result["days"][-1]
+    assert yesterday["steps"] == pytest.approx(1500) and today["steps"] == pytest.approx(1500)
+    # One walk, counted once; its whole length is still the best on record.
+    assert result["week"]["sessions"] == 1 and result["all"]["sessions"] == 1
+    assert result["all"]["steps"] == 3000 and result["best"]["steps"] == 3000
+    assert result["streak"] == 2, "both days were walked on"
+
+
+def test_the_session_in_progress_past_midnight_counts_for_today(rt):
+    midnight = NOW - 12 * 3600
+    now = midnight + 600
+    live = rt.to_lua({"start": midnight - 1800, "seconds": 2400, "distanceM": 2000, "steps": 3000, "kcal": 120, "yards": 0})
+    result = lua_plain(rt.ns.SessionLog.totals(rt.to_lua([]), now, live))
+    assert result["today"]["steps"] == pytest.approx(3000 * 600 / 2400)
+    assert result["all"]["steps"] == 3000 and result["all"]["sessions"] == 1
+
+
+def test_a_walk_within_one_day_is_booked_whole(rt):
+    walk = rt.to_lua({"start": NOW - 3600, "end": NOW - 1800, "seconds": 1800, "steps": 2000, "distanceM": 1500, "kcal": 80})
+    result = lua_plain(rt.ns.SessionLog.totals(rt.to_lua([walk]), NOW))
+    assert result["today"] == {"sessions": 1, "seconds": 1800, "distanceM": 1500, "steps": 2000, "kcal": 80, "yards": 0}

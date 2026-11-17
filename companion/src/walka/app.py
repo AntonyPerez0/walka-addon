@@ -421,9 +421,13 @@ class App:
         limits = self.config.limits
         try:
             return {
-                "minKmh": round(float(known["min_kmh"]), 4),
-                "maxKmh": round(min(float(known["max_kmh"]), limits.max_speed_kmh), 4),
-                "stepKmh": round(float(known["step_kmh"]), 5),
+                # (Seven decimals, all three alike: with fewer the belt's
+                # minimum and the grid point it sits on came out different in
+                # the last place, and the addon then asked for one step more
+                # than the slowest speed - 0.7 mph for 0.6.)
+                "minKmh": round(float(known["min_kmh"]), 7),
+                "maxKmh": round(min(float(known["max_kmh"]), limits.max_speed_kmh), 7),
+                "stepKmh": round(float(known["step_kmh"]), 7),
                 "accelKmhPerS": limits.accel_kmh_per_s,
                 "decelKmhPerS": limits.decel_kmh_per_s,
                 "mphGrid": bool(known.get("mph_grid")),

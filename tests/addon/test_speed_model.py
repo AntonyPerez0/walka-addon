@@ -403,11 +403,30 @@ def test_combat_hold_keeps_at_least_the_running_pace(rt):
     held = Model(rt, combatHold=True, stopHoldSeconds=0)
     standing, running, mounted = held.pace("standKmh"), held.pace("runKmh"), held.pace("mountKmh")
     assert standing < running < mounted
-    assert held.run(60, speed=0, combat=True)[-1] == pytest.approx(running)
+    held.run(10, speed=7.0, combat=True)                                           # ran into a fight ...
+    assert held.run(60, speed=0, combat=True)[-1] == pytest.approx(running)        # ... and stands in it
     assert held.run(60, speed=14.0, combat=True)[-1] == pytest.approx(mounted)     # faster is not slowed
     assert held.run(60, speed=0, combat=False)[-1] == pytest.approx(standing)      # only in combat
     default = Model(rt, stopHoldSeconds=0)
     assert default.run(60, speed=0, combat=True)[-1] == pytest.approx(standing)    # off by default
+
+
+def test_combat_hold_never_speeds_up_a_character_nobody_is_steering(rt):
+    """Something attacks a character that stands still: no key was pressed,
+    so the belt must not speed up - and one that is stopped must not start."""
+    idle = Model(rt, combatHold=True, stopHoldSeconds=0)
+    standing = idle.pace("standKmh")
+    idle.run(30, speed=0)
+    assert idle.run(120, speed=0, combat=True)[-1] == pytest.approx(standing)
+    stopped = Model(rt, combatHold=True, standKmh=0, stopHoldSeconds=0)
+    stopped.run(30, speed=0)
+    assert set(stopped.run(120, speed=0, combat=True)) == {0}
+    # Once the character has moved in that fight, the hold applies ...
+    stopped.run(5, speed=7.0, combat=True)
+    assert stopped.run(60, speed=0, combat=True)[-1] == pytest.approx(stopped.pace("runKmh"))
+    # ... and it ends with the fight: the next one starts from scratch.
+    stopped.run(60, speed=0, combat=False)
+    assert set(stopped.run(60, speed=0, combat=True)[-100:]) == {0}
 
 
 # ---- standing speed 0: the belt stops -----------------------------------------------

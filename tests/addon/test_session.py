@@ -341,17 +341,88 @@ def test_the_session_resumes_when_the_character_moves_after_afk(rt):
 
 
 def test_moving_while_still_afk_does_not_resume(rt):
-    # Both conditions are needed: AFK over, and the character moving. (Being
-    # pushed, or on a boat, with the AFK state still set is not coming back.)
+    # Being pushed, or on a boat, with the AFK state still set is not coming
+    # back ...
     afk_paused_session(rt)
     rt.set(speed=7.0)
     rt.tick(20)
     assert rt.walka.IsPaused(rt.walka)
     assert flags(rt) == AFK_PAUSED | Flags.MOVING, "the AFK flag is set once, not twice"
+    # ... and a character that is already being carried along when the AFK
+    # flag clears (somebody typed a chat line) pressed no key for anyone.
     rt.set(afk=False)
+    rt.tick(50)
+    assert rt.walka.IsPaused(rt.walka)
+    assert flags(rt) == AFK_PAUSED | Flags.MOVING
+    # It has to stand, and then start moving.
+    rt.set(speed=0)
+    rt.tick(5)
+    assert rt.walka.IsPaused(rt.walka)
+    rt.set(speed=7.0)
     rt.tick()
     assert not rt.walka.IsPaused(rt.walka)
     assert flags(rt) == Flags.ACTIVE | Flags.MOVING
+
+
+def test_a_flight_path_never_ends_an_afk_pause(rt):
+    """AFK on a flight path; the flag is cleared in mid-air. The belt stays
+    off through the flight and the landing, until the first step."""
+    rt.set(speed=7.0)
+    rt.slash("/walka start")
+    rt.tick(100)
+    rt.set(taxi=True, speed=20.0)
+    rt.tick(50)
+    rt.set(afk=True)
+    rt.tick(5)
+    assert rt.walka.IsPaused(rt.walka)
+    rt.set(afk=False)                       # a chat line, with nobody on the pad
+    rt.tick(300)
+    assert rt.walka.IsPaused(rt.walka)
+    assert rt.live_frame().target_raw == 0
+    rt.set(taxi=False, speed=0)             # landed
+    rt.tick(20)
+    assert rt.walka.IsPaused(rt.walka)
+    rt.set(speed=7.0)                       # the first step
+    rt.tick()
+    assert not rt.walka.IsPaused(rt.walka)
+
+
+def test_an_afk_paused_session_restored_after_a_reload_waits_for_a_real_start(rt):
+    afk_paused_session(rt)
+    fresh = rt.reload()
+    fresh.set(afk=False, taxi=True, speed=20.0)   # back in the game, in mid-flight
+    fresh.tick(100)
+    assert fresh.walka.IsPaused(fresh.walka)
+    fresh.set(taxi=False, speed=0)
+    fresh.tick(5)
+    fresh.set(speed=7.0)
+    fresh.tick()
+    assert not fresh.walka.IsPaused(fresh.walka)
+
+
+def test_where_the_game_hides_the_afk_flag_the_addon_keeps_its_own_clock(rt):
+    """Inside dungeons, raids and battlegrounds addons cannot read the AFK
+    flag. Hidden must not mean "not AFK": five minutes without movement or
+    a fight count as away there."""
+    game = rt.ns.Game
+    rt.set(speed=7.0)
+    rt.slash("/walka start")
+    rt.tick(100)
+    rt.set(chatLockdown=True, afk=True, speed=0)  # (the flag itself cannot be read)
+    rt.advance(game.AFK_IDLE_SECONDS - 20)
+    assert not rt.walka.IsPaused(rt.walka)
+    rt.advance(30)
+    assert rt.walka.IsPaused(rt.walka) and session(rt)["pauseReason"] == "afk"
+    assert rt.walka.GetGameState(rt.walka).afkHidden
+    assert rt.find_secrets() == []
+    # Back: the first movement ends it.
+    rt.set(speed=7.0)
+    rt.tick(2)
+    assert not rt.walka.IsPaused(rt.walka)
+    # A fight counts as being there, however long the character stands.
+    rt.set(speed=0, combat=True)
+    rt.advance(game.AFK_IDLE_SECONDS + 60)
+    assert not rt.walka.IsPaused(rt.walka)
 
 
 def test_a_second_afk_pauses_again(rt):
@@ -398,7 +469,10 @@ def test_a_pause_by_hand_is_not_undone_by_afk_ending(rt):
     rt.set(afk=True)
     rt.tick(5)
     assert session(rt)["pauseReason"] == "user"
-    assert flags(rt) == AFK_PAUSED, "the game's own AFK state is still reported"
+    # On a paused frame the AFK flag means "this is the automatic pause". A
+    # pause made by hand goes out without it, even while the game shows the
+    # player AFK - or the companion would not take it for the player's own.
+    assert flags(rt) == Flags.ACTIVE | Flags.PAUSED
     rt.set(afk=False)
     rt.tick(5)
     assert rt.walka.IsPaused(rt.walka), "only an AFK pause resumes by itself"

@@ -176,6 +176,9 @@ def test_history_merges_both_sources(crt):
     assert (newest["yards"], newest["character"]) == (11800, "Tester-Azeroth")
     assert manual["measured"] is True and manual["game"] == "manual" and manual.get("character") is None
     assert estimated["measured"] is False and estimated["character"] == "Alt-Azeroth"
+    # The companion has synced since that session and knows of no walk then:
+    # it is listed, but it does not count.
+    assert estimated["unconfirmed"] is True and "unconfirmed" not in newest
     assert [entry["start"] for entry in entries] == sorted((entry["start"] for entry in entries), reverse=True)
     # Merging is a view: the addon's own records are not rewritten.
     assert lua_plain(crt.db.sessions)[0]["steps"] == 2500
@@ -184,11 +187,12 @@ def test_history_merges_both_sources(crt):
 def test_totals_merge_both_sources_the_older_summary_and_the_live_session(crt):
     totals = lua_plain(crt.walka.GetTotals(crt.walka))
     assert totals["today"] == {"sessions": 1, "seconds": 1790, "distanceM": 1502, "steps": 2710, "kcal": 118.4, "yards": 11800}
-    assert totals["week"]["sessions"] == 3
-    assert totals["week"]["steps"] == 2710 + 1300 + 1700
-    assert totals["all"]["sessions"] == 3 + 12
-    assert totals["all"]["steps"] == 2710 + 1300 + 1700 + 50000
-    assert totals["all"]["kcal"] == pytest.approx(118.4 + 55.0 + 70.0 + 2400.5)
+    # (The session the companion never saw is not in these: see above.)
+    assert totals["week"]["sessions"] == 2
+    assert totals["week"]["steps"] == 2710 + 1300
+    assert totals["all"]["sessions"] == 2 + 12
+    assert totals["all"]["steps"] == 2710 + 1300 + 50000
+    assert totals["all"]["kcal"] == pytest.approx(118.4 + 55.0 + 2400.5)
     assert totals["best"]["steps"] == 2710
     assert totals["streak"] == 1
 
@@ -198,7 +202,34 @@ def test_totals_merge_both_sources_the_older_summary_and_the_live_session(crt):
     totals = lua_plain(crt.walka.GetTotals(crt.walka))
     assert totals["today"]["sessions"] == 2
     assert totals["today"]["steps"] == round(2710 + live["steps"])
-    assert totals["all"]["sessions"] == 16
+    assert totals["all"]["sessions"] == 2 + 12 + 1
+
+
+def test_a_walk_from_after_the_last_sync_counts_as_an_estimate(make_rt):
+    """The companion cannot have told the addon about a walk that ended
+    after it last wrote its file: that one is an estimate waiting for the
+    treadmill's numbers, and counts."""
+    saved = (
+        "{sessions={{id=9,start=%d,['end']=%d,seconds=1190,distanceM=950,steps=1700,"
+        "kcal=70.0,yards=8000,maxKmh=3.22,character='Tester-Azeroth'}}}"
+    ) % (NOW - 1800, NOW - 600)
+    rt = make_rt(files={"CompanionData.lua": COMPANION}, saved_variables={"WalkaDB": saved}, state={"clock": NOW})
+    newest = lua_dict(lua_list(rt.walka.GetHistory(rt.walka))[0])
+    assert newest["steps"] == 1700 and newest["measured"] is False and "unconfirmed" not in newest
+    assert lua_plain(rt.walka.GetTotals(rt.walka))["today"]["steps"] == 2710 + 1700
+
+
+def test_the_addons_records_of_walks_in_the_older_summary_are_not_counted_twice(make_rt):
+    """The companion lists its newest walks and sums up the rest. The
+    addon's own records of walks from before the list begins are in that
+    sum already."""
+    older = "older = { sessions = 12, seconds = 36000, distanceM = 30000, steps = 50000, kcal = 2400.5 }"
+    companion = COMPANION.replace(older, older[:-2] + f", [\"until\"] = {NOW - 4 * DAY} }}")
+    assert companion != COMPANION
+    rt = make_rt(files={"CompanionData.lua": companion}, saved_variables={"WalkaDB": SAVED}, state={"clock": NOW})
+    entries = [lua_dict(entry) for entry in lua_list(rt.walka.GetHistory(rt.walka))]
+    assert len(entries) == 2, "the five-day-old record is in the summary, not in the list"
+    assert lua_plain(rt.walka.GetTotals(rt.walka))["all"]["sessions"] == 2 + 12
 
 
 def test_a_finished_session_shows_up_in_the_merged_history(crt):

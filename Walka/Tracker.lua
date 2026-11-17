@@ -77,7 +77,7 @@ end
 -- Add up this character's walks that are still estimates.
 local function readPending()
     pendingStale = false
-    Journey.unbanked(core.db.sessions, key, pending)
+    Journey.unbanked(core.db.sessions, key, pending, core:GetSyncTime())
     if pending.first and pending.first < record.since then
         record.since = pending.first
     end
@@ -139,7 +139,7 @@ function Tracker.Forget(own)
     if bankStale then
         bank()
     end
-    Journey.forget(journeys, own, Game.Now())
+    Journey.forget(journeys, own, Game.Now(), core:GetSyncTime())
     pendingStale = true
 end
 

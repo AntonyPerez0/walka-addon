@@ -116,9 +116,35 @@ end
 -- records that went into a measured walk, absorbed[its index] is that
 -- walk's entry. The journey uses it to take over the measured numbers
 -- (Core/Journey.lua).
+--- Has the companion looked since this walk of the addon's ended, and seen
+-- nothing of it? `written` is when the companion wrote its file (nil: it
+-- never has). A session that ended well before that and that the companion
+-- has no walk for was not walked on a treadmill it could see: it was
+-- closed, the pad was off - or the walk was deleted on the dashboard. Such
+-- a session stays in the list but counts for nothing. (A walk the
+-- treadmill's numbers were once taken over for - `banked` - was real, even
+-- if the companion has lost it since.)
+SessionLog.CONFIRM_MARGIN_SECONDS = 120
+
+function SessionLog.unconfirmed(own, written)
+    if type(own) ~= "table" or own.banked then
+        return false
+    end
+    written = number(written, -1)
+    local finish = number(own["end"], -1)
+    return written > 0 and usableTime(finish) and finish + SessionLog.CONFIRM_MARGIN_SECONDS < written
+end
+
 function SessionLog.merge(ownSessions, companionData, absorbed)
     local merged = {}
     local companionSessions = companionData and companionData.sessions
+    local written = companionData and companionData.written
+    -- The companion lists only its newest walks and sums up the rest in
+    -- `older`. The addon's records of walks from before that list begins
+    -- are in that sum already: showing them again as estimates would count
+    -- them twice.
+    local older = companionData and companionData.older
+    local olderUntil = type(older) == "table" and number(older["until"], -1) or -1
     local used = {}
 
     -- The addon's records as plain numbers, read once. Every companion
@@ -132,6 +158,9 @@ function SessionLog.merge(ownSessions, companionData, absorbed)
             local start = type(own) == "table" and number(own.start, -1)
             if start and usableTime(start) then
                 ownStart[index], ownEnd[index] = start, number(own["end"])
+                if start < olderUntil then
+                    used[index] = true
+                end
             else
                 -- (a damaged saved-variables file can hold anything)
                 used[index] = true
@@ -167,7 +196,11 @@ function SessionLog.merge(ownSessions, companionData, absorbed)
     if type(ownSessions) == "table" then
         for index, own in ipairs(ownSessions) do
             if not used[index] then
-                merged[#merged + 1] = fromOwn(own)
+                local entry = fromOwn(own)
+                if SessionLog.unconfirmed(own, written) then
+                    entry.unconfirmed = true
+                end
+                merged[#merged + 1] = entry
             end
         end
     end
@@ -247,9 +280,17 @@ function SessionLog.totals(merged, now, live, older)
     end
 
     local walkedOn = {}
-    local function account(entry, countSession)
-        local key = SessionLog.dayKey(number(entry.start, now))
-        add(all, entry, countSession)
+    -- Book `entry` (or the `share` of it that fell on that day) on one day.
+    local part = {}
+    local function accountDay(key, entry, share, countSession)
+        if share < 1 then
+            part.seconds = number(entry.seconds) * share
+            part.distanceM = number(entry.distanceM) * share
+            part.steps = number(entry.steps) * share
+            part.kcal = number(entry.kcal) * share
+            part.yards = number(entry.yards) * share
+            entry = part
+        end
         if key == todayKey then
             add(today, entry, countSession)
         end
@@ -262,16 +303,42 @@ function SessionLog.totals(merged, now, live, older)
             day.seconds = day.seconds + number(entry.seconds)
         end
         walkedOn[key] = true
+    end
+
+    -- `finish`: when the walk ended (for the session in progress: now).
+    local function account(entry, countSession, finish)
+        local start = number(entry.start, now)
+        local key = SessionLog.dayKey(start)
+        add(all, entry, countSession)
         best.steps = max(best.steps, number(entry.steps))
         best.distanceM = max(best.distanceM, number(entry.distanceM))
         best.seconds = max(best.seconds, number(entry.seconds))
+        -- A walk that runs past midnight belongs to both days, by the time
+        -- spent on each (late-night play is ordinary use: without this the
+        -- steps after midnight would all be booked on the day before, and
+        -- today's goal and streak would show nothing for them).
+        local endKey = finish > start and usableTime(finish) and SessionLog.dayKey(finish) or key
+        local fields = endKey ~= key and date("*t", finish)
+        if fields then
+            local midnight = finish - (fields.hour * 3600 + fields.min * 60 + fields.sec)
+            local share = (midnight - start) / (finish - start)
+            if share > 0 and share < 1 then
+                accountDay(key, entry, share, countSession)
+                accountDay(endKey, entry, 1 - share, false)
+                return
+            end
+        end
+        accountDay(key, entry, 1, countSession)
     end
 
     for _, entry in ipairs(merged or {}) do
-        account(entry, true)
+        -- (a session the treadmill never confirmed is listed, not counted)
+        if not entry.unconfirmed then
+            account(entry, true, number(entry["end"], -1))
+        end
     end
     if live then
-        account(live, true)
+        account(live, true, now)
     end
     if type(older) == "table" then
         add(all, older, false)

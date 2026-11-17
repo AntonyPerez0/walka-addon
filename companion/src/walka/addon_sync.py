@@ -174,6 +174,10 @@ def build_payload(
             "distanceM": int(round(sum(r.distance_m for r in older))),
             "steps": int(sum(r.steps for r in older)),
             "kcal": round(sum(r.kcal for r in older), 1),
+            # Everything that began before this moment is in the sum above:
+            # the addon leaves its own records of those walks out, instead
+            # of counting them a second time as estimates.
+            "until": int(listed[0].start),
         }
     return payload
 

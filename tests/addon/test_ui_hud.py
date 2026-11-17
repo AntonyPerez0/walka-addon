@@ -5,6 +5,8 @@ Controls are found the way a player finds them (see ui_driver.py)."""
 
 from __future__ import annotations
 
+import time
+
 import re
 
 import pytest
@@ -12,7 +14,7 @@ import pytest
 from . import ui_driver as ui
 from .conftest import KMH_PER_MPH, MPH_STEP, nearest_step
 from .harness import lua_list, lua_plain
-from .test_ui import COMPANION, NOW, history_saved
+from .test_ui import COMPANION, NOW, SYNCED, history_saved
 
 STATES = {"Off", "Starting", "Waiting", "Walking", "Paused", "Paused (AFK)"}
 HUD_WIDTH = 224
@@ -456,7 +458,8 @@ def test_tooltip_explains_the_state_and_the_data(full_rt):
     assert lines[0] == "Walka"
     assert "No session is running" in lines[1]
     assert "Daily goal: 4,711 of 6,000 steps (79%)." in lines
-    assert any(line.startswith("Companion data from Nov 17") for line in lines)
+    synced = time.strftime("%b %d", time.localtime(SYNCED))
+    assert any(line.startswith(f"Companion data from {synced}") for line in lines)
     assert lines[-1] == "Drag to move. Right-click for the menu."
     rt.walka.Set(rt.walka, "hud.locked", True)
     assert ui.tooltip(rt, ui.hud(rt))[-1] == "Locked. Right-click for the menu."
@@ -778,18 +781,23 @@ def test_totals_are_cached_between_redraws(full_rt):
     rt.tick(550)                    # 55 s idle, some 180 redraws
     assert merges.calls == 0 and totals.calls == 0
     rt.tick(100)                    # ... past the one-minute refresh (for midnight)
-    assert merges.calls == 1 and totals.calls == 1
+    # The totals are added up again - but the history has not changed, so it
+    # is not merged again (that is the expensive part, and it used to cost a
+    # dropped frame once a minute for anyone with a long history).
+    assert merges.calls == 0 and totals.calls == 1
+    rt.tick(3000)                   # five more minutes
+    assert merges.calls == 0 and totals.calls <= 7
 
     merges.reset()
     rt.set(speed=7.0)
     rt.slash("/walka start")
     assert merges.calls == 1, "a session starting changes what 'today' means: one refresh"
-    rt.tick(1200)                   # two minutes of walking: one refresh a minute
-    assert merges.calls <= 3
+    rt.tick(1200)                   # two minutes of walking
+    assert merges.calls == 1, "... and no merge while nothing is filed"
     rt.slash("/walka pause")
     rt.slash("/walka resume")
     rt.tick(10)
-    assert merges.calls <= 3, "pausing and resuming do not change the totals"
+    assert merges.calls == 1, "pausing and resuming do not change the totals"
 
     merges.reset()
     rt.slash("/walka stop")

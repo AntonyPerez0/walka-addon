@@ -112,14 +112,21 @@ end
 
 local function refreshTotals()
     local now = GetTime()
+    -- Merging the history is the expensive part (hundreds of walks against
+    -- hundreds), and the list only changes when a walk is filed: it is kept,
+    -- and merged again only then. The totals over it are refreshed once a
+    -- minute, which is what notices midnight - cheap, without the merge.
     if not cache.dirty and now - cache.at < TOTALS_MAX_AGE then
         return
     end
     -- Marked clean first: should the history ever fail to add up, one error
     -- report a minute is enough - not one on every redraw.
     cache.at = now
-    cache.dirty = false
-    local history = Walka:GetHistory()
+    if cache.dirty or not cache.history then
+        cache.dirty = false
+        cache.history = Walka:GetHistory()
+    end
+    local history = cache.history
     cache.totals = Walka:GetTotals(history)
     local session = Walka:GetSession()
     cache.session = session

@@ -9,6 +9,8 @@ test_stat_frames.py, the window that shows them in test_ui_journey.py.
 
 from __future__ import annotations
 
+import re
+
 import math
 
 import pytest
@@ -40,8 +42,15 @@ def saved(*records: str, more: str = "") -> dict[str, str]:
     return {"WalkaDB": "{sessions={" + ",".join(records) + "}" + more + "}"}
 
 
-def companion(*walks: str, more: str = "") -> dict[str, str]:
-    return {"CompanionData.lua": f"WalkaCompanionData = {{ written = {NOW - 60}, sessions = {{ {','.join(walks)} }}{more} }}"}
+def companion(*walks: str, more: str = "", written: int | None = None) -> dict[str, str]:
+    """The companion's file. Unless told otherwise it was written right
+    after the newest walk it lists - so the addon's sessions from after
+    that are estimates still waiting for the treadmill's numbers, not
+    sessions the companion looked for and did not find."""
+    if written is None:
+        ends = [int(end) for end in re.findall(r"\['end'\]=(\d+)", ",".join(walks))]
+        written = max(ends) + 30 if ends else NOW - 400 * 86400
+    return {"CompanionData.lua": f"WalkaCompanionData = {{ written = {written}, sessions = {{ {','.join(walks)} }}{more} }}"}
 
 
 def summary(rt) -> dict:
@@ -562,6 +571,27 @@ def test_estimates_from_the_history_count_for_the_character_that_walked_them(mak
     assert set(lua_dict(rt.db.journeys)) == {ME}, "nothing is opened for other characters, or for nobody"
 
 
+def test_a_session_the_companion_looked_for_and_did_not_find_adds_nothing(make_rt):
+    """The companion has written its file since the second session ended and
+    lists no walk for it: the treadmill was not moving then (the companion
+    was closed, the pad off), or the walk was deleted on the dashboard. The
+    session stays in the history - and counts for nothing."""
+    rt = make_rt(
+        saved_variables=saved(
+            own(NOW - 90000, 1800, steps=2500, distance=1400, kcal=100.4),
+            own(NOW - 80000, 900, steps=1200, distance=700, kcal=50.3),
+        ),
+        files=companion(measured(NOW - 90010, 1810, steps=2610, distance=1503, kcal=111.6), written=NOW - 3600),
+    )
+    assert real(rt) == {"steps": 2610, "distanceM": 1503, "kcal": 111, "seconds": 1810, "walks": 1, "estimated": False}
+    history = [lua_dict(entry) for entry in lua_list(rt.walka.GetHistory(rt.walka))]
+    assert [entry.get("unconfirmed") for entry in history] == [True, None]
+    assert lua_plain(rt.walka.GetTotals(rt.walka))["all"]["steps"] == 2610
+    # Clearing the history does not smuggle it into the journey either.
+    rt.walka.ClearHistory(rt.walka)
+    assert real(rt)["steps"] == 2610 and real(rt)["walks"] == 1
+
+
 def test_measured_walks_replace_the_estimates_and_are_settled(make_rt):
     rt = make_rt(
         saved_variables=saved(
@@ -570,7 +600,7 @@ def test_measured_walks_replace_the_estimates_and_are_settled(make_rt):
         ),
         files=companion(
             measured(NOW - 90010, 1810, steps=2610, distance=1503, kcal=111.6),
-            measured(NOW - 50000, 600, steps=900, distance=500, kcal=40.0),        # a walk outside the game
+            measured(NOW - 86000, 600, steps=900, distance=500, kcal=40.0),        # a walk outside the game
         ),
     )
     assert real(rt) == {"steps": 3810, "distanceM": 2203, "kcal": 161, "seconds": 2710, "walks": 2, "estimated": True}
@@ -580,7 +610,7 @@ def test_measured_walks_replace_the_estimates_and_are_settled(make_rt):
     assert sessions[0].get("banked") is True and "banked" not in sessions[1]
     # The history window lists what it always did: the mark is the journey's own.
     merged = [lua_plain(entry) for entry in lua_list(rt.walka.GetHistory(rt.walka))]
-    assert [(entry["measured"], entry["steps"]) for entry in merged] == [(True, 900), (False, 1200), (True, 2610)]
+    assert [(entry["measured"], entry["steps"]) for entry in merged] == [(False, 1200), (True, 900), (True, 2610)]
     assert not any("banked" in entry for entry in merged)
 
 

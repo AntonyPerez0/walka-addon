@@ -232,7 +232,9 @@ WalkaCompanionData = {{
 
 
 def test_totals_can_be_computed_from_a_history_already_merged(make_rt):
-    saved = f"{{sessions={{{{id=1,start={NOW - 20000},['end']={NOW - 19000},seconds=900,distanceM=700,steps=1100,kcal=50,yards=500}}}}}}"
+    # (A walk from after the companion last wrote its file: an estimate
+    # that is still waiting for the treadmill's numbers.)
+    saved = f"{{sessions={{{{id=1,start={NOW - 500},['end']={NOW - 100},seconds=390,distanceM=300,steps=480,kcal=21,yards=500}}}}}}"
     rt = make_rt(files={"CompanionData.lua": COMPANION}, saved_variables={"WalkaDB": saved}, state={"clock": NOW})
     walka = rt.walka
     rt.set(speed=7.0)
