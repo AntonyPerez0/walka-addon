@@ -433,8 +433,9 @@ function Walka:PauseSession(reason)
     if session.paused then
         -- Pausing by hand during an AFK pause makes the pause the player's
         -- own: the belt must not restart by itself when AFK ends.
-        if (reason or "user") == "user" then
+        if (reason or "user") == "user" and session.pauseReason ~= "user" then
             session.pauseReason = "user"
+            self:Fire("SESSION", "pause")
         end
         return
     end
@@ -579,15 +580,16 @@ function Walka:Tick(dt)
     local target = 0
 
     if session then
-        if self.db.settings.autoPauseAFK then
-            if state.afk and not session.paused then
-                self:PauseSession("afk")
-            elseif not state.afk and session.paused and session.pauseReason == "afk" and state.moving then
-                -- Back from AFK: the session resumes when the character
-                -- moves, not on the first key press - typing a chat line
-                -- should not start a belt.
+        if session.paused and session.pauseReason == "afk" then
+            -- Back from AFK: the session resumes when the character moves,
+            -- not on the first key press - typing a chat line should not
+            -- start a belt. (Also when the automatic pause has been switched
+            -- off meanwhile: this pause was automatic, so is its end.)
+            if not state.afk and state.moving then
                 self:ResumeSession()
             end
+        elseif self.db.settings.autoPauseAFK and state.afk and not session.paused then
+            self:PauseSession("afk")
         end
 
         flags = flags + FLAG.ACTIVE

@@ -683,7 +683,9 @@ def test_pausing_by_hand_during_an_afk_pause_makes_it_stick(rt):
     assert session(rt)["pauseReason"] == "afk"
     rt.slash("/walka pause")
     assert session(rt)["pauseReason"] == "user"
-    assert events.count(("SESSION", "pause")) == 1, "it was paused already"
+    # One for the automatic pause, one when it became the player's own (the
+    # HUD's "Paused (AFK)" turns into "Paused" at once).
+    assert events.count(("SESSION", "pause")) == 2
     rt.set(afk=False)
     rt.tick(20)
     assert rt.walka.IsPaused(rt.walka)
@@ -802,3 +804,49 @@ def test_settings_reach_the_speed_model_live(rt):
     assert live_speed(rt)[1] <= 2.0 + 1e-9
     rt.tick(100)
     assert live_speed(rt)[1] == pytest.approx(2.0), "at the cap, not stopped"
+
+
+# ---- follow-ups to the AFK rules ---------------------------------------------------------------
+
+
+def test_afk_pause_still_ends_on_movement_after_the_setting_is_switched_off(rt):
+    """The pause was automatic, so its end is too - even if "pause when AFK"
+    has been unticked while it lasted."""
+    walka = rt.walka
+    rt.set(speed=7.0)
+    rt.slash("/walka start")
+    rt.advance(20)
+    rt.set(afk=True, speed=0)
+    rt.advance(2)
+    assert walka.IsPaused(walka)
+    walka.Set(walka, "autoPauseAFK", False)
+    rt.set(afk=False)
+    rt.advance(2)
+    assert walka.IsPaused(walka), "back, but standing still"
+    rt.set(speed=7.0)
+    rt.advance(1)
+    assert not walka.IsPaused(walka)
+    # ... and with the setting off, going AFK again does not pause.
+    rt.set(afk=True, speed=0)
+    rt.advance(2)
+    assert not walka.IsPaused(walka)
+
+
+def test_manual_pause_during_an_afk_pause_tells_the_windows(rt):
+    walka = rt.walka
+    rt.set(speed=7.0)
+    rt.slash("/walka start")
+    rt.advance(10)
+    rt.set(afk=True, speed=0)
+    rt.advance(2)
+    events = rt.run(
+        """
+        local walka, seen = ..., {}
+        walka:On("SESSION", function(what) seen[#seen + 1] = what end)
+        walka:PauseSession("user")
+        walka:PauseSession("user")
+        return table.concat(seen, ",")
+        """,
+        walka,
+    )
+    assert events == "pause", "one event when the pause becomes the player's own, none when repeated"

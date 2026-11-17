@@ -323,3 +323,20 @@ def test_every_secret_capable_api_the_addon_calls_is_exercised_here(rt, snapshot
             assert name in covered, f"{name} can return secret values ({', '.join(tags)}) but no test makes it secret"
     for name in covered:
         assert name in snapshot.secret, f"{name} is not tagged as secret-capable in this client any more"
+
+
+def test_ghost_speed_is_not_remembered_for_the_combat_estimate(rt):
+    """A ghost runs faster than the living character; that speed must not
+    become the estimate used once the real speed is hidden in combat."""
+    game = rt.ns.Game
+    rt.set(speed=7.0, runSpeed=7.0)
+    rt.tick(5)
+    assert game.remembered.run == 7.0
+    rt.set(dead=True, speed=8.75, runSpeed=8.75)
+    rt.tick(5)
+    assert game.remembered.run == 7.0
+    rt.set(dead=False, speed=7.0, runSpeed=7.0)
+    rt.enter_combat()
+    rt.tick(5)
+    state = rt.walka.GetGameState(rt.walka)
+    assert state.estimated and state.speed == 7.0

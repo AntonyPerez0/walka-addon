@@ -56,7 +56,7 @@ local function statsAreSecret()
 end
 
 -- Reads the real speed. Returns nil when it is hidden.
-local function readRealSpeed(mounted)
+local function readRealSpeed(mounted, dead)
     if statsAreSecret() then
         return nil
     end
@@ -67,7 +67,9 @@ local function readRealSpeed(mounted)
     if type(current) ~= "number" then
         return nil
     end
-    if type(run) == "number" and run > 0 then
+    -- (Not while dead: a ghost runs faster than the living character will
+    -- when the estimate is needed.)
+    if type(run) == "number" and run > 0 and not dead then
         if mounted then
             remembered.mounted = run
         else
@@ -113,11 +115,12 @@ local state = {
 function Game.Read()
     local mounted = plainBool(IsMounted and IsMounted(), false)
     local swimming = plainBool(IsSwimming and IsSwimming(), false)
+    local dead = plainBool(UnitIsDeadOrGhost and UnitIsDeadOrGhost("player"), false)
 
     -- pcall is a last line of defence: if a client build hides a value this
     -- code did not expect, fall back to the estimate instead of erroring
     -- ten times a second.
-    local ok, speed = pcall(readRealSpeed, mounted)
+    local ok, speed = pcall(readRealSpeed, mounted, dead)
     if ok and speed then
         state.speed = speed
         state.estimated = false
@@ -132,7 +135,7 @@ function Game.Read()
     state.swimming = swimming
     state.taxi = plainBool(UnitOnTaxi and UnitOnTaxi("player"), false)
     state.flying = plainBool(IsFlying and IsFlying(), false)
-    state.dead = plainBool(UnitIsDeadOrGhost and UnitIsDeadOrGhost("player"), false)
+    state.dead = dead
     state.combat = plainBool(UnitAffectingCombat and UnitAffectingCombat("player"), false)
     -- UnitIsAFK is hidden inside dungeons/raids/battlegrounds.
     state.afk = plainBool(UnitIsAFK and UnitIsAFK("player"), false)

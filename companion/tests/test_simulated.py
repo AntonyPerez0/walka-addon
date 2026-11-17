@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import itertools
+import time
 
 import pytest
 
@@ -313,13 +314,17 @@ def test_nothing_advances_while_disconnected_or_with_no_time():
 
 
 def test_auto_run_advances_in_real_time_and_stops_on_disconnect():
-    sim = SimulatedTreadmill(countdown_s=0.05, tick_s=0.01, ramp_kmh_per_s=50.0)
+    # Sleeps well above 16 ms and a wall-clock deadline: on Windows the event
+    # loop's clock ticks every 15.6 ms, and two tasks that both sleep for less
+    # than a tick wake each other up without any time passing.
+    sim = SimulatedTreadmill(countdown_s=0.05, tick_s=0.03, ramp_kmh_per_s=50.0)
 
     async def scenario():
         await sim.connect()
         await sim.start()
-        for _ in range(200):
-            await asyncio.sleep(0.01)
+        deadline = time.monotonic() + 4.0
+        while time.monotonic() < deadline:
+            await asyncio.sleep(0.03)
             if sim.status.speed_kmh > 0.5:
                 break
         assert sim.status.state is BeltState.RUNNING and sim.status.speed_kmh > 0.5

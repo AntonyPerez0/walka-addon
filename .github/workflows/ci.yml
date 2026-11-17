@@ -56,6 +56,9 @@ jobs:
           $scan = (& $exe scan --seconds 2 2>&1 | Out-String)
           Write-Host $scan
           if ($scan -match "ModuleNotFoundError|ImportError|AttributeError|Traceback") { throw "Bluetooth stack did not load in the frozen app" }
+          # "No Bluetooth adapter" is the expected answer here and exits 1;
+          # do not let that become this step's exit code.
+          $global:LASTEXITCODE = 0
           $env:WALKA_DATA_DIR = Join-Path $env:RUNNER_TEMP "walka-data"
           $proc = Start-Process -FilePath $exe -ArgumentList "--demo","--no-browser","--port","8791" -PassThru -NoNewWindow
           try {
