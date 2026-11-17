@@ -209,7 +209,11 @@ async def _scan(args: argparse.Namespace) -> int:
     cfg = config_module.load(_data_dir(args))
     treadmill = FtmsTreadmill(name_prefixes=cfg.treadmill.name_prefixes)
     print(f"Scanning for treadmills for {args.seconds:.0f} s ...")
-    found = await treadmill.discover(args.seconds)
+    try:
+        found = await treadmill.discover(args.seconds)
+    except Exception as exc:  # no adapter, Bluetooth switched off, ...
+        print(f"Bluetooth is not available: {exc}")
+        return 2
     if not found:
         print("None found. Is the pad on, in range, and the UREVO phone app closed?")
         return 1
@@ -223,11 +227,15 @@ async def _probe(args: argparse.Namespace) -> int:
     from . import probe
 
     cfg = config_module.load(_data_dir(args))
-    lines = await probe.probe(
-        address=args.address or cfg.treadmill.address or None,
-        name_prefixes=cfg.treadmill.name_prefixes,
-        listen_s=args.seconds,
-    )
+    try:
+        lines = await probe.probe(
+            address=args.address or cfg.treadmill.address or None,
+            name_prefixes=cfg.treadmill.name_prefixes,
+            listen_s=args.seconds,
+        )
+    except Exception as exc:  # no adapter, Bluetooth switched off, the pad dropped the link, ...
+        print(f"Bluetooth problem: {exc}")
+        return 2
     path = probe.save_report(lines, Path(args.out) if args.out else Path.cwd())
     print(f"\nReport saved to {path}")
     return 0

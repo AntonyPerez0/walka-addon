@@ -235,7 +235,11 @@ def _registry_roots() -> list[Path]:
         import winreg
     except ImportError:
         return roots
+    # WoW: Forever registers its own key; the others are retail's (a shared
+    # install has the same root folder).
     keys = (
+        r"SOFTWARE\WOW6432Node\Blizzard Entertainment\World of Warcraft Forever",
+        r"SOFTWARE\Blizzard Entertainment\World of Warcraft Forever",
         r"SOFTWARE\WOW6432Node\Blizzard Entertainment\World of Warcraft",
         r"SOFTWARE\Blizzard Entertainment\World of Warcraft",
     )

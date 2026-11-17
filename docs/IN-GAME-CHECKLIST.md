@@ -75,7 +75,35 @@ used.
 - [ ] `/walka history` lists the session; `/walka options` opens the
       settings page; sliders and checkboxes work.
 
-## 6. With the treadmill (after the checks in the README)
+## 6. The windows
+
+- [ ] HUD: it has a border and a dark fill; the play icon and the small
+      target arrow are triangles, not rectangles; no text is clipped
+      ("Paused (AFK)" fits beside the four buttons, in mph and in km/h).
+- [ ] Right-click the HUD: a menu with *Lock position*, *Keep walking when
+      standing*, *History*, *Options* and *Hide*. All of them work, also in
+      combat.
+- [ ] Drag the HUD into a corner, then `/reload`: it is back in the same
+      place.
+- [ ] *Keep walking*: tick it (menu, options or `/walka keepwalking on`),
+      run, then stand still - the target eases down to the walking pace and
+      stays there.
+- [ ] `/afk` during a session: "Paused (AFK)". Type something in chat: still
+      paused. Move your character: it resumes.
+- [ ] `/walka history`: opens centred; Escape and the X close it; the wheel
+      scrolls the list. *Sync* reloads the interface and a running session
+      is still running afterwards.
+- [ ] Esc → Options → AddOns → Walka exists; `/walka options` opens it on
+      that page; it scrolls; sliders, checkboxes and edit boxes work; the
+      units switch converts every value.
+- [ ] In combat, `/walka options` prints a "cannot be opened in combat"
+      line and nothing else. After Walka has opened the settings window,
+      change a keybinding in that same window - if "Interface action failed
+      because of an AddOn" appears, tell me.
+- [ ] Minimap addon compartment: left-click toggles the HUD, right-click
+      opens the options.
+
+## 7. With the treadmill (after the checks in the README)
 
 - [ ] Stand on the pad, `/walka start`: countdown, belt starts at minimum
       speed, then follows.

@@ -100,12 +100,16 @@ with no I/O, so every rule below is covered by automated tests.
 
 * *Start* in the HUD is the only thing that arms the system from the game
   side. *Stop* ends the session and stops the belt.
-* Going AFK pauses the session (and the belt) automatically; it resumes when
-  you come back. You can turn this off.
+* Going AFK pauses the session (and the belt) automatically. Coming back
+  does not restart it by itself: the session resumes when your character
+  next *moves*, so typing a chat line does not start a belt. You can turn
+  the automatic pause off.
 * By default the belt never stops while a session runs: when your character
-  stands still it drops to the *standing* speed (1.0 mph). You can set the
-  standing speed to "stop the belt", but every restart then costs the
-  treadmill's countdown, and the belt starts when your character moves.
+  stands still it drops to the *standing* pace (0.8 mph). Two options
+  change that: *Keep walking* holds your walking pace instead, and *Stop
+  the belt when my character stands still* pauses it - every restart then
+  costs the treadmill's countdown, and the belt starts when your character
+  moves.
 * During combat the game hides the character's exact speed from addons.
   Walka then estimates it (moving or not, plus your last known run speed),
   so the belt keeps a sensible pace; it does not try to read the hidden

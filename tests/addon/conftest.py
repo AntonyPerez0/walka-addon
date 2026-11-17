@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import time
 from pathlib import Path
 
@@ -52,6 +53,25 @@ def ui_rt(make_rt) -> WowRuntime:
     if not ui_files_present():
         pytest.skip("Walka/UI/*.lua are not written yet")
     return make_rt()
+
+
+KMH_PER_MPH = 1.609344
+
+# The speed grid of the treadmill the addon assumes with speeds in mph (the
+# default for an enUS client): 0.1 mph steps. With km/h it is 0.1 km/h.
+MPH_STEP = 0.1 * KMH_PER_MPH
+
+
+def nearest_step(kmh: float, step: float = 0.1) -> float:
+    """The value on a treadmill's speed grid (multiples of ``step`` km/h)
+    nearest to ``kmh``, halves rounding up as in Core/SpeedModel.lua.
+
+    This is the target the speed model settles on for a pace that neither
+    the cap nor the belt's minimum limits, so tests can say "the running
+    pace" without repeating the numbers of SpeedModel.DEFAULTS. (The
+    defaults themselves, and what they come to on both grids, are pinned in
+    test_speed_model.py.)"""
+    return math.floor(kmh / step + 0.5) * step
 
 
 def local_noon(year: int, month: int, day: int) -> int:

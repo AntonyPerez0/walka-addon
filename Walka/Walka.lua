@@ -54,7 +54,6 @@ local function buildDefaults()
         beacon = { enabled = true, cellPx = Beacon.DEFAULT_CELL_PX },
         hud = { shown = true, locked = false, scale = 1.0, alpha = 0.9 },
         autoPauseAFK = true,
-        netCalories = false,
         dailyStepGoal = 6000,
         announce = true,
     }
@@ -444,7 +443,7 @@ function Walka:PauseSession(reason)
     self.targetKmh = 0
     if self.db.settings.announce then
         if reason == "afk" then
-            self:Print("you are AFK - session paused.")
+            self:Print("you are AFK - session paused. It resumes when your character moves.")
         else
             self:Print("session paused.")
         end
@@ -583,7 +582,10 @@ function Walka:Tick(dt)
         if self.db.settings.autoPauseAFK then
             if state.afk and not session.paused then
                 self:PauseSession("afk")
-            elseif not state.afk and session.paused and session.pauseReason == "afk" then
+            elseif not state.afk and session.paused and session.pauseReason == "afk" and state.moving then
+                -- Back from AFK: the session resumes when the character
+                -- moves, not on the first key press - typing a chat line
+                -- should not start a belt.
                 self:ResumeSession()
             end
         end
@@ -591,6 +593,12 @@ function Walka:Tick(dt)
         flags = flags + FLAG.ACTIVE
         if session.paused then
             flags = flags + FLAG.PAUSED
+            if session.pauseReason == "afk" and not state.afk then
+                -- Still the automatic pause: keep telling the companion so,
+                -- or it would take this for a pause the player asked for
+                -- (which acknowledges a stop made at the treadmill).
+                flags = flags + FLAG.AFK
+            end
         else
             target = self.model:update(dt, state)
             session.yards = session.yards + state.speed * dt

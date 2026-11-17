@@ -260,7 +260,7 @@ local STATE_HELP = {
     starting = "The treadmill is counting down; the belt starts at its slowest speed.",
     waiting = "Your character is standing still, so the belt is stopped. It restarts when you move.",
     paused = "The session is paused and the belt is stopped.",
-    afk = "You are AFK, so the session is paused. It resumes when you come back.",
+    afk = "You went AFK, so the session is paused. It resumes when your character moves.",
 }
 
 -- "Waiting" although the character is moving: it is the settings that keep

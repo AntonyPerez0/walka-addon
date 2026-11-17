@@ -533,6 +533,32 @@ local function create()
     close:ClearAllPoints()
     close:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -3, -3)
 
+    -- An addon cannot receive anything while the game runs: the walks the
+    -- companion app has measured only arrive when the interface loads. This
+    -- button reloads it (a click counts as the key press the game requires).
+    -- A session in progress survives the reload.
+    local sync = Widgets.Button(frame, "Sync", 58, function()
+        if ReloadUI then
+            ReloadUI()
+        end
+    end)
+    sync:SetPoint("RIGHT", close, "LEFT", -6, 0)
+    Widgets.Tooltip(sync, "Load measured walks", function()
+        local lines = {
+            "Reloads the interface (a few seconds) to load the walks the companion app "
+                .. "has measured since you logged in. They replace the ~ estimates.",
+            "A session in progress carries on.",
+        }
+        local synced = Walka:GetSyncTime()
+        if synced then
+            lines[#lines + 1] = Widgets.Colorize("Companion data from " .. date("%b %d %H:%M", synced) .. ".", COLOR.grey)
+        else
+            lines[#lines + 1] = Widgets.Colorize("No companion data loaded yet.", COLOR.grey)
+        end
+        return lines
+    end, "ANCHOR_BOTTOMRIGHT")
+    parts.sync = sync
+
     -- Summary cards.
     local cardTitles = { { "today", "Today" }, { "week", "Last 7 days" }, { "all", "All time" } }
     for index, info in ipairs(cardTitles) do

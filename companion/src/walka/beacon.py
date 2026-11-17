@@ -12,7 +12,7 @@ contrast, HDR tone-mapping and colour-blind filters: the decoder only needs
 "brighter or darker than the midpoint", and it measures that midpoint from
 the preamble of every frame.
 
-Every cell is ``cell`` physical pixels wide and tall (3 by default). The
+Every cell is ``cell`` physical pixels wide and tall (4 by default). The
 decoder does not need to know the size: it measures the pitch from the
 preamble and refines it until the postamble and CRC agree.
 
@@ -32,7 +32,7 @@ PREAMBLE: tuple[int, ...] = (1, 0, 1, 0)
 POSTAMBLE: tuple[int, ...] = (1, 0)
 TOTAL_CELLS = len(PREAMBLE) + FRAME_BITS + len(POSTAMBLE)  # 86
 
-DEFAULT_CELL_PX = 3
+DEFAULT_CELL_PX = 4
 MIN_CELL_PX = 1.5
 MAX_CELL_PX = 16.0
 

@@ -1,7 +1,7 @@
 name: CI
 
-# Manual runs only while the first version is being assembled; the final
-# commit switches this to run on every push.
+# Manual runs only until the tests for the new defaults have landed; the
+# next commit switches this to run on every push.
 on:
   workflow_dispatch:
 
@@ -22,7 +22,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install
-        run: python -m pip install -e "companion[dev]" pytest-asyncio
+        run: python -m pip install -e "companion[dev]"
       - name: Lint
         working-directory: companion
         run: ruff check src tests
@@ -32,7 +32,6 @@ jobs:
   windows-exe:
     name: Windows executable
     runs-on: windows-latest
-    needs: test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -49,6 +48,12 @@ jobs:
           $exe = "companion/dist/Walka.exe"
           & $exe --version
           if ($LASTEXITCODE -ne 0) { throw "version check failed" }
+          # The Bluetooth stack must load inside the frozen app. The runner
+          # has no Bluetooth adapter, so the scan itself is expected to say
+          # so - what must not happen is an import error.
+          $scan = (& $exe scan --seconds 2 2>&1 | Out-String)
+          Write-Host $scan
+          if ($scan -match "ModuleNotFoundError|ImportError|AttributeError|Traceback") { throw "Bluetooth stack did not load in the frozen app" }
           $env:WALKA_DATA_DIR = Join-Path $env:RUNNER_TEMP "walka-data"
           $proc = Start-Process -FilePath $exe -ArgumentList "--demo","--no-browser","--port","8791" -PassThru -NoNewWindow
           try {

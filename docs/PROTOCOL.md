@@ -53,8 +53,13 @@ Bit 0 is the least-significant bit of the 16-bit field.
 | 2048  | RESTING   | In an inn or city. |
 | 4096  | ESTIMATED | The character speed is an estimate (see below). |
 
-Only ACTIVE, PAUSED and MOVING change what the companion does; the rest are
-for display and for future use.
+ACTIVE, PAUSED, MOVING and AFK change what the companion does; the rest are
+for display and for future use. AFK matters together with PAUSED: the addon
+pauses a session by itself when the player goes AFK, and keeps the AFK flag
+set for as long as that automatic pause lasts. The companion treats a pause
+*without* AFK as something the player asked for (pause then resume is a
+deliberate way to restart a belt that was stopped at the treadmill); an
+automatic one is not.
 
 ### Why "ESTIMATED" exists
 

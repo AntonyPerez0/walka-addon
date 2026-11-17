@@ -47,6 +47,7 @@ local log = {
     popups = {},
     settings_opened = {},
     blocked = {},
+    reloads = {},        -- ReloadUI() calls: the clock (state.clock) at each
 }
 M.log = log
 
@@ -662,6 +663,16 @@ define("PlaySound", function(soundKitID, channel)
     end
     log.sounds[#log.sounds + 1] = soundKitID
     return true, #log.sounds
+end)
+
+-- ReloadUI() (Blizzard_SharedXML/InterfaceUtil.lua) throws the whole Lua
+-- state away and loads the interface again. The mock only records that it
+-- was asked to: the state stays alive, so a test can count the calls and
+-- look at what the addon did before them. A test that wants what a reload
+-- does (saved variables through the serialiser into a fresh state) calls
+-- WowRuntime.reload() in harness.py.
+define("ReloadUI", function()
+    log.reloads[#log.reloads + 1] = state.clock
 end)
 
 -- C_Secrets: predicates that say whether a class of API returns secrets.

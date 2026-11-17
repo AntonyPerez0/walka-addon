@@ -1,4 +1,4 @@
-## Interface: 16001
+## Interface: 16001, 16002
 ## Title: Walka
 ## Notes: Links an under-desk walking pad to your character: the belt follows your character's speed, and the HUD tracks speed, steps, distance and calories.
 ## Author: Walka

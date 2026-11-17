@@ -40,11 +40,13 @@ SpeedModel.CAP_TOLERANCE_KMH = 0.005
 
 --- Default settings. All belt speeds are km/h.
 SpeedModel.DEFAULTS = {
-    standKmh = 1.6,   -- character standing still (1.0 mph). 0 = stop the belt.
-    walkKmh = 2.4,    -- character walking, 2.5 yd/s (1.5 mph)
-    runKmh = 3.2,     -- character running, 7 yd/s (2.0 mph)
-    mountKmh = 4.0,   -- 100% mount speed and above, 14 yd/s (2.5 mph)
-    maxKmh = 4.8,     -- never ask for more than this (3.0 mph)
+    -- Paces in the range people settle at on treadmill desks (1-2 mph),
+    -- where typing is barely affected; the options page raises them.
+    standKmh = 1.287, -- character standing still (0.8 mph). 0 = stop the belt.
+    walkKmh = 1.931,  -- character walking, 2.5 yd/s (1.2 mph)
+    runKmh = 2.575,   -- character running, 7 yd/s (1.6 mph)
+    mountKmh = 3.219, -- 100% mount speed and above, 14 yd/s (2.0 mph)
+    maxKmh = 4.023,   -- never ask for more than this (2.5 mph)
     minBeltKmh = 1.0, -- slowest speed the treadmill can hold; below it = stop
     stepKmh = 0.1,    -- treadmill speed increment
     riseSeconds = 4,  -- smoothing time constant when speeding up

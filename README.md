@@ -21,7 +21,8 @@ do with just the remote.
 
 > **Status: untested on real hardware and in the real game.** Everything
 > here was built and tested against a simulated treadmill and a simulated
-> game client. Read [Before your first walk](#before-your-first-walk).
+> game client (about 2,000 automated tests). Read
+> [Before your first walk](#before-your-first-walk).
 
 ## How it works
 
@@ -54,18 +55,19 @@ Details: [docs/PROTOCOL.md](docs/PROTOCOL.md).
 
 ## What you need
 
-* Windows 10 or 11 with Bluetooth (4.0 / "LE" or newer).
+* Windows 11 (Windows 10 generally works) with Bluetooth 4.0 / "LE" or
+  newer.
 * The walking pad, switched on, **not** paired in Windows Bluetooth
   settings, and with the UREVO phone app **closed** (the pad accepts one
   connection at a time).
-* WoW: Forever running in *Windowed* or *Fullscreen (Windowed)* mode, with
-  the top-left corner of the game visible.
+* WoW: Forever in *Windowed* or *Windowed (Fullscreen)* mode, with the
+  top-left corner of the game visible.
 
 ## Install
 
 1. **Get the companion.** Either download `Walka.exe` from this
    repository's *Actions* tab (latest run → *Walka-windows* artifact), or
-   run it from source:
+   run it from source (Python 3.10 or newer):
 
    ```
    cd companion
@@ -75,15 +77,14 @@ Details: [docs/PROTOCOL.md](docs/PROTOCOL.md).
 
 2. **Run it.** A console window opens and your browser shows the dashboard
    at <http://127.0.0.1:8787>.
-3. **Install the addon.** On the dashboard: *Settings → Addon → Install*.
-   (Or copy the `Walka` folder to
-   `World of Warcraft\_forever_\Interface\AddOns\` yourself.) Restart the
-   game if it was running and tick *Walka* in the AddOns list.
+3. **Install the addon.** With the game closed, on the dashboard:
+   *Settings → Game addon → Install automatically*. (Or copy the `Walka`
+   folder to `World of Warcraft\_forever_\Interface\AddOns\` yourself.)
+   Start the game and tick *Walka* in the AddOns list.
 4. **Connect the treadmill.** Dashboard → *Treadmill → Scan*, pick
    `URTM030`, *Connect*.
-5. **Tell it about you.** *Settings → Profile*: weight and height (used for
-   calories and steps). Add age and sex if you want heart-rate based
-   calories.
+5. **Tell it about you.** *Settings → Body profile*: weight and height
+   (used for calories and steps).
 
 ## Using it
 
@@ -93,24 +94,35 @@ starts slowly; from then on it follows your character:
 
 | Your character is…          | Belt (defaults)  |
 |-----------------------------|------------------|
-| standing still              | 1.0 mph          |
-| walking                     | 1.5 mph          |
-| running                     | 2.0 mph          |
-| on a fast mount             | 2.5 mph          |
+| standing still              | 0.8 mph          |
+| walking                     | 1.2 mph          |
+| running                     | 1.6 mph          |
+| on a fast mount             | 2.0 mph          |
 | on a flight path            | running pace     |
 | anything faster/slower      | in between - Sprint really does speed you up |
 
 A real run speed (14 mph!) is not something to match under a desk, so every
-one of those numbers is yours to set in `/walka options`, along with how
-quickly the belt reacts (*Steady*, *Balanced*, *Responsive*), a maximum, and
-whether the belt should stop outright when you stand still.
+one of those numbers is yours to set in `/walka options`. The defaults sit
+where people settle on treadmill desks (1-2 mph); raise them as you get
+used to it. Also there:
 
-**Pause** / **Stop** are on the HUD too. Going AFK pauses automatically.
+* how quickly the belt reacts (*Steady*, *Balanced*, *Responsive*);
+* a maximum (2.5 mph by default; the companion has its own hard cap,
+  3.0 mph by default);
+* **Keep walking when my character stands still** - the belt holds your
+  walking pace through stops (looting, casting, reading a quest), so they
+  cost no steps. Also on the HUD's right-click menu and as
+  `/walka keepwalking`;
+* or the opposite: stop the belt outright when you stand still.
+
+**Pause** / **Stop** are on the HUD too. Going AFK pauses automatically;
+the session resumes when your character next moves.
 
 | Command | |
 |---|---|
 | `/walka` | show or hide the HUD |
 | `/walka start` · `pause` · `resume` · `stop` | control the session |
+| `/walka keepwalking on` \| `off` | hold the walking pace when your character stops |
 | `/walka history` | past sessions, totals, 7-day chart |
 | `/walka options` | settings |
 | `/walka status` | what the addon is doing right now |
@@ -121,10 +133,10 @@ whether the belt should stop outright when you stand still.
 ### Numbers: estimated now, measured later
 
 The HUD's live numbers are marked `~`: they are the addon's estimate. After
-a walk, `/reload` (or just your next login) loads what the treadmill
-actually measured, and the history switches that session to the measured
-values. The dashboard shows measured values the whole time - put it on a
-second monitor or your phone.
+a walk, press **Sync** in the history window (it reloads the interface; a
+session in progress carries on) or just log in next time, and the history
+switches that session to what the treadmill measured. The dashboard shows
+measured values the whole time - put it on a second monitor or your phone.
 
 ### In combat
 
@@ -132,6 +144,54 @@ WoW: Forever hides your character's exact speed from addons during combat.
 Walka does not work around that. While it is hidden the addon estimates:
 moving or not, at your last known run speed. The HUD tooltip tells you when
 this is happening.
+
+### Calories and steps
+
+* **Calories** come from belt speed and your weight, using an equation
+  validated at slow desk-walking speeds (the usual treadmill formula reads
+  11-35% low there). Expect roughly ±10% for an individual. The dashboard
+  also shows how much of it is *on top of* what sitting would have burned.
+* **Steps** are the treadmill's own count if it reports one; otherwise they
+  are estimated from belt speed and your height. People differ by 6-20% at
+  slow speeds, so there is a *step calibration* setting: count your steps
+  for a minute, divide by what Walka counted.
+* A **wrist watch will not count these steps** - with your hands on the
+  keyboard your arm does not swing. Walka's count is the record.
+
+## Stopping the belt
+
+Fastest first:
+
+1. the treadmill's **remote**, stop button or safety key - Walka then
+   leaves the belt stopped;
+2. **Ctrl+Alt+X** anywhere on the PC, even inside the game (Windows; change
+   it under *Settings → Safety limits*);
+3. the red **STOP** on the dashboard;
+4. *Stop* on the HUD, or `/walka stop`.
+
+## Heart rate (optional)
+
+Any Bluetooth heart-rate sensor works: a chest strap, an arm band, or a
+watch that can broadcast. Dashboard → *Settings → Heart-rate sensor → Scan*.
+
+**Garmin Instinct 2 / Instinct 2 Solar:** hold *MENU* → *Sensors &
+Accessories* → *Wrist Heart Rate* → *Broadcast Heart Rate*, then press
+*GPS* to start broadcasting (press it again to stop). Watch-to-Windows
+Bluetooth is known to be hit-and-miss and broadcasting uses battery; a
+cheap Bluetooth chest strap or arm band is the dependable option.
+
+Heart rate is shown live and stored with each walk. It only drives the
+calorie figure when you have entered age and sex *and* your heart rate is
+in real exercise territory (above 60% of the maximum for your age, for a
+minute) - at desk-walking heart rates the heart-rate formula would read up
+to double.
+
+## Garmin Connect, Strava and others
+
+Each walk can be downloaded as a **TCX** file (dashboard → *History* → a
+walk → *TCX*) and imported by hand: on connect.garmin.com, *Activities* →
+*Import*. Imported walks show time, distance, calories and heart rate.
+Garmin does not add their steps to your daily step total.
 
 ## Other games, or no game
 
@@ -145,14 +205,13 @@ recorded too.
 Short version - the long one is [docs/SAFETY.md](docs/SAFETY.md):
 
 * Nothing moves until you press Start.
-* A hard speed cap (3.0 mph until you raise it) that no game state can
-  exceed, and gentle, rate-limited speed changes.
+* A hard speed cap (3.0 mph until you raise it, never above 4.0 mph) that
+  no game state can exceed, and gentle, rate-limited speed changes.
 * If the companion loses sight of the game it holds, then slows, then
   pauses the belt. It never speeds up on a lost signal.
 * Stop the belt at the treadmill and Walka leaves it stopped.
 * After any pause it did not watch you start, the belt waits for your
   character to move.
-* A big STOP button on the dashboard.
 
 Bluetooth is not an emergency stop: keep the remote within reach.
 
@@ -192,8 +251,8 @@ order:
    cannot move the belt. Keep the report - it settles the open questions in
    [docs/HARDWARE.md](docs/HARDWARE.md).
 2. **A manual session from the dashboard while standing next to the pad**,
-   not on it. Start, change speed, pause, stop, press STOP. Stop it with
-   the remote and check Walka leaves it stopped.
+   not on it. Start, change speed, pause, stop, press STOP, press
+   Ctrl+Alt+X. Stop it with the remote and check Walka leaves it stopped.
 3. **`Walka.exe beacon`** with the game running: checks that the strip can
    be read from your screen.
 4. **In game**, the checks in
@@ -207,14 +266,24 @@ order:
 | Treadmill not found | Is it on? Close the UREVO phone app (force-quit it). Remove the pad from Windows *Bluetooth & devices* if you paired it there. A USB Bluetooth 5 adapter helps with weak built-in radios. |
 | Dashboard says *no game signal* | Run the game windowed or borderless; keep the top-left corner uncovered; `/walka beacon on`; try `/walka beacon size 6`; run `Walka.exe beacon`. |
 | Belt does not follow | Is a session started (`/walka status`)? Does the dashboard say *waiting for you to move your character* or *stopped at the treadmill*? Press Resume. |
-| Speed is one step off | Set *Settings → Treadmill → firmware units* to mph (or km/h) instead of auto. |
-| History shows `~` numbers | `/reload` after the companion has saved the walk; check *Settings → Addon* shows the right folder. |
-| HDR / odd colours | The strip is plain black and white and should survive HDR; if not, make it bigger. |
+| "Waiting for the treadmill to finish its previous workout" | Normal for about ten seconds after a stop: the pad ignores a start until then. |
+| Speed is one step off | Set *Settings → Treadmill → Firmware speed grid* to mph (or km/h) instead of auto. |
+| History shows `~` numbers | Press *Sync* in the history window after the companion has saved the walk; check *Settings → Game addon* shows the right folder. |
+| Addon marked out of date after a game patch | Tick *Load out of date AddOns*, and update the `## Interface:` line in `Walka/Walka.toc`. |
+| The pad keeps waking up | The companion only reconnects when a session starts or you press Connect; closing the companion releases the pad entirely. |
+
+## Ideas for later
+
+* A foot pod or other Bluetooth cadence sensor for true step counts.
+* Goals and streak rewards in game; milestones announced in chat.
+* Per-game plugins for other games (the companion's manual mode already
+  works with anything).
+* Reading daily totals back from Garmin's personal API.
 
 ## Development
 
 ```
-py -m pip install -e "companion[dev]" pytest-asyncio
+py -m pip install -e "companion[dev]"
 py -m pytest          # companion tests + addon tests (the addon runs under a mocked game client)
 ```
 
@@ -226,7 +295,7 @@ py -m pytest          # companion tests + addon tests (the addon runs under a mo
   (dashboard), `app.py` (wiring), `cli.py`.
 * `tests/addon/` - loads the real addon files into a mock of the game's
   API that is checked against Blizzard's published API documentation for
-  this client build.
+  this client build (`tools/gen_api_snapshot.py` regenerates the snapshot).
 * `py -m walka --demo` runs everything against a simulated treadmill and a
   scripted character.
 
