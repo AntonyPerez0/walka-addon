@@ -69,8 +69,11 @@ def record_to_tcx(record: SessionRecord, *, sport: str = "Other", height_cm: flo
     lines += [
         "        <Intensity>Active</Intensity>",
         "        <TriggerMethod>Manual</TriggerMethod>",
-        "        <Track>",
     ]
+    # The schema allows a Lap without a Track, but not a Track without
+    # Trackpoints - so a walk with no stored samples gets no Track at all.
+    if points:
+        lines.append("        <Track>")
     for t, distance, kmh, bpm in points:
         # TCX cadence counts one foot (strides per minute), max 254.
         cadence = min(254, int(round(metrics.steps_per_minute(kmh, height_cm) / 2.0)))
@@ -85,8 +88,9 @@ def record_to_tcx(record: SessionRecord, *, sport: str = "Other", height_cm: flo
             f"<ns3:RunCadence>{cadence}</ns3:RunCadence></ns3:TPX></Extensions>"
         )
         lines.append("          </Trackpoint>")
+    if points:
+        lines.append("        </Track>")
     lines += [
-        "        </Track>",
         f"        <Extensions><ns3:LX><ns3:Steps>{int(record.steps)}</ns3:Steps></ns3:LX></Extensions>",
         "      </Lap>",
         "      <Notes>"

@@ -22,6 +22,7 @@ from . import __version__, addon_sync
 from . import config as config_module
 from .config import Config
 from .governor import Action, Belt, Command, Governor, Reading
+from .metrics import Profile
 from .protocol import Flags
 from .session import SessionRecord, SessionRecorder, SessionStore
 from .sources import BeaconSource, ManualSource
@@ -78,6 +79,7 @@ class App:
         self._last_checkpoint = 0.0
         self._idle_since: float | None = None
         self._last_reading = Reading()
+        self._manual_was_active = False
         self._totals_cache: tuple[float, dict[str, Any]] | None = None
         self._state = self._load_state()
         self._command_lock = asyncio.Lock()
@@ -128,10 +130,18 @@ class App:
     # ---- the control tick --------------------------------------------------------
     def current_reading(self, mono: float) -> Reading:
         if self.manual.active:
+            self._manual_was_active = True
             return self.manual.reading()
-        if self.beacon is not None:
-            return self.beacon.reading(mono)
-        return Reading()
+        reading = self.beacon.reading(mono) if self.beacon is not None else Reading()
+        if self._manual_was_active:
+            self._manual_was_active = False
+            if not (reading.active and reading.age_s <= self.config.limits.signal_timeout_s):
+                # The dashboard session has just ended and the game is not
+                # there to take over. Say so: with no beacon (or a stale one)
+                # the governor would otherwise see a *lost signal* and keep
+                # the belt running through its hold and safe-speed stages.
+                return Reading(age_s=0.0, active=False)
+        return reading
 
     def source_kind(self) -> str:
         if self.manual.active:
@@ -365,6 +375,9 @@ class App:
         self.manual.stop()
         self.governor.notify_external_stop()
         self.governor.user_stopped = True
+        # If the command below fails or is lost, the governor asks again for
+        # as long as the belt reports that it is still moving.
+        self.governor.expect_halt(self.mono())
         self.log_event("STOP pressed - belt stopped.", "warning")
         if self.treadmill.status.connected:
             try:
@@ -396,9 +409,31 @@ class App:
     def update_config(self, patch: dict[str, Any]) -> None:
         """Apply a partial config (from the dashboard), save and re-sync."""
         config_module.apply_update(self.config, patch)
-        self.manual.speed_kmh = self.config.manual.speed_kmh
+        manual_patch = patch.get("manual")
+        if isinstance(manual_patch, dict) and "speed_kmh" in manual_patch:
+            # Only when the manual speed itself was changed: any other
+            # setting must not alter the speed of a session in progress.
+            self.manual.speed_kmh = self.config.manual.speed_kmh
+        if isinstance(patch.get("profile"), dict) and not self._state.get("profile_set"):
+            # Saving the body profile - even unchanged - confirms it, which
+            # ticks the dashboard's first-run checklist.
+            self._state["profile_set"] = True
+            self._save_state()
+        treadmill_patch = patch.get("treadmill")
+        if isinstance(treadmill_patch, dict):
+            # Hand these to the driver so they apply on its next connection
+            # rather than only after a restart.
+            if "address" in treadmill_patch and hasattr(self.treadmill, "address"):
+                self.treadmill.address = self.config.treadmill.address or None
+            if "units" in treadmill_patch and hasattr(self.treadmill, "units"):
+                self.treadmill.units = self.config.treadmill.units
         self.save_config()
         self.sync_addon()
+
+    def profile_is_set(self) -> bool:
+        """Has the walker's body profile been entered? Defaults do not count
+        until they are saved from the dashboard."""
+        return bool(self._state.get("profile_set")) or self.config.profile != Profile()
 
     # ---- snapshot for the dashboard ----------------------------------------------
     def totals(self, wall: float) -> dict[str, Any]:
@@ -470,6 +505,7 @@ class App:
                 "last_sync": self.last_sync,
                 "error": self.addon_error,
             },
+            "setup": {"profile_set": self.profile_is_set()},
             "config": self.config.to_dict(),
             "events": list(self.events)[:30],
         }

@@ -111,7 +111,14 @@ end
 
 --- Set the size of one cell in physical pixels (clamped to 2..8).
 function Beacon.SetCellSize(pixels)
-    pixels = math.floor((tonumber(pixels) or Beacon.DEFAULT_CELL_PX) + 0.5)
+    pixels = tonumber(pixels)
+    -- tonumber("nan") is a number, and NaN slips through every comparison
+    -- below; it would reach SetSize and, worse, the saved variables (which
+    -- the client then cannot read back).
+    if not pixels or pixels ~= pixels then
+        pixels = Beacon.DEFAULT_CELL_PX
+    end
+    pixels = math.floor(pixels + 0.5)
     if pixels < Beacon.MIN_CELL_PX then
         pixels = Beacon.MIN_CELL_PX
     elseif pixels > Beacon.MAX_CELL_PX then

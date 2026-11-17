@@ -19,6 +19,7 @@ import asyncio
 import ipaddress
 import json
 import logging
+import mimetypes
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -33,6 +34,23 @@ log = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).parent / "static"
 PUSH_INTERVAL_S = 0.5
+
+# The dashboard is a self-contained page: it may load and talk to this server
+# only, and no other page may frame it (a framed dashboard could be used to
+# trick a click onto a button that moves the belt).
+PAGE_HEADERS = {
+    "Content-Security-Policy": (
+        "default-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    ),
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+}
+
+# Some Windows machines map .js or .css to text/plain in the registry. Together
+# with the nosniff header below, a browser would then refuse the dashboard's own
+# script and stylesheet - so pin the types the static files are served with.
+for _content_type, _extension in (("text/javascript", ".js"), ("text/css", ".css"), ("image/svg+xml", ".svg")):
+    mimetypes.add_type(_content_type, _extension)
 
 Handler = Callable[[web.Request], Awaitable[web.StreamResponse]]
 
@@ -104,7 +122,7 @@ def create_app(app: App) -> web.Application:
 
     @routes.get("/")
     async def index(_request: web.Request) -> web.StreamResponse:
-        return web.FileResponse(STATIC_DIR / "index.html")
+        return web.FileResponse(STATIC_DIR / "index.html", headers=PAGE_HEADERS)
 
     @routes.get("/api/state")
     async def state(_request: web.Request) -> web.Response:

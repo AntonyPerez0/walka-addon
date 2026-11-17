@@ -53,8 +53,10 @@ function Widgets.Colorize(text, color)
     )
 end
 
+--- `value` limited to low..high. Not-a-number (which a saved setting or a
+-- typed "nan" can turn into) becomes `low`: no widget accepts NaN.
 function Widgets.Clamp(value, low, high)
-    if value < low then
+    if value ~= value or value < low then
         return low
     elseif value > high then
         return high
@@ -102,6 +104,32 @@ function Widgets.Fill(parent, layer, r, g, b, a)
     return texture
 end
 
+--- A small round dot, built from three overlapping rectangles (a plus
+-- sign with its corners filled in) so that it needs no art. Returns a frame
+-- with :SetColor(r, g, b).
+function Widgets.Dot(parent, size, color)
+    local dot = CreateFrame("Frame", nil, parent)
+    dot:SetSize(size, size)
+    local pieces = {}
+    for index, shape in ipairs({ { 1, 3 / 7 }, { 5 / 7, 5 / 7 }, { 3 / 7, 1 } }) do
+        local piece = Widgets.Fill(dot, "ARTWORK", 1, 1, 1, 1)
+        piece:SetSize(size * shape[1], size * shape[2])
+        piece:SetPoint("CENTER", dot, "CENTER", 0, 0)
+        pieces[index] = piece
+    end
+
+    function dot:SetColor(r, g, b)
+        for index = 1, #pieces do
+            pieces[index]:SetVertexColor(r, g, b, 1)
+        end
+    end
+
+    if color then
+        dot:SetColor(color[1], color[2], color[3])
+    end
+    return dot
+end
+
 ----------------------------------------------------------------------------
 -- Tooltips
 ----------------------------------------------------------------------------
@@ -140,11 +168,17 @@ end
 -- time the tooltip opens, so it can describe the current state; `anchor`
 -- may be a function too. The frame must receive the mouse (buttons do).
 function Widgets.Tooltip(frame, title, body, anchor)
+    -- A function may return nil ("nothing to say right now"), so this cannot
+    -- be the `f and f() or f` idiom: that would fall back to the function.
+    local function resolve(value, self)
+        if type(value) == "function" then
+            return value(self)
+        end
+        return value
+    end
     hook(frame, "OnEnter", function(self)
-        local titleText = type(title) == "function" and title(self) or title
-        local bodyText = type(body) == "function" and body(self) or body
-        local where = type(anchor) == "function" and anchor(self) or anchor
-        Widgets.ShowTooltip(self, titleText, bodyText, where)
+        -- No title, no tooltip.
+        Widgets.ShowTooltip(self, resolve(title, self), resolve(body, self), resolve(anchor, self))
     end)
     hook(frame, "OnLeave", function(self)
         Widgets.HideTooltip(self)

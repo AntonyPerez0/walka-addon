@@ -111,10 +111,23 @@ _BOUNDS: dict[tuple[str, str], tuple[float, float]] = {
 }
 
 
+_TRUE_WORDS = ("true", "yes", "on", "1")
+_FALSE_WORDS = ("false", "no", "off", "0")
+
+
 def _coerce(current: Any, value: Any) -> Any:
-    """Convert a JSON value to the type of the existing field value."""
+    """Convert a JSON value to the type of the existing field value.
+
+    Raises TypeError/ValueError/OverflowError for a value that cannot be one.
+    """
     if isinstance(current, bool):
-        return bool(value)
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)) and value in (0, 1):
+            return bool(value)
+        if isinstance(value, str) and value.strip().lower() in _TRUE_WORDS + _FALSE_WORDS:
+            return value.strip().lower() in _TRUE_WORDS  # a hand-edited "false" must not read as True
+        raise ValueError(f"not a boolean: {value!r}")
     if isinstance(current, int) and not isinstance(current, bool):
         return int(value)
     if isinstance(current, float):
@@ -122,6 +135,41 @@ def _coerce(current: Any, value: Any) -> Any:
     if isinstance(current, str):
         return str(value)
     return value
+
+
+def _valid_age(value: Any) -> int:
+    age = int(value)
+    if isinstance(value, bool) or not 5 <= age <= 110:
+        raise ValueError(f"implausible age: {value!r}")
+    return age
+
+
+def _valid_sex(value: Any) -> str:
+    sex = value.strip().lower() if isinstance(value, str) else ""
+    if sex not in ("male", "female"):
+        raise ValueError(f"sex must be 'male' or 'female', not {value!r}")
+    return sex
+
+
+def _valid_origin(value: Any) -> list[int]:
+    if not isinstance(value, (list, tuple)) or len(value) != 2 or any(isinstance(v, bool) for v in value):
+        raise ValueError(f"origin must be [x, y], not {value!r}")
+    return [int(value[0]), int(value[1])]
+
+
+def _valid_name_prefixes(value: Any) -> list[str]:
+    if not isinstance(value, (list, tuple)) or not all(isinstance(v, str) for v in value):
+        raise ValueError(f"name_prefixes must be a list of strings, not {value!r}")
+    return list(value)
+
+
+# Fields whose value is checked the same way whatever they held before.
+_VALIDATORS = {
+    ("profile", "age"): _valid_age,
+    ("profile", "sex"): _valid_sex,
+    ("wow", "origin"): _valid_origin,
+    ("treadmill", "name_prefixes"): _valid_name_prefixes,
+}
 
 
 def _update(target: Any, data: dict[str, Any], section: str = "") -> None:
@@ -141,19 +189,14 @@ def _update(target: Any, data: dict[str, Any], section: str = "") -> None:
                 setattr(target, f.name, None)
             continue
         try:
-            if current is None:
+            validator = _VALIDATORS.get((section, f.name))
+            if validator is not None:
+                coerced = validator(value)
+            elif current is None:
                 coerced = value
-                if f.name == "age":
-                    coerced = int(value)
-                    if not 5 <= coerced <= 110:
-                        continue
-                elif f.name == "sex":
-                    coerced = str(value).lower()
-                    if coerced not in ("male", "female"):
-                        continue
             else:
                 coerced = _coerce(current, value)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             log.warning("ignoring bad config value %s.%s=%r", section, f.name, value)
             continue
         bounds = _BOUNDS.get((section, f.name))

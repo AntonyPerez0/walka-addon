@@ -31,6 +31,13 @@ SpeedModel.MOUNT_YPS = 14.0
 
 SpeedModel.KMH_PER_MPH = 1.609344
 
+-- Tolerance when comparing a speed with the cap, in km/h: half the
+-- resolution of the beacon's target field (0.01 km/h). Settings arrive
+-- rounded - the options page stores 0.001 km/h, so a cap of "1.0 mph" is
+-- 1.609 rather than 1.609344 - and without this the largest allowed grid
+-- value would come out a whole step (0.1 mph) below what the user chose.
+SpeedModel.CAP_TOLERANCE_KMH = 0.005
+
 --- Default settings. All belt speeds are km/h.
 SpeedModel.DEFAULTS = {
     standKmh = 1.6,   -- character standing still (1.0 mph). 0 = stop the belt.
@@ -184,9 +191,10 @@ function SpeedModel:update(dt, input)
         output = quantise(raw, step)
     end
 
-    if output > maxKmh then
+    local capped = maxKmh + SpeedModel.CAP_TOLERANCE_KMH
+    if output > capped then
         -- Largest grid value that does not exceed the cap.
-        output = floor(maxKmh / step + 1e-6) * step
+        output = floor(capped / step) * step
     end
 
     local minBelt = settingOf(settings, "minBeltKmh")
@@ -199,6 +207,13 @@ function SpeedModel:update(dt, input)
             -- Smallest grid value the belt can hold.
             output = floor(minBelt / step + 1 - 1e-6) * step
         end
+    end
+
+    -- The cap is the safety limit, so it wins over the belt's minimum: if
+    -- the slowest speed the belt can hold is above the cap (or the speed
+    -- step is nonsense and the arithmetic above gave NaN), stop.
+    if output ~= output or output > capped then
+        output = 0
     end
 
     self.output = output

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Build tests/addon/data/forever_api.json.gz from Blizzard's UI source.
 
 The addon tests cannot run inside the game, so they check every global,
@@ -222,6 +221,12 @@ NON_WIDGET_TAGS = {
     "Member", "ScopedModifier", "ScrollChild", "RadialProgressBar", "KeyValye",
 }
 
+# Blizzard addons whose Lua mixins are kept even when no XML applies them.
+FOUNDATION_ADDONS = {
+    "Blizzard_SharedXMLBase", "Blizzard_SharedXML", "Blizzard_SharedXMLGame", "Blizzard_Colors",
+    "Blizzard_Settings_Shared", "Blizzard_Menu", "Blizzard_FrameXMLBase", "Blizzard_FrameXMLUtil",
+}
+
 # --------------------------------------------------------------------------
 # C-implemented globals missing from the generated documentation
 # --------------------------------------------------------------------------
@@ -352,8 +357,8 @@ class LoadRules:
         return True, flags
 
     def expand(self, path: str) -> str:
-        path = re.sub(r"\[family\]", self.family_dir, path, flags=re.I)
-        return re.sub(r"\[game\]", self.game_dir, path, flags=re.I)
+        path = re.sub(r"\[family\]", self.family_dir, path, flags=re.IGNORECASE)
+        return re.sub(r"\[game\]", self.game_dir, path, flags=re.IGNORECASE)
 
 
 class TocFile:
@@ -402,17 +407,19 @@ class TocFile:
 # Lua scanning (regex: top-level definitions only)
 # --------------------------------------------------------------------------
 
-_LONG_BRACKET = re.compile(r"(--)?\[(=*)\[.*?\]\2\]", re.S)
+_LONG_BRACKET = re.compile(r"(--)?\[(=*)\[.*?\]\2\]", re.DOTALL)
 _IDENT = r"[A-Za-z_][A-Za-z0-9_]*"
-_RE_LOCAL = re.compile(rf"^[ \t]*local\s+(?:function\s+)?({_IDENT}(?:[ \t]*,[ \t]*{_IDENT})*)", re.M)
-_RE_FUNCTION = re.compile(rf"^([ \t]*)function\s+({_IDENT})((?:\.{_IDENT})*)(?::({_IDENT}))?\s*\(", re.M)
-_RE_ASSIGN = re.compile(rf"^({_IDENT})((?:\.{_IDENT})*)\s*=(?!=)", re.M)
-_RE_G_ASSIGN = re.compile(rf"^_G(?:\.({_IDENT})|\[\s*[\"']({_IDENT})[\"']\s*\])\s*=(?!=)", re.M)
-_RE_TABLE_OPEN = re.compile(rf"^({_IDENT})\s*=\s*(?:{_IDENT}\s*\()?\s*\{{\s*(?:--.*)?$", re.M)
+_RE_LOCAL = re.compile(rf"^[ \t]*local\s+(?:function\s+)?({_IDENT}(?:[ \t]*,[ \t]*{_IDENT})*)", re.MULTILINE)
+_RE_FUNCTION = re.compile(rf"^([ \t]*)function\s+({_IDENT})((?:\.{_IDENT})*)(?::({_IDENT}))?\s*\(", re.MULTILINE)
+_RE_ASSIGN = re.compile(rf"^({_IDENT})((?:\.{_IDENT})*)\s*=(?!=)", re.MULTILINE)
+_RE_G_ASSIGN = re.compile(rf"^_G(?:\.({_IDENT})|\[\s*[\"']({_IDENT})[\"']\s*\])\s*=(?!=)", re.MULTILINE)
+_RE_TABLE_OPEN = re.compile(rf"^({_IDENT})\s*=\s*(?:{_IDENT}\s*\()?\s*\{{\s*(?:--.*)?$", re.MULTILINE)
 _RE_TABLE_KEY = re.compile(rf"^\t({_IDENT})\s*=(?!=)")
+_RE_MIXIN_PARENTS = re.compile(rf"^({_IDENT})\s*=\s*CreateFromMixins\(([^()]*)\)", re.MULTILINE)
 _RE_METHOD_CALL = re.compile(rf"\b({_IDENT}):({_IDENT})\s*\(")
 _RE_SCRIPT_NAME = re.compile(r":(?:SetScript|HookScript)\(\s*[\"'](\w+)[\"']")
 _RE_WORD = re.compile(_IDENT)
+_RE_TOC_FIELD = re.compile(r"GetAddOnMetadata\([^(),]+,\s*[\"']([A-Za-z][\w-]*)[\"']\s*\)")
 _RE_LINE_COMMENT = re.compile(r"--.*")
 _RE_STRING = re.compile(r"\"(?:[^\"\\\n]|\\.)*\"|'(?:[^'\\\n]|\\.)*'")
 _RE_CAPS = re.compile(r"(?<![.:\w])([A-Z][A-Z0-9_]{3,})\b(?!\s*=[^=])")
@@ -449,6 +456,13 @@ class LuaScan:
         self.functions: set[str] = set()
         self.values: set[str] = set()
         self.members: dict[str, set[str]] = defaultdict(set)
+        # XMixin = CreateFromMixins(A, B): XMixin also has A's and B's methods.
+        self.mixin_parents: dict[str, list[str]] = {}
+        for match in _RE_MIXIN_PARENTS.finditer(text):
+            if match.group(1) not in locals_:
+                parents = [name for name in re.split(r"[\s,]+", match.group(2)) if re.fullmatch(_IDENT, name)]
+                if parents:
+                    self.mixin_parents[match.group(1)] = parents
 
         for match in _RE_FUNCTION.finditer(text):
             indent, root, path, method = match.groups()
@@ -556,6 +570,8 @@ class XmlCollector:
                 key = child.get("parentKey")
                 array = child.get("parentArray")
                 name = child.get("name")
+                if (child.get("hidden") or "").lower() == "true":
+                    child_shape["h"] = 1
                 if key:
                     child_shape["k"] = key
                 if array:
@@ -643,9 +659,13 @@ class SourceWalker:
         self.lua_functions: dict[str, str | None] = {}   # name -> lod addon or None
         self.lua_values: dict[str, str | None] = {}
         self.members: dict[str, set[str]] = defaultdict(set)
+        self.member_addons: dict[str, set[str]] = defaultdict(set)   # table -> defining addons
+        self.mixin_parents: dict[str, list[str]] = {}
+        self.addon = ""                      # addon whose TOC is being followed
         self.tooltip_methods: set[str] = set()
         self.words: set[str] = set()         # every identifier Blizzard's code mentions
         self.caps: set[str] = set()          # ALL_CAPS names used by always-loaded code
+        self.toc_fields: set[str] = set()    # TOC metadata the client's own UI reads
         self.seen: set[Path] = set()
         self.missing: list[str] = []
         self.stats = defaultdict(int)
@@ -670,11 +690,14 @@ class SourceWalker:
         if lod is None:
             for table, members in scan.members.items():
                 self.members[table] |= members
+                self.member_addons[table].add(self.addon)
+            self.mixin_parents.update(scan.mixin_parents)
             self.caps |= scan.caps
         for owner, method in _RE_METHOD_CALL.findall(scan.text):
             if owner == "GameTooltip":
                 self.tooltip_methods.add(method)
         self.words.update(_RE_WORD.findall(scan.text))
+        self.toc_fields.update(_RE_TOC_FIELD.findall(text))
 
     def load_xml(self, path: Path, lod: str | None) -> None:
         if path in self.seen:
@@ -732,6 +755,7 @@ class SourceWalker:
                 self.stats["addons_secure_environment"] += 1
                 continue
             self.stats["addons_load_on_demand" if toc.load_on_demand else "addons_loaded_at_login"] += 1
+            self.addon = toc.addon
             for relative, flags in toc.files:
                 lod = toc.addon if (toc.load_on_demand and "bootstrap" not in flags) else None
                 self.load_file(toc_path.parent, relative, lod)
@@ -772,7 +796,8 @@ local function secretTags(fn)
     local tags = {}
     for key, value in pairs(fn) do
         if type(key) == "string" and value and
-            (key:find("^SecretWhen") or key:find("^SecretIn") or key == "SecretReturns") then
+            (key:find("^SecretWhen") or key:find("^SecretIn") or key == "SecretReturns"
+                or key == "HasRestrictions" or key == "IsProtectedFunction") then
             tags[#tags + 1] = key
         end
     end
@@ -1006,7 +1031,9 @@ def build_snapshot(source: Path, game_type: str = "camelot") -> tuple[dict, dict
     # BackdropTemplateMixin:SetBackdrop, SOUNDKIT.IG_MAINMENU_OPEN ...) and
     # Lua additions to documented namespaces (C_Timer.NewTicker). To keep the
     # snapshot small, mixins are only kept if some XML template or frame
-    # applies them - those are the ones the mock needs to instantiate widgets.
+    # applies them (the mock needs those to instantiate widgets) or if they
+    # come from the shared foundation addons that third-party addons build on
+    # (ColorMixin, CallbackRegistryMixin ...).
     members = {}
     for table, found in walker.members.items():
         if not found:
@@ -1014,18 +1041,30 @@ def build_snapshot(source: Path, game_type: str = "camelot") -> tuple[dict, dict
         if table in docs["namespaces"]:
             members[table] = sorted(found)
         elif table in lua_values:
-            if table.endswith("Mixin") and table not in walker.xml.mixins_used:
+            foundation = any(addon in FOUNDATION_ADDONS for addon in walker.member_addons[table])
+            if table.endswith("Mixin") and table not in walker.xml.mixins_used and not foundation:
                 continue
             members[table] = sorted(found)
 
-    secret = {}
+    # Per-function tags: which can return secret values (and when), which
+    # are protected (addons may not call them) or restricted (blocked for
+    # addons in some situations, e.g. combat lockdown).
+    secret, protected, restricted = {}, [], []
+
+    def note_tags(full_name: str, tags: list[str]) -> None:
+        secret_tags = [tag for tag in tags if tag.startswith("Secret")]
+        if secret_tags:
+            secret[full_name] = secret_tags
+        if "IsProtectedFunction" in tags:
+            protected.append(full_name)
+        if "HasRestrictions" in tags:
+            restricted.append(full_name)
+
     for name, tags in docs["globals"].items():
-        if tags:
-            secret[name] = tags
+        note_tags(name, tags)
     for namespace, functions in docs["namespaces"].items():
         for name, tags in functions.items():
-            if tags:
-                secret[f"{namespace}.{name}"] = tags
+            note_tags(f"{namespace}.{name}", tags)
 
     version = ""
     version_file = source.parent.parent / "version.txt"
@@ -1043,9 +1082,12 @@ def build_snapshot(source: Path, game_type: str = "camelot") -> tuple[dict, dict
             "globals": sorted(docs["globals"]),
             "namespaces": {ns: sorted(fns) for ns, fns in sorted(docs["namespaces"].items())},
             "secret": dict(sorted(secret.items())),
+            "protected": sorted(protected),
+            "restricted": sorted(restricted),
         },
         "c_globals": c_globals,
         "events": sorted(docs["events"]),
+        "toc_fields": sorted(walker.toc_fields),
         "enums": sorted(docs["enums"]),
         "widgets": {
             "apis": {name: sorted(methods) for name, methods in sorted(script_objects.items())},
@@ -1062,6 +1104,9 @@ def build_snapshot(source: Path, game_type: str = "camelot") -> tuple[dict, dict
         "referenced": referenced,
         "templates": dict(sorted(templates.items())),
         "members": dict(sorted(members.items())),
+        "mixin_parents": {
+            name: parents for name, parents in sorted(walker.mixin_parents.items()) if name in members
+        },
         "lod": dict(sorted(lod_names.items())),
     }
 
@@ -1073,7 +1118,10 @@ def build_snapshot(source: Path, game_type: str = "camelot") -> tuple[dict, dict
         "namespaces": len(docs["namespaces"]),
         "namespaced_functions": sum(len(fns) for fns in docs["namespaces"].values()),
         "secret_tagged_functions": len(secret),
+        "protected_functions": len(protected),
+        "restricted_functions": len(restricted),
         "events": len(docs["events"]),
+        "toc_fields_read_by_blizzard_ui": sorted(walker.toc_fields),
         "enums": len(docs["enums"]),
         "widget_api_tables": len(script_objects),
         "widget_types": len(WIDGET_TYPES),

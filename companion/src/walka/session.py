@@ -319,6 +319,17 @@ def day_key(epoch: float) -> str:
     return time.strftime("%Y-%m-%d", time.localtime(epoch))
 
 
+def _local_noon(epoch: float) -> float:
+    """Noon of the local calendar day that contains ``epoch``.
+
+    Stepping back 24 hours at a time from noon always lands inside the
+    previous calendar day, also across a daylight-saving change (a 23- or
+    25-hour day); stepping back from just after midnight does not.
+    """
+    t = time.localtime(epoch)
+    return time.mktime((t.tm_year, t.tm_mon, t.tm_mday, 12, 0, 0, 0, 0, -1))
+
+
 class SessionStore:
     """Finished walks on disk: one JSON file per walk under ``sessions/``."""
 
@@ -408,10 +419,11 @@ class SessionStore:
         """Totals for today, the last 7 days and all time, plus a 7-day series."""
         now = time.time() if now is None else now
         today_key = day_key(now)
+        noon = _local_noon(now)
         days = []
         index: dict[str, dict[str, Any]] = {}
         for offset in range(6, -1, -1):
-            key = day_key(now - offset * 86400)
+            key = day_key(noon - offset * 86400)
             if key not in index:
                 index[key] = {"day": key, "steps": 0, "distance_m": 0.0, "kcal": 0.0, "seconds": 0.0}
                 days.append(index[key])
@@ -431,7 +443,7 @@ class SessionStore:
                 day["kcal"] += record.kcal
                 day["seconds"] += record.seconds
         streak = 0
-        cursor = now if today_key in walked else now - 86400
+        cursor = noon if today_key in walked else noon - 86400
         while day_key(cursor) in walked and streak < 3650:
             streak += 1
             cursor -= 86400

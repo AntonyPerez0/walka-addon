@@ -17,6 +17,7 @@ local SessionLog = {}
 ns.SessionLog = SessionLog
 
 local date = date or os.date
+local time = time or os.time
 local max, min, floor = math.max, math.min, math.floor
 
 local function number(value, fallback)
@@ -86,7 +87,8 @@ function SessionLog.merge(ownSessions, companionData)
                 local entry = fromCompanion(record)
                 if type(ownSessions) == "table" then
                     for index, own in ipairs(ownSessions) do
-                        if not used[index] and SessionLog.sameWalk(own, record) then
+                        -- (a damaged saved-variables file can hold anything)
+                        if not used[index] and type(own) == "table" and SessionLog.sameWalk(own, record) then
                             used[index] = true
                             entry.yards = (entry.yards or 0) + number(own.yards)
                             entry.character = entry.character or own.character
@@ -134,6 +136,18 @@ end
 
 local SECONDS_PER_DAY = 86400
 
+-- Noon of the local calendar day that `epoch` falls on. Whole days are
+-- counted back from here rather than from `epoch` itself: a day with a
+-- clock change is 23 or 25 hours long, so 86400-second steps from a time
+-- near midnight would skip a calendar day or land on the same one twice.
+-- From noon they always land inside the day meant.
+local function noonOf(epoch)
+    local fields = date("*t", epoch)
+    fields.hour, fields.min, fields.sec = 12, 0, 0
+    fields.isdst = nil -- let the C library decide; it may differ from `epoch`'s
+    return time(fields) or epoch
+end
+
 --- Totals over a merged list (see SessionLog.merge).
 --
 -- Returns {
@@ -149,11 +163,12 @@ function SessionLog.totals(merged, now, live, older)
     local today, week, all = emptyBucket(), emptyBucket(), emptyBucket()
     local best = { steps = 0, distanceM = 0, seconds = 0 }
     local todayKey = SessionLog.dayKey(now)
+    local noon = noonOf(now)
 
     local dayIndex, days = {}, {}
     for offset = 6, 0, -1 do
         -- Noon avoids daylight-saving edges when stepping back whole days.
-        local key = SessionLog.dayKey(now - offset * SECONDS_PER_DAY)
+        local key = SessionLog.dayKey(noon - offset * SECONDS_PER_DAY)
         if not dayIndex[key] then
             local day = { day = key, steps = 0, distanceM = 0, kcal = 0, seconds = 0 }
             dayIndex[key] = day
@@ -195,9 +210,9 @@ function SessionLog.totals(merged, now, live, older)
 
     -- Streak: count back from today (or from yesterday if today has no walk yet).
     local streak = 0
-    local cursor = now
+    local cursor = noon
     if not walkedOn[todayKey] then
-        cursor = now - SECONDS_PER_DAY
+        cursor = noon - SECONDS_PER_DAY
     end
     while walkedOn[SessionLog.dayKey(cursor)] do
         streak = streak + 1

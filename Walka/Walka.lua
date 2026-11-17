@@ -122,6 +122,24 @@ end
 -- picked up on login or /reload)
 ----------------------------------------------------------------------------
 
+-- The data file is written by another program, so its numbers are checked
+-- before they are used: a height of 0 or a speed step of 0 would otherwise
+-- turn into inf/NaN in the estimates, the beacon and the saved variables.
+
+-- `value` as a number within low..high, or nil. (NaN fails both tests.)
+local function numberWithin(value, low, high)
+    value = tonumber(value)
+    if value and value >= low and value <= high then
+        return value
+    end
+    return nil
+end
+
+-- `value` as a positive, finite number, or nil.
+local function positiveNumber(value)
+    return numberWithin(value, 1e-9, 1e9)
+end
+
 --- The table the companion wrote, or nil.
 function Walka:GetCompanionData()
     local data = _G.WalkaCompanionData
@@ -136,12 +154,16 @@ end
 function Walka:GetProfile()
     local data = self:GetCompanionData()
     local own = self.db.settings.profile
-    if data and type(data.profile) == "table" and tonumber(data.profile.weightKg) then
-        return {
-            weightKg = tonumber(data.profile.weightKg),
-            heightCm = tonumber(data.profile.heightCm) or own.heightCm,
-            fromCompanion = true,
-        }
+    if data and type(data.profile) == "table" then
+        -- The same plausible ranges as /walka weight and /walka height.
+        local weightKg = numberWithin(data.profile.weightKg, 30, 250)
+        if weightKg then
+            return {
+                weightKg = weightKg,
+                heightCm = numberWithin(data.profile.heightCm, 120, 230) or own.heightCm,
+                fromCompanion = true,
+            }
+        end
     end
     return own
 end
@@ -152,15 +174,18 @@ end
 function Walka:GetBeltLimits()
     local data = self:GetCompanionData()
     local limits = data and data.limits
-    if type(limits) == "table" and tonumber(limits.minKmh) and tonumber(limits.maxKmh) then
-        return {
-            minKmh = tonumber(limits.minKmh),
-            maxKmh = tonumber(limits.maxKmh),
-            stepKmh = tonumber(limits.stepKmh) or 0.1,
-            accelKmhPerS = tonumber(limits.accelKmhPerS),
-            decelKmhPerS = tonumber(limits.decelKmhPerS),
-            fromCompanion = true,
-        }
+    if type(limits) == "table" then
+        local minKmh, maxKmh = positiveNumber(limits.minKmh), positiveNumber(limits.maxKmh)
+        if minKmh and maxKmh and maxKmh >= minKmh then
+            return {
+                minKmh = minKmh,
+                maxKmh = maxKmh,
+                stepKmh = positiveNumber(limits.stepKmh) or 0.1,
+                accelKmhPerS = positiveNumber(limits.accelKmhPerS),
+                decelKmhPerS = positiveNumber(limits.decelKmhPerS),
+                fromCompanion = true,
+            }
+        end
     end
     if self.db.settings.units == "mph" then
         return { minKmh = 0.6 * KMH_PER_MPH, maxKmh = 4.0 * KMH_PER_MPH, stepKmh = 0.1 * KMH_PER_MPH }
@@ -360,7 +385,15 @@ end
 
 function Walka:PauseSession(reason)
     local session = self.session
-    if not session or session.paused then
+    if not session then
+        return
+    end
+    if session.paused then
+        -- Pausing by hand during an AFK pause makes the pause the player's
+        -- own: the belt must not restart by itself when AFK ends.
+        if (reason or "user") == "user" then
+            session.pauseReason = "user"
+        end
         return
     end
     session.paused = true
@@ -732,6 +765,11 @@ local function slash(message)
         end
         if unit == "lb" or unit == "lbs" then
             value = value * 0.45359237
+        elseif unit ~= "kg" and unit ~= "kgs" then
+            -- "180 pounds", "12 stone" or a height typed by mistake: do not
+            -- read a unit we do not know as kilograms.
+            self:Print("usage: /walka weight 180lb  or  /walka weight 82kg")
+            return
         end
         if value < 30 or value > 250 then
             self:Print("that weight looks wrong - use e.g. 180lb or 82kg.")
@@ -749,6 +787,10 @@ local function slash(message)
             value = value * 2.54
         elseif unit == "m" then
             value = value * 100
+        elseif unit ~= "cm" then
+            -- As for the weight: an unknown unit is not centimetres.
+            self:Print("usage: /walka height 5'11  or  /walka height 180cm")
+            return
         end
         if value < 120 or value > 230 then
             self:Print("that height looks wrong - use e.g. 5'11 or 180cm.")

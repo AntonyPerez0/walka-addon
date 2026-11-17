@@ -143,12 +143,17 @@ end
 
 --- "Name-Realm" of the current character.
 function Game.CharacterName()
-    local name = UnitName and UnitName("player") or "?"
-    local realm = GetRealmName and GetRealmName() or ""
-    if isSecret(name) or type(name) ~= "string" then
+    -- Rule 2 above: look at a value only after issecretvalue() has cleared
+    -- it. Even `UnitName("player") or "?"` is a (truth) test on the result.
+    local name = UnitName and UnitName("player")
+    if isSecret(name) or type(name) ~= "string" or name == "" then
         name = "?"
     end
-    if realm and realm ~= "" then
+    local realm = GetRealmName and GetRealmName()
+    if isSecret(realm) or type(realm) ~= "string" then
+        realm = ""
+    end
+    if realm ~= "" then
         return name .. "-" .. realm
     end
     return name

@@ -28,6 +28,10 @@ Rules, in priority order:
     companion was started mid-session, the treadmill reconnected, or the belt
     was paused after a long signal loss), it waits for the character to start
     moving - or an explicit resume - before starting the belt.
+7.  **A stop is not done until the belt says so.** After a pause or stop of
+    its own the governor watches the reported speed, and asks again every
+    few seconds for as long as the belt still moves. (Start and speed
+    commands are never repeated on a guess.)
 """
 
 from __future__ import annotations
@@ -79,6 +83,7 @@ class Reading:
     moving: bool = False  # the character is moving
     target_kmh: float = 0.0  # belt speed wanted
     session: int = 0  # session counter (changes when a new session starts)
+    afk: bool = False  # the player is away: a pause now is automatic, not something they asked for
 
 
 @dataclass(frozen=True)
@@ -107,6 +112,8 @@ class Command:
 
 
 _MOVING_EPS_KMH = 0.05
+# A belt that still moves this long after we asked it to stop is asked again.
+_HALT_RETRY_S = 5.0
 
 
 @dataclass
@@ -128,10 +135,12 @@ class Governor:
     _zero_since: float | None = None
     _lost_since: float | None = None
     _session: int | None = None
-    _prev_moving: bool = False
+    _prev_moving: bool | None = None  # None: not seen yet, so nothing can count as "started moving"
     _was_connected: bool = False
     _saw_inactive: bool = False
     _want_kmh: float = 0.0
+    _halting: Action | None = None  # a PAUSE/STOP the belt has not been seen to obey yet
+    _halt_at: float = -math.inf
 
     # ---- external events from the treadmill driver ------------------------------
     def notify_external_stop(self) -> None:
@@ -146,6 +155,7 @@ class Governor:
         """The belt was started at the treadmill: an explicit resume."""
         self.user_stopped = False
         self.needs_act = False
+        self._halting = None  # whoever pressed start wants it running
         if self.driving:
             self.belt_on = True
             self._belt_on_since = now
@@ -158,11 +168,21 @@ class Governor:
         self.belt_on = False
         self.commanded_kmh = 0.0
         self._zero_since = None
+        self._halting = None
 
     def resume(self) -> None:
         """Explicit resume (dashboard button)."""
         self.user_stopped = False
         self.needs_act = False
+        # ... and a session that begins right now (a dashboard session) is
+        # one the user started, not one we stumbled into.
+        self._saw_inactive = True
+
+    def expect_halt(self, now: float, action: Action = Action.STOP) -> None:
+        """A stop was sent to the belt from outside the governor (the
+        dashboard's STOP button): keep asking until the belt has stopped."""
+        self._halting = action
+        self._halt_at = now
 
     # ---- helpers ---------------------------------------------------------------
     @property
@@ -178,6 +198,10 @@ class Governor:
         if kmh <= 0:
             return 0.0
         top = self._top(belt)
+        if top < belt.min_kmh - 1e-9:
+            # The cap is below the slowest this belt can go: the only speed
+            # that respects it is "not moving".
+            return 0.0
         kmh = max(belt.min_kmh, min(kmh, top))
         step = belt.step_kmh
         if step > 0:
@@ -185,9 +209,15 @@ class Governor:
             if snapped > top + 1e-9:
                 snapped -= step
             if snapped < belt.min_kmh - 1e-9:
-                snapped += step
+                # No grid point between the minimum and the cap: the minimum
+                # itself is a speed the belt can run at (stepping up a notch
+                # instead could land above the cap).
+                snapped = belt.min_kmh
             kmh = snapped
-        return round(kmh, 4)
+        # (Rounded only to tidy float noise. Coarser rounding moves a grid
+        # value like 3.0 mph = 4.828032 km/h just below its own grid point,
+        # and "snap down while speeding up" then never reaches it.)
+        return round(kmh, 9)
 
     @staticmethod
     def _toward(kmh: float, step: float, *, rising: bool) -> float:
@@ -196,8 +226,8 @@ class Governor:
         if step <= 0:
             return kmh
         units = kmh / step
-        snapped = math.floor(units + 1e-9) if rising else math.ceil(units - 1e-9)
-        return round(snapped * step, 4)
+        snapped = math.floor(units + 1e-6) if rising else math.ceil(units - 1e-6)
+        return round(snapped * step, 9)
 
     def _belt_off(self, now: float) -> None:
         self.belt_on = False
@@ -205,9 +235,17 @@ class Governor:
         self._belt_off_at = now
         self._zero_since = None
 
+    def _halt(self, now: float, commands: list[Command], action: Action, reason: str) -> None:
+        """Ask the belt to stop, and remember to check that it did: the
+        command can fail or get lost, and a belt left running is the one
+        failure nobody is watching for."""
+        commands.append(Command(action, reason=reason))
+        self._halting = action
+        self._halt_at = now
+
     def _pause(self, now: float, commands: list[Command], reason: str) -> None:
         if self.belt_on:
-            commands.append(Command(Action.PAUSE, reason=reason))
+            self._halt(now, commands, Action.PAUSE, reason)
         self._belt_off(now)
 
     def _idle(self, phase: Phase, reason: str) -> None:
@@ -231,22 +269,38 @@ class Governor:
             if self._was_connected:
                 self.notify_disconnected()
             self._was_connected = False
+            # A session that begins while there is no treadmill is not one
+            # that may start the belt the moment a treadmill appears.
+            self._saw_inactive = False
             self._idle(Phase.NO_TREADMILL, "treadmill not connected")
             return commands
         self._was_connected = True
+
+        # Did the belt obey our last stop? This is feedback, not a blind
+        # retry: it is only asked again while it reports that it still moves.
+        if self._halting is not None and now - self._halt_at >= _HALT_RETRY_S:
+            if belt.speed_kmh > _MOVING_EPS_KMH:
+                self._halt(now, commands, self._halting, "belt has not stopped - asking again")
+            else:
+                self._halting = None
 
         fresh = reading.age_s <= lim.signal_timeout_s
 
         if fresh:
             self._lost_since = None
-            moving_edge = reading.moving and not self._prev_moving
+            # "Started moving" needs a reading in which the character stood
+            # still: one that is already moving when we first look (a flight
+            # path, auto-run) pressed no key for us.
+            moving_edge = reading.moving and self._prev_moving is False
             self._prev_moving = reading.moving
 
             if not reading.active:
                 # Session over (or never started).
                 self._saw_inactive = True
-                if self.driving and self.belt_on:
-                    commands.append(Command(Action.STOP, reason="session ended"))
+                if self.driving and (self.belt_on or belt.speed_kmh > _MOVING_EPS_KMH) and not commands:
+                    # (also a belt we think is off but that is still turning:
+                    # the session is over, it must not be left running)
+                    self._halt(now, commands, Action.STOP, "session ended")
                 if self.driving:
                     self._belt_off(now)
                 self.driving = False
@@ -258,19 +312,27 @@ class Governor:
 
             if reading.session != self._session:
                 # A new session. It counts as an explicit start only if we
-                # watched it begin; otherwise wait for a deliberate act.
+                # watched it begin (the reading before it said "no session",
+                # which also cleared any stop at the machine). Otherwise - the
+                # id simply changed under us - a stop at the machine stands,
+                # and a belt that is not running waits for a deliberate act.
+                # A belt that is running just keeps following: needs_act is
+                # about surprise starts, and must never park a moving belt
+                # out of the governor's control.
                 self._session = reading.session
-                self.user_stopped = False
-                self.needs_act = not self._saw_inactive
+                self.needs_act = not self._saw_inactive and not self.belt_on
             self._saw_inactive = False
             self.driving = True
 
             if reading.paused:
-                # An explicit pause also acknowledges any earlier stop, so
-                # pause -> resume is always a way to restart the belt.
                 self._pause(now, commands, "paused")
-                self.user_stopped = False
-                self.needs_act = False
+                if not reading.afk:
+                    # A pause the player asked for also acknowledges any
+                    # earlier stop, so pause -> resume is always a way to
+                    # restart the belt. The addon's automatic AFK pause is
+                    # not that: nobody was there to ask for anything.
+                    self.user_stopped = False
+                    self.needs_act = False
                 self._idle(Phase.PAUSED, "paused")
                 return commands
 
@@ -283,6 +345,7 @@ class Governor:
             if not self.belt_on and belt.speed_kmh > _MOVING_EPS_KMH and now - self._belt_off_at > lim.start_grace_s:
                 self.belt_on = True
                 self.needs_act = False
+                self._halting = None
                 self._belt_on_since = now
                 self._last_command_at = now - lim.command_interval_s
 
@@ -296,7 +359,9 @@ class Governor:
             run_phase = Phase.FOLLOWING
             self.reason = "following"
         else:
-            # Signal lost.
+            # Signal lost. Whatever starts while we cannot see is not a
+            # session we watched begin.
+            self._saw_inactive = False
             if not self.driving:
                 self._idle(Phase.IDLE, "no signal")
                 return commands
@@ -312,7 +377,8 @@ class Governor:
                 return commands
             current = self._current_kmh(belt)
             if lost_for < lim.hold_s:
-                want = current
+                # Hold - but the cap still wins if it was lowered meanwhile.
+                want = min(current, self._clamp(current, belt))
                 run_phase = Phase.HOLDING
                 self.reason = "signal lost - holding speed"
             elif lim.safe_speed_kmh > 0 and lost_for < lim.hold_s + lim.loss_pause_s:
@@ -330,15 +396,18 @@ class Governor:
 
         if want <= 0:
             # The source wants the belt stopped while the session stays active
-            # (character standing with a stand speed of 0).
-            self._pause(now, commands, "target speed is zero")
+            # (character standing with a stand speed of 0) - or no speed the
+            # belt can run at is allowed by the cap.
+            capped = self._top(belt) < belt.min_kmh - 1e-9
+            self._pause(now, commands, "speed cap is below the belt's minimum" if capped else "target speed is zero")
             self.phase = Phase.STANDING
-            self.reason = "standing still"
+            self.reason = "the speed cap is below the treadmill's minimum speed" if capped else "standing still"
             return commands
 
         if not self.belt_on:
             # Only reachable with a live signal (see the lost branch above).
             commands.append(Command(Action.START, reason="session active"))
+            self._halting = None
             self.belt_on = True
             self._belt_on_since = now
             self._zero_since = None
@@ -357,6 +426,10 @@ class Governor:
             allowed = lim.start_grace_s if starting else lim.stall_s
             since = self._belt_on_since if starting else self._zero_since
             if now - since > allowed:
+                # We only know that no movement is reported - the data may
+                # have dried up under a belt that still runs, or a start may
+                # yet come through. Make it true before treating it as fact.
+                self._halt(now, commands, Action.PAUSE, "belt is not moving")
                 self.notify_external_stop()
                 self._idle(Phase.USER_STOPPED, "belt is not moving - pause and resume to restart")
                 return commands
@@ -369,8 +442,11 @@ class Governor:
 
         self.phase = run_phase
 
-        # Rate-limited speed command.
-        if now - self._last_command_at < lim.command_interval_s:
+        # Rate-limited speed command - except that a speed we commanded
+        # before the cap was lowered is corrected at once, not an interval
+        # later (the belt may still be accelerating towards it).
+        over_cap = self.commanded_kmh > self._top(belt) + 1e-9
+        if now - self._last_command_at < lim.command_interval_s and not over_cap:
             return commands
         first = self.commanded_kmh <= 0
         current = self._current_kmh(belt)
@@ -400,6 +476,7 @@ class Governor:
         if self.driving and self.belt_on:
             commands.append(Command(Action.STOP, reason="companion exiting"))
         self.driving = False
+        self._halting = None
         self._belt_off(now)
         self._idle(Phase.IDLE, "stopped")
         return commands

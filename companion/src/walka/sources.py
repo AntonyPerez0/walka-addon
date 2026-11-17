@@ -237,6 +237,7 @@ class BeaconSource:
                 moving=frame.has(Flags.MOVING),
                 target_kmh=frame.target_kmh,
                 session=frame.session,
+                afk=frame.has(Flags.AFK),
             )
 
 

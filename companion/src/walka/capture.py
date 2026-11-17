@@ -140,8 +140,18 @@ class BeaconReader:
         return None
 
     def _full_scan(self) -> tuple[Decoded, tuple[int, int]] | None:
-        """Search every monitor for the strip (slow; used sparingly)."""
-        for left, top, width, height in self.grabber.monitors():
+        """Search every monitor for the strip (slow; used sparingly).
+
+        Returns the decoded strip and where to grab next time: one row above
+        the hit (but not above its monitor, whose top may well be negative),
+        so that row 1 of the grab is on the strip.
+        """
+        try:
+            monitors = self.grabber.monitors()
+        except Exception as exc:
+            log.debug("monitor enumeration failed: %s", exc)
+            return None
+        for left, top, width, height in monitors:
             try:
                 shot = self.grabber.grab(left, top, width, height)
             except Exception as exc:
@@ -155,7 +165,7 @@ class BeaconReader:
                     continue
                 decoded = beacon.decode_row(row)
                 if decoded is not None:
-                    return decoded, (left + decoded.x0, top + y)
+                    return decoded, (left + decoded.x0, top + max(0, y - 1))
         return None
 
     # ---- the read --------------------------------------------------------------
@@ -194,9 +204,8 @@ class BeaconReader:
             self._last_full_scan = now
             found = self._full_scan()
             if found is not None:
-                decoded, (x, y) = found
-                # Lock one row above the hit so row 1 of the grab is on the strip.
-                self.locked, self.locked_where = (x, max(0, y - 1)), "scan"
+                decoded, origin = found
+                self.locked, self.locked_where = origin, "scan"
                 return ReadResult(decoded, self.locked, "scan")
         return ReadResult(None, None, "")
 

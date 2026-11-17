@@ -10,13 +10,26 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "aiohttp>=3.9",
-    "bleak>=1.0",
+    # 3.1 fixes WinRT errors on disconnect and on fast reconnects.
+    "bleak>=3.1,<4",
     "mss>=10.2,<11",  # 11 changes the capture API
+    # bleak 3.1 is developed against the 3.x Windows Runtime bindings; the
+    # 4.x series (October 2026) renamed APIs and cannot be mixed with 3.x.
+    "winrt-runtime>=3.2,<4; sys_platform == 'win32'",
+    "winrt-Windows.Devices.Bluetooth>=3.2,<4; sys_platform == 'win32'",
+    "winrt-Windows.Devices.Bluetooth.Advertisement>=3.2,<4; sys_platform == 'win32'",
+    "winrt-Windows.Devices.Bluetooth.GenericAttributeProfile>=3.2,<4; sys_platform == 'win32'",
+    "winrt-Windows.Devices.Enumeration>=3.2,<4; sys_platform == 'win32'",
+    "winrt-Windows.Devices.Radios>=3.2,<4; sys_platform == 'win32'",
+    "winrt-Windows.Foundation>=3.2,<4; sys_platform == 'win32'",
+    "winrt-Windows.Foundation.Collections>=3.2,<4; sys_platform == 'win32'",
+    "winrt-Windows.Storage.Streams>=3.2,<4; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8",
+    "pytest-asyncio>=0.23",
     "lupa>=2.2",
     "ruff>=0.6",
 ]

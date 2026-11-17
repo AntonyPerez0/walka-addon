@@ -224,6 +224,19 @@ def _threshold_table(threshold: int) -> bytes:
 _PREAMBLE_RE = re.compile(rb"\x01{2,16}\x00{2,16}\x01{2,16}\x00{2,}")
 
 
-def row_may_contain_beacon(row: bytes, threshold: int = 128) -> bool:
-    """Cheap C-speed test used to skip rows when scanning a whole screen."""
+def row_may_contain_beacon(row: bytes, threshold: int | None = None) -> bool:
+    """Cheap C-speed test used to skip rows when scanning a whole screen.
+
+    It must never drop a row ``decode_row`` would decode, so by default it
+    splits bright from dark at the same point ``decode_row`` does: halfway
+    between the darkest and the brightest pixel of the row (a dim or
+    washed-out strip has no pixel on one side of a fixed mid-grey).
+    """
+    if threshold is None:
+        if not row:
+            return False
+        lo, hi = min(row), max(row)
+        if hi - lo < MIN_CONTRAST:
+            return False
+        threshold = (lo + hi) // 2  # value > (lo + hi) / 2  <=>  value > (lo + hi) // 2
     return _PREAMBLE_RE.search(row.translate(_threshold_table(threshold))) is not None

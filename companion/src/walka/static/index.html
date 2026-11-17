@@ -1,0 +1,401 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" media="(prefers-color-scheme: light)" content="#f3f2ee">
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0d0d0d">
+<meta name="referrer" content="no-referrer">
+<title>Walka</title>
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<link rel="stylesheet" href="/static/app.css">
+<script type="module" src="/static/app.js"></script>
+</head>
+<body data-offline="1">
+
+<svg class="defs" aria-hidden="true" focusable="false" width="0" height="0">
+  <symbol id="i-go" viewBox="0 0 24 24"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z" fill="currentColor"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6" y="5" width="4.5" height="14" rx="1" fill="currentColor"/><rect x="13.5" y="5" width="4.5" height="14" rx="1" fill="currentColor"/></symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24"><rect x="5.5" y="5.5" width="13" height="13" rx="2" fill="currentColor"/></symbol>
+  <symbol id="i-warn" viewBox="0 0 24 24"><path d="M12 5v8.5" stroke="currentColor" stroke-width="3" stroke-linecap="round"/><circle cx="12" cy="18.2" r="1.8" fill="currentColor"/></symbol>
+  <symbol id="i-idle" viewBox="0 0 24 24"><circle cx="12" cy="12" r="6.5" fill="none" stroke="currentColor" stroke-width="2.6"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="5.5" fill="none" stroke="currentColor" stroke-width="2.6"/><path d="m15 15 4.5 4.5" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5.5 12.5 4.2 4.2 8.8-9.4" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="m6.5 6.5 11 11m0-11-11 11" stroke="currentColor" stroke-width="2.8" stroke-linecap="round"/></symbol>
+  <symbol id="i-off" viewBox="0 0 24 24"><path d="M6.5 12h11" stroke="currentColor" stroke-width="2.8" stroke-linecap="round"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></symbol>
+  <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/></symbol>
+  <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m8 10 4 4 4-4" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+</svg>
+
+<!-- First in the document so it is the first Tab stop; fixed on screen in every view. -->
+<div class="stopdock">
+  <button id="stop" class="stop" type="button" aria-label="STOP - stop the belt now">
+    <svg aria-hidden="true" width="22" height="22"><use href="#i-stop"/></svg>
+    <span>STOP</span>
+  </button>
+</div>
+
+<div class="chrome">
+  <header class="top">
+    <a class="brand" href="#live" aria-label="Walka - live view">Walka</a>
+    <nav class="tabs" aria-label="Views">
+      <a href="#live" data-view="live">Live</a>
+      <a href="#history" data-view="history">History</a>
+      <a href="#settings" data-view="settings">Settings</a>
+    </nav>
+  </header>
+  <ul class="health" aria-label="Connection health">
+    <li><a class="pill" id="pill-treadmill" href="#live/treadmill" data-tone="idle"><span class="lamp"><svg aria-hidden="true"><use href="#i-off"/></svg></span><span class="pill-name" data-short="Pad">Treadmill</span><span class="pill-state">-</span></a></li>
+    <li><a class="pill" id="pill-game" href="#live/link-game" data-tone="idle"><span class="lamp"><svg aria-hidden="true"><use href="#i-off"/></svg></span><span class="pill-name">Game</span><span class="pill-state">-</span></a></li>
+    <li><a class="pill" id="pill-hr" href="#live/link-hr" data-tone="idle"><span class="lamp"><svg aria-hidden="true"><use href="#i-off"/></svg></span><span class="pill-name" data-short="HR">Heart rate</span><span class="pill-state">-</span></a></li>
+    <li><a class="pill" id="pill-addon" href="#live/link-addon" data-tone="idle"><span class="lamp"><svg aria-hidden="true"><use href="#i-off"/></svg></span><span class="pill-name">Addon</span><span class="pill-state">-</span></a></li>
+  </ul>
+</div>
+
+<div id="offline" class="offline" role="alert" hidden>
+  <span class="lamp"><svg aria-hidden="true"><use href="#i-x"/></svg></span>
+  <p><strong>The Walka companion is not running.</strong>
+  This page cannot see or control the belt - if it is moving, stop it with the pad's own remote.
+  Start the companion on your PC; the page reconnects by itself. <span id="offline-since"></span></p>
+</div>
+
+<main id="main">
+
+<!-- ====================================================================== LIVE -->
+<section id="view-live" class="view" aria-label="Live">
+
+  <div class="live-grid">
+
+    <section class="card hero" id="hero" data-tone="idle" aria-label="Belt state and speed">
+      <div class="annun">
+        <span class="lamp"><svg aria-hidden="true"><use id="hero-icon" href="#i-idle"/></svg></span>
+        <p class="annun-title" id="hero-title" role="status">Connecting to the companion</p>
+        <span class="annun-meta" id="hero-meta"></span>
+      </div>
+      <div class="hero-body">
+        <div class="speed" aria-live="off">
+          <span class="speed-num num" id="speed-num">-.-</span>
+          <span class="speed-side"><span class="speed-unit" id="speed-unit">mph</span><span class="speed-cap">belt speed</span></span>
+        </div>
+        <dl class="readout">
+          <div><dt>Target</dt><dd class="num" id="ro-target">-</dd></div>
+          <div><dt id="ro-ask-k">Asked for</dt><dd class="num" id="ro-ask">-</dd></div>
+          <div><dt>Character</dt><dd class="num" id="ro-char">-</dd></div>
+          <div><dt>Belt</dt><dd id="ro-belt">-</dd></div>
+        </dl>
+        <div class="meter" id="meter" role="img" aria-label="Belt speed against your maximum">
+          <div class="meter-bar">
+            <div class="meter-track"><div class="meter-range" id="meter-range"></div><div class="meter-fill" id="meter-fill"></div></div>
+            <div class="meter-layer" id="meter-target" hidden><i></i></div>
+          </div>
+          <div class="meter-scale num" aria-hidden="true">
+            <span class="meter-zero">0</span>
+            <div class="meter-layer" id="meter-min-at"><span id="meter-min"></span></div>
+            <div class="meter-layer" id="meter-cap-at"><span id="meter-cap"></span></div>
+            <span class="meter-end" id="meter-max"></span>
+          </div>
+        </div>
+        <p class="hero-detail" id="hero-detail">Waiting for the first data.</p>
+        <div class="hero-actions">
+          <button class="btn primary big" id="hero-action" type="button" hidden>Resume</button>
+          <span class="hero-action-note" id="hero-action-note" hidden></span>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" id="session" aria-labelledby="session-title">
+      <header class="card-head">
+        <h2 id="session-title">Today</h2>
+        <span class="muted num" id="session-sub"></span>
+      </header>
+      <div class="tiles">
+        <div class="tile"><span class="k" id="t1-k">Time</span><span class="v num" id="t1-v">-</span><span class="s" id="t1-s"></span></div>
+        <div class="tile"><span class="k" id="t2-k">Distance</span><span class="v num"><span id="t2-v">-</span><small id="t2-u"></small></span><span class="s" id="t2-s"></span></div>
+        <div class="tile"><span class="k" id="t3-k">Steps</span><span class="v num" id="t3-v">-</span><span class="s" id="t3-s"></span></div>
+        <div class="tile"><span class="k" id="t4-k">Calories</span><span class="v num"><span id="t4-v">-</span><small>kcal</small></span><span class="s" id="t4-s"></span></div>
+        <div class="tile"><span class="k" id="t5-k">Heart rate</span><span class="v num"><span id="t5-v">-</span><small id="t5-u"></small></span><span class="s" id="t5-s"></span></div>
+        <div class="tile"><span class="k" id="t6-k">Average speed</span><span class="v num"><span id="t6-v">-</span><small id="t6-u"></small></span><span class="s" id="t6-s"></span></div>
+      </div>
+      <div class="howto" id="howto">
+        <h3>How to start a walk</h3>
+        <ul>
+          <li><strong>In World of Warcraft:</strong> type <kbd>/walka start</kbd> or press Start on the Walka HUD. The belt then follows your character.</li>
+          <li><strong>Any other game:</strong> <a href="#live/manual">start a manual session</a> and set the speed yourself.</li>
+        </ul>
+        <p class="muted small" id="last-walk" hidden></p>
+      </div>
+    </section>
+
+    <section class="card setup" id="setup" aria-labelledby="setup-title" hidden>
+      <header class="card-head">
+        <h2 id="setup-title">Getting started</h2>
+        <span class="muted num" id="setup-count"></span>
+        <button class="btn quiet small" id="setup-hide" type="button">Hide</button>
+      </header>
+      <ol class="steps">
+        <li id="step-treadmill" data-done="false">
+          <span class="tick"><svg aria-hidden="true"><use href="#i-check"/></svg></span>
+          <div class="step-text"><strong>Connect the treadmill</strong>
+            <span>Switch the pad on and close the UREVO phone app - the pad accepts only one Bluetooth connection.</span></div>
+          <a class="btn small" href="#live/treadmill">Treadmill</a>
+        </li>
+        <li id="step-addon" data-done="false">
+          <span class="tick"><svg aria-hidden="true"><use href="#i-check"/></svg></span>
+          <div class="step-text"><strong>Install the game addon</strong>
+            <span>Copies Walka into World of Warcraft's AddOns folder. Then restart the game and tick Walka in the AddOns list.</span></div>
+          <button class="btn small" id="setup-install" type="button">Install</button>
+        </li>
+        <li id="step-game" data-done="false">
+          <span class="tick"><svg aria-hidden="true"><use href="#i-check"/></svg></span>
+          <div class="step-text"><strong>Let Walka see the game</strong>
+            <span>Run the game windowed or borderless with the top-left corner of its window visible. This ticks itself when the first signal arrives.</span></div>
+          <a class="btn small" href="#live/link-game">Signal</a>
+        </li>
+        <li id="step-profile" data-done="false">
+          <span class="tick"><svg aria-hidden="true"><use href="#i-check"/></svg></span>
+          <div class="step-text"><strong>Enter your weight and height</strong>
+            <span>Calories depend on your weight; the step estimate on your height.</span></div>
+          <a class="btn small" href="#settings/set-profile">Profile</a>
+        </li>
+      </ol>
+    </section>
+
+    <div class="pair">
+      <section class="card" id="manual" aria-labelledby="manual-title" data-active="false" tabindex="-1">
+        <header class="card-head">
+          <h2 id="manual-title">Manual control</h2>
+          <span class="badge" id="manual-badge" hidden>On - game signal ignored</span>
+        </header>
+        <p class="muted" id="manual-intro">For any other game, or no game at all: you set the speed here.</p>
+        <div class="stepper" role="group" aria-label="Manual speed">
+          <button class="btn square" id="manual-minus" type="button" aria-label="Slower"><svg aria-hidden="true"><use href="#i-minus"/></svg></button>
+          <output class="stepper-value" id="manual-speed" aria-live="polite"><span class="num" id="manual-speed-num">-</span> <small id="manual-speed-unit">mph</small></output>
+          <button class="btn square" id="manual-plus" type="button" aria-label="Faster"><svg aria-hidden="true"><use href="#i-plus"/></svg></button>
+        </div>
+        <p class="muted small" id="manual-note"></p>
+        <div class="btn-row">
+          <button class="btn primary" id="manual-start" type="button">Start manual session</button>
+          <button class="btn" id="manual-pause" type="button" hidden>Pause</button>
+          <button class="btn primary" id="manual-resume" type="button" hidden>Resume</button>
+          <button class="btn" id="manual-stop" type="button" hidden>End session</button>
+        </div>
+      </section>
+
+      <section class="card" id="treadmill" aria-labelledby="treadmill-title" data-tone="idle" tabindex="-1">
+        <header class="card-head">
+          <span class="lamp"><svg aria-hidden="true"><use href="#i-off"/></svg></span>
+          <h2 id="treadmill-title">Treadmill</h2>
+          <span class="head-state" id="tm-state">-</span>
+        </header>
+        <p class="link-detail" id="tm-detail"></p>
+        <dl class="facts" id="tm-facts">
+          <div><dt>Name</dt><dd id="tm-name">-</dd></div>
+          <div><dt>Range</dt><dd class="num" id="tm-range">-</dd></div>
+          <div><dt>Step</dt><dd class="num" id="tm-step">-</dd></div>
+          <div><dt>Firmware</dt><dd id="tm-grid">-</dd></div>
+        </dl>
+        <div class="btn-row">
+          <button class="btn" id="tm-scan" type="button">Scan</button>
+          <button class="btn" id="tm-connect" type="button">Connect</button>
+          <button class="btn" id="tm-disconnect" type="button" hidden>Disconnect</button>
+        </div>
+        <div id="tm-scan-out" class="scan-out" aria-live="polite"></div>
+        <fieldset class="sim" id="tm-sim" hidden>
+          <legend>Simulator controls</legend>
+          <p class="muted small">This is the simulated treadmill. These buttons stand in for the buttons on a real pad's remote.</p>
+          <div class="btn-row">
+            <button class="btn small" id="sim-start" type="button">Press start on the pad</button>
+            <button class="btn small" id="sim-stop" type="button">Press stop on the pad</button>
+          </div>
+        </fieldset>
+      </section>
+    </div>
+
+    <section class="card" id="links" aria-labelledby="links-title">
+      <header class="card-head"><h2 id="links-title">Connections</h2></header>
+
+      <div class="link" id="link-game" data-tone="idle" tabindex="-1">
+        <div class="link-head">
+          <span class="lamp"><svg aria-hidden="true"><use href="#i-off"/></svg></span>
+          <h3>Game signal</h3>
+          <span class="head-state num" id="game-state">-</span>
+        </div>
+        <p class="link-detail" id="game-detail"></p>
+        <div class="chips" id="game-flags" aria-label="What the character is doing"></div>
+      </div>
+
+      <div class="link" id="link-hr" data-tone="idle" tabindex="-1">
+        <div class="link-head">
+          <span class="lamp"><svg aria-hidden="true"><use href="#i-off"/></svg></span>
+          <h3>Heart-rate sensor</h3>
+          <span class="head-state num" id="hr-state">-</span>
+        </div>
+        <p class="link-detail" id="hr-detail"></p>
+        <div class="btn-row"><a class="btn small" id="hr-setup" href="#settings/set-hr">Set up</a></div>
+      </div>
+
+      <div class="link" id="link-addon" data-tone="idle" tabindex="-1">
+        <div class="link-head">
+          <span class="lamp"><svg aria-hidden="true"><use href="#i-off"/></svg></span>
+          <h3>Addon sync</h3>
+          <span class="head-state num" id="addon-state">-</span>
+        </div>
+        <p class="link-detail" id="addon-detail"></p>
+        <div class="btn-row">
+          <button class="btn small" id="addon-sync" type="button">Sync now</button>
+          <button class="btn small" id="addon-install" type="button" hidden>Install addon</button>
+          <a class="btn small quiet" href="#settings/set-addon">Addon settings</a>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" id="activity" aria-labelledby="activity-title">
+      <header class="card-head"><h2 id="activity-title">Activity</h2></header>
+      <ol class="log" id="log" tabindex="0" aria-label="Recent events, newest first"></ol>
+      <p class="muted small" id="log-empty">Nothing has happened yet.</p>
+    </section>
+  </div>
+</section>
+
+<!-- =================================================================== HISTORY -->
+<section id="view-history" class="view" aria-label="History" hidden>
+  <div class="history-top">
+    <div class="totals">
+      <section class="card total" aria-labelledby="tot-today-h">
+        <h2 id="tot-today-h">Today</h2>
+        <p class="total-v"><span class="num" id="tot-today-steps">-</span> <small>steps</small></p>
+        <p class="total-s num" id="tot-today-sub"></p>
+      </section>
+      <section class="card total" aria-labelledby="tot-week-h">
+        <h2 id="tot-week-h">Last 7 days</h2>
+        <p class="total-v"><span class="num" id="tot-week-steps">-</span> <small>steps</small></p>
+        <p class="total-s num" id="tot-week-sub"></p>
+      </section>
+      <section class="card total" aria-labelledby="tot-all-h">
+        <h2 id="tot-all-h">All time</h2>
+        <p class="total-v"><span class="num" id="tot-all-steps">-</span> <small>steps</small></p>
+        <p class="total-s num" id="tot-all-sub"></p>
+      </section>
+      <section class="card total" aria-labelledby="tot-streak-h">
+        <h2 id="tot-streak-h">Streak</h2>
+        <p class="total-v"><span class="num" id="tot-streak">-</span> <small id="tot-streak-unit">days</small></p>
+        <p class="total-s" id="tot-streak-sub"></p>
+      </section>
+    </div>
+
+    <section class="card" id="week" aria-labelledby="week-title">
+      <header class="card-head">
+        <h2 id="week-title">Steps per day, last 7 days</h2>
+        <button class="btn quiet small" id="week-toggle" type="button" aria-pressed="false">Show as table</button>
+      </header>
+      <div class="chart" id="week-chart"></div>
+      <table class="data" id="week-table" hidden>
+        <thead><tr><th scope="col">Day</th><th scope="col">Steps</th><th scope="col">Distance</th><th scope="col">Time</th><th scope="col">kcal</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+  </div>
+
+  <section class="card" id="sessions" aria-labelledby="sessions-title">
+    <header class="card-head">
+      <h2 id="sessions-title">Walks</h2>
+      <span class="muted num" id="sessions-count"></span>
+    </header>
+    <div class="srow shead" aria-hidden="true">
+      <span>When</span><span>Source</span><span class="r">Time</span><span class="r">Distance</span><span class="r">Steps</span><span class="r">Calories</span><span class="r">Avg speed</span><span class="r">Avg HR</span><span></span>
+    </div>
+    <ul class="slist" id="session-list"></ul>
+    <p class="empty" id="sessions-empty" hidden>No walks yet. A finished walk shows up here, and in the addon's history after the next /reload. Walks shorter than 20 seconds are not kept.</p>
+    <p class="empty" id="sessions-error" role="alert" hidden></p>
+    <div class="btn-row center"><button class="btn" id="sessions-more" type="button" hidden>Show older walks</button></div>
+  </section>
+</section>
+
+<!-- ================================================================== SETTINGS -->
+<section id="view-settings" class="view" aria-label="Settings" hidden>
+  <div class="settings-grid">
+
+    <section class="card wide units-card" id="set-units" aria-labelledby="set-units-h" tabindex="-1">
+      <header class="card-head"><h2 id="set-units-h">Display units</h2></header>
+      <div class="segmented" role="radiogroup" aria-labelledby="set-units-h">
+        <label><input type="radio" name="units" value="mph"><span>mph, miles, lb, ft/in</span></label>
+        <label><input type="radio" name="units" value="kmh"><span>km/h, km, kg, cm</span></label>
+      </div>
+      <p class="muted small">Changes how numbers are shown here. The pad's own firmware grid is set under Treadmill.</p>
+    </section>
+
+    <section class="card wide" id="set-limits" aria-labelledby="set-limits-h" tabindex="-1">
+      <header class="card-head"><h2 id="set-limits-h">Safety limits</h2></header>
+      <p class="muted">The companion enforces these whatever the game or this page asks for.</p>
+      <form class="form cols" data-form="limits" novalidate></form>
+    </section>
+
+    <div class="stack">
+      <section class="card" id="set-profile" aria-labelledby="set-profile-h" tabindex="-1">
+        <header class="card-head"><h2 id="set-profile-h">Body profile</h2><span class="badge quiet" id="profile-badge" hidden>Not set yet</span></header>
+        <p class="muted">Used only for the estimates, and synced to the addon so the in-game numbers agree.</p>
+        <form class="form" data-form="profile" novalidate></form>
+      </section>
+
+      <section class="card" id="set-hr" aria-labelledby="set-hr-h" data-tone="idle" tabindex="-1">
+        <header class="card-head">
+          <span class="lamp"><svg aria-hidden="true"><use href="#i-off"/></svg></span>
+          <h2 id="set-hr-h">Heart-rate sensor</h2>
+          <span class="head-state num" id="set-hr-state">-</span>
+        </header>
+        <p class="muted">Optional. Any Bluetooth heart-rate sensor works: a chest strap, an arm band, or a watch that can broadcast heart rate over Bluetooth. With age and sex set in the body profile, calories are then computed from heart rate.</p>
+        <p class="link-detail" id="set-hr-detail"></p>
+        <div class="btn-row">
+          <button class="btn" id="hr-scan" type="button">Scan for sensors</button>
+          <button class="btn" id="hr-off" type="button" hidden>Turn off</button>
+        </div>
+        <div id="hr-scan-out" class="scan-out" aria-live="polite"></div>
+      </section>
+    </div>
+
+    <div class="stack">
+      <section class="card" id="set-treadmill" aria-labelledby="set-treadmill-h" tabindex="-1">
+        <header class="card-head"><h2 id="set-treadmill-h">Treadmill</h2></header>
+        <form class="form" data-form="treadmill" novalidate></form>
+      </section>
+
+      <section class="card" id="set-addon" aria-labelledby="set-addon-h" data-tone="idle" tabindex="-1">
+        <header class="card-head">
+          <span class="lamp"><svg aria-hidden="true"><use href="#i-off"/></svg></span>
+          <h2 id="set-addon-h">Game addon</h2>
+          <span class="head-state num" id="set-addon-state">-</span>
+        </header>
+        <p class="link-detail" id="set-addon-detail"></p>
+        <form class="form" data-form="addon" novalidate></form>
+        <h3 class="sub">Install or update the addon</h3>
+        <p class="muted small">Copies the addon bundled with this companion into the game's <code>Interface\AddOns</code> folder. Your synced history is kept. Afterwards restart the game (or type <kbd>/reload</kbd>) and tick Walka in the AddOns list.</p>
+        <div class="btn-row">
+          <button class="btn" id="addon-find" type="button">Find game folders</button>
+          <button class="btn" id="addon-install-auto" type="button">Install automatically</button>
+          <button class="btn" id="addon-sync-2" type="button">Sync now</button>
+        </div>
+        <div id="addon-find-out" class="scan-out" aria-live="polite"></div>
+        <div class="inline-form">
+          <label for="addon-dir-manual">Or type the AddOns folder</label>
+          <div class="inline-row">
+            <input id="addon-dir-manual" type="text" autocomplete="off" spellcheck="false" placeholder="C:\Program Files (x86)\World of Warcraft\_forever_\Interface\AddOns">
+            <button class="btn" id="addon-install-manual" type="button">Install here</button>
+          </div>
+        </div>
+      </section>
+    </div>
+
+  </div>
+  <p class="foot muted small">Walka companion <span id="version"></span>. Everything on this page stays on this computer.</p>
+</section>
+
+</main>
+
+<div id="toasts" class="toasts" role="region" aria-label="Notifications"></div>
+<div id="tooltip" class="tooltip" role="presentation" hidden></div>
+
+<noscript><p class="noscript">The Walka dashboard needs JavaScript. The belt can always be stopped with the pad's own remote.</p></noscript>
+</body>
+</html>

@@ -104,12 +104,15 @@ frame.
 
 ### Drawing it (addon)
 
-The strip's frame is a child of `WorldFrame` (which stays visible when the UI
-is hidden with Alt+Z), ignores its parent's scale, and has its own scale set
-to `768 / physicalScreenHeight`. WoW's UI coordinate space is always 768 units
-high, so at that scale one unit is exactly one physical pixel whatever the UI
-scale setting is. The scale is re-applied when the resolution or UI scale
-changes.
+The strip's frame has no parent and is anchored to the screen itself, so it
+is unaffected by the UI scale, is not hidden with the rest of the UI (Alt+Z),
+and does not move when the game letterboxes the world view for a cinematic.
+Its own scale is set to `768 / physicalScreenHeight`: WoW's UI coordinate
+space is always 768 units high, so at that scale one unit is exactly one
+physical pixel. The scale is re-applied when the resolution or UI scale
+changes. Cell positions and sizes are whole pixels, so the strip does not
+depend on the client's pixel-snapping (which some UI replacement addons turn
+off for every texture).
 
 ### Reading it (companion)
 
