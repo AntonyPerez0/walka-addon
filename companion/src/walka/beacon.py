@@ -16,6 +16,11 @@ Every cell is ``cell`` physical pixels wide and tall (4 by default). The
 decoder does not need to know the size: it measures the pitch from the
 preamble and refines it until the postamble and CRC agree.
 
+The strip shows one frame at a time: usually a live frame, now and then a
+stat frame (see ``protocol``). The decoder hands back both, in separate
+places (``Decoded.frame`` and ``Decoded.stat``), so that a stat frame can
+never be taken for news about the belt.
+
 This module is pure Python (no numpy) and operates on rows of 8-bit
 brightness values, so it can be tested without a screen.
 """
@@ -26,7 +31,7 @@ import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
-from .protocol import FRAME_BITS, Frame, FrameError
+from .protocol import FRAME_BITS, Frame, FrameError, StatFrame, decode_bits
 
 PREAMBLE: tuple[int, ...] = (1, 0, 1, 0)
 POSTAMBLE: tuple[int, ...] = (1, 0)
@@ -41,24 +46,41 @@ MAX_CELL_PX = 16.0
 MIN_CONTRAST = 48
 
 
-def frame_to_cells(frame: Frame) -> list[int]:
+def frame_to_cells(frame: Frame | StatFrame) -> list[int]:
     """Return the 86 cell values (1 = white, 0 = black) for a frame."""
     return [*PREAMBLE, *frame.to_bits(), *POSTAMBLE]
 
 
-def cells_to_frame(cells: Sequence[int]) -> Frame:
-    """Decode 86 cell values. Raises FrameError if the guards or CRC are wrong."""
+def _frame_bits(cells: Sequence[int]) -> Sequence[int]:
+    """The 80 frame bits of 86 cell values, once the guard cells check out."""
     if len(cells) != TOTAL_CELLS:
         raise FrameError(f"expected {TOTAL_CELLS} cells, got {len(cells)}")
     if tuple(cells[: len(PREAMBLE)]) != PREAMBLE:
         raise FrameError("bad preamble")
     if tuple(cells[-len(POSTAMBLE) :]) != POSTAMBLE:
         raise FrameError("bad postamble")
-    return Frame.from_bits(cells[len(PREAMBLE) : len(PREAMBLE) + FRAME_BITS])
+    return cells[len(PREAMBLE) : len(PREAMBLE) + FRAME_BITS]
+
+
+def cells_to_frame(cells: Sequence[int]) -> Frame:
+    """Decode 86 cell values that carry a live frame.
+
+    Raises FrameError if the guards or CRC are wrong - and if the strip is
+    showing a stat frame (use ``decode_cells`` to get either kind).
+    """
+    return Frame.from_bits(_frame_bits(cells))
+
+
+def decode_cells(cells: Sequence[int]) -> Frame | StatFrame:
+    """Decode 86 cell values into the frame they carry, live or stat.
+
+    Raises FrameError if the guards or CRC are wrong.
+    """
+    return decode_bits(_frame_bits(cells))
 
 
 def render_row(
-    frame: Frame,
+    frame: Frame | StatFrame,
     cell_px: float = DEFAULT_CELL_PX,
     *,
     white: int = 255,
@@ -84,13 +106,27 @@ def render_row(
 
 @dataclass(frozen=True)
 class Decoded:
-    """A successfully decoded strip."""
+    """A successfully decoded strip.
 
-    frame: Frame
+    It carried either a live frame (``frame``) or a stat frame (``stat``);
+    the other one is None. They are kept apart on purpose: ``frame`` is
+    what the belt follows, and a stat frame must never turn up there.
+    """
+
+    frame: Frame | None  # the live frame; None while the strip shows a stat frame
     x0: int  # pixel column where the strip starts
     cell_px: float  # measured cell pitch in pixels
     white: int  # measured brightness of white cells
     black: int  # measured brightness of black cells
+    stat: StatFrame | None = None  # the stat frame, when that is what the strip shows
+
+    def __post_init__(self) -> None:
+        if self.frame is not None and not isinstance(self.frame, Frame):
+            raise TypeError("Decoded.frame must be a live Frame")
+        if self.stat is not None and not isinstance(self.stat, StatFrame):
+            raise TypeError("Decoded.stat must be a StatFrame")
+        if (self.frame is None) == (self.stat is None):
+            raise ValueError("a decoded strip carries either a live frame or a stat frame")
 
 
 def _candidate_pitches(base: float) -> Iterable[float]:
@@ -154,10 +190,13 @@ def _try_decode_at(row: Sequence[int], x0: int, runs: tuple[int, int, int]) -> D
             if cells is None:
                 continue
             try:
-                frame = cells_to_frame(cells)
+                frame = decode_cells(cells)
             except FrameError:
                 continue
-            return Decoded(frame, x0, pitch, int(round(white)), int(round(black)))
+            geometry = (x0, pitch, int(round(white)), int(round(black)))
+            if isinstance(frame, Frame):
+                return Decoded(frame, *geometry)
+            return Decoded(None, *geometry, stat=frame)
     return None
 
 
@@ -167,6 +206,8 @@ def decode_row(row: Sequence[int] | bytes, *, max_start: int | None = None) -> D
     ``max_start`` limits how far from the left edge the strip may begin
     (``None`` = anywhere). Returns ``None`` if no valid frame is found; a
     frame is only returned if its preamble, postamble and CRC-16 all check out.
+    The frame is in ``Decoded.frame`` if it is a live frame and in
+    ``Decoded.stat`` if it is a stat frame.
     """
     n = len(row)
     if n < TOTAL_CELLS * MIN_CELL_PX:

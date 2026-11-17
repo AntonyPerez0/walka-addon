@@ -18,6 +18,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from . import stat_route
 from .capture import BeaconReader, GameWindow
 from .governor import Reading
 from .protocol import Flags, Frame
@@ -89,6 +90,9 @@ class BeaconSource:
         self._had_active = False
         self._closed = False  # the game was closed, and no frame has been seen since
         self.status = BeaconStatus()
+        # Stat frames (journey numbers) go to this callback as (stat id, value)
+        # and nowhere else; the live reading never sees them. See stat_route.py.
+        self.on_stat: stat_route.StatHandler | None = None
 
     # ---- lifecycle -------------------------------------------------------------
     def start(self) -> None:
@@ -140,6 +144,7 @@ class BeaconSource:
             reader.close()
 
     def _ingest(self, now: float, reader: BeaconReader, result: Any) -> None:
+        result = stat_route.live_only(result, self.on_stat)  # a stat frame is no news for the belt
         with self._lock:
             self._window = reader.window
             if reader.window is not None:
@@ -167,6 +172,8 @@ class BeaconSource:
 
     def inject(self, frame: Frame, now: float | None = None) -> None:
         """Feed a frame directly (tests and the simulator)."""
+        if stat_route.take(frame, self.on_stat):  # a stat frame is no news for the belt
+            return
         now = self.clock() if now is None else now
         with self._lock:
             self._seen_at = now

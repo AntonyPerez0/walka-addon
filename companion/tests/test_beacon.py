@@ -7,10 +7,12 @@ import random
 import pytest
 
 from walka import beacon
-from walka.beacon import TOTAL_CELLS, decode_row, render_row, row_may_contain_beacon
-from walka.protocol import Flags, Frame, FrameError
+from walka.beacon import TOTAL_CELLS, Decoded, decode_row, render_row, row_may_contain_beacon
+from walka.protocol import Flags, Frame, FrameError, Stat, StatFrame
 
 FRAME = Frame(seq=41, session=7, flags=Flags.ACTIVE | Flags.MOVING, target_raw=322, char_speed_raw=350)
+# The strip's other kind of frame: one number of the character's journey.
+STAT = StatFrame(seq=42, stat_id=Stat.FOOT_YD, value=1_234_567)
 
 INTEGER_CELLS = [2, 3, 4, 5, 6, 7, 8]
 FRACTIONAL_CELLS = [2.25, 2.5, 3.2, 3.75, 4.5, 5.33, 6.4, 7.7]
@@ -360,3 +362,74 @@ def test_prefilter_rejects_flat_rows():
     assert not row_may_contain_beacon(b"")
     # A single bright blob is not a preamble.
     assert not row_may_contain_beacon(bytes(100) + bytes([255]) * 50 + bytes(100))
+
+
+# ---- stat frames: the strip's other kind of frame ------------------------------------
+
+
+def test_cells_of_a_stat_frame():
+    cells = beacon.frame_to_cells(STAT)
+    assert len(cells) == TOTAL_CELLS
+    assert tuple(cells[:4]) == (1, 0, 1, 0) and tuple(cells[-2:]) == (1, 0)
+    assert cells[4:84] == STAT.to_bits()
+    # decode_cells gives whichever kind the cells carry ...
+    assert beacon.decode_cells(cells) == STAT
+    assert beacon.decode_cells(beacon.frame_to_cells(FRAME)) == FRAME
+    # ... cells_to_frame is for live frames and refuses the other kind.
+    with pytest.raises(FrameError, match="not a live frame"):
+        beacon.cells_to_frame(cells)
+
+
+def test_bad_guard_cells_are_refused_for_either_kind():
+    for frame in (FRAME, STAT):
+        cells = beacon.frame_to_cells(frame)
+        for index in (0, 1, 2, 3, 84, 85):
+            broken = list(cells)
+            broken[index] ^= 1
+            with pytest.raises(FrameError):
+                beacon.decode_cells(broken)
+        with pytest.raises(FrameError):
+            beacon.decode_cells(cells[:-1])
+        with pytest.raises(FrameError):
+            beacon.decode_cells(cells + [0])
+
+
+@pytest.mark.parametrize("cell", INTEGER_CELLS + FRACTIONAL_CELLS)
+def test_a_stat_strip_decodes_into_its_own_slot(cell: float):
+    rng = random.Random(int(cell * 100))
+    for _ in range(25):
+        stat = StatFrame(seq=rng.randrange(256), stat_id=rng.randrange(64), value=rng.getrandbits(40))
+        decoded = decode_row(render_row(stat, cell) + bytes(int(cell) + 2))
+        assert decoded is not None, f"cell {cell}: {stat}"
+        assert decoded.stat == stat
+        assert decoded.frame is None  # nothing here for the belt
+        assert decoded.x0 == 0
+        assert decoded.cell_px == pytest.approx(cell, abs=0.45)
+        assert decoded.white == 255 and decoded.black == 0
+
+
+def test_a_live_strip_has_no_stat():
+    decoded = decode_row(render_row(FRAME, 3) + bytes(8))
+    assert decoded is not None and decoded.frame == FRAME and decoded.stat is None
+
+
+def test_a_stat_strip_is_found_like_any_other():
+    strip = render_row(STAT, 3, white=210, black=45) + bytes([45]) * 8
+    row = on_desktop(strip, 250, 900, 45)
+    assert row_may_contain_beacon(row)  # the whole-screen search does not skip it
+    decoded = decode_row(row)
+    assert decoded is not None and decoded.stat == STAT and decoded.x0 == 250
+
+
+def test_decoded_keeps_the_two_kinds_in_their_own_slots():
+    """``Decoded.frame`` is what the belt follows: it cannot hold a stat frame."""
+    with pytest.raises(TypeError):
+        Decoded(STAT, 0, 3.0, 255, 0)
+    with pytest.raises(TypeError):
+        Decoded(None, 0, 3.0, 255, 0, stat=FRAME)
+    with pytest.raises(ValueError):
+        Decoded(None, 0, 3.0, 255, 0)  # a decoded strip carried something
+    with pytest.raises(ValueError):
+        Decoded(FRAME, 0, 3.0, 255, 0, stat=STAT)  # ... and only one thing
+    assert Decoded(FRAME, 0, 3.0, 255, 0).stat is None
+    assert Decoded(None, 0, 3.0, 255, 0, stat=STAT).frame is None

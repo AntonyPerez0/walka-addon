@@ -383,6 +383,22 @@ async def _probe(args: argparse.Namespace) -> int:
     return 0
 
 
+def _frame_text(decoded) -> str:
+    """One decoded strip in words, for ``walka beacon``."""
+    stat = decoded.stat
+    if stat is not None:
+        # Every few frames the addon shows one number of the character's
+        # journey instead of its live state.
+        name = stat.stat.name if stat.stat is not None else f"number {stat.stat_id}"
+        return f"seq={stat.seq} journey {name}={stat.value}"
+    frame = decoded.frame
+    flags = ",".join(flag.name for flag in Flags if flag in frame.flags) or "-"
+    return (
+        f"seq={frame.seq} session={frame.session} "
+        f"target={frame.target_kmh:.2f} km/h char={frame.char_speed_yps:.2f} yd/s [{flags}]"
+    )
+
+
 def _beacon(args: argparse.Namespace) -> int:
     """Diagnose screen capture: print what is decoded from the screen."""
     capture.enable_dpi_awareness()
@@ -403,12 +419,9 @@ def _beacon(args: argparse.Namespace) -> int:
                 )
             else:
                 seen += 1
-                frame = decoded.frame
-                flags = ",".join(flag.name for flag in Flags if flag in frame.flags) or "-"
                 line = (
                     f"OK via {result.where} at {result.origin} cell={decoded.cell_px:.2f}px "
-                    f"contrast={decoded.white - decoded.black} | seq={frame.seq} session={frame.session} "
-                    f"target={frame.target_kmh:.2f} km/h char={frame.char_speed_yps:.2f} yd/s [{flags}]"
+                    f"contrast={decoded.white - decoded.black} | {_frame_text(decoded)}"
                 )
             if line != last_line:
                 print(line)

@@ -114,6 +114,23 @@ def test_beacon_selection():
     assert capturing._reader_factory is not None and capturing.fps == 20.0  # (nothing is captured until started)
 
 
+def test_beacon_diagnosis_names_both_kinds_of_frame():
+    """``walka beacon`` prints what is on the strip. Every few frames that is
+    a number of the character's journey, not the live state."""
+    from walka.beacon import Decoded
+    from walka.protocol import Flags, Frame, Stat, StatFrame
+
+    live = Decoded(
+        Frame(seq=7, session=2, flags=Flags.ACTIVE | Flags.MOVING, target_raw=322, char_speed_raw=350), 0, 4.0, 255, 0
+    )
+    assert cli._frame_text(live) == "seq=7 session=2 target=3.22 km/h char=7.00 yd/s [ACTIVE,MOVING]"
+    assert cli._frame_text(Decoded(Frame(seq=8), 0, 4.0, 255, 0)).endswith("[-]")
+    stat = Decoded(None, 0, 4.0, 255, 0, stat=StatFrame(seq=9, stat_id=Stat.FOOT_YD, value=123456))
+    assert cli._frame_text(stat) == "seq=9 journey FOOT_YD=123456"
+    unknown = Decoded(None, 0, 4.0, 255, 0, stat=StatFrame(seq=10, stat_id=40, value=5))
+    assert cli._frame_text(unknown) == "seq=10 journey number 40=5"
+
+
 def test_install_addon_command(tmp_path: Path, capsys, monkeypatch):
     addons = tmp_path / "_forever_" / "Interface" / "AddOns"
     addons.mkdir(parents=True)

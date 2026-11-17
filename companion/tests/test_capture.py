@@ -8,7 +8,7 @@ import pytest
 
 from walka import capture
 from walka.capture import FULL_SCAN_INTERVAL_S, STRIP_HEIGHT, STRIP_WIDTH, BeaconReader, GameWindow, Shot
-from walka.protocol import Flags, Frame
+from walka.protocol import Flags, Frame, Stat, StatFrame
 from walka_fakes import FakeScreen
 
 FRAME = Frame(seq=10, session=2, flags=Flags.ACTIVE | Flags.MOVING, target_raw=322, char_speed_raw=350)
@@ -148,6 +148,41 @@ def test_falls_back_to_a_full_scan_when_the_strip_is_somewhere_else():
         assert again.decoded is not None and again.decoded.frame == frame(seq)
         assert again.where == "scan" and again.origin == (333, 46)
     assert screen.grabs == [(333, 46, STRIP_WIDTH, STRIP_HEIGHT)] * 5
+
+
+def test_a_stat_frame_on_the_strip_keeps_the_lock():
+    """Twice a second the strip shows a number of the character's journey
+    instead of the live state. The reader hands it over as what it is and
+    stays where it is: taking it for "no strip" would mean searching the
+    whole screen again every time."""
+    screen = FakeScreen([(0, 0, 1000, 140)])
+    screen.paint_strip(FRAME, 333, 47, 3)
+    reader = BeaconReader(screen, None, clock=Clock())
+    assert reader.read().where == "scan"
+    screen.grabs.clear()
+
+    stat = StatFrame(seq=11, stat_id=Stat.FOOT_YD, value=2**40 - 1)
+    screen.paint_strip(stat, 333, 47, 3)
+    result = reader.read()
+    assert result.decoded is not None and result.decoded.stat == stat
+    assert result.decoded.frame is None  # not a live frame
+    assert result.where == "scan" and result.origin == (333, 46)
+
+    screen.paint_strip(frame(12), 333, 47, 3)
+    again = reader.read()
+    assert again.decoded is not None and again.decoded.frame == frame(12) and again.decoded.stat is None
+    assert screen.grabs == [(333, 46, STRIP_WIDTH, STRIP_HEIGHT)] * 2
+    assert screen.full_grabs() == 0
+
+
+def test_the_strip_is_found_while_it_shows_a_stat_frame():
+    screen = FakeScreen([(0, 0, 1000, 140)])
+    stat = StatFrame(seq=200, stat_id=Stat.CHAR_KEY, value=3_129_773_777)
+    screen.paint_strip(stat, 137, 31, 4)
+    reader = BeaconReader(screen, Finder(wow_window(137, 31)), clock=Clock())
+    result = reader.read()
+    assert result.decoded is not None and result.decoded.stat == stat and result.decoded.frame is None
+    assert result.where == "window" and reader.locked == (137, 31)
 
 
 @pytest.mark.parametrize("cell", [2, 4, 8])

@@ -1,4 +1,8 @@
-"""The beacon frame codec: layout, range limits and what the CRC catches."""
+"""The beacon frame codec: layout, range limits and what the CRC catches.
+
+These are the tests of the live frame. The stat frame, and everything that
+keeps the two kinds apart, is in test_protocol_stat.py.
+"""
 
 from __future__ import annotations
 
@@ -20,6 +24,9 @@ FIELD_WIDTHS = {
     "char_speed_raw": 12,
     "reserved": 2,
 }
+# What a caller may choose. The version is 1 and the type of a live frame is
+# "live": neither is a matter of choice.
+SETTABLE = {name: width for name, width in FIELD_WIDTHS.items() if name not in ("version", "frame_type")}
 
 
 def random_frame(rng: random.Random) -> Frame:
@@ -29,7 +36,6 @@ def random_frame(rng: random.Random) -> Frame:
         flags=Flags(rng.randrange(1 << 16)),
         target_raw=rng.randrange(4096),
         char_speed_raw=rng.randrange(4096),
-        frame_type=rng.randrange(4),
         reserved=rng.randrange(4),
     )
 
@@ -112,7 +118,7 @@ def test_round_trip_random_frames():
         assert beacon.cells_to_frame(beacon.frame_to_cells(frame)) == frame
 
 
-@pytest.mark.parametrize("name,width", [(n, w) for n, w in FIELD_WIDTHS.items() if n != "version"])
+@pytest.mark.parametrize("name,width", list(SETTABLE.items()))
 def test_every_field_round_trips_at_its_limits(name: str, width: int):
     top = (1 << width) - 1
     for value in (0, 1, top - 1, top):
@@ -125,11 +131,23 @@ def test_every_field_round_trips_at_its_limits(name: str, width: int):
                 assert int(getattr(back, other)) == int(getattr(Frame(), other))
 
 
-@pytest.mark.parametrize("name,width", list(FIELD_WIDTHS.items()))
+@pytest.mark.parametrize("name,width", [*SETTABLE.items(), ("version", 4)])
 def test_out_of_range_fields_are_refused(name: str, width: int):
     for value in (-1, 1 << width, (1 << width) + 7):
         with pytest.raises(FrameError):
             Frame(**{name: value}).pack()
+
+
+def test_a_live_frame_cannot_be_given_another_type():
+    """The type is not a field: there is no way to build a Frame that would
+    be packed - or passed around - as anything but a live frame."""
+    assert Frame.frame_type == protocol.TYPE_LIVE == 0
+    assert Frame(seq=3).frame_type == protocol.TYPE_LIVE
+    with pytest.raises(TypeError):
+        Frame(frame_type=protocol.TYPE_STAT)
+    with pytest.raises(AttributeError):  # frozen, like every other attribute
+        Frame().frame_type = protocol.TYPE_STAT
+    assert (Frame(seq=3).pack()[0] >> 2) & 0b11 == protocol.TYPE_LIVE
 
 
 def test_unknown_flag_bits_survive():
@@ -204,7 +222,7 @@ def test_every_single_bit_flip_is_caught():
     rng = random.Random(2)
     for _ in range(40):
         bits = random_frame(rng).to_bits()
-        # (frame_type/reserved are free in random_frame, version is always 1)
+        # (reserved is free in random_frame; version and frame type are fixed)
         for i in range(80):
             flipped = list(bits)
             flipped[i] ^= 1
@@ -274,7 +292,8 @@ def test_false_accept_rate_of_random_bits():
             except FrameError:
                 pass
     # The CRC alone passes 2^-16 of random strings: 1 expected here. The
-    # version nibble cuts what is finally accepted by another factor of 16.
+    # version nibble and the frame type cut what is finally accepted as a
+    # live frame by another factor of 64.
     assert crc_ok <= 8, f"CRC false-accept rate {crc_ok / trials:.2e} is far above 2^-16"
     assert accepted <= 2
 

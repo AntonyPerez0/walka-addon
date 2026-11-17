@@ -16,13 +16,19 @@ checks them against each other.
 
 Ten bytes: eight payload bytes followed by a CRC-16.
 
-Payload, most-significant bit first:
+There are two kinds of frame, told apart by the frame type. This section
+describes the *live frame*: the addon's state from moment to moment, and the
+only thing the belt follows. The other kind, the *stat frame*, carries the
+numbers of a character's journey and is described in
+[section 4](#4-stat-frames).
+
+Payload of the live frame, most-significant bit first:
 
 | Bits   | Width | Field           | Meaning |
 |--------|------:|-----------------|---------|
 | 0–3    | 4     | version         | `1` |
-| 4–5    | 2     | frame type      | `0` = live state (others reserved) |
-| 6–13   | 8     | seq             | Heartbeat. +1 on every redraw (10 per second), wraps at 256. |
+| 4–5    | 2     | frame type      | `0` = live frame. (`1` = stat frame, section 4. `2` and `3` are not assigned.) |
+| 6–13   | 8     | seq             | Heartbeat. +1 on every redraw (10 per second) of either kind of frame, wraps at 256. |
 | 14–21  | 8     | session         | Walking-session counter, 1–255. `0` = no session. |
 | 22–37  | 16    | flags           | See below. |
 | 38–49  | 12    | target speed    | Belt speed the addon wants, in 0.01 km/h (0–40.95). |
@@ -74,7 +80,8 @@ sets this flag. A hidden value is never drawn on screen.
 
 * **seq** proves the game is alive. If valid frames keep arriving but `seq`
   stops changing, the picture is frozen (a loading screen over a stale frame,
-  a hung client) and the companion treats the signal as lost.
+  a hung client) and the companion treats the signal as lost. Only the `seq`
+  of live frames counts here (section 4).
 * **session** changing means a new walking session started; the companion
   starts a new recording and treats it as a fresh, explicit start.
 * **target speed** is a *request*. The companion clamps it to the treadmill's
@@ -134,7 +141,8 @@ a cell size:
    side in fine steps (this is what makes fractional cell sizes work, e.g.
    when the game window is being scaled).
 3. Accept the frame only if the preamble, the postamble and the CRC-16 all
-   match, and the version is one this build understands.
+   match, and the version and the frame type are ones this build
+   understands.
 
 Where to look: first the game window's client-area origin (found through the
 Win32 API), then the top-left corner of each monitor, and - at most every few
@@ -155,3 +163,106 @@ and the game loads it at login and on `/reload`, like the data files written
 by other addon companion apps. Until then the in-game HUD shows the addon's
 own estimates, which replay the companion's rate limits and so stay close to
 the real numbers.
+
+## 4. Stat frames
+
+Besides driving the belt, the addon keeps a record of each character's
+journey: its level and time played, how far it has travelled on foot, and
+the real-world walking done while playing it. The companion's dashboard
+turns those numbers into a picture to share. The game only writes an addon's
+saved data to disk at logout or `/reload`, so to reach the companion while
+the game runs the numbers take the same road as everything else: the strip.
+
+A stat frame carries one number. It has the same ten bytes, the same CRC and
+the same place on the strip as a live frame; only the payload differs:
+
+| Bits   | Width | Field      | Meaning |
+|--------|------:|------------|---------|
+| 0–3    | 4     | version    | `1` |
+| 4–5    | 2     | frame type | `1` |
+| 6–13   | 8     | seq        | The same counter as in live frames: +1 on every redraw of either kind. |
+| 14–19  | 6     | stat id    | Which number this is: see below. |
+| 20–59  | 40    | value      | An unsigned whole number. |
+| 60–63  | 4     | reserved   | `0` |
+
+### The stats
+
+| Id    | Name             | Value |
+|------:|------------------|-------|
+| 1     | CHAR_KEY         | A hash of the character's "Name-Realm" (below). Tells characters apart. |
+| 2     | CHAR_INFO        | `level` + `level cap` × 2^8 + `class id` × 2^16 + `faction` × 2^24, one byte each. Faction: `0` unknown, `1` Alliance, `2` Horde. |
+| 3     | PLAYED_S         | Total time played (`/played`), in seconds. `0` = not known yet. |
+| 4     | FOOT_YD          | Yards travelled on foot since Walka began tracking this character. |
+| 5     | TRAVEL_YD        | Yards travelled by any means: mounts, flight paths and swimming included. |
+| 6     | REAL_STEPS       | Real-world steps walked while playing this character, over all its walks. |
+| 7     | REAL_M           | Real-world distance walked, in metres. |
+| 8     | REAL_KCAL        | Energy used, in kilocalories (gross, whole number). |
+| 9     | REAL_S           | Seconds on the moving belt. |
+| 10    | WALKS            | Number of walks counted. |
+| 11    | SINCE            | When tracking began for this character: Unix time, in seconds. |
+| 12    | INFO_FLAGS       | Bit 0 (value 1): the real-world totals include estimates the companion has not confirmed yet. |
+| 16–19 | NAME_0 to NAME_3 | The character's name (below). |
+
+"On foot" means moving while not mounted, not on a flight path, not flying
+and not swimming; running as a ghost and jumping count.
+
+Ids 0, 13–15 and 20–63 are not assigned. The addon never sends 0, and the
+companion ignores ids it does not know, so stats can be added later without
+a new protocol version.
+
+Every value is a whole number that fits the field. The addon rounds, and
+clamps instead of wrapping: a number too large for 40 bits is sent as
+2^40 - 1, a negative or unusable one as 0.
+
+**CHAR_KEY** is the djb2 hash of the UTF-8 bytes of the "Name-Realm" string,
+kept to 32 bits: start with `h = 5381`, then `h = (h × 33 + byte) mod 2^32`
+for every byte. Check value: the hash of the ASCII string `hello` is
+`261238937`. A hash is sent, and not the text, so that the realm is never
+drawn on screen; the companion only needs to know *that* two sets of numbers
+belong to different characters.
+
+**NAME_0 to NAME_3** carry the character's name without the realm - which the
+game shows on screen anyway - as UTF-8: up to 20 bytes, five per frame,
+padded with zero bytes. Within a value the first byte is the most
+significant. A name longer than 20 bytes is cut between two characters,
+never inside one (twelve Cyrillic letters are 24 bytes: the first ten are
+sent).
+
+### When they are sent
+
+Every 5th redraw is a stat frame instead of a live frame - never two in a
+row - so the belt still hears from the game four times out of five, and the
+longest gap between two live frames grows from 0.1 to 0.2 seconds. The stats
+go round in a fixed order:
+
+```
+CHAR_KEY, NAME_0, NAME_1, NAME_2, NAME_3, CHAR_INFO, PLAYED_S, FOOT_YD,
+TRAVEL_YD, REAL_STEPS, REAL_M, REAL_KCAL, REAL_S, WALKS, SINCE, INFO_FLAGS
+```
+
+Sixteen stats, two a second: a full round takes about 8 seconds. CHAR_KEY
+opens the round, and what follows belongs to that character; a different
+CHAR_KEY means another character has logged in.
+
+### A stat frame is never a live frame
+
+A stat frame says nothing about what the belt should do, and the companion
+makes sure it can never be mistaken for a frame that does:
+
+* Only live frames (type 0) feed the reading the belt is driven by: its
+  content, its age, the frozen-picture check and the "game window closed"
+  rule. To all of these a stat frame is the same as no frame at all.
+* Stat frames are handed to the part of the companion that keeps the
+  journey numbers, which has no way to reach the belt.
+* A frame of type 2 or 3, like a frame of another version, is refused: for
+  the companion there is no beacon in that picture.
+* So a picture that froze while a stat frame was on the strip is a lost
+  signal like any other ([SAFETY.md](SAFETY.md)), although a valid frame
+  can still be read from it.
+
+The frame type is covered by the CRC like every other bit, so a misread
+pixel cannot turn one kind of frame into the other.
+
+Implementations: `Protocol.packStatBits` in the addon; `protocol.decode`,
+`beacon.Decoded` (which keeps the two kinds in separate fields) and
+`stat_route.py` in the companion.
