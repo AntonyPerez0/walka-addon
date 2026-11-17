@@ -1,0 +1,79 @@
+name: CI
+
+# Manual runs only while the first version is being assembled; the final
+# commit switches this to run on every push.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: python -m pip install -e "companion[dev]" pytest-asyncio
+      - name: Lint
+        working-directory: companion
+        run: ruff check src tests
+      - name: Test
+        run: python -m pytest -q
+
+  windows-exe:
+    name: Windows executable
+    runs-on: windows-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: python -m pip install -e "companion[build]"
+      - name: Build
+        working-directory: companion
+        run: python build_exe.py
+      - name: Smoke test
+        shell: pwsh
+        run: |
+          $exe = "companion/dist/Walka.exe"
+          & $exe --version
+          if ($LASTEXITCODE -ne 0) { throw "version check failed" }
+          $env:WALKA_DATA_DIR = Join-Path $env:RUNNER_TEMP "walka-data"
+          $proc = Start-Process -FilePath $exe -ArgumentList "--demo","--no-browser","--port","8791" -PassThru -NoNewWindow
+          try {
+            $state = $null
+            foreach ($i in 1..40) {
+              Start-Sleep -Milliseconds 500
+              try { $state = Invoke-RestMethod "http://127.0.0.1:8791/api/state"; if ($state.treadmill.speed_kmh -gt 0) { break } } catch { }
+            }
+            if (-not $state) { throw "the dashboard API did not come up" }
+            if ($state.treadmill.speed_kmh -le 0) { throw "the simulated belt never moved" }
+            $page = Invoke-WebRequest "http://127.0.0.1:8791/" -UseBasicParsing
+            if ($page.StatusCode -ne 200) { throw "dashboard page missing from the bundle" }
+            Write-Host "belt speed $($state.treadmill.speed_kmh) km/h, phase $($state.governor.phase)"
+          } finally {
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+          }
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release | Out-Null
+          Copy-Item companion/dist/Walka.exe release/
+          Copy-Item -Recurse Walka release/Walka
+          Copy-Item README.md release/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Walka-windows
+          path: release/
+          if-no-files-found: error

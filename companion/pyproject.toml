@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling>=1.21"]
+build-backend = "hatchling.build"
+
+[project]
+name = "walka"
+version = "0.1.0"
+description = "Walka companion: links an under-desk walking pad to World of Warcraft (and other games)."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "aiohttp>=3.9",
+    "bleak>=1.0",
+    "mss>=10.2,<11",  # 11 changes the capture API
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "lupa>=2.2",
+    "ruff>=0.6",
+]
+build = [
+    "pyinstaller>=6.6",
+]
+
+[project.scripts]
+walka = "walka.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/walka"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E501", "UP007", "UP045"]
