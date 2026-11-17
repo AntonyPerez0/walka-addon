@@ -38,7 +38,10 @@ def default_data_dir() -> Path:
 @dataclass
 class TreadmillConfig:
     kind: str = "ftms"  # "ftms" | "simulated"
-    address: str = ""  # Bluetooth address; empty = first matching treadmill
+    # Bluetooth address. Empty = the first matching treadmill; the companion
+    # then stores that pad's address here, so that every later reconnect can
+    # only reach the same pad.
+    address: str = ""
     name_prefixes: list[str] = field(default_factory=lambda: ["URTM"])
     units: str = "auto"  # firmware speed grid: "auto" | "mph" | "kmh"
     auto_connect: bool = True

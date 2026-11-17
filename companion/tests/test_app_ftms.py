@@ -226,9 +226,13 @@ def test_link_loss_and_reconnect_with_the_pad_stopped(tmp_path: Path, monkeypatc
         rig.pad.writes.clear()
         await rig.run(60, target=3.2, moving=True)
         assert rig.pad.writes == [], "the belt was restarted without a deliberate act"
-        assert rig.app.governor.phase is Phase.WAITING
+        # Found stopped: as final as a stop pressed on the pad itself.
+        assert rig.app.governor.phase is Phase.USER_STOPPED
         await rig.run(2, target=3.2, moving=False)
         await rig.run(40, target=3.2, moving=True)
+        assert rig.pad.writes == [] and rig.pad.speed_kmh == 0
+        await rig.run(2, target=3.2, paused=True)
+        await rig.run(40, target=3.2)
         assert rig.pad.speed_kmh == pytest.approx(2.0 * MPH)
 
     run(scenario())
@@ -368,6 +372,7 @@ def test_soak_on_the_emulated_pad(tmp_path: Path, monkeypatch, seed: int):
         await rig.treadmill.connect()
         await rig.run(1, active=False)
         external = False
+        ramping_until = 0.0  # a lowered cap is approached at the deceleration limit, not in one jump
         for _ in range(140):
             previous_cap = limits.max_speed_kmh
             roll = rng.random()
@@ -401,9 +406,11 @@ def test_soak_on_the_emulated_pad(tmp_path: Path, monkeypatch, seed: int):
                 rig.app.resume()
             else:
                 rig.app.update_config({"limits": {"max_speed_kmh": rng.uniform(0.5, 8.0)}})
+                over = max(0.0, rig.pad.target_kmh - limits.max_speed_kmh)
+                ramping_until = rig.clock.mono + over / limits.decel_kmh_per_s + 2 * limits.command_interval_s + 1.0
             if rig.pad.state not in ("running", "countdown"):
                 external = False
-            ticked = roll < 0.68  # (a cap change needs one tick to reach the pad)
+            ticked = roll < 0.68 and rig.clock.mono > ramping_until  # (a cap change needs time to reach the pad)
             if ticked and rig.pad.client is not None and rig.pad.target_tenths is not None and not external:
                 allowed = max(limits.max_speed_kmh, previous_cap)
                 if rig.app.governor.belt_on and rig.app.governor.commanded_kmh > 0:

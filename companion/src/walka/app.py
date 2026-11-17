@@ -21,22 +21,47 @@ from typing import Any
 from . import __version__, addon_sync
 from . import config as config_module
 from .config import Config
-from .governor import Action, Belt, Command, Governor, Reading
+from .governor import ABANDONED_AFTER_S, Action, Belt, Command, Governor, Reading
 from .hotkey import GlobalHotkey
 from .metrics import Profile
 from .protocol import Flags
 from .session import SessionRecord, SessionRecorder, SessionStore
 from .sources import BeaconSource, ManualSource
-from .treadmill import Treadmill, TreadmillError, TreadmillEvent
+from .treadmill import KMH_PER_MPH, BeltState, Treadmill, TreadmillError, TreadmillEvent
 
 log = logging.getLogger(__name__)
 
 TICK_S = 0.2
 CHECKPOINT_EVERY_S = 30.0
 FREE_WALK_GRACE_S = 60.0  # a remote-controlled walk ends after this long stopped
-ABANDONED_AFTER_S = 900.0  # a session with no signal and no movement is closed
+# (ABANDONED_AFTER_S, from the governor: a session with no signal and no
+# movement is closed - and let go of - after this long.)
 STALE_DATA_S = 5.0  # treadmill data older than this is not trusted
 STATE_FILE = "state.json"
+
+# What the governor has to tell the user, in plain words: (level, text).
+_NOTES = {
+    "found_stopped": (
+        "warning",
+        "The treadmill came back stopped - Walka will not restart it until you resume.",
+    ),
+    "halt_abandoned": (
+        "error",
+        "The treadmill has been out of reach for half an hour, so Walka has stopped trying to reconnect "
+        "to make sure the belt is off. If the belt is moving, stop it at the treadmill itself!",
+    ),
+    "resume_expired": (
+        "info",
+        "Resume was pressed over a minute ago and the belt could not be started in that time, so it no "
+        "longer counts. Press Resume again when you are ready to walk.",
+    ),
+    "released": (
+        "info",
+        "The belt was started at the treadmill while the game is out of view: it is yours. "
+        "Walka leaves it alone until it can see the game again.",
+    ),
+    "abandoned": ("info", "The game has been out of view for a quarter of an hour: Walka has let go of that session."),
+}
 
 
 class App:
@@ -87,6 +112,7 @@ class App:
         self._stopping = asyncio.Event()
         self._tasks: list[asyncio.Task] = []
         self._last_checkpoint = 0.0
+        self._unsaved: list[SessionRecord] = []  # finished walks that could not be written yet
         self._idle_since: float | None = None
         self._last_reading = Reading()
         self._manual_was_active = False
@@ -120,6 +146,7 @@ class App:
             self.governor.notify_external_stop()
         elif event is TreadmillEvent.EXTERNAL_START:
             self.governor.notify_external_start(self.mono())
+            self._tell_notes()
         elif event is TreadmillEvent.DISCONNECTED:
             self.governor.notify_disconnected()
             self.log_event("Treadmill disconnected.", "warning")
@@ -129,6 +156,7 @@ class App:
             self.connect_error = ""
             self._eager_connect = False
             self.log_event(f"Treadmill connected: {status.name or status.address}.")
+            self._pin_treadmill()
             self._state["treadmill"] = {
                 "name": status.name,
                 "min_kmh": status.min_kmh,
@@ -139,21 +167,63 @@ class App:
             self._save_state()
             self.sync_addon()
 
+    def _pin_treadmill(self) -> None:
+        """Tie Walka to the treadmill it has just connected to.
+
+        With no address stored, a reconnect takes the first treadmill that
+        answers - which, with two pads in range, need not be the one the
+        walker is standing on. From the first connection on, only this pad.
+        (The simulated treadmill has no address to pin.)"""
+        status = self.treadmill.status
+        if not hasattr(self.treadmill, "address") or not status.address:
+            return
+        if not self.config.treadmill.address:
+            self.config.treadmill.address = status.address
+            self.save_config()
+            self.log_event(
+                f"Walka now only reconnects to this treadmill ({status.name or status.address}). "
+                'To use another one, pick it from a scan or press "Forget this treadmill".'
+            )
+        if not self.treadmill.address:
+            self.treadmill.address = self.config.treadmill.address
+
+    def _speed_text(self, kmh: float) -> str:
+        if self.config.units == "mph":
+            return f"{kmh / KMH_PER_MPH:.1f} mph"
+        return f"{kmh:.1f} km/h"
+
+    def _tell_notes(self) -> None:
+        """Put what the governor has to say into the event log."""
+        notes, self.governor.notes[:] = list(self.governor.notes), []
+        for note in notes:
+            if note == "ceiling":
+                held = self.governor.ceiling_kmh
+                if held is not None:
+                    self.log_event(
+                        f"The speed was lowered at the treadmill: Walka keeps the belt at {self._speed_text(held)} "
+                        "or slower until you press Resume (or pause and resume in game)."
+                    )
+            elif note in _NOTES:
+                level, text = _NOTES[note]
+                self.log_event(text, level)
+
     # ---- the control tick --------------------------------------------------------
     def current_reading(self, mono: float) -> Reading:
         if self.manual.active:
             self._manual_was_active = True
             return self.manual.reading()
-        reading = self.beacon.reading(mono) if self.beacon is not None else Reading()
         if self._manual_was_active:
             self._manual_was_active = False
-            if not (reading.active and reading.age_s <= self.config.limits.signal_timeout_s):
-                # The dashboard session has just ended and the game is not
-                # there to take over. Say so: with no beacon (or a stale one)
-                # the governor would otherwise see a *lost signal* and keep
-                # the belt running through its hold and safe-speed stages.
-                return Reading(age_s=0.0, active=False)
-        return reading
+            # The dashboard session has just ended, and "End session" is a
+            # promise that the belt stops - also when a game session is live
+            # in the background. Say "session over" once, whatever the game
+            # shows: with a stale beacon the governor would otherwise see a
+            # *lost signal* and run on through its hold and safe-speed
+            # stages, and with a live one the game would take the belt and
+            # speed it up. (Marked as ours: it is no proof that the game's
+            # session was watched to begin.)
+            return Reading(age_s=0.0, active=False, synthetic=True)
+        return self.beacon.reading(mono) if self.beacon is not None else Reading()
 
     def source_kind(self) -> str:
         if self.manual.active:
@@ -167,10 +237,21 @@ class App:
         speed = status.speed_kmh
         if status.connected and status.age_s(mono) > STALE_DATA_S:
             speed = 0.0  # no recent data: do not pretend to know the belt is moving
-        return Belt(status.connected, speed, status.min_kmh, status.max_kmh, status.step_kmh, busy=status.busy)
+        return Belt(
+            status.connected,
+            speed,
+            status.min_kmh,
+            status.max_kmh,
+            status.step_kmh,
+            busy=status.busy,
+            data_at=status.updated_at,  # changes with every data packet
+            target_kmh=status.target_kmh,
+        )
 
     async def _execute(self, command: Command) -> None:
         treadmill = self.treadmill
+        if self._stopping.is_set() and command.action in (Action.START, Action.SET_SPEED):
+            return  # the companion is closing: nothing that moves the belt goes out any more
         try:
             async with self._command_lock:
                 if command.action is Action.START:
@@ -185,8 +266,9 @@ class App:
         except TreadmillError as exc:
             self.log_event(f"Treadmill command {command.action.value} failed: {exc}", "warning")
             if command.action is Action.SET_SPEED:
-                # Forget what we think we commanded so that it is re-sent.
-                self.governor.commanded_kmh = 0.0
+                # The belt is still set to the speed before this one: the
+                # governor tries again from there.
+                self.governor.speed_command_failed()
 
     async def tick(self) -> None:
         """One control step: read the source, run the governor, record."""
@@ -196,6 +278,7 @@ class App:
         belt = self._belt(mono)
         for command in self.governor.step(mono, reading, belt):
             await self._execute(command)
+        self._tell_notes()
         self._record(wall, reading, belt)
 
     # ---- recording ---------------------------------------------------------------
@@ -268,25 +351,52 @@ class App:
             )
             if wall - self._last_checkpoint >= CHECKPOINT_EVERY_S:
                 self._last_checkpoint = wall
-                self.store.checkpoint(recorder.snapshot(wall))
+                self._save_unsaved()
+                if not self._unsaved:
+                    # (While a finished walk is still waiting to be written,
+                    # the checkpoint file is what keeps it safe: leave it.)
+                    self.store.checkpoint(recorder.snapshot(wall))
 
     def _finish_recording(self, wall: float) -> SessionRecord | None:
+        """Close the walk being recorded and file it. Never raises: a disk
+        that is full must not stop the control loop, nor the shutdown."""
         recorder, self.recorder = self.recorder, None
-        self.store.clear_checkpoint()
-        if recorder is None:
-            return None
-        record = recorder.finish(wall)
+        record = recorder.finish(wall) if recorder is not None else None
         if record is None:
+            if not self._unsaved:
+                self.store.clear_checkpoint()
             return None
-        self.store.add(record)
-        self.last_record = record
-        self._totals_cache = None
-        self.log_event(
-            f"Walk saved: {record.seconds / 60:.0f} min, {record.distance_m / 1000:.2f} km, "
-            f"{record.steps} steps, {record.kcal:.0f} kcal."
-        )
-        self.sync_addon()
-        return record
+        self._unsaved.append(record)
+        self._save_unsaved(announce=True)
+        return record if record not in self._unsaved else None
+
+    def _save_unsaved(self, *, announce: bool = False) -> None:
+        """Write finished walks to disk. The file is written first and the
+        crash checkpoint cleared only afterwards; a walk that cannot be
+        written stays in memory for another try and in the checkpoint, where
+        the next start of the companion finds it."""
+        while self._unsaved:
+            record = self._unsaved[0]
+            try:
+                self.store.add(record)
+            except OSError as exc:
+                self.store.checkpoint(record)
+                if announce:
+                    self.log_event(
+                        f"The walk could not be saved ({exc}). Walka keeps it and tries again; "
+                        "check that the disk is not full and the data folder can be written.",
+                        "error",
+                    )
+                return
+            self._unsaved.pop(0)
+            self.last_record = record
+            self._totals_cache = None
+            self.log_event(
+                f"Walk saved: {record.seconds / 60:.0f} min, {record.distance_m / 1000:.2f} km, "
+                f"{record.steps} steps, {record.kcal:.0f} kcal."
+            )
+            self.sync_addon()
+        self.store.clear_checkpoint()
 
     # ---- addon sync --------------------------------------------------------------
     def find_addon_dir(self) -> Path | None:
@@ -387,39 +497,56 @@ class App:
 
     async def emergency_stop(self) -> None:
         """Stop the belt now and keep it stopped until explicitly resumed."""
+        await self._stop_now("STOP pressed - belt stopped.")
+
+    async def _stop_now(self, text: str) -> bool:
+        """Latch the stop, then send it. Returns whether it could be sent."""
         ended_manual_session = self.manual.active
         self.manual.stop()
-        self.governor.notify_external_stop()
-        self.governor.user_stopped = True
+        # If the command below fails or is lost, the governor asks again for
+        # as long as the belt reports that it is still moving - also after
+        # the Bluetooth link has dropped and come back.
+        self.governor.stop_pressed(self.mono())
         if ended_manual_session:
             # (not the ordinary "session over" path, which would lift the latch)
             self._manual_was_active = False
             self.governor.end_session()
-        # If the command below fails or is lost, the governor asks again for
-        # as long as the belt reports that it is still moving.
-        self.governor.expect_halt(self.mono())
-        self.log_event("STOP pressed - belt stopped.", "warning")
-        if self.treadmill.status.connected:
-            try:
-                async with self._command_lock:
-                    await self.treadmill.stop()
-            except TreadmillError as exc:
-                self.log_event(f"Stop command failed: {exc} - use the treadmill's own stop button!", "error")
-        else:
+        self.log_event(text, "warning")
+        if not self.treadmill.status.connected:
             self.log_event(
                 "The treadmill is not connected, so STOP could not be sent - "
                 "if the belt is moving, stop it at the treadmill itself!",
                 "error",
             )
+            return False
+        try:
+            async with self._command_lock:
+                await self.treadmill.stop()
+        except TreadmillError as exc:
+            self.log_event(f"Stop command failed: {exc} - use the treadmill's own stop button!", "error")
+            return False
+        return True
+
+    def _belt_in_use(self) -> bool:
+        """Is there a belt that moves, or that may be moving because of us
+        (running when the link dropped, or not yet seen to obey a stop)?"""
+        status = self.treadmill.status
+        governor = self.governor
+        if status.connected and (status.speed_kmh > 0.05 or status.state in (BeltState.STARTING, BeltState.RUNNING)):
+            return True
+        return governor.belt_on or governor.halt_pending or governor.belt_out_of_sight
 
     def connect(self, address: str | None = None) -> None:
         """Ask the connection loop to (re)connect, optionally to a new address."""
         status = self.treadmill.status
         if address is not None:
-            switching = status.connected and bool(address) and address.upper() != status.address.upper()
-            if switching and (self.governor.belt_on or status.speed_kmh > 0.05):
+            tied_to = self.config.treadmill.address or status.address
+            if address.upper() != tied_to.upper() and self._belt_in_use():
+                # (Also with the link down: the next reconnect would then
+                # reach for another pad than the one that is still running.)
                 self.log_event("Stop the belt before switching to another treadmill.", "warning")
                 return
+            switching = status.connected and bool(address) and address.upper() != status.address.upper()
             self.config.treadmill.address = address
             if hasattr(self.treadmill, "address"):
                 self.treadmill.address = address or None
@@ -429,9 +556,35 @@ class App:
         self._eager_connect = True
         self._connect_now.set()
 
-    async def disconnect(self) -> None:
+    def forget_treadmill(self) -> bool:
+        """Forget which treadmill Walka is tied to, so that the next one it
+        finds is taken (and remembered in turn). Refused while a belt is in
+        use: Walka could then reconnect to a different pad than the one the
+        walker is standing on."""
+        if self._belt_in_use():
+            self.log_event("Stop the belt before forgetting this treadmill.", "warning")
+            return False
+        self.config.treadmill.address = ""
+        if hasattr(self.treadmill, "address"):
+            self.treadmill.address = None
+        self.save_config()
+        self.log_event("Treadmill forgotten. Walka will take the next treadmill it connects to, and remember that one.")
+        return True
+
+    async def disconnect(self) -> bool:
+        """Let go of the treadmill and stop looking for it.
+
+        A belt that is moving, counting down, or not yet seen to obey a stop
+        is stopped first (and stays stopped until a resume): cutting the link
+        under it would leave it running with nobody steering. Returns False,
+        still connected, if that stop could not be sent."""
+        if self.treadmill.status.connected and self._belt_in_use():
+            if not await self._stop_now("Disconnect pressed while the belt was in use - belt stopped first."):
+                self.log_event("Not disconnecting: the belt could not be stopped from here.", "error")
+                return False
         self.want_connected = False
         await self.treadmill.disconnect()
+        return True
 
     def connection_wanted(self) -> bool:
         """Should the connection loop be trying to reach the treadmill now?"""
@@ -439,10 +592,12 @@ class App:
             return False
         if self._eager_connect:
             return True
-        # Otherwise only while something needs the belt.
+        # Otherwise only while something needs the belt - a session, or a
+        # stop that a belt of ours has not been seen to obey (the governor
+        # gives that up after half an hour out of reach).
         reading = self._last_reading
         signal_live = reading.active and reading.age_s <= self.config.limits.signal_timeout_s
-        return self.manual.active or self.governor.driving or signal_live
+        return self.manual.active or self.governor.driving or signal_live or self.governor.halt_owed
 
     # ---- global STOP hotkey ----------------------------------------------------------
     def _hotkey_pressed(self) -> None:
@@ -469,6 +624,14 @@ class App:
 
     def update_config(self, patch: dict[str, Any]) -> None:
         """Apply a partial config (from the dashboard), save and re-sync."""
+        treadmill_patch = patch.get("treadmill")
+        if isinstance(treadmill_patch, dict) and "address" in treadmill_patch and self._belt_in_use():
+            wanted = treadmill_patch["address"]
+            if not isinstance(wanted, str) or wanted.upper() != self.config.treadmill.address.upper():
+                # Another address would send the next reconnect to another
+                # pad than the one that is running.
+                self.log_event("Stop the belt before changing the treadmill's address.", "warning")
+                patch = {**patch, "treadmill": {k: v for k, v in treadmill_patch.items() if k != "address"}}
         config_module.apply_update(self.config, patch)
         manual_patch = patch.get("manual")
         if isinstance(manual_patch, dict) and "speed_kmh" in manual_patch:
@@ -522,6 +685,9 @@ class App:
             want_connected=self.want_connected,
             error=self.connect_error,
             cap_kmh=self.config.limits.max_speed_kmh,
+            # Walka is tied to one treadmill (see _pin_treadmill).
+            pinned=bool(self.config.treadmill.address) and hasattr(self.treadmill, "address"),
+            in_use=self._belt_in_use(),
         )
         reading = self._last_reading
         return {
@@ -537,6 +703,7 @@ class App:
                 "driving": governor.driving,
                 "user_stopped": governor.user_stopped,
                 "needs_act": governor.needs_act,
+                "ceiling_kmh": None if governor.ceiling_kmh is None else round(governor.ceiling_kmh, 2),
             },
             "source": {
                 "kind": self.source_kind(),
@@ -634,16 +801,23 @@ class App:
         """Leave everything safe: stop a belt we drive, save the walk, sync."""
         self._stopping.set()
         self._connect_now.set()
+        # The belt first. When the console window is closed Windows gives the
+        # process only a few seconds: they go to the stop, not to tidying up.
+        if self.config.treadmill.stop_on_exit and self.treadmill.status.connected:
+            mono = self.mono()
+            for command in self.governor.shutdown(mono, self._belt(mono)):
+                await self._execute(command)
         for task in self._tasks:
             task.cancel()
         await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks.clear()
         if self.hotkey is not None:
             self.hotkey.stop()
-        if self.config.treadmill.stop_on_exit and self.treadmill.status.connected:
-            for command in self.governor.shutdown(self.mono()):
-                await self._execute(command)
-        self._finish_recording(self.wall())
+        try:
+            self._finish_recording(self.wall())
+            self._save_unsaved()
+        except Exception:
+            log.exception("could not save the walk on exit")
         if self.heart_rate is not None:
             try:
                 await self.heart_rate.close()

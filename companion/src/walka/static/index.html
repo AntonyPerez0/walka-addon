@@ -201,6 +201,7 @@
           <button class="btn" id="tm-scan" type="button">Scan</button>
           <button class="btn" id="tm-connect" type="button">Connect</button>
           <button class="btn" id="tm-disconnect" type="button" hidden>Disconnect</button>
+          <button class="btn" id="tm-forget" type="button" hidden title="Walka only reconnects to the treadmill it used first. Forget it to use another one.">Forget this treadmill</button>
         </div>
         <div id="tm-scan-out" class="scan-out" aria-live="polite"></div>
         <fieldset class="sim" id="tm-sim" hidden>
@@ -209,6 +210,8 @@
           <div class="btn-row">
             <button class="btn small" id="sim-start" type="button">Press start on the pad</button>
             <button class="btn small" id="sim-stop" type="button">Press stop on the pad</button>
+            <button class="btn small" id="sim-slower" type="button">Press - on the pad</button>
+            <button class="btn small" id="sim-faster" type="button">Press + on the pad</button>
           </div>
         </fieldset>
       </section>

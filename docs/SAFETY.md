@@ -33,30 +33,45 @@ with no I/O, so every rule below is covered by automated tests.
    (3.0 mph out of the box; change it in the dashboard under *Settings →
    Safety*). No game state, addon setting or corrupted frame can make the
    companion command more than that, nor more than the range the treadmill
-   itself advertises.
+   itself advertises. If you lower the cap during a walk, the belt starts
+   coming down to it at once - at the gentle rate of rule 3, not in one
+   jump.
 
 3. **Changes are gentle.** Speed commands go out at most once a second and
    move by at most 0.2 km/h per second up and 0.4 km/h per second down - on
    a US pad that is one 0.1 mph step per second up, two down. (Research
    treadmills that change speed under a walker limit themselves to about
-   twice that.) The addon also smooths the game's instant speed changes
-   before they ever reach the companion, and holds your pace through short
-   stops (looting, talking) so the belt does not surge and sag.
+   twice that.) Speed-ups are measured from what the belt *reports*, not
+   from what Walka asked for: no command is ever more than one step above
+   the speed the belt is really doing, so a command that got lost cannot
+   turn into a jump later. The addon also smooths the game's instant speed
+   changes before they ever reach the companion, and holds your pace
+   through short stops (looting, talking) so the belt does not surge and
+   sag.
 
 4. **Losing the game signal slows the belt, never speeds it up.** The signal
    is lost whenever the companion cannot see the strip in the corner of the
    game window: a loading screen, the game minimised, another window on top
-   of that corner, the game frozen or closed. Then:
-   * for 5 seconds the belt holds its speed;
+   of that corner, the game frozen or closed. Counted from the last picture
+   the companion saw:
+   * after 1 second the belt may still slow down but is no longer sped up
+     (and is not started);
+   * until 5 seconds it holds its speed;
    * then it slows to the *safe speed* (0.8 mph by default) - never faster
-     than it was already going;
+     than it was already going, and never faster than the belt reports;
    * after 2 minutes of that, it pauses;
    * if the game window disappears altogether, the session ends and the belt
-     stops.
+     stops - also if the treadmill was out of Bluetooth reach at that
+     moment: the stop is delivered when it is back;
+   * if you start the belt with the remote while the game is out of view,
+     that walk is yours: Walka leaves the belt alone until it can see the
+     game again. After a quarter of an hour without the game, with the belt
+     off, Walka lets go of the session altogether.
 
 5. **A stop at the treadmill is final.** If the belt is stopped or paused
    with the pad's own button, its remote or its safety key - or if it simply
-   stops moving - Walka will not start it again by itself. To carry on,
+   stops moving, or is found stopped when the Bluetooth link comes back -
+   Walka will not start it again by itself. To carry on,
    pause and resume the session yourself (HUD or dashboard), start a new
    session, or press start on the remote. The addon's *automatic* pause
    when you go AFK does not count as you resuming: stop the belt at the
@@ -67,8 +82,15 @@ with no I/O, so every rule below is covered by automated tests.
    every other situation where the belt is stopped but a session is still
    marked active - the companion was started mid-session, the treadmill
    reconnected, the belt was paused after a long signal loss - Walka waits
-   until **your character starts moving** (you pressed a movement key) or
-   you press *Resume*.
+   until **your character starts moving** or you press *Resume*. "Starts
+   moving" means Walka saw the character stand still and then move, after
+   any stretch in which it could not watch: a character that is already
+   being carried along when the picture returns (a flight path, auto-run)
+   pressed no key for you. A *Resume* that cannot be acted on - the game is
+   out of view, the treadmill out of reach - counts for one minute; after
+   that it has to be pressed again. Ending a dashboard (manual) session
+   always stops the belt, even if a game session is running behind it; the
+   game session then waits for the same deliberate act.
 
 7. **Starts and speed changes are never repeated on a guess; stops are
    repeated until they work.** If a start or speed command gets no
@@ -76,11 +98,16 @@ with no I/O, so every rule below is covered by automated tests.
    send it again blindly. A stop is the opposite case: after any pause or
    stop of its own, Walka watches the speed the belt reports and sends a
    stop every few seconds for as long as it is still moving and not slowing
-   down.
+   down. A stop that could not be delivered because the Bluetooth link
+   dropped stays owed: Walka keeps trying to reconnect (for up to half an
+   hour) and stops the belt as soon as it can reach it.
 
 8. **Closing the companion stops the belt** it was driving (Ctrl+C, or
-   closing its window). A crash or a killed process cannot do that: the belt
-   then keeps its current speed until you stop it at the treadmill.
+   closing its window) - before anything else is tidied up, and including a
+   belt whose earlier stop had not been confirmed. *Disconnect* on the
+   dashboard does the same: a belt in use is stopped first. A crash or a
+   killed process cannot do that: the belt then keeps its current speed
+   until you stop it at the treadmill.
 
 9. **STOP latches.** The dashboard's STOP button and the hotkey stop the
    belt immediately, and nothing - not a session still running in the game,
@@ -91,7 +118,21 @@ with no I/O, so every rule below is covered by automated tests.
     desk mode. Walka changes speed by itself under someone who is looking at
     a game; running speeds are not for that.
 
-11. **The pad is given time between a stop and a start.** A treadmill that
+11. **A speed you set at the treadmill is a ceiling.** If you slow the belt
+    with the remote, Walka does not fight you: it keeps following your
+    character below that speed and never goes above it. The dashboard says
+    so ("held at the speed you set"). The ceiling is lifted by *Resume*, by
+    pausing and resuming in game, by a new session - or by you raising the
+    speed at the pad again. If you speed the belt up with the remote beyond
+    what the game asks for, Walka walks it back down at the gentle rate.
+
+12. **One treadmill.** The first treadmill Walka connects to is remembered,
+    and from then on it only ever reconnects to that one, so a second pad
+    in Bluetooth range cannot be driven by mistake. *Forget this treadmill*
+    on the dashboard (refused while a belt is in use) lets you move to
+    another.
+
+13. **The pad is given time between a stop and a start.** A treadmill that
     has just been stopped is still closing its workout and would ignore a
     start; Walka waits about ten seconds (you will see "waiting for the
     treadmill to finish its previous workout").

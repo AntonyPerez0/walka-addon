@@ -333,7 +333,11 @@ def test_reconnect_with_the_belt_still_running_is_adopted_without_a_start(rig: R
     run(scenario())
 
 
-def test_reconnect_with_the_belt_stopped_waits_for_a_deliberate_act(rig: Rig):
+def test_reconnect_with_the_belt_stopped_is_final_until_resumed(rig: Rig):
+    """The belt Walka was driving is found stopped when the link is back:
+    it was stopped at the pad (or the pad was switched off). That is as
+    final as any stop at the treadmill - a movement key does not undo it."""
+
     async def scenario():
         await session_running(rig, 3.2)
         sent = commands_sent(rig)
@@ -342,10 +346,14 @@ def test_reconnect_with_the_belt_stopped_waits_for_a_deliberate_act(rig: Rig):
         restore_link(rig)
         await rig.run(60, target=3.2, moving=True)  # the character runs on throughout (auto-run)
         assert sent == [], "the belt must not restart by itself after a reconnect"
-        assert rig.app.governor.phase is Phase.WAITING
+        assert rig.app.governor.phase is Phase.USER_STOPPED
         assert rig.treadmill.status.speed_kmh == 0
+        assert any("came back stopped" in e["text"] for e in rig.app.events)
         await rig.run(2, target=3.2, moving=False)
-        await rig.run(30, target=3.2, moving=True)  # stops, then moves: a key was pressed
+        await rig.run(30, target=3.2, moving=True)  # stops, then moves: still not a resume
+        assert sent == [] and rig.app.governor.phase is Phase.USER_STOPPED
+        await rig.run(2, target=3.2, paused=True)  # pause -> resume in the game is
+        await rig.run(30, target=3.2)
         assert sent[0] == "start"
         assert rig.treadmill.status.speed_kmh > 2.5
 
@@ -747,14 +755,22 @@ def test_manual_session_overrides_the_game_and_hands_back(rig: Rig):
         await rig.run(10, target=3.0 * MPH)
         assert rig.treadmill.status.speed_kmh == pytest.approx(2.0 * MPH, abs=0.01)
 
-        # Manual session ends; the game session is still active and takes the belt back.
+        # "End session" stops the belt - also with a game session still
+        # active behind it. The game does not take the belt and speed it up:
+        # it waits, like any session Walka did not watch begin.
         rig.app.manual_stop()
-        await rig.run(30, target=3.0 * MPH, moving=True)
+        await rig.run(30, target=3.0 * MPH, moving=True)  # the character runs on throughout
+        assert sent[-1] == "stop" and "start" not in sent
+        assert rig.treadmill.status.speed_kmh == 0 and rig.treadmill.status.state is BeltState.STOPPED
         assert rig.app.source_kind() == "wow"
+        assert rig.app.governor.phase is Phase.WAITING
+        # The character stops and sets off again (a key was pressed): now it starts.
+        await rig.run(2, target=3.0 * MPH, moving=False)
+        await rig.run(40, target=3.0 * MPH, moving=True)
+        assert sent.count("start") == 1
         assert rig.app.governor.phase is Phase.FOLLOWING
         assert rig.treadmill.status.speed_kmh == pytest.approx(3.0 * MPH, abs=0.01)
         assert rig.app.recorder.source == "wow"
-        assert "start" not in sent and "stop" not in sent and "pause" not in sent
         await rig.run(3, active=False)
 
     run(scenario())
@@ -1455,10 +1471,12 @@ def test_soak_random_events_never_exceed_the_cap_or_crash(tmp_path: Path, seed: 
                 if external:
                     allowed = max(allowed, status.min_kmh)  # started with the remote: the pad's own minimum
                 if status.target_kmh > allowed + 1e-6 and rig.app.governor.driving and rig.app.governor.belt_on:
-                    # The correction goes out with the next speed command
-                    # (at once if it is our own command that is too high; one
-                    # command interval after a failed attempt otherwise).
-                    await rig.run(limits.command_interval_s + TICK_S * 2, signal=False)
+                    # The correction starts with the next speed command (at
+                    # once if it is our own command that is too high; one
+                    # command interval after a failed attempt otherwise) and
+                    # comes down at the deceleration limit - no faster.
+                    ramp_s = (status.target_kmh - allowed) / limits.decel_kmh_per_s
+                    await rig.run(ramp_s + 2 * limits.command_interval_s + TICK_S * 2, signal=False)
                     if status.connected and status.target_kmh is not None and status.target_kmh > allowed + 1e-6:
                         violations.append(f"target {status.target_kmh:.3f} above the cap {allowed:.3f}")
             if reachable and rig.app.governor.driving and not external:

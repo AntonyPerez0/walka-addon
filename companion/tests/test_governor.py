@@ -25,10 +25,14 @@ class ToyBelt:
         self.log: list[Command] = []
         self.deaf = False  # commands are logged but never reach the belt
         self.blind = False  # the belt runs but reports no speed (stale data)
+        self.clock = 0.0  # set by the rig
+        self.packet_at = 0.0  # when the newest data packet was sent
 
     def view(self) -> Belt:
         speed = 0.0 if self.blind else self.speed
-        return Belt(self.connected, speed, self.min_kmh, self.max_kmh, self.step)
+        if not self.blind:
+            self.packet_at = self.clock  # a blind belt sends no packets: the last one just gets older
+        return Belt(self.connected, speed, self.min_kmh, self.max_kmh, self.step, data_at=self.packet_at)
 
     def apply(self, commands: list[Command]) -> None:
         for c in commands:
@@ -83,6 +87,7 @@ class Rig:
                 self.last_good = self.now
                 self.last_reading = reading
                 r = reading
+            self.belt.clock = self.now
             self.belt.apply(self.gov.step(self.now, r, self.belt.view()))
             self.belt.advance(dt)
             self.max_seen = max(self.max_seen, self.belt.speed)
@@ -204,9 +209,11 @@ def test_signal_loss_holds_then_slows_then_pauses():
     rig.run(1, IDLE)
     rig.run(30, live(4.0))
     assert rig.belt.speed == pytest.approx(4.0)
-    rig.run(6, None)  # timeout (3 s) + part of the hold
+    rig.run(4.5, None)  # past the timeout (3 s), inside the hold (5 s, counted from the last frame)
     assert rig.gov.phase is Phase.HOLDING
     assert rig.belt.speed == pytest.approx(4.0)
+    rig.run(1, None)
+    assert rig.gov.phase is Phase.SAFE  # 5.5 s after the last frame: the documented "5 seconds" are over
     rig.run(20, None)
     assert rig.gov.phase is Phase.SAFE
     assert rig.belt.speed == pytest.approx(1.6)
@@ -362,7 +369,10 @@ def test_external_start_resumes():
     assert rig.belt.speed == pytest.approx(3.0)
 
 
-def test_treadmill_reconnect_mid_session_requires_act_if_belt_stopped():
+def test_belt_found_stopped_after_a_reconnect_is_final_like_a_stop_at_the_machine():
+    """The belt we were driving ran when the link dropped and stands still
+    when it is back: somebody stopped it at the pad (or switched the pad
+    off). A character that starts moving does not undo that."""
     rig = Rig()
     rig.run(1, IDLE)
     rig.run(20, live(3.0, moving=False))
@@ -374,8 +384,12 @@ def test_treadmill_reconnect_mid_session_requires_act_if_belt_stopped():
     n = len(rig.belt.log)
     rig.run(10, live(3.0, moving=False))
     assert len(rig.belt.log) == n
-    assert rig.gov.phase is Phase.WAITING
+    assert rig.gov.phase is Phase.USER_STOPPED and "found_stopped" in rig.gov.notes
     rig.run(25, live(3.0, moving=True))
+    assert len(rig.belt.log) == n and rig.belt.speed == 0
+    # Pause -> resume (or Resume on the dashboard) is the way back.
+    rig.run(2, live(3.0, paused=True))
+    rig.run(25, live(3.0))
     assert rig.belt.speed == pytest.approx(3.0)
 
 
@@ -500,14 +514,17 @@ def test_cap_lowered_at_runtime_takes_effect_while_following():
     rig = started_rig(5.0, Limits(max_speed_kmh=6.0))
     rig.gov.limits.max_speed_kmh = 2.0  # the dashboard mutates the same Limits object
     before = len(rig.belt.log)
-    rig.run(1.25, live(5.0))
-    # The very next command is already inside the new cap: the cap outranks
-    # the gentle-deceleration rule (the belt itself ramps down).
+    rig.run(0.25, live(5.0))
+    # The reaction comes at once - but as a step down at the deceleration
+    # limit, not as one jump of 3 km/h under someone who is walking.
     new = [c.speed_kmh for c in rig.belt.log[before:] if c.action is Action.SET_SPEED]
-    assert new == [2.0]
+    assert new == [pytest.approx(4.6)]
     rig.run(10, live(5.0))
     assert rig.belt.speed == pytest.approx(2.0)
-    assert all(c.speed_kmh <= 2.0 + 1e-9 for c in rig.belt.log[before:] if c.action is Action.SET_SPEED)
+    downs = [c.speed_kmh for c in rig.belt.log[before:] if c.action is Action.SET_SPEED]
+    assert downs[-1] == pytest.approx(2.0)
+    assert all(0 < a - b <= 0.4 + 1e-9 for a, b in itertools.pairwise([5.0] + downs))  # always down, never a jump
+    assert max(rig.speeds[-40:]) <= 5.0 + 1e-9
     # Raising it again lets the belt climb back, gently.
     before = len(rig.belt.log)
     rig.gov.limits.max_speed_kmh = 4.0
@@ -1426,7 +1443,8 @@ def test_soak_random_events_never_break_the_invariants(seed: int):
     """Random sessions, signal losses, button presses at the pad, link drops,
     lost commands and settings changes. Invariants, checked after every event:
 
-    * no speed command above the cap in force (or outside the pad's range);
+    * no speed command above the cap in force (or outside the pad's range) -
+      except a step *down* towards a cap that was lowered under a moving belt;
     * the belt is never started while the cap is below the pad's minimum;
     * the belt never goes faster than the cap, unless it already was faster
       when the cap was lowered or someone started it at the pad itself
@@ -1446,18 +1464,23 @@ def test_soak_random_events_never_break_the_invariants(seed: int):
     )
     rig = Rig(limits, min_kmh=grid[0], max_kmh=grid[1], step=grid[2])
     rig.run(1, IDLE)
-    state = {"external": False, "previous_cap": limits.max_speed_kmh, "out_of_reach": False}
+    state = {"external": False, "previous_cap": limits.max_speed_kmh, "out_of_reach": False, "last_speed": None}
 
     def check(before_log: int, before_speed: float) -> None:
         new = rig.belt.log[before_log:]
         for c in new:
             if c.action is Action.SET_SPEED:
                 assert c.speed_kmh is not None
-                assert c.speed_kmh <= limits.max_speed_kmh + 1e-9, "commanded above the cap"
+                if c.speed_kmh > limits.max_speed_kmh + 1e-9:
+                    last = state["last_speed"]
+                    assert last is not None and c.speed_kmh < last - 1e-9, "commanded above the cap"
                 assert grid[0] - 1e-9 <= c.speed_kmh <= grid[1] + 1e-9, "commanded outside the pad's range"
                 state["external"] = False  # from here on the speed is ours
-            elif c.action is Action.START:
-                assert limits.max_speed_kmh >= grid[0] - 1e-9, "started a belt that cannot run within the cap"
+                state["last_speed"] = c.speed_kmh
+            else:
+                state["last_speed"] = None
+                if c.action is Action.START:
+                    assert limits.max_speed_kmh >= grid[0] - 1e-9, "started a belt that cannot run within the cap"
         if rig.belt.deaf or not rig.belt.connected:
             state["out_of_reach"] = True  # whatever the belt does now, we cannot change it
         elif any(c.action is not Action.START for c in new):

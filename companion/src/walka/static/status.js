@@ -287,6 +287,18 @@ export function describe(s) {
       }
       const asked = s.source.frame ? s.source.frame.target_kmh : 0;
       const capped = asked - g.wanted_kmh > 0.08;
+      if (g.ceiling_kmh != null) {
+        // The walker slowed the belt with the remote: Walka follows the game
+        // below that speed and never above it, until told otherwise.
+        return {
+          tone: "ok",
+          icon: "go",
+          title: "Following - held at the speed you set",
+          short: "Held",
+          detail: `You slowed the belt at the treadmill, so Walka keeps it at ${fmt.speedU(g.ceiling_kmh)} or slower. Press Resume (or pause and resume in game) to let it follow your character's full speed again.`,
+          action: { kind: "resume", label: "Resume", note: "Lifts the limit you set at the treadmill." },
+        };
+      }
       return {
         tone: "ok",
         icon: "go",
@@ -386,7 +398,7 @@ export function describe(s) {
         title: "Paused: game signal lost",
         short: "Waiting",
         detail: `The belt was paused because the game signal stayed away. ${WINDOW_ADVICE} Then move your character, or press Resume.`,
-        action: { kind: "resume", label: "Resume", note: "The belt starts once the signal is back." },
+        action: { kind: "resume", label: "Resume", note: "Counts for one minute: the belt starts if the game is back in view by then." },
       };
 
     case "user_stopped":

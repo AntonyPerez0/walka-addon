@@ -87,6 +87,7 @@ class BeaconSource:
         self._window: GameWindow | None = None
         self._finder_works = False  # the window finder has found the game at least once
         self._had_active = False
+        self._closed = False  # the game was closed, and no frame has been seen since
         self.status = BeaconStatus()
 
     # ---- lifecycle -------------------------------------------------------------
@@ -155,6 +156,7 @@ class BeaconSource:
                 self._last_seq = frame.seq
                 self._fresh_at = now
             self._frame = frame
+            self._closed = False
             self._window_seen_at = now  # a decoded beacon proves the game is up
             status = self.status
             status.frames += 1
@@ -172,6 +174,7 @@ class BeaconSource:
                 self._last_seq = frame.seq
                 self._fresh_at = now
             self._frame = frame
+            self._closed = False
             self._window_seen_at = now
             self.status.frames += 1
 
@@ -196,6 +199,15 @@ class BeaconSource:
             status = self.status
             status.age_s = None if math.isinf(age) else age
 
+            if self._closed:
+                # "The game was closed" is a state, not a moment: it is said
+                # on every reading until a frame is seen again. Said only
+                # once, it is lost if the governor cannot act on that very
+                # tick (the treadmill out of reach) - and the belt would
+                # later run on through the lost-signal stages instead of
+                # stopping.
+                return Reading(age_s=0.0, active=False)
+
             if frame is None:
                 if status.state not in ("error",):
                     status.state = "no_signal"
@@ -216,6 +228,7 @@ class BeaconSource:
             ):
                 self._had_active = False
                 self._frame = None
+                self._closed = True
                 status.state = "game_closed"
                 status.detail = "the game window closed"
                 return Reading(age_s=0.0, active=False)
