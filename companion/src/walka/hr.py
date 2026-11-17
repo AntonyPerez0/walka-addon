@@ -21,6 +21,19 @@ log = logging.getLogger(__name__)
 FRESH_S = 10.0  # a reading older than this is not used
 RETRY_S = 15.0
 
+# Name fragments of watches and straps that can act as a Bluetooth
+# heart-rate sensor (lower case).
+_SENSOR_NAMES = (
+    "instinct", "fenix", "forerunner", "venu", "vivoactive", "garmin", "hrm",
+    "polar", "h10", "h9", "oh1", "verity", "wahoo", "tickr", "coospo", "hw9", "h808",
+    "magene", "scosche", "rhythm", "heart",
+)  # fmt: skip
+
+
+def looks_like_heart_rate_sensor(name: str) -> bool:
+    lowered = (name or "").lower()
+    return any(fragment in lowered for fragment in _SENSOR_NAMES)
+
 
 class HeartRateMonitor:
     def __init__(
@@ -78,7 +91,9 @@ class HeartRateMonitor:
 
     # ---- Bluetooth -------------------------------------------------------------
     async def discover(self, timeout: float = 6.0) -> list[dict[str, Any]]:
-        """Nearby devices advertising the Heart Rate service."""
+        """Nearby heart-rate sensors: devices that advertise the Heart Rate
+        service, plus ones whose name says they are a watch or strap (some
+        only reveal the service once connected)."""
         from bleak import BleakScanner
 
         from .treadmill.bleak_backend import prepare_windows_threading
@@ -87,12 +102,11 @@ class HeartRateMonitor:
         found = await BleakScanner.discover(timeout=timeout, return_adv=True)
         devices = []
         for device, adv in found.values():
-            uuids = [u.lower() for u in adv.service_uuids]
-            if ftms.HEART_RATE_SERVICE in uuids:
-                devices.append(
-                    {"name": adv.local_name or device.name or "", "address": device.address, "rssi": adv.rssi}
-                )
-        devices.sort(key=lambda d: -(d["rssi"] or -999))
+            name = adv.local_name or device.name or ""
+            advertises = ftms.HEART_RATE_SERVICE in [u.lower() for u in adv.service_uuids]
+            if advertises or looks_like_heart_rate_sensor(name):
+                devices.append({"name": name, "address": device.address, "rssi": adv.rssi, "hr": advertises})
+        devices.sort(key=lambda d: (not d["hr"], -(d["rssi"] or -999)))
         return devices
 
     async def _connect_once(self) -> None:

@@ -120,6 +120,9 @@ local FIELDS = {
 }
 Protocol.FIELDS = FIELDS
 
+-- Field values of the frame being packed (see packBits).
+local scratchValues = {}
+
 --- Pack a frame into `out` (an array reused between calls) as 80 bits,
 -- each 0 or 1, most-significant bit first. Returns `out`.
 --
@@ -132,16 +135,17 @@ Protocol.FIELDS = FIELDS
 -- }
 function Protocol.packBits(frame, out)
     out = out or {}
-    local values = {
-        version = Protocol.VERSION,
-        frameType = frame.frameType or Protocol.TYPE_LIVE,
-        seq = (frame.seq or 0) % 256,
-        session = (frame.session or 0) % 256,
-        flags = (frame.flags or 0) % 65536,
-        target = clampInt(frame.target, Protocol.TARGET_MAX_RAW),
-        charSpeed = clampInt(frame.charSpeed, Protocol.CHAR_MAX_RAW),
-        reserved = 0,
-    }
+    -- (One table for every call: this runs ten times a second in the game,
+    -- and a fresh table each time would only be garbage to collect.)
+    local values = scratchValues
+    values.version = Protocol.VERSION
+    values.frameType = frame.frameType or Protocol.TYPE_LIVE
+    values.seq = (frame.seq or 0) % 256
+    values.session = (frame.session or 0) % 256
+    values.flags = (frame.flags or 0) % 65536
+    values.target = clampInt(frame.target, Protocol.TARGET_MAX_RAW)
+    values.charSpeed = clampInt(frame.charSpeed, Protocol.CHAR_MAX_RAW)
+    values.reserved = 0
 
     local n = 0
     for f = 1, #FIELDS do

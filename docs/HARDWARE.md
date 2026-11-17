@@ -32,6 +32,12 @@ to check it (the probe only reads - it cannot move the belt).
 * [qdomyos-zwift](https://github.com/cagnulein/qdomyos-zwift) routes every
   device named `URTM...` to its generic FTMS treadmill driver.
 
+How strong is that? Moderate. The ftms-js project is one person's report
+from a repository that was a few days old when this was written, and VRTI's
+list is community-reported. Everything else comes from sibling models
+(URTM054, URTM059, URTM041), which share a firmware family but are not the
+same pad. That is why the probe comes first.
+
 ## Command sequence
 
 1. Subscribe to indications on the Control Point (`0x2AD9`) *before*
@@ -50,7 +56,26 @@ to check it (the probe only reads - it cannot move the belt).
 Each command is answered by an indication `80 <opcode> <result>` (`01` =
 success, `05` = control not permitted: request control again). A missing
 answer does not mean the command was not applied, so Walka never blindly
-repeats a motor command.
+repeats a start or a speed change. (A stop is different: Walka watches the
+reported speed and asks again for as long as the belt keeps moving.)
+
+Things other projects learnt the hard way, which the driver follows:
+
+* **A start right after a stop is swallowed.** After `08 01` the Strol 2E
+  spends a few seconds "post-workout" (it says so on the Training Status
+  characteristic, `0x2AD3`). A start sent then is acknowledged with success
+  and ignored. Walka waits ten seconds after any stop - longer while the pad
+  still reports post-workout - before starting the belt again, and never
+  takes the acknowledgement as proof: only a reported speed above zero
+  counts. In-session halts use pause, not stop.
+* **Requests must not arrive back to back.** Cheap Bluetooth modules drop
+  them, so the driver leaves a gap between subscriptions and at least 0.4 s
+  between control-point writes.
+* **Request Control may be refused and still work.** Some pads answer it
+  with a failure and then obey every command. The driver carries on and only
+  asks again when a command comes back "control not permitted".
+* **A speed write while the belt is stopped** is refused ("operation
+  failed") or silently ignored, depending on the model.
 
 ## Quirks Walka handles
 
@@ -65,6 +90,15 @@ repeats a motor command.
   10 minutes; its timer display wraps at 99:59 and its calorie counter stops
   at 6553. Walka therefore keeps its own totals and uses the pad's counters
   only as increments.
+* **The top speed step may be unreachable.** For 4.0 mph the rounded-up
+  value is 6.5 km/h, above the 6.43 km/h the pad advertises. If the pad
+  refuses it, Walka sends 6.43 instead (which lands on 3.9 mph) and treats
+  3.9 mph as the top from then on.
+* **The desk-mode limit may not be enforced by the pad.** The manual ties
+  the 4.0 mph limit to the remote ("to accelerate to 6.2 mph, press + on the
+  console"), not to a sensor in the handle. A pad that treats Bluetooth like
+  its console might accept more. Walka does not rely on the pad for this:
+  its own speed cap is enforced first, and cannot be set above 6.5 km/h.
 * **Steps** are not part of standard treadmill data. Sibling models either
   append a 24-bit step counter to Treadmill Data (flagged by a reserved
   bit, `0x2000`) - Walka reads that - or only send steps on a vendor
@@ -76,11 +110,25 @@ repeats a motor command.
 
 Found by reading the probe report:
 
-* the exact speed range and step it advertises, folded and unfolded;
+* the exact speed range and step it advertises, folded and unfolded (the
+  console buttons step 0.2 mph; siblings step 0.1 mph over Bluetooth);
 * whether targets above 4.0 mph are refused with the handle folded;
-* where (or whether) it reports steps;
-* how fast the belt accelerates;
-* whether it stops by itself when nobody is walking.
+* where (or whether) it reports steps - its manual and at least one review
+  describe a display with speed, distance, time and calories only, while
+  UREVO's product page mentions steps;
+* whether it counts down before starting, and how fast the belt accelerates;
+* whether it stops by itself when nobody is walking;
+* whether it switches itself off, and drops the connection, after a long
+  pause (siblings do; Walka then reconnects when you next start a session).
+
+## Windows notes
+
+* The Bluetooth library (bleak) documents Windows 11 as its supported
+  version; Windows 10 generally works.
+* If the pad has been paired in Windows *Bluetooth & devices*, remove it
+  there: Windows then holds the connection and the pad stops advertising.
+* Weak built-in Bluetooth (no external antenna) is a common cause of
+  dropouts; a USB Bluetooth 5 adapter is the usual fix.
 
 ## Sources
 

@@ -161,8 +161,13 @@ function Walka:GetSyncTime()
     return data and numberWithin(data.written, 0, SessionLog.MAX_EPOCH - 1)
 end
 
+-- The companion's profile as GetProfile returns it. One table, refilled on
+-- every call: the tick asks ten times a second.
+local companionProfile = { fromCompanion = true }
+
 --- Body profile used for the live estimates: the companion's if it has
 -- one (so both sides compute the same), otherwise the addon's own.
+-- Returns a table that is reused between calls; copy what you need to keep.
 function Walka:GetProfile()
     local data = self:GetCompanionData()
     local own = self.db.settings.profile
@@ -170,11 +175,9 @@ function Walka:GetProfile()
         -- The same plausible ranges as /walka weight and /walka height.
         local weightKg = numberWithin(data.profile.weightKg, 30, 250)
         if weightKg then
-            return {
-                weightKg = weightKg,
-                heightCm = numberWithin(data.profile.heightCm, 120, 230) or own.heightCm,
-                fromCompanion = true,
-            }
+            companionProfile.weightKg = weightKg
+            companionProfile.heightCm = numberWithin(data.profile.heightCm, 120, 230) or own.heightCm
+            return companionProfile
         end
     end
     return own

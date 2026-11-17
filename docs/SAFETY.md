@@ -10,6 +10,15 @@ reach and use the safety key if your pad has one. If anything feels wrong,
 stop the belt at the treadmill itself: Walka treats that as final and will
 not restart it.
 
+Ways to stop, fastest first:
+
+1. the treadmill's remote, stop button or safety key;
+2. **Ctrl+Alt+X** - a system-wide hotkey the companion registers on
+   Windows; it works while the game has focus and the key press is not
+   passed on to the game (change it under *Settings -> Safety*);
+3. the STOP button on the dashboard;
+4. *Stop* on the in-game HUD, or `/walka stop`.
+
 ## The rules the companion enforces
 
 These live in one small state machine (`companion/src/walka/governor.py`)
@@ -27,8 +36,10 @@ with no I/O, so every rule below is covered by automated tests.
    itself advertises.
 
 3. **Changes are gentle.** Speed commands go out at most once a second and
-   move by at most 0.5 km/h per second up (about 0.3 mph/s) and 1.0 km/h per
-   second down. The addon also smooths the game's instant speed changes
+   move by at most 0.2 km/h per second up and 0.4 km/h per second down - on
+   a US pad that is one 0.1 mph step per second up, two down. (Research
+   treadmills that change speed under a walker limit themselves to about
+   twice that.) The addon also smooths the game's instant speed changes
    before they ever reach the companion, and holds your pace through short
    stops (looting, talking) so the belt does not surge and sag.
 
@@ -37,17 +48,19 @@ with no I/O, so every rule below is covered by automated tests.
    game window: a loading screen, the game minimised, another window on top
    of that corner, the game frozen or closed. Then:
    * for 5 seconds the belt holds its speed;
-   * then it slows to the *safe speed* (1.0 mph by default) - never faster
+   * then it slows to the *safe speed* (0.8 mph by default) - never faster
      than it was already going;
-   * after 5 minutes of that, it pauses;
+   * after 2 minutes of that, it pauses;
    * if the game window disappears altogether, the session ends and the belt
      stops.
 
 5. **A stop at the treadmill is final.** If the belt is stopped or paused
    with the pad's own button, its remote or its safety key - or if it simply
    stops moving - Walka will not start it again by itself. To carry on,
-   pause and resume the session (HUD or dashboard), start a new session, or
-   press start on the remote.
+   pause and resume the session yourself (HUD or dashboard), start a new
+   session, or press start on the remote. The addon's *automatic* pause
+   when you go AFK does not count as you resuming: stop the belt at the
+   pad, walk away, come back and touch a key, and it stays stopped.
 
 6. **The belt only starts on a deliberate act.** Pressing *Start* starts it
    (after the treadmill's own 3-2-1 countdown, at its minimum speed). In
@@ -57,16 +70,31 @@ with no I/O, so every rule below is covered by automated tests.
    until **your character starts moving** (you pressed a movement key) or
    you press *Resume*.
 
-7. **Unknown outcomes are not retried.** If a Bluetooth command gets no
-   acknowledgement it may or may not have been applied; Walka does not send
-   it again blindly.
+7. **Starts and speed changes are never repeated on a guess; stops are
+   repeated until they work.** If a start or speed command gets no
+   acknowledgement it may or may not have been applied, and Walka does not
+   send it again blindly. A stop is the opposite case: after any pause or
+   stop of its own, Walka watches the speed the belt reports and sends a
+   stop every few seconds for as long as it is still moving and not slowing
+   down.
 
 8. **Closing the companion stops the belt** it was driving (Ctrl+C, or
    closing its window). A crash or a killed process cannot do that: the belt
    then keeps its current speed until you stop it at the treadmill.
 
-9. **The big STOP button** on the dashboard stops the belt immediately and
-   latches: nothing restarts it until you resume.
+9. **STOP latches.** The dashboard's STOP button and the hotkey stop the
+   belt immediately, and nothing - not a session still running in the game,
+   not the game coming back into view - restarts it until you resume.
+
+10. **Speeds stay in walking territory.** The cap can be raised from its
+    default 3.0 mph, but not above 6.5 km/h (4.0 mph), the top of a pad's
+    desk mode. Walka changes speed by itself under someone who is looking at
+    a game; running speeds are not for that.
+
+11. **The pad is given time between a stop and a start.** A treadmill that
+    has just been stopped is still closing its workout and would ignore a
+    start; Walka waits about ten seconds (you will see "waiting for the
+    treadmill to finish its previous workout").
 
 ## What the addon does
 
@@ -85,9 +113,10 @@ with no I/O, so every rule below is covered by automated tests.
 
 ## Sensible habits
 
-* Start slow. The default mapping tops out at 2.5 mph while mounted and the
-  cap is 3.0 mph; most people type and play comfortably at 1.0-2.0 mph.
-  Raise things gradually.
+* Start slow. Studies of treadmill desks find people settle at 1-2 mph,
+  that typing is barely affected there, and that mouse work suffers most
+  (expect your aim to be worse than seated). The defaults sit in that range
+  and the cap is 3.0 mph. Raise things gradually.
 * Do the first sessions out of combat, somewhere quiet, until you know how
   the belt responds to your play style.
 * Use the *Steady* feel preset if the speed changes distract you.

@@ -171,6 +171,18 @@ end
 
 local STEPS_LABEL, KCAL_LABEL = grey(" steps"), grey(" kcal")
 
+-- " mi" / " km" in grey, made once per unit rather than on every redraw.
+local distanceLabels = {}
+
+local function distanceLabel(unit)
+    local label = distanceLabels[unit]
+    if not label then
+        label = grey(" " .. unit)
+        distanceLabels[unit] = label
+    end
+    return label
+end
+
 local function update()
     if not frame or not frame:IsShown() then
         return
@@ -225,7 +237,7 @@ local function update()
     local distance, distanceUnit = string.match(Walka:FormatDistance(distanceM), "^(%S+)%s*(.*)$")
     parts.steps:SetText(mark .. Walka:FormatNumber(steps) .. STEPS_LABEL)
     parts.kcal:SetText(mark .. Walka:FormatNumber(kcal) .. KCAL_LABEL)
-    parts.distance:SetText(mark .. (distance or "0") .. grey(" " .. (distanceUnit or "")))
+    parts.distance:SetText(mark .. (distance or "0") .. distanceLabel(distanceUnit or ""))
     parts.time:SetText(Walka:FormatDuration(seconds))
 
     -- Daily goal.
