@@ -14,6 +14,7 @@
   --inset: #eceae4;
   --line: rgba(11, 11, 11, 0.13);
   --line-2: #c3c2b7;
+  --field: #85837d; /* edges of things you can operate: 3:1 against the surface */
   --ink: #0b0b0b;
   --ink-2: #4a4946;
   --ink-3: #696863;
@@ -25,6 +26,7 @@
   --ok-ink: #006300;
   --ok-tint: #e1f2de;
   --warn: #fab219;
+  --warn-edge: #9a6a00; /* amber is faint on a light surface: give its lamp an edge */
   --warn-ink: #6f4700;
   --warn-tint: #fcefc9;
   --bad: #d03b3b;
@@ -60,6 +62,7 @@
     --inset: #262624;
     --line: rgba(255, 255, 255, 0.13);
     --line-2: #4a4a46;
+    --field: #74726b;
     --ink: #f0efec;
     --ink-2: #c3c2b7;
     --ink-3: #a09e96;
@@ -67,6 +70,7 @@
 
     --ok-ink: #5fce5f;
     --ok-tint: #15301a;
+    --warn-edge: transparent;
     --warn-ink: #fab219;
     --warn-tint: #3a2e10;
     --bad-ink: #ee8080;
@@ -79,7 +83,7 @@
 
     --accent: #3987e5;
     --accent-ink: #86b6ef;
-    --track: #173d70;
+    --track: #0d366b;
     --series-1: #3987e5;
     --series-2: #d95926;
     --grid: #2c2c2a;
@@ -136,7 +140,11 @@ a {
 
 kbd,
 code {
-  font: 0.92em ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font:
+    0.92em ui-monospace,
+    "Cascadia Mono",
+    Consolas,
+    monospace;
   padding: 1px 5px;
   border: 1px solid var(--line);
   border-radius: 5px;
@@ -207,6 +215,7 @@ code {
 [data-tone="warn"] > * > .lamp {
   background: var(--warn);
   color: #0b0b0b;
+  box-shadow: inset 0 0 0 1.5px var(--warn-edge);
 }
 
 [data-tone="bad"] > .lamp,
@@ -223,7 +232,7 @@ code {
   gap: 8px;
   min-height: 40px;
   padding: 0 14px;
-  border: 1px solid var(--line-2);
+  border: 1px solid var(--field);
   border-radius: var(--r-s);
   background: var(--surface);
   color: var(--ink);
@@ -236,7 +245,7 @@ code {
 }
 
 .btn:hover {
-  border-color: var(--ink-3);
+  border-color: var(--ink-2);
   background: var(--inset);
 }
 
@@ -397,6 +406,9 @@ code {
   font-weight: 800;
   font-size: 20px;
   letter-spacing: -0.01em;
+}
+
+.brand a {
   color: var(--ink);
   text-decoration: none;
 }
@@ -715,6 +727,11 @@ main {
   min-width: 2.2ch;
 }
 
+.speed-num[data-void="1"] {
+  font-weight: 300;
+  color: var(--ink-3);
+}
+
 .speed-side {
   display: grid;
   gap: 2px;
@@ -728,6 +745,7 @@ main {
 }
 
 .speed-cap {
+  white-space: nowrap;
   font-size: 13px;
   color: var(--ink-3);
   font-weight: 600;
@@ -766,9 +784,14 @@ main {
   white-space: nowrap;
 }
 
+/* The marker layers are full-width boxes slid sideways with a transform (cheap
+   to animate); the padding leaves room for the target tick above the track and
+   the clipping keeps the slid boxes from widening the page. */
 .meter {
   grid-column: 1 / -1;
-  margin-top: 28px;
+  margin-top: 20px;
+  padding-top: 8px;
+  overflow: hidden;
 }
 
 .meter-bar {
@@ -817,6 +840,17 @@ main {
   border-radius: 2px;
   background: var(--ink);
   box-shadow: 0 0 0 2px var(--surface);
+}
+
+/* Your max speed: a line across the track, so the limit never depends on
+   telling two tints apart. */
+#meter-cap-line b {
+  position: absolute;
+  left: -1px;
+  top: 0;
+  width: 2px;
+  height: 14px;
+  background: var(--ink-2);
 }
 
 .meter-scale {
@@ -995,6 +1029,7 @@ main {
   font-size: 14px;
   line-height: 1.45;
   color: var(--ink-2);
+  overflow-wrap: anywhere; /* folder paths and device names can be long */
 }
 
 .link-detail:empty,
@@ -1085,6 +1120,7 @@ main {
 
 .link {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   padding-top: 14px;
   border-top: 1px solid var(--line);
@@ -1161,6 +1197,10 @@ main {
   white-space: nowrap;
 }
 
+.log span {
+  overflow-wrap: anywhere;
+}
+
 .log li[data-level="warning"] span,
 .log li[data-level="error"] span {
   color: var(--ink);
@@ -1207,7 +1247,7 @@ main {
   place-items: center;
   width: 26px;
   height: 26px;
-  border: 2px solid var(--line-2);
+  border: 2px solid var(--field);
   border-radius: 50%;
   color: transparent;
 }
@@ -1458,7 +1498,9 @@ table.data thead th {
 /* Walks: one grid shared by the header and every row. */
 .srow {
   display: grid;
-  grid-template-columns: minmax(150px, 1.5fr) minmax(90px, 1fr) repeat(6, minmax(64px, 0.8fr)) 28px;
+  grid-template-columns:
+    minmax(150px, 1.5fr) minmax(90px, 1fr) repeat(6, minmax(64px, 0.8fr))
+    28px;
   gap: 12px;
   align-items: center;
 }
@@ -1634,7 +1676,7 @@ table.data thead th {
   justify-content: center;
   min-height: 48px;
   padding: 0 14px;
-  border: 1px solid var(--line-2);
+  border: 1px solid var(--field);
   border-radius: var(--r-s);
   font-weight: 600;
   font-size: 15px;
@@ -1704,7 +1746,7 @@ select {
   width: 100%;
   min-height: 42px;
   padding: 0 11px;
-  border: 1px solid var(--line-2);
+  border: 1px solid var(--field);
   border-radius: var(--r-s);
   background: var(--surface);
   color: var(--ink);
@@ -1720,7 +1762,12 @@ input.short {
 
 input[type="text"]:hover,
 select:hover {
-  border-color: var(--ink-3);
+  border-color: var(--ink-2);
+}
+
+input::placeholder {
+  color: var(--ink-3);
+  opacity: 1;
 }
 
 input[aria-invalid="true"] {
@@ -1852,6 +1899,8 @@ input[aria-invalid="true"] {
 
 .toast p {
   flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .toast[data-kind="ok"] {
@@ -2122,6 +2171,10 @@ input[aria-invalid="true"] {
     font-size: clamp(104px, 33vw, 136px);
   }
 
+  .speed-num[data-wide="1"] {
+    font-size: clamp(84px, 25vw, 104px);
+  }
+
   .speed-unit {
     font-size: 26px;
   }
@@ -2137,12 +2190,17 @@ input[aria-invalid="true"] {
 
   .readout div,
   .readout div:last-child {
+    gap: 8px;
     padding-bottom: 6px;
     border-bottom: 1px solid var(--line);
   }
 
+  .readout dt {
+    white-space: nowrap;
+  }
+
   .meter {
-    margin-top: 20px;
+    margin-top: 12px;
     order: 2;
   }
 
@@ -2248,6 +2306,10 @@ input[aria-invalid="true"] {
 
   .sdetail {
     padding: 14px 2px 18px;
+  }
+
+  .sdetail .facts {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .inline-row {

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import re
 import time
 import xml.etree.ElementTree as ET
@@ -153,10 +154,10 @@ def test_trackpoint_distances_are_monotonic_and_end_at_the_recorded_distance():
     lap = lap_of(parse(record_to_tcx(record)))
     distances = [float(p.findtext("t:DistanceMeters", namespaces=NS)) for p in lap.iterfind("t:Track/t:Trackpoint", NS)]
     assert distances[0] == 0.0
-    assert all(b >= a for a, b in zip(distances, distances[1:]))
+    assert all(b >= a for a, b in itertools.pairwise(distances))
     assert distances[-1] == pytest.approx(912.3, abs=0.05)
     # Flat while the belt was paused.
-    paused = [d for s, d in zip(samples, distances) if 405 <= s[0] <= 455]
+    paused = [d for s, d in zip(samples, distances, strict=True) if 405 <= s[0] <= 455]
     assert max(paused) - min(paused) < 0.2
 
 
@@ -214,7 +215,9 @@ def test_malformed_samples_are_skipped():
 def test_a_single_sample_or_a_motionless_walk_does_not_divide_by_zero():
     for samples in ([[0.0, 3.2, None]], steady_samples(30, 0.0)):
         lap = lap_of(parse(record_to_tcx(make_record(samples))))
-        distances = [float(p.findtext("t:DistanceMeters", namespaces=NS)) for p in lap.iterfind("t:Track/t:Trackpoint", NS)]
+        distances = [
+            float(p.findtext("t:DistanceMeters", namespaces=NS)) for p in lap.iterfind("t:Track/t:Trackpoint", NS)
+        ]
         assert distances and set(distances) == {0.0}
 
 

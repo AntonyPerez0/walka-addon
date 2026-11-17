@@ -248,7 +248,8 @@ export async function api(path, { method = "GET", body, timeoutMs = 10000 } = {}
     data = null;
   }
   if (!response.ok || (data && data.ok === false)) {
-    const message = (data && data.error) || (data ? "" : text.replace(/^\d{3}:\s*/, "")) || `Request failed (${response.status}).`;
+    const message =
+      (data && data.error) || (data ? "" : text.replace(/^\d{3}:\s*/, "")) || `Request failed (${response.status}).`;
     throw new ApiError(sentence(message), response.status);
   }
   return data ?? {};

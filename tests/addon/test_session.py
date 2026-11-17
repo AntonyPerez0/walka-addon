@@ -390,11 +390,34 @@ def test_saved_variables_from_an_older_or_damaged_file_are_repaired(make_rt):
     assert len(history(rt)) == 1
 
 
-@pytest.mark.parametrize("saved", ["7", '"text"', "false", "{}"])
+@pytest.mark.parametrize(
+    "saved",
+    [
+        "7", '"text"', "false", "{}",
+        # values of the wrong type, as a hand-edited file might have
+        '{settings={speed={maxKmh="fast",standKmh=false,riseSeconds="x",taxiMode=3}}}',
+        '{settings={profile={weightKg="x",heightCm={}}}}',
+        '{settings={units=5,beacon={cellPx="big",enabled="yes"},hud={scale="x",alpha=false,shown=1}}}',
+        "{settings={autoPauseAFK=0,announce='no',dailyStepGoal='many'}}",
+        # a half-written session in progress
+        "{active={savedAt=1794999990,session={}}}",
+        '{active={savedAt=1794999990,session={id=1,start=1794999000,seconds="a"}}}',
+        "{active={savedAt='x',session=5}}",
+        "{active=true,sessionCounter={}}",
+    ],
+)
 def test_any_saved_value_loads(make_rt, saved):
     rt = make_rt(saved_variables={"WalkaDB": saved})
     assert rt.db.settings.units in ("mph", "kmh")
-    rt.tick(3)
+    assert not rt.walka.IsActive(rt.walka), "a damaged session must not be resumed"
+    rt.set(speed=7.0)
+    rt.slash("/walka start")
+    rt.tick(300)
+    rt.slash("/walka status")
+    assert live_speed(rt)[1] == pytest.approx(2.0 * KMH_PER_MPH, abs=0.01) or rt.db.settings.units == "kmh"
+    rt.slash("/walka stop")
+    assert len(history(rt)) == 1
+    rt.reload()
 
 
 # ---- history size -------------------------------------------------------------------------

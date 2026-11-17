@@ -7,7 +7,6 @@ import math
 from types import SimpleNamespace
 
 import pytest
-from walka_fakes import FakeBackend, FakePad, mph_tenths_to_centi_kmh, us_firmware_mph_tenths
 
 from walka import ftms
 from walka.treadmill import ftms_ble
@@ -20,6 +19,7 @@ from walka.treadmill.base import (
     mph_tenths_to_command_kmh,
 )
 from walka.treadmill.ftms_ble import OWN_EVENT_WINDOW_S, FtmsTreadmill, is_treadmill_candidate
+from walka_fakes import FakeBackend, FakePad, mph_tenths_to_centi_kmh, us_firmware_mph_tenths
 
 REQUEST_CONTROL, START, STOP, PAUSE = b"\x00", b"\x07", b"\x08\x01", b"\x08\x02"
 
@@ -189,7 +189,7 @@ def test_units_setting_and_missing_speed_range(units, pad_kwargs, expected):
     assert driver.status.max_kmh == pytest.approx(hi, abs=1e-9)
 
 
-@pytest.mark.parametrize("raw", [b"", b"\x00\x00", bytes.fromhex("0000" "8302" "1000"), bytes.fromhex("8302" "6000" "1000")])
+@pytest.mark.parametrize("raw", [b"", b"\x00\x00", bytes.fromhex("000083021000"), bytes.fromhex("830260001000")])
 def test_unusable_speed_range_falls_back_to_safe_defaults(raw: bytes):
     pad = FakePad()
     pad.speed_range_override = raw
@@ -784,6 +784,73 @@ def test_data_notifications_update_the_status(clock):
     assert status.updated_at == clock.now and status.age_s(clock.now + 2.5) == pytest.approx(2.5)
     data = status.to_dict()
     assert data["state"] == "running" and "updated_at" not in data
+
+
+def test_belt_coasting_down_after_a_stop_is_not_reported_as_running(clock):
+    """After stop/pause the pad still sends a few packets with speed > 0."""
+    driver, pad, *_ = rig()
+
+    async def scenario():
+        await running(driver, pad, clock)
+        await driver.set_speed(3.0 * KMH_PER_MPH)
+        for _ in range(60):
+            pad.advance(0.1)
+        await driver.pause()
+        pad.advance(0.1)
+        assert driver.status.speed_kmh > 1.0  # still coasting ...
+        assert driver.status.state is BeltState.PAUSED  # ... but paused, not running
+        for _ in range(30):
+            clock.now += 0.1
+            pad.advance(0.1)
+        assert driver.status.speed_kmh == 0 and driver.status.state is BeltState.PAUSED
+
+        await driver.start()
+        for _ in range(60):
+            clock.now += 0.1
+            pad.advance(0.1)
+        assert driver.status.state is BeltState.RUNNING
+        await driver.stop()
+        for _ in range(30):
+            clock.now += 0.1
+            pad.advance(0.1)
+        assert driver.status.speed_kmh == 0 and driver.status.state is BeltState.STOPPED
+
+        # The same when the stop comes from the pad's own button.
+        clock.now += 20
+        await driver.start()
+        for _ in range(60):
+            clock.now += 0.1
+            pad.advance(0.1)
+        clock.now += 20
+        pad.press_stop()
+        for _ in range(30):
+            clock.now += 0.1
+            pad.advance(0.1)
+        assert driver.status.speed_kmh == 0 and driver.status.state is BeltState.STOPPED
+
+    run(scenario())
+
+
+def test_belt_seen_moving_long_after_a_stop_is_running_again(clock):
+    """No status event (a pad without the status characteristic), but the
+    data says the belt is turning: believe the data."""
+    driver, pad, *_ = rig(FakePad(has_status=False))
+
+    async def scenario():
+        await running(driver, pad, clock)
+        await driver.stop()
+        for _ in range(30):
+            clock.now += 0.1
+            pad.advance(0.1)
+        assert driver.status.state is BeltState.STOPPED
+        clock.now += 60
+        pad.press_start()  # nobody tells us
+        for _ in range(50):
+            clock.now += 0.1
+            pad.advance(0.1)
+        assert driver.status.speed_kmh > 0 and driver.status.state is BeltState.RUNNING
+
+    run(scenario())
 
 
 def test_pad_without_step_counter_reports_none():

@@ -53,13 +53,27 @@ def _build_beacon(cfg: config_module.Config, *, read_screen: bool = True):
     return BeaconSource(make_reader, fps=cfg.wow.capture_fps)
 
 
+DEMO_SESSION_STARTS_AFTER_S = 2.0
+
+
 async def _demo_character(beacon, stop: asyncio.Event) -> None:
     """--demo: feed the beacon source a scripted character so the whole
-    pipeline can be watched without the game."""
+    pipeline can be watched without the game.
+
+    Like a real player it first stands there with no session, then starts
+    one: a session that is already running when the companion first sees it
+    would (rightly) not start the belt until the character starts moving.
+    """
     seq = 0
     started = time.monotonic()
     while not stop.is_set():
         t = time.monotonic() - started
+        if t < DEMO_SESSION_STARTS_AFTER_S:
+            seq = (seq + 1) % 256
+            beacon.inject(Frame(seq=seq, session=0, flags=Flags(0)))
+            await asyncio.sleep(0.1)
+            continue
+        t -= DEMO_SESSION_STARTS_AFTER_S
         phase = t % 120
         if phase < 50:
             yps, flags = 7.0, Flags.MOVING  # running

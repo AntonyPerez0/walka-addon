@@ -67,7 +67,9 @@ local function applyDefaults(target, defaults)
                 target[key] = {}
             end
             applyDefaults(target[key], value)
-        elseif target[key] == nil then
+        elseif type(target[key]) ~= type(value) then
+            -- Missing, or of the wrong type (a hand-edited or damaged
+            -- saved-variables file): the code does arithmetic on these.
             target[key] = value
         end
     end
@@ -610,6 +612,13 @@ local function restoreSession(self)
         return
     end
     local session = saved.session
+    -- Every tick does arithmetic on these: a session from a damaged file
+    -- is dropped rather than resumed.
+    for _, key in ipairs({ "id", "start", "seconds", "distanceM", "steps", "kcal", "yards" }) do
+        if type(session[key]) ~= "number" then
+            return
+        end
+    end
     local savedAt = tonumber(saved.savedAt) or 0
     if Game.Now() - savedAt <= Walka.RESUME_WINDOW_SECONDS then
         self.session = session

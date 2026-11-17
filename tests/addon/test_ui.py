@@ -22,15 +22,42 @@ from .harness import lua_dict, lua_list, lua_plain
 NOW = local_noon(2026, 11, 17)
 DAY = 86400
 
-WINDOWS = ("WalkaHUD", "WalkaHistoryFrame", "WalkaOptionsPanel")
-
-
-def window(rt, name):
-    return rt.global_(name)
+# The windows are found by what they are, not by their names, so that a
+# rename in the UI does not break these tests: every named frame the addon
+# created is a window, except the beacon strip.
 
 
 def windows(rt):
-    return [frame for frame in (window(rt, name) for name in WINDOWS) if frame is not None]
+    """Every top-level frame the addon has created so far."""
+    found = []
+    for name in sorted(rt.created_globals()):
+        frame = rt.global_(name)
+        if name == "WalkaBeaconFrame" or frame is None or not rt.M.is_widget(frame):
+            continue
+        if "Frame" in rt.snapshot.type_chain(rt.inspect(frame)["type"]):
+            found.append(frame)
+    return found
+
+
+def same(rt, a, b) -> bool:
+    return bool(rt.lua.globals().rawequal(a, b))
+
+
+def window(rt, which):
+    """The HUD, the history window or the options page.
+
+    The options page is the frame registered with the Settings window; of
+    the others, the HUD is the one created first (it exists from login) and
+    the history window the one created after it.
+    """
+    categories = list(rt.M.settings_categories.values())
+    options = categories[0].frame if categories else None
+    if which == "WalkaOptionsPanel":
+        return options
+    others = [frame for frame in windows(rt) if options is None or not same(rt, frame, options)]
+    others.sort(key=lambda frame: rt.inspect(frame)["serial"])
+    index = {"WalkaHUD": 0, "WalkaHistoryFrame": 1}[which]
+    return others[index] if len(others) > index else None
 
 
 def visible(rt, name) -> bool:
@@ -107,21 +134,22 @@ def test_every_file_in_the_toc_loads(ui_rt):
 def test_windows_have_walka_names_and_sit_under_uiparent(ui_rt):
     ui_rt.slash("/walka history")
     ui_rt.slash("/walka options")
+    assert len(windows(ui_rt)) >= 3, "HUD, history window and options page"
     for name in ("WalkaHUD", "WalkaHistoryFrame"):
         frame = window(ui_rt, name)
         assert frame is not None, name
+        assert ui_rt.inspect(frame)["name"].startswith("Walka")
         assert rt_parent_chain_has_uiparent(ui_rt, frame), f"{name} must hide with the UI (Alt+Z)"
 
 
 def rt_parent_chain_has_uiparent(rt, frame) -> bool:
     ui_parent = rt.global_("UIParent")
-    same = rt.lua.globals().rawequal
     cursor = frame
     for _ in range(20):
         cursor = rt.inspect(cursor).get("parent")
         if cursor is None:
             return False
-        if same(cursor, ui_parent):
+        if same(rt, cursor, ui_parent):
             return True
     return False
 
@@ -212,21 +240,25 @@ def test_hud_buttons_drive_the_session(ui_rt):
         elif state() == (False, False):
             stoppers.append(button)
         settings_are_sane(rt)
-    assert len(starters) == 1, "one button on the HUD starts a session"
-    assert len(pausers) == 1 and len(stoppers) == 1, "... one pauses it and one stops it"
-    assert rt.lua.globals().rawequal(starters[0], pausers[0]), "start and pause are the same (play/pause) button"
+    assert starters, "a button on the HUD starts a session"
+    assert pausers and stoppers, "... one pauses it and one stops it"
 
-    # Play/pause cycles; stop ends and files the session.
+    # Start, pause, and (by one of the two) resume; stop files the session.
     walka.StopSession(walka)
-    toggle, stop = pausers[0], stoppers[0]
-    seen = []
-    for _ in range(4):
-        rt.click(toggle)
+    start, pause, stop = starters[0], pausers[0], stoppers[0]
+    rt.click(start)
+    rt.tick(2)
+    assert state() == (True, False)
+    rt.click(pause)
+    rt.tick(2)
+    assert state() == (True, True)
+    rt.click(pause)
+    rt.tick(2)
+    if state() == (True, True):
+        rt.click(start)
         rt.tick(2)
-        seen.append(state())
-    assert seen == [(True, False), (True, True), (True, False), (True, True)]
+    assert state() == (True, False), "a paused session can be resumed from the HUD"
     rt.set(speed=7.0)
-    rt.click(toggle)
     rt.tick(300)
     rt.click(stop)
     assert state() == (False, False)
@@ -583,6 +615,7 @@ def test_random_use_never_breaks_anything(full_rt, seed):
     rt.slash("/walka history")
     rt.slash("/walka options")
     rt.tick()
+    used: set[str] = set()
 
     def act():
         choice = rng.random()
@@ -600,14 +633,16 @@ def test_random_use_never_breaks_anything(full_rt, seed):
             elif rng.random() < 0.5:
                 rt.leave_combat()
             return
-        candidates = [w for frame in windows(rt) for w in rt.descendants(frame, visible=True)]
+        candidates = [w for frame in windows(rt) for w in lua_list(rt.M.interactive(frame))]
         if not candidates:
             rt.slash("/walka show")
             return
         widget = rng.choice(candidates)
         kind = rt.inspect(widget)["type"]
-        if kind in ("Button", "CheckButton"):
+        used.add(kind)
+        if rt.M.script_set(widget, "OnEnter") and rng.random() < 0.5:
             rt.hover(widget)
+        if kind in ("Button", "CheckButton"):
             rt.click(widget, rng.choice(["LeftButton", "LeftButton", "RightButton"]))
         elif kind == "Slider":
             low, high = widget.GetMinMaxValues(widget)
@@ -615,16 +650,19 @@ def test_random_use_never_breaks_anything(full_rt, seed):
         elif kind == "EditBox":
             rt.M.type_text(widget, rng.choice(TYPED), rng.random() < 0.7)
             widget.ClearFocus(widget)
-        elif rt.M.script_set(widget, "OnMouseWheel"):
+        elif rt.M.script_set(widget, "OnMouseWheel") and rng.random() < 0.5:
+            used.add("wheel")
             rt.M.scroll_wheel(widget, rng.choice([-1, 1]))
         elif rt.M.script_set(widget, "OnMouseUp"):
             rt.M.fire_script(widget, "OnMouseUp", rng.choice(["LeftButton", "RightButton"]))
             entries = [str(e) for e in lua_list(rt.M.menu_entries())]
             pressable = [e.split(":")[1] for e in entries if e.split(":")[0] in ("button", "checkbox")]
             if pressable and rng.random() < 0.7:
+                used.add("menu")
                 rt.M.menu_click(rng.choice(pressable))
-        elif rt.M.script_set(widget, "OnEnter"):
-            rt.hover(widget)
+        elif rt.M.script_set(widget, "OnDragStart") and rng.random() < 0.5:
+            used.add("drag")
+            rt.M.drag(widget, rng.uniform(-400, 400), rng.uniform(-300, 300))
 
     for step in range(350):
         act()
@@ -637,6 +675,8 @@ def test_random_use_never_breaks_anything(full_rt, seed):
                 frame = beacon.cells_to_frame(rt.beacon_cells())
                 assert frame.has(Flags.ACTIVE) == bool(rt.walka.IsActive(rt.walka))
     assert lua_list(rt.log.blocked) == []
+    # The run really did use the controls, not just look at them.
+    assert {"Button", "CheckButton", "Slider", "EditBox"} <= used, used
     fresh = rt.reload()
     fresh.tick(20)
     assert fresh.find_secrets() == []

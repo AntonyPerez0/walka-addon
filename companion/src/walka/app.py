@@ -197,8 +197,10 @@ class App:
         recorder = self.recorder
         if not fresh and recorder is not None and recorder.source == "wow" and self.governor.driving:
             return ("wow", recorder.beacon_session)  # signal lost mid-session: keep it open
-        if moving:
-            return ("free", None)  # walking with the remote, no session
+        if moving and not self.governor.halt_pending:
+            # Walking with the remote, no session. (A belt still coasting
+            # down after our own stop is not the start of such a walk.)
+            return ("free", None)
         return None
 
     def _record(self, wall: float, reading: Reading, belt: Belt) -> None:
@@ -385,6 +387,12 @@ class App:
                     await self.treadmill.stop()
             except TreadmillError as exc:
                 self.log_event(f"Stop command failed: {exc} - use the treadmill's own stop button!", "error")
+        else:
+            self.log_event(
+                "The treadmill is not connected, so STOP could not be sent - "
+                "if the belt is moving, stop it at the treadmill itself!",
+                "error",
+            )
 
     def connect(self, address: str | None = None) -> None:
         """Ask the connection loop to (re)connect, optionally to a new address."""
@@ -448,7 +456,7 @@ class App:
         return totals
 
     def snapshot(self) -> dict[str, Any]:
-        wall, mono = self.wall(), self.mono()
+        wall = self.wall()
         status = self.treadmill.status
         governor = self.governor
         frame = self.beacon.frame if self.beacon is not None else None

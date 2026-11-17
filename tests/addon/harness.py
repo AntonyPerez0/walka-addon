@@ -398,9 +398,9 @@ class WowRuntime:
         self.check_errors()
 
     def run(self, source: str, *args: Any) -> Any:
-        """Run Lua test code inside the addon's environment. ``...`` are
-        ``args``; the addon's private table is the global ``ns`` is not
-        available there, so pass ``rt.ns`` when needed."""
+        """Run Lua test code inside the addon's environment (so it sees
+        what the addon sees). ``...`` in the code are ``args``; the addon's
+        private table is not a global, pass ``rt.ns`` if the code needs it."""
         result = self.M.run(source, *args)
         self.check_errors()
         return result

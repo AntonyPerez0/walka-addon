@@ -5,11 +5,11 @@ from __future__ import annotations
 import sys
 
 import pytest
-from walka_fakes import FakeScreen
 
 from walka import capture
 from walka.capture import FULL_SCAN_INTERVAL_S, STRIP_HEIGHT, STRIP_WIDTH, BeaconReader, GameWindow, Shot
 from walka.protocol import Flags, Frame
+from walka_fakes import FakeScreen
 
 FRAME = Frame(seq=10, session=2, flags=Flags.ACTIVE | Flags.MOVING, target_raw=322, char_speed_raw=350)
 

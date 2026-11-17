@@ -306,3 +306,86 @@ def test_week_on_the_day_the_clocks_go_back(rt, us_eastern):
     assert [day["day"] for day in result["days"]] == [f"2027-11-{day:02d}" for day in range(1, 8)]
     assert result["days"][0]["steps"] == 4321
     assert result["streak"] == 2
+
+
+# ---- merge at scale -------------------------------------------------------------------------
+# The merge runs in the game's UI thread whenever a window refreshes its
+# totals. A year of daily walks is ~400 addon records against ~300 measured
+# ones; comparing every pair in full took ~80 ms, a visible stutter.
+
+
+def reference_merge(own_sessions, companion_sessions):
+    """The documented behaviour, written the obvious way."""
+
+    def same_walk(a, b):
+        if a["end"] <= a["start"] or b["end"] <= b["start"]:
+            return False
+        shared = max(0, min(a["end"], b["end"]) - max(a["start"], b["start"]))
+        return shared >= min(a["end"] - a["start"], b["end"] - b["start"]) * 0.5
+
+    used, merged = set(), []
+    for record in companion_sessions:
+        if record["end"] <= record["start"]:
+            continue
+        yards, character = None, None
+        for index, session in enumerate(own_sessions):
+            if index not in used and same_walk(session, record):
+                used.add(index)
+                yards = (yards or 0) + session["yards"]
+                character = character or session["character"]
+        merged.append((record["start"], True, record["steps"], yards, character))
+    for index, session in enumerate(own_sessions):
+        if index not in used:
+            merged.append((session["start"], False, session["steps"], session["yards"], session["character"]))
+    return sorted(merged, key=repr)
+
+
+@pytest.mark.parametrize("seed", range(8))
+def test_merge_matches_the_reference_on_random_histories(rt, seed):
+    import random
+
+    rng = random.Random(seed)
+    base = NOW - 400 * DAY
+
+    def random_sessions(count, measured_side):
+        sessions = []
+        for index in range(count):
+            start = base + rng.randrange(0, 60 * DAY)
+            length = rng.choice([0, 30, 600, 1800, 1800, 5400, 14400])
+            record = {"start": start, "end": start + length, "seconds": length, "steps": 1000 + index,
+                      "distanceM": 100, "kcal": 10.0, "maxKmh": 3.0}
+            if not measured_side:
+                record.update(yards=100 + index, character=f"Char{index % 3}-Realm")
+            sessions.append(record)
+        return sessions
+
+    own_sessions = random_sessions(rng.randrange(0, 120), False)
+    companion_sessions = random_sessions(rng.randrange(0, 120), True)
+    # Some walks really are the same on both sides, a little offset.
+    for session in rng.sample(own_sessions, len(own_sessions) // 2):
+        companion_sessions.append({**session, "start": session["start"] + rng.randrange(-40, 40),
+                                   "end": session["end"] + rng.randrange(-40, 40), "steps": 5000})
+    rng.shuffle(companion_sessions)
+
+    got = sorted(
+        (
+            (entry["start"], entry["measured"], entry["steps"], entry.get("yards"), entry.get("character"))
+            for entry in merge(rt, own_sessions, companion_sessions)
+        ),
+        key=repr,
+    )
+    assert got == reference_merge(own_sessions, companion_sessions)
+
+
+def test_merging_a_long_history_does_not_compare_every_pair_in_full(rt):
+    own_sessions = [own(NOW - index * 7200 - 5000, 1750) for index in range(400)]
+    companion_sessions = [measured(NOW - index * 7200 - 5010, 1790) for index in range(300)]
+    counter = rt.lua.eval(
+        "function(log) local real, calls = log.sameWalk, 0 "
+        "log.sameWalk = function(a, b) calls = calls + 1 return real(a, b) end "
+        "return function() return calls end end"
+    )(rt.ns.SessionLog)
+    entries = merge(rt, own_sessions, companion_sessions)
+    assert len(entries) == 400
+    assert sum(1 for entry in entries if entry["measured"]) == 300
+    assert counter() <= 3 * (400 + 300), f"{counter()} full comparisons for 400 x 300 records"

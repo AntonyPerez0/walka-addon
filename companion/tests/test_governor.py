@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import itertools
 import math
 
 import pytest
@@ -136,7 +137,7 @@ def test_acceleration_is_rate_limited():
     rig.run(40, live(6.0))
     speeds = [c.speed_kmh for c in rig.belt.log if c.action is Action.SET_SPEED]
     assert speeds[-1] == pytest.approx(6.0)
-    for a, b in zip(speeds, speeds[1:]):
+    for a, b in itertools.pairwise(speeds):
         assert b - a <= 0.5 + 1e-9
     # Commands are spaced at least command_interval apart: bounded count.
     assert len(speeds) <= 41
@@ -513,7 +514,7 @@ def test_cap_lowered_at_runtime_takes_effect_while_following():
     rig.run(10, live(5.0))
     assert rig.belt.speed == pytest.approx(4.0)
     ups = [c.speed_kmh for c in rig.belt.log[before:] if c.action is Action.SET_SPEED]
-    assert all(b - a <= 0.5 + 1e-9 for a, b in zip([2.0] + ups, ups))
+    assert all(b - a <= 0.5 + 1e-9 for a, b in itertools.pairwise([2.0] + ups))
 
 
 def test_cap_lowered_while_the_signal_is_lost_is_not_ignored():
@@ -536,7 +537,7 @@ def test_belt_without_a_speed_grid():
     rig.run(40, live(9.0))
     assert rig.belt.speed == pytest.approx(4.0) and rig.max_seen <= 4.0 + 1e-9
     speeds = [c.speed_kmh for c in rig.belt.log if c.action is Action.SET_SPEED]
-    assert all(b - a <= 0.5 + 1e-9 for a, b in zip(speeds, speeds[1:]))
+    assert all(b - a <= 0.5 + 1e-9 for a, b in itertools.pairwise(speeds))
 
 
 @pytest.mark.parametrize("target", [float("inf"), 1e300, 4095 * 0.01])
@@ -633,7 +634,7 @@ def test_rate_limits_hold_at_the_edges_of_the_allowed_settings(interval: float, 
                 if c.action is Action.SET_SPEED:
                     times.append((rig.now, c.speed_kmh))
     assert len(times) >= 4
-    for (t0, v0), (t1, v1) in zip(times, times[1:]):
+    for (t0, v0), (t1, v1) in itertools.pairwise(times):
         assert t1 - t0 >= interval - 1e-9, "speed commands closer together than the interval"
         # Never more than the rate limit allows for the time since the last command.
         assert v1 - v0 <= accel * (t1 - t0) + 1e-9
@@ -765,7 +766,7 @@ def test_return_from_safe_speed_climbs_back_gently():
     rig.run(12, live(5.0))
     ups = [c.speed_kmh for c in rig.belt.log[n:]]
     assert all(c.action is Action.SET_SPEED for c in rig.belt.log[n:])
-    assert all(b - a <= 0.5 + 1e-9 for a, b in zip([1.6] + ups, ups))
+    assert all(b - a <= 0.5 + 1e-9 for a, b in itertools.pairwise([1.6] + ups))
     assert rig.belt.speed == pytest.approx(5.0)
 
 
@@ -1229,14 +1230,126 @@ def test_disconnect_sends_nothing_and_reconnect_adopts_a_running_belt():
     assert rig.belt.speed == pytest.approx(4.0) and rig.gov.phase is Phase.FOLLOWING
 
 
+def reconnect(rig: Rig, reading: Reading | None, *, data_after: float = 1.0) -> None:
+    """The link comes back. As with the real driver, the belt's speed is
+    unknown (reported as zero) until the first data packet arrives."""
+    rig.belt.connected = True
+    rig.belt.blind = True
+    rig.run(data_after, reading)
+    rig.belt.blind = False
+
+
 def test_session_ending_while_disconnected_stops_the_belt_on_reconnect():
     rig = started_rig(3.0)
     rig.belt.connected = False
     rig.run(5, IDLE)  # the session ends while the link is down; the pad runs on
-    rig.belt.connected = True
+    assert rig.belt.speed == pytest.approx(3.0)
+    reconnect(rig, IDLE)
+    assert Action.STOP not in rig.actions()  # nothing is known about the belt yet
     rig.run(10, IDLE)
     assert rig.actions()[-1] is Action.STOP and rig.belt.speed == 0
-    assert rig.gov.phase is Phase.IDLE
+    assert rig.gov.phase is Phase.IDLE and not rig.gov.driving
+    assert rig.actions().count(Action.STOP) == 1
+
+
+def test_pause_during_a_link_loss_is_applied_on_reconnect():
+    rig = started_rig(3.0)
+    rig.belt.connected = False
+    rig.run(5, live(3.0, paused=True))
+    reconnect(rig, live(3.0, paused=True))
+    rig.run(10, live(3.0, paused=True))
+    assert rig.actions()[-1] is Action.PAUSE and rig.belt.speed == 0
+    assert rig.gov.phase is Phase.PAUSED
+    rig.run(25, live(3.0))
+    assert rig.belt.speed == pytest.approx(3.0)
+
+
+def test_standing_still_during_a_link_loss_is_applied_on_reconnect():
+    rig = started_rig(3.0)
+    rig.belt.connected = False
+    rig.run(5, live(0.0, moving=False))
+    reconnect(rig, live(0.0, moving=False))
+    rig.run(10, live(0.0, moving=False))
+    assert rig.actions()[-1] is Action.PAUSE and rig.belt.speed == 0
+    assert rig.gov.phase is Phase.STANDING
+
+
+def test_signal_lost_during_a_link_loss_degrades_as_usual_on_reconnect():
+    """Game and pad both out of reach for a while (the PC slept). The belt
+    that ran on must still be slowed and paused by the signal-loss rules."""
+    limits = Limits(hold_s=2, safe_speed_kmh=1.6, loss_pause_s=20)
+    rig = started_rig(4.0, limits)
+    rig.belt.connected = False
+    rig.run(4, None)
+    reconnect(rig, None)
+    assert rig.belt.speed == pytest.approx(4.0)
+    rig.run(8, None)
+    assert rig.gov.phase is Phase.SAFE and rig.belt.speed == pytest.approx(1.6)
+    rig.run(30, None)
+    assert rig.belt.speed == 0 and rig.gov.phase is Phase.WAITING
+    assert Action.START not in rig.actions()[1:]
+
+
+def test_reconnect_with_a_running_belt_and_a_live_session_just_follows():
+    rig = started_rig(3.0)
+    n = len(rig.belt.log)
+    rig.belt.connected = False
+    rig.run(5, live(4.0, moving=False))
+    reconnect(rig, live(4.0, moving=False))
+    rig.run(10, live(4.0, moving=False))
+    assert [c.action for c in rig.belt.log[n:]].count(Action.START) == 0
+    assert rig.belt.speed == pytest.approx(4.0) and rig.gov.phase is Phase.FOLLOWING
+
+
+def test_reconnect_with_a_stopped_belt_sends_nothing():
+    for reading in (IDLE, live(3.0, paused=True), live(0.0, moving=False), live(3.0, moving=False), None):
+        rig = started_rig(3.0)
+        rig.run(1, live(3.0, moving=False))
+        rig.belt.connected = False
+        rig.belt.running = False
+        rig.belt.speed = 0.0
+        rig.run(5, reading)
+        n = len(rig.belt.log)
+        reconnect(rig, reading)
+        rig.run(20, reading)
+        assert len(rig.belt.log) == n, reading
+
+
+def test_stop_pressed_during_a_link_loss_is_applied_on_reconnect():
+    """The dashboard's STOP while the pad is out of reach cannot be sent. If
+    the belt we were driving turns out to have run on, it is stopped the
+    moment it can be - not adopted, not left running under "stopped"."""
+    rig = started_rig(3.0)
+    rig.belt.connected = False
+    rig.run(2, live(3.0))
+    rig.gov.notify_external_stop()  # what the app does when STOP is pressed
+    rig.gov.user_stopped = True
+    rig.gov.expect_halt(rig.now)
+    rig.run(20, live(3.0))
+    reconnect(rig, live(3.0))
+    rig.run(10, live(3.0))
+    assert rig.actions()[-1] is Action.STOP and rig.belt.speed == 0
+    assert rig.gov.phase is Phase.USER_STOPPED and not rig.gov.belt_on
+    n = len(rig.belt.log)
+    rig.run(30, live(3.0, moving=False))
+    rig.run(30, live(3.0, moving=True))
+    assert len(rig.belt.log) == n  # and it stays latched
+
+
+def test_belt_that_was_off_when_the_link_dropped_is_not_claimed_on_reconnect():
+    """Paused by us, link drops, someone starts the belt with the remote
+    during the outage: with the session over, that belt is theirs."""
+    rig = started_rig(3.0)
+    rig.run(5, live(3.0, paused=True))
+    rig.belt.connected = False
+    rig.belt.apply([Command(Action.START)])
+    rig.belt.log.pop()
+    rig.belt.target = 2.0
+    rig.run(10, IDLE)
+    n = len(rig.belt.log)
+    reconnect(rig, IDLE)
+    rig.run(20, IDLE)
+    assert len(rig.belt.log) == n and rig.belt.speed == pytest.approx(2.0)
 
 
 def test_shutdown_only_stops_a_belt_that_is_ours_and_running():

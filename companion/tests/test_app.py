@@ -929,6 +929,89 @@ def test_emergency_stop_whose_command_fails_keeps_trying(rig: Rig):
     run(scenario())
 
 
+@pytest.mark.parametrize("seed", range(5))
+def test_after_emergency_stop_nothing_but_an_explicit_act_moves_the_belt(tmp_path: Path, seed: int):
+    """Property: STOP, then anything that is not a deliberate resume - the
+    game character moving or not, targets, signal losses, the addon's AFK
+    pause, link drops, settings changes, failing commands, more stops at the
+    pad. Not one start or speed command may follow."""
+    rng = random.Random(seed)
+    rig = Rig(tmp_path)
+
+    async def afk_pause(seconds: float) -> None:
+        for _ in range(int(seconds / TICK_S)):
+            rig.clock.advance(TICK_S)
+            rig.seq = (rig.seq + 1) % 256
+            flags = Flags.ACTIVE | Flags.PAUSED | Flags.AFK
+            rig.beacon.inject(Frame(seq=rig.seq, session=1, flags=flags))
+            await rig.app.tick()
+            rig.treadmill.advance(TICK_S)
+
+    async def scenario():
+        await session_running(rig, 3.2)
+        await rig.app.emergency_stop()
+        sent = commands_sent(rig)
+        for _ in range(60):
+            roll = rng.random()
+            if roll < 0.45:
+                await rig.run(
+                    rng.uniform(0.2, 6), target=rng.choice([0.0, 1.6, rng.uniform(0, 8)]), moving=rng.random() < 0.6
+                )
+            elif roll < 0.6:
+                await rig.run(rng.uniform(0.2, 12), signal=False)
+            elif roll < 0.7:
+                await afk_pause(rng.uniform(0.2, 10))
+            elif roll < 0.78:
+                if rig.treadmill.status.connected:
+                    drop_link(rig, belt_keeps_running=False)
+                else:
+                    restore_link(rig)
+            elif roll < 0.86:
+                rig.app.update_config({"limits": {"max_speed_kmh": rng.uniform(1.0, 8.0)}, "units": "kmh"})
+            elif roll < 0.93:
+                rig.treadmill.fail_commands = not rig.treadmill.fail_commands
+            else:
+                rig.treadmill.press_stop()
+        moves = [c for c in sent if c == "start" or c.startswith("set_speed")]
+        assert moves == [], f"after STOP: {sent}"
+        assert rig.treadmill.status.speed_kmh == 0
+        # The explicit way back still works.
+        rig.treadmill.fail_commands = False
+        if not rig.treadmill.status.connected:
+            restore_link(rig)
+        rig.app.resume()
+        await rig.run(30, target=3.2)
+        assert rig.treadmill.status.speed_kmh > 0.9
+
+    run(scenario())
+
+
+def test_emergency_stop_while_the_treadmill_is_unreachable(rig: Rig):
+    """STOP cannot reach a pad whose link is down. The dashboard must say so
+    (not "belt stopped"), and the stop must land as soon as the link is back."""
+
+    async def scenario():
+        await session_running(rig, 3.2)
+        speed = drop_link(rig, belt_keeps_running=True)
+        await rig.run(2, target=3.2)
+        await rig.app.emergency_stop()
+        assert any("not connected" in e["text"] and e["level"] == "error" for e in rig.app.events)
+        await rig.run(20, target=3.2)
+        restore_link(rig)
+        await rig.run(1, target=3.2)
+        rig.treadmill.status.speed_kmh = speed  # first data after the reconnect: it ran on
+        await rig.run(5, target=3.2)
+        assert rig.treadmill.status.state is BeltState.STOPPED, "the belt ran on after STOP was pressed"
+        assert rig.treadmill.status.speed_kmh == 0
+        assert rig.app.governor.phase is Phase.USER_STOPPED
+        sent = commands_sent(rig)
+        await rig.run(30, target=3.2, moving=False)
+        await rig.run(30, target=3.2, moving=True)
+        assert sent == []
+
+    run(scenario())
+
+
 def test_emergency_stop_without_a_treadmill_or_session_is_harmless(rig: Rig):
     async def scenario():
         await rig.app.emergency_stop()  # not connected
@@ -1036,7 +1119,7 @@ def test_addon_data_after_several_walks(rig: Rig):
     sessions = [data.sessions[i] for i in range(1, 4)]
     assert data.sessions[4] is None
     assert [s.source for s in sessions] == ["free", "manual", "wow"]  # newest first
-    for entry, record in zip(sessions, reversed(records)):
+    for entry, record in zip(sessions, reversed(records), strict=True):
         assert entry.steps == record.steps
         assert entry.seconds == round(record.seconds)
         assert entry.distanceM == round(record.distance_m)
@@ -1049,7 +1132,9 @@ def test_addon_data_after_several_walks(rig: Rig):
     assert data.limits.stepKmh == pytest.approx(0.1 * MPH, abs=1e-4)
     assert data.limits.accelKmhPerS == 0.5 and data.limits.decelKmhPerS == 1.0
     assert data.older is None
-    # The dashboard's totals agree with what was synced.
+    # The dashboard's totals agree with what was synced - and the belt
+    # coasting down after the last stop is not a "walk in progress".
+    assert rig.app.snapshot()["session"] is None
     totals = rig.app.snapshot()["totals"]
     assert totals["all"]["sessions"] == 3
     assert totals["all"]["steps"] == sum(r.steps for r in records)
@@ -1273,8 +1358,10 @@ def test_soak_random_events_never_exceed_the_cap_or_crash(tmp_path: Path, seed: 
                 if external:
                     allowed = max(allowed, status.min_kmh)  # started with the remote: the pad's own minimum
                 if status.target_kmh > allowed + 1e-6 and rig.app.governor.driving and rig.app.governor.belt_on:
-                    # One tick is granted for the correction to go out.
-                    await rig.run(TICK_S * 2, signal=False)
+                    # The correction goes out with the next speed command
+                    # (at once if it is our own command that is too high; one
+                    # command interval after a failed attempt otherwise).
+                    await rig.run(limits.command_interval_s + TICK_S * 2, signal=False)
                     if status.connected and status.target_kmh is not None and status.target_kmh > allowed + 1e-6:
                         violations.append(f"target {status.target_kmh:.3f} above the cap {allowed:.3f}")
             if reachable and rig.app.governor.driving and not external:

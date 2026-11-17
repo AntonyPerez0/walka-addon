@@ -129,14 +129,23 @@ export class WeekChart {
         );
         if (item.today || item === best) {
           group.append(
-            el("text", { class: "label-strong", x: x + barW / 2, y: y - 7, "text-anchor": "middle" }, fmt.int(item.value)),
+            el(
+              "text",
+              { class: "label-strong", x: x + barW / 2, y: y - 7, "text-anchor": "middle" },
+              fmt.int(item.value),
+            ),
           );
         }
       }
       group.append(
         el(
           "text",
-          { class: item.today ? "label-strong" : null, x: m.l + i * band + band / 2, y: height - 8, "text-anchor": "middle" },
+          {
+            class: item.today ? "label-strong" : null,
+            x: m.l + i * band + band / 2,
+            y: height - 8,
+            "text-anchor": "middle",
+          },
           item.label,
         ),
       );
@@ -286,7 +295,9 @@ export class SessionChart {
 
     for (const panel of panels) {
       // Panel title doubles as the legend: a short stroke of the series colour.
-      svg.append(el("line", { class: `key ${panel.cls}`, x1: m.l, x2: m.l + 14, y1: panel.top - 12, y2: panel.top - 12 }));
+      svg.append(
+        el("line", { class: `key ${panel.cls}`, x1: m.l, x2: m.l + 14, y1: panel.top - 12, y2: panel.top - 12 }),
+      );
       svg.append(el("text", { class: "label-strong", x: m.l + 20, y: panel.top - 8 }, panel.title));
       for (const tick of panel.ticks) {
         const y = Math.round(panel.yOf(tick)) + 0.5;

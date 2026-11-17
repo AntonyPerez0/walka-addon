@@ -10,7 +10,6 @@ import time
 from pathlib import Path
 
 import pytest
-from walka_fakes import load_addon_file, lua_to_py, new_lua
 
 from walka import addon_sync
 from walka.addon_sync import (
@@ -22,6 +21,7 @@ from walka.addon_sync import (
     write_data_file,
 )
 from walka.session import SessionRecord, SessionStore
+from walka_fakes import load_addon_file, lua_to_py, new_lua
 
 T0 = 1_800_000_000.0
 

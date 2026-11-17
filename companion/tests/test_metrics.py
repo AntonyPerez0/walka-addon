@@ -3,16 +3,17 @@ and the addon (Lua) pinned by tests/shared/metrics_vectors.json."""
 
 from __future__ import annotations
 
+import itertools
 import json
 import math
 
-import gen_metrics_vectors
 import pytest
-from walka_fakes import load_addon_file
 
+import gen_metrics_vectors
 from walka import metrics
 from walka.metrics import KMH_PER_MPH, Profile
 from walka.session import SessionRecorder
+from walka_fakes import load_addon_file
 
 VECTORS_PATH = gen_metrics_vectors.VECTORS_PATH
 REL = 1e-9
@@ -80,7 +81,7 @@ def test_monotonic_in_speed_within_walking_and_within_running():
         net = [metrics.kcal_per_minute(v, profile, net=True) for v in speeds]
         steps = [metrics.steps_per_minute(v, 172) for v in speeds]
         for series in (kcal, net, steps):
-            assert all(b > a for a, b in zip(series, series[1:]))
+            assert all(b > a for a, b in itertools.pairwise(series))
     # Switching to the running equations never drops the estimate.
     assert metrics.kcal_per_minute(8.0, profile) > metrics.kcal_per_minute(7.999, profile)
     assert metrics.steps_per_minute(8.0, 172) > metrics.steps_per_minute(7.999, 172)
@@ -90,7 +91,9 @@ def test_weight_and_height_effects():
     for kmh in (2.0, 4.8, 10.0):
         light, heavy = Profile(weight_kg=50), Profile(weight_kg=100)
         assert metrics.kcal_per_minute(kmh, heavy) == pytest.approx(2 * metrics.kcal_per_minute(kmh, light))
-        assert metrics.steps_per_minute(kmh, 150) > metrics.steps_per_minute(kmh, 172) > metrics.steps_per_minute(kmh, 195)
+        assert (
+            metrics.steps_per_minute(kmh, 150) > metrics.steps_per_minute(kmh, 172) > metrics.steps_per_minute(kmh, 195)
+        )
     # Walking: shorter people work harder at the same speed (Ludlow & Weyand).
     assert metrics.kcal_per_minute(4.8, Profile(height_cm=150)) > metrics.kcal_per_minute(4.8, Profile(height_cm=195))
 
@@ -118,7 +121,7 @@ def test_heart_rate_calories():
     assert metrics.kcal_per_minute_from_hr(120, woman) == pytest.approx(6.518, abs=0.001)
     for profile in (man, woman):
         rates = [metrics.kcal_per_minute_from_hr(bpm, profile) for bpm in range(60, 200, 5)]
-        assert all(b >= a for a, b in zip(rates, rates[1:]))
+        assert all(b >= a for a, b in itertools.pairwise(rates))
         assert metrics.kcal_per_minute_from_hr(30, profile) == 0.0  # clamped, never negative
     for incomplete in (Profile(), Profile(age=40), Profile(sex="male"), Profile(age=40, sex="x")):
         assert metrics.kcal_per_minute_from_hr(120, incomplete) is None

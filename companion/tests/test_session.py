@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import json
 import os
 import time
@@ -207,7 +208,9 @@ def test_disconnected_time_is_not_recorded_and_counters_are_rebased():
 # ---- SessionRecorder: the pad's own counters -----------------------------------------
 
 
-def machine_walk(rec: SessionRecorder, seconds: float, speed: float, *, distance_factor=1.0, steps_per_m=1.25, base=0.0):
+def machine_walk(
+    rec: SessionRecorder, seconds: float, speed: float, *, distance_factor=1.0, steps_per_m=1.25, base=0.0
+):
     """Walk with machine counters derived from the true distance."""
     now = rec.last_at
     metres = 0.0
@@ -375,7 +378,7 @@ def test_samples_are_taken_every_five_seconds():
     offsets = [s[0] for s in rec.samples]
     assert offsets[0] == pytest.approx(DT)
     assert len(offsets) == 13
-    gaps = [b - a for a, b in zip(offsets, offsets[1:])]
+    gaps = [b - a for a, b in itertools.pairwise(offsets)]
     assert all(SAMPLE_EVERY_S - 1e-6 <= gap <= SAMPLE_EVERY_S + DT + 1e-6 for gap in gaps)
     assert all(s[1] == 3.0 and s[2] == 101 for s in rec.samples)
     quiet = recorder()
@@ -445,7 +448,9 @@ def test_record_from_json_ignores_unknown_keys_and_needs_the_required_ones():
 # ---- SessionStore -----------------------------------------------------------------------
 
 
-def make_record(start: float, *, seconds: float = 600.0, steps: int = 1000, distance: float = 500.0, kcal: float = 40.0):
+def make_record(
+    start: float, *, seconds: float = 600.0, steps: int = 1000, distance: float = 500.0, kcal: float = 40.0
+):
     return SessionRecord(
         id=time.strftime("%Y%m%d-%H%M%S", time.localtime(start)),
         start=start,

@@ -37,6 +37,10 @@ function remember(key, value) {
 
 // ---- hero -------------------------------------------------------------------------------
 
+// Shown instead of a number when the belt's speed is not known (no treadmill,
+// no companion). Never a zero: an unseen belt may well be moving.
+const NO_SPEED = "--";
+
 const BELT_WORDS = {
   unknown: "state unknown",
   stopped: "stopped",
@@ -63,7 +67,8 @@ function updateHero(s, view, online) {
 
   setText($("speed-unit"), U.speedUnit);
   if (!online || !s) {
-    setText($("speed-num"), "-.-");
+    setText($("speed-num"), NO_SPEED);
+    setAttr($("speed-num"), "data-void", "1");
     setText($("hero-meta"), "");
     return;
   }
@@ -72,7 +77,10 @@ function updateHero(s, view, online) {
   const g = s.governor;
   const frame = s.source.frame;
   const manual = s.source.manual;
-  setText($("speed-num"), t.connected ? fmt.speed(t.speed_kmh) : "-.-");
+  const speedText = t.connected ? fmt.speed(t.speed_kmh) : NO_SPEED;
+  setText($("speed-num"), speedText);
+  setAttr($("speed-num"), "data-void", t.connected ? null : "1");
+  setAttr($("speed-num"), "data-wide", speedText.length > 3 ? "1" : null); // "12.0": shrink to fit a phone
   setText($("hero-meta"), sourceLabel(s));
 
   // Readout.
@@ -100,12 +108,18 @@ function updateHero(s, view, online) {
   const minAt = Math.min(1, t.min_kmh / scale);
   const capAt = Math.min(1, top / scale);
   const speedAt = t.connected ? Math.max(0, Math.min(1, t.speed_kmh / scale)) : 0;
-  setTransform($("meter-range"), `translateX(${(minAt * 100).toFixed(2)}%) scaleX(${Math.max(0, capAt - minAt).toFixed(4)})`);
+  setTransform(
+    $("meter-range"),
+    `translateX(${(minAt * 100).toFixed(2)}%) scaleX(${Math.max(0, capAt - minAt).toFixed(4)})`,
+  );
   setTransform($("meter-fill"), `scaleX(${speedAt.toFixed(4)})`);
   const target = $("meter-target");
   setShown(target, steering);
   if (steering) setTransform(target, `translateX(${(Math.min(1, g.wanted_kmh / scale) * 100).toFixed(2)}%)`);
 
+  const capLine = $("meter-cap-line");
+  setShown(capLine, capAt < 0.995);
+  setTransform(capLine, `translateX(${(capAt * 100).toFixed(2)}%)`);
   const capIsEnd = capAt > 0.88;
   setTransform($("meter-min-at"), `translateX(${(minAt * 100).toFixed(2)}%)`);
   setText($("meter-min"), fmt.speed(t.min_kmh));
@@ -140,10 +154,32 @@ function updateSession(s) {
     setText($("session-title"), SESSION_TITLE[live.source] || "Session");
     setText($("session-sub"), `since ${fmt.timeOfDay(live.started_at)}`);
     tile(1, "Time", fmt.clock(live.seconds), "", "belt moving");
-    tile(2, "Distance", fmt.dist(live.distance_m), U.distUnit, live.distance_source === "treadmill" ? "treadmill counter" : "from belt speed");
-    tile(3, "Steps", fmt.int(live.steps), "", live.steps_source === "treadmill" ? "treadmill counter" : "estimate: speed and height");
-    tile(4, "Calories", fmt.int(live.kcal), "", live.calories_source === "heart_rate" ? "from heart rate" : "estimate: speed and weight");
-    const hrNote = live.avg_hr ? `avg ${Math.round(live.avg_hr)}, max ${live.max_hr || "-"}` : live.hr ? "heart-rate sensor" : "no sensor";
+    tile(
+      2,
+      "Distance",
+      fmt.dist(live.distance_m),
+      U.distUnit,
+      live.distance_source === "treadmill" ? "treadmill counter" : "from belt speed",
+    );
+    tile(
+      3,
+      "Steps",
+      fmt.int(live.steps),
+      "",
+      live.steps_source === "treadmill" ? "treadmill counter" : "estimate: speed and height",
+    );
+    tile(
+      4,
+      "Calories",
+      fmt.int(live.kcal),
+      "",
+      live.calories_source === "heart_rate" ? "from heart rate" : "estimate: speed and weight",
+    );
+    const hrNote = live.avg_hr
+      ? `avg ${Math.round(live.avg_hr)}, max ${live.max_hr || "-"}`
+      : live.hr
+        ? "heart-rate sensor"
+        : "no sensor";
     tile(5, "Heart rate", live.hr ? String(live.hr) : "-", live.hr ? "bpm" : "", hrNote);
     const avg = live.seconds > 0 ? (live.distance_m / live.seconds) * 3.6 : null;
     tile(6, "Average speed", avg == null ? "-" : fmt.speed(avg), U.speedUnit, `max ${fmt.speedU(live.max_kmh)}`);
@@ -207,7 +243,8 @@ function updateManual(s) {
 
   let note;
   if (!t.connected) note = "Connect the treadmill to start a manual session.";
-  else if (!m.active) note = `Starts the belt after the pad's 3-2-1 countdown, then holds ${fmt.speedU(kmh)}. Overrides the game while it runs.`;
+  else if (!m.active)
+    note = `Starts the belt after the pad's 3-2-1 countdown, then holds ${fmt.speedU(kmh)}. Overrides the game while it runs.`;
   else if (m.paused) note = "Paused. Resume to carry on, or end the session.";
   else note = `Allowed range ${fmt.speed(lo)}-${fmt.speedU(hi)}. End session, or STOP, stops the belt.`;
   setText($("manual-note"), note);
@@ -262,9 +299,6 @@ function updateTreadmill(s, link) {
   const disconnect = $("tm-disconnect");
   setShown(disconnect, t.connected || searching);
   setText(disconnect, t.connected ? "Disconnect" : "Stop searching");
-  const moving = t.connected && t.speed_kmh > 0.05;
-  setDisabled(disconnect, moving);
-  setAttr(disconnect, "title", moving ? "Stop the belt before disconnecting" : null);
   setShown($("tm-sim"), t.kind === "simulated");
 }
 
@@ -282,7 +316,12 @@ function deviceRow(device, onPick, pickLabel) {
   return h(
     "div",
     { class: "device" },
-    h("div", { class: "device-text" }, h("strong", { text: device.name || "(no name)" }), h("span", { text: details.filter(Boolean).join(" · ") })),
+    h(
+      "div",
+      { class: "device-text" },
+      h("strong", { text: device.name || "(no name)" }),
+      h("span", { text: details.filter(Boolean).join(" · ") }),
+    ),
     button,
   );
 }
@@ -385,7 +424,10 @@ export function installAddon(button, addonsDir) {
   return run(button, async () => {
     try {
       const data = await post("/api/addon/install", addonsDir ? { addons_dir: addonsDir } : {});
-      toast(`Addon installed to ${data.path}. Restart the game (or type /reload) and tick Walka in the AddOns list.`, "ok");
+      toast(
+        `Addon installed to ${data.path}. Restart the game (or type /reload) and tick Walka in the AddOns list.`,
+        "ok",
+      );
       return data;
     } catch (error) {
       if (!addonsDir && !location.hash.startsWith("#settings")) location.hash = "#settings/set-addon";
@@ -395,23 +437,40 @@ export function installAddon(button, addonsDir) {
 }
 
 export function syncAddon(button) {
-  return run(button, () => post("/api/addon/sync"), { success: "History synced to the addon. Type /reload in game to load it." });
+  return run(button, () => post("/api/addon/sync"), {
+    success: "History synced to the addon. Type /reload in game to load it.",
+  });
 }
 
 // ---- activity log -----------------------------------------------------------------------------------
 
 let logKey = null;
+let newestEvent = null; // time of the newest event already seen
 
 function updateLog(s) {
   const events = s.events || [];
   const key = events.length ? `${events.length}|${events[0].time}` : "";
   if (key === logKey) return;
   logKey = key;
+  // An error that happened while you were looking elsewhere (a stop command
+  // that failed, say) must not sit quietly in a list: raise it.
+  if (newestEvent !== null) {
+    for (const event of events) {
+      if (event.time <= newestEvent) break;
+      if (event.level === "error") toast(event.text, "error", { sticky: true });
+    }
+  }
+  newestEvent = events.length ? events[0].time : 0;
   setShown($("log-empty"), !events.length);
   setShown($("log"), !!events.length);
   $("log").replaceChildren(
     ...events.map((event) =>
-      h("li", { "data-level": event.level }, h("time", { text: fmt.timeOfDaySec(event.time) }), h("span", { text: event.text })),
+      h(
+        "li",
+        { "data-level": event.level },
+        h("time", { text: fmt.timeOfDaySec(event.time) }),
+        h("span", { text: event.text }),
+      ),
     ),
   );
 }
@@ -453,8 +512,17 @@ export function initLive() {
   $("manual-stop").addEventListener("click", (event) => run(event.currentTarget, () => manual("stop")));
 
   $("tm-scan").addEventListener("click", scanTreadmills);
-  $("tm-connect").addEventListener("click", (event) => run(event.currentTarget, () => post("/api/treadmill/connect", {})));
-  $("tm-disconnect").addEventListener("click", (event) => run(event.currentTarget, () => post("/api/treadmill/disconnect")));
+  $("tm-connect").addEventListener("click", (event) =>
+    run(event.currentTarget, () => post("/api/treadmill/connect", {})),
+  );
+  $("tm-disconnect").addEventListener("click", (event) => {
+    // Cutting the link to a moving belt would leave it running with nobody steering.
+    if (last && last.treadmill.connected && last.treadmill.speed_kmh > 0.05) {
+      toast("Stop the belt first: disconnecting now would leave it running without Walka.", "warn");
+      return;
+    }
+    run(event.currentTarget, () => post("/api/treadmill/disconnect"));
+  });
   $("sim-start").addEventListener("click", (event) =>
     run(event.currentTarget, () => post("/api/treadmill/press", { button: "start" })),
   );

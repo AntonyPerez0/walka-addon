@@ -114,6 +114,8 @@ class Command:
 _MOVING_EPS_KMH = 0.05
 # A belt that still moves this long after we asked it to stop is asked again.
 _HALT_RETRY_S = 5.0
+# After a reconnect the belt's speed takes a moment to come in.
+_RECONNECT_SETTLE_S = 3.0
 
 
 @dataclass
@@ -141,6 +143,8 @@ class Governor:
     _want_kmh: float = 0.0
     _halting: Action | None = None  # a PAUSE/STOP the belt has not been seen to obey yet
     _halt_at: float = -math.inf
+    _orphan: bool = False  # the link dropped while we were driving a running belt
+    _settle_until: float | None = None  # reconnected: waiting to learn whether that belt ran on
 
     # ---- external events from the treadmill driver ------------------------------
     def notify_external_stop(self) -> None:
@@ -165,6 +169,7 @@ class Governor:
         """The treadmill link dropped; we no longer know the belt state."""
         if self.driving:
             self.needs_act = True
+            self._orphan = self._orphan or self.belt_on
         self.belt_on = False
         self.commanded_kmh = 0.0
         self._zero_since = None
@@ -177,6 +182,11 @@ class Governor:
         # ... and a session that begins right now (a dashboard session) is
         # one the user started, not one we stumbled into.
         self._saw_inactive = True
+
+    @property
+    def halt_pending(self) -> bool:
+        """A stop of ours is on its way: the belt may still be coasting down."""
+        return self._halting is not None
 
     def expect_halt(self, now: float, action: Action = Action.STOP) -> None:
         """A stop was sent to the belt from outside the governor (the
@@ -276,6 +286,29 @@ class Governor:
             return commands
         self._was_connected = True
 
+        # Back after a link loss. A pad keeps running when the link drops, so
+        # the belt we were driving is probably still turning - but its speed
+        # only arrives with the first data packet. Once it does, the belt is
+        # ours again and is followed, paused or stopped like any belt of ours
+        # (whatever happened to the session while we could not reach it).
+        if self._orphan:
+            self._orphan = False
+            self._settle_until = now + _RECONNECT_SETTLE_S if self.driving else None
+        if self._settle_until is not None:
+            if belt.speed_kmh > _MOVING_EPS_KMH and self.driving and not self.belt_on:
+                self._settle_until = None
+                if self.user_stopped:
+                    # STOP was pressed while the belt was out of reach.
+                    self._halt(now, commands, Action.STOP, "stop requested while the treadmill was out of reach")
+                else:
+                    self.belt_on = True
+                    self.needs_act = False
+                    self._belt_on_since = now
+                    self._zero_since = None
+                    self._last_command_at = now - lim.command_interval_s
+            elif now >= self._settle_until or self.belt_on or not self.driving:
+                self._settle_until = None
+
         # Did the belt obey our last stop? This is feedback, not a blind
         # retry: it is only asked again while it reports that it still moves.
         if self._halting is not None and now - self._halt_at >= _HALT_RETRY_S:
@@ -297,9 +330,16 @@ class Governor:
             if not reading.active:
                 # Session over (or never started).
                 self._saw_inactive = True
-                if self.driving and (self.belt_on or belt.speed_kmh > _MOVING_EPS_KMH) and not commands:
-                    # (also a belt we think is off but that is still turning:
-                    # the session is over, it must not be left running)
+                if self._settle_until is not None:
+                    # Just reconnected: do not conclude "nothing to stop"
+                    # before the belt has had a chance to say that it runs.
+                    self._idle(Phase.IDLE, "no active session")
+                    return commands
+                still_turning = belt.speed_kmh > _MOVING_EPS_KMH and self._halting is None
+                if self.driving and (self.belt_on or still_turning) and not commands:
+                    # (also a belt we think is off but that is turning, unless
+                    # a stop of ours is already on its way: the session is
+                    # over, it must not be left running)
                     self._halt(now, commands, Action.STOP, "session ended")
                 if self.driving:
                     self._belt_off(now)

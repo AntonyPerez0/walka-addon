@@ -81,18 +81,37 @@ function SessionLog.merge(ownSessions, companionData)
     local companionSessions = companionData and companionData.sessions
     local used = {}
 
+    -- The addon's records as plain numbers, read once. Every companion
+    -- record is compared with every addon record - over 100,000 pairs for
+    -- a year of walks - and this runs while the game is drawing, so the
+    -- inner loop below must stay cheap.
+    local ownStart, ownEnd, ownCount = {}, {}, 0
+    if type(ownSessions) == "table" then
+        for index, own in ipairs(ownSessions) do
+            ownCount = index
+            if type(own) == "table" then
+                ownStart[index], ownEnd[index] = number(own.start), number(own["end"])
+            else
+                -- (a damaged saved-variables file can hold anything)
+                used[index] = true
+            end
+        end
+    end
+
     if type(companionSessions) == "table" then
         for _, record in ipairs(companionSessions) do
             if type(record) == "table" and number(record["end"]) > number(record.start) then
                 local entry = fromCompanion(record)
-                if type(ownSessions) == "table" then
-                    for index, own in ipairs(ownSessions) do
-                        -- (a damaged saved-variables file can hold anything)
-                        if not used[index] and type(own) == "table" and SessionLog.sameWalk(own, record) then
-                            used[index] = true
-                            entry.yards = (entry.yards or 0) + number(own.yards)
-                            entry.character = entry.character or own.character
-                        end
+                local recordStart, recordEnd = entry.start, entry["end"]
+                for index = 1, ownCount do
+                    -- Walks that do not overlap at all cannot be the same
+                    -- walk: skip them without the full comparison.
+                    if not used[index] and ownEnd[index] > recordStart and ownStart[index] < recordEnd
+                        and SessionLog.sameWalk(ownSessions[index], record) then
+                        local own = ownSessions[index]
+                        used[index] = true
+                        entry.yards = (entry.yards or 0) + number(own.yards)
+                        entry.character = entry.character or own.character
                     end
                 end
                 merged[#merged + 1] = entry

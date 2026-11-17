@@ -5,10 +5,10 @@ from __future__ import annotations
 import random
 
 import pytest
-from walka_fakes import load_addon_file, lua_to_py
 
 from walka import beacon, protocol
 from walka.protocol import Flags, Frame, FrameError, bits_to_bytes, bytes_to_bits, crc16
+from walka_fakes import load_addon_file, lua_to_py
 
 FIELD_WIDTHS = {
     "version": 4,

@@ -41,7 +41,11 @@ function updateChrome(s, summary, links, online) {
       const ignored = link.ignored && link.tone === "ok";
       setTone(pill.el, ignored ? "idle" : link.tone);
       setText(pill.stateEl, ignored ? "ignored" : link.pill);
-      setAttr(pill.el, "aria-label", `${pill.label}: ${ignored ? "ignored while manual mode is on" : link.state}. Show details.`);
+      setAttr(
+        pill.el,
+        "aria-label",
+        `${pill.label}: ${ignored ? "ignored while manual mode is on" : link.state}. Show details.`,
+      );
     }
   }
   let title = "Walka";
@@ -120,7 +124,10 @@ function watchdog() {
     if (seconds >= 2) {
       const first = $("offline").hidden;
       setShown($("offline"), true);
-      setText($("offline-since"), everOnline ? `No data for ${seconds < 90 ? `${seconds} s` : `${Math.round(seconds / 60)} min`}.` : "");
+      setText(
+        $("offline-since"),
+        everOnline ? `No data for ${seconds < 90 ? `${seconds} s` : `${Math.round(seconds / 60)} min`}.` : "",
+      );
       if (first) render();
     }
   }
@@ -158,7 +165,9 @@ async function stop(button) {
     await post("/api/stop", {}, { timeoutMs: 5000 });
     toast("Stop sent. The belt stays off until you resume.", "warn");
   } catch {
-    toast("STOP could not reach the companion. Use the stop button on the pad or its remote now.", "error", { sticky: true });
+    toast("STOP could not reach the companion. Use the stop button on the pad or its remote now.", "error", {
+      sticky: true,
+    });
   } finally {
     delete button.dataset.busy;
   }

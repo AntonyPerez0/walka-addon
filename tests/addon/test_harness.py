@@ -382,3 +382,29 @@ def test_newer_lua_syntax_is_rejected(tmp_path, make_rt, code, message):
     (addon / "Bad.lua").write_text(code + "\n", encoding="utf-8")
     with pytest.raises(Exception, match=message):
         make_rt(addon_dir=addon)
+
+
+def test_the_core_runs_without_the_ui_files(tmp_path, make_rt, addon_dir):
+    """The UI may not exist yet (or fail to load): the TOC lists it, the
+    loader skips what is missing, and the core must be complete without it."""
+    import shutil
+
+    copy = tmp_path / "Walka"
+    shutil.copytree(addon_dir, copy, ignore=shutil.ignore_patterns("UI"))
+    rt = make_rt(addon_dir=copy)
+    assert rt.skipped_files == [name for name in rt.toc.files if name.startswith("UI")]
+    assert len(rt.skipped_files) >= 1
+    assert rt.ns.HUD is None and rt.ns.History is None and rt.ns.Options is None
+    rt.set(speed=7.0)
+    for command in ("", "show", "hide", "history", "options", "start", "status", "pause", "resume", "help"):
+        rt.slash("/walka " + command)
+        rt.tick(5)
+    rt.tick(250)
+    click = rt.global_(rt.toc.metadata["AddonCompartmentFunc"])
+    rt.M.call(click, "Walka", "LeftButton")
+    rt.M.call(click, "Walka", "RightButton")
+    rt.slash("/walka stop")
+    assert len(lua_list(rt.db.sessions)) == 1
+    fresh = rt.reload()
+    fresh.tick(5)
+    assert fresh.undefined_globals() == {} and rt.undefined_globals() == {}

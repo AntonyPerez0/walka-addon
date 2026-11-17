@@ -39,7 +39,7 @@
 
 <div class="chrome">
   <header class="top">
-    <a class="brand" href="#live" aria-label="Walka - live view">Walka</a>
+    <h1 class="brand"><a href="#live" aria-label="Walka - live view">Walka</a></h1>
     <nav class="tabs" aria-label="Views">
       <a href="#live" data-view="live">Live</a>
       <a href="#history" data-view="history">History</a>
@@ -76,7 +76,7 @@
       </div>
       <div class="hero-body">
         <div class="speed" aria-live="off">
-          <span class="speed-num num" id="speed-num">-.-</span>
+          <span class="speed-num num" id="speed-num" data-void="1">--</span>
           <span class="speed-side"><span class="speed-unit" id="speed-unit">mph</span><span class="speed-cap">belt speed</span></span>
         </div>
         <dl class="readout">
@@ -88,6 +88,7 @@
         <div class="meter" id="meter" role="img" aria-label="Belt speed against your maximum">
           <div class="meter-bar">
             <div class="meter-track"><div class="meter-range" id="meter-range"></div><div class="meter-fill" id="meter-fill"></div></div>
+            <div class="meter-layer" id="meter-cap-line" hidden><b></b></div>
             <div class="meter-layer" id="meter-target" hidden><i></i></div>
           </div>
           <div class="meter-scale num" aria-hidden="true">

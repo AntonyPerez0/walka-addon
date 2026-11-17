@@ -59,10 +59,16 @@ def _host_is_local(host_header: str | None) -> bool:
     if not host_header:
         return False
     host = host_header.strip()
+    port = ""
     if host.startswith("["):  # [::1]:8787
-        host = host[1:].split("]", 1)[0]
-    else:
-        host = host.rsplit(":", 1)[0] if host.count(":") == 1 else host
+        host, _, rest = host[1:].partition("]")
+        if rest and not rest.startswith(":"):
+            return False  # something other than a port after the address
+        port = rest[1:]
+    elif host.count(":") == 1:
+        host, port = host.split(":")
+    if port and not port.isdigit():
+        return False
     if host.lower() == "localhost":
         return True
     try:

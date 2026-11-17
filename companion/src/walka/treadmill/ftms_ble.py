@@ -126,6 +126,7 @@ class FtmsTreadmill(Treadmill):
         self._write_with_response = True
         self._own_stop_until = 0.0
         self._own_start_until = 0.0
+        self._coast_until = 0.0  # after any stop/pause: speed reports are the belt running down
         self._data = ftms.TreadmillData()
         self.features: ftms.MachineFeatures | None = None
         self.raw_speed_range: ftms.SpeedRange | None = None
@@ -301,7 +302,10 @@ class FtmsTreadmill(Treadmill):
         if packet.speed_kmh is not None:
             status.speed_kmh = packet.speed_kmh
             if packet.speed_kmh > 0.05:
-                status.state = BeltState.RUNNING
+                # A belt coasting down after a stop still reports speed for a
+                # moment; that does not make it "running" again.
+                if status.state not in (BeltState.PAUSED, BeltState.STOPPED) or now > self._coast_until:
+                    status.state = BeltState.RUNNING
             elif status.state is BeltState.RUNNING and now > self._own_start_until:
                 # Moving -> not moving without a status event; the governor
                 # decides whether this is a stall.
@@ -334,6 +338,7 @@ class FtmsTreadmill(Treadmill):
         elif event.paused or event.stopped:
             status.state = BeltState.PAUSED if event.paused else BeltState.STOPPED
             status.target_kmh = None
+            self._coast_until = now + OWN_EVENT_WINDOW_S
             if now > self._own_stop_until:
                 self._emit(TreadmillEvent.EXTERNAL_STOP)
         elif event.op == ftms.StatusOp.RESET:
@@ -414,14 +419,14 @@ class FtmsTreadmill(Treadmill):
     async def pause(self) -> None:
         self._own_stop_until = time.monotonic() + OWN_EVENT_WINDOW_S
         await self._command(ftms.cmd_pause())
-        self._own_stop_until = time.monotonic() + OWN_EVENT_WINDOW_S
+        self._own_stop_until = self._coast_until = time.monotonic() + OWN_EVENT_WINDOW_S
         self.status.state = BeltState.PAUSED
         self.status.target_kmh = None
 
     async def stop(self) -> None:
         self._own_stop_until = time.monotonic() + OWN_EVENT_WINDOW_S
         await self._command(ftms.cmd_stop())
-        self._own_stop_until = time.monotonic() + OWN_EVENT_WINDOW_S
+        self._own_stop_until = self._coast_until = time.monotonic() + OWN_EVENT_WINDOW_S
         self.status.state = BeltState.STOPPED
         self.status.target_kmh = None
 

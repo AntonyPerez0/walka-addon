@@ -239,7 +239,9 @@ def test_capture_origin_can_be_set_and_cleared():
     assert config.wow.origin is None
 
 
-@pytest.mark.parametrize("origin", ["0,0", 5, [1], [1, 2, 3], ["a", "b"], {"x": 1, "y": 2}, [None, None], [1.5e400, 0], True])
+@pytest.mark.parametrize(
+    "origin", ["0,0", 5, [1], [1, 2, 3], ["a", "b"], {"x": 1, "y": 2}, [None, None], [1.5e400, 0], True]
+)
 def test_malformed_capture_origin_is_refused(origin):
     """It ends up as screen coordinates for the capture thread: anything but
     two numbers would break (or silently disable) reading the beacon."""

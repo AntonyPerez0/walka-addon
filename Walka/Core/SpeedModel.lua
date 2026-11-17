@@ -52,6 +52,8 @@ SpeedModel.DEFAULTS = {
     stopHoldSeconds = 4, -- keep pace this long after the character stops
     taxiMode = "run", -- on flight paths: "run", "stand" or "follow"
     combatHold = false, -- in combat never drop below the running pace
+    keepWalking = false, -- never drop below the walking pace: when the
+                         -- character stops, the belt stays at walkKmh
 }
 
 local function settingOf(settings, key)
@@ -71,16 +73,25 @@ function SpeedModel.curve(settings, yps)
     local mount = settingOf(settings, "mountKmh")
     yps = max(0, yps or 0)
 
+    local kmh
     if yps <= 0 then
-        return stand
+        kmh = stand
     elseif yps < SpeedModel.WALK_YPS then
-        return stand + (walk - stand) * (yps / SpeedModel.WALK_YPS)
+        kmh = stand + (walk - stand) * (yps / SpeedModel.WALK_YPS)
     elseif yps < SpeedModel.RUN_YPS then
-        return walk + (run - walk) * ((yps - SpeedModel.WALK_YPS) / (SpeedModel.RUN_YPS - SpeedModel.WALK_YPS))
+        kmh = walk + (run - walk) * ((yps - SpeedModel.WALK_YPS) / (SpeedModel.RUN_YPS - SpeedModel.WALK_YPS))
     elseif yps < SpeedModel.MOUNT_YPS then
-        return run + (mount - run) * ((yps - SpeedModel.RUN_YPS) / (SpeedModel.MOUNT_YPS - SpeedModel.RUN_YPS))
+        kmh = run + (mount - run) * ((yps - SpeedModel.RUN_YPS) / (SpeedModel.MOUNT_YPS - SpeedModel.RUN_YPS))
+    else
+        kmh = mount
     end
-    return mount
+
+    -- "Keep walking": standing still (looting, casting, reading a quest)
+    -- should not cost steps, so the walking pace becomes the floor.
+    if settingOf(settings, "keepWalking") and kmh < walk then
+        kmh = walk
+    end
+    return kmh
 end
 
 --- Create a model. `settings` is read on every update, so the options panel
@@ -92,9 +103,10 @@ function SpeedModel.new(settings)
     return self
 end
 
---- Forget all history. `kmh` seeds the smoothed speed (default: stand speed).
+--- Forget all history. `kmh` seeds the smoothed speed (default: the pace
+-- for a character standing still).
 function SpeedModel:reset(kmh)
-    self.smoothed = kmh or settingOf(self.settings, "standKmh")
+    self.smoothed = kmh or SpeedModel.curve(self.settings, 0)
     self.output = nil
     self.lastYps = 0
     self.holdLeft = 0

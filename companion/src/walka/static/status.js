@@ -48,7 +48,12 @@ export function treadmillHealth(s) {
     return { tone: "ok", pill: "connected", state: "connected", detail: "" };
   }
   if (!t.want_connected) {
-    return { tone: "idle", pill: "off", state: "disconnected", detail: "Not connected. Press Connect when the pad is switched on." };
+    return {
+      tone: "idle",
+      pill: "off",
+      state: "disconnected",
+      detail: "Not connected. Press Connect when the pad is switched on.",
+    };
   }
   if (t.error) {
     let detail = sentence(t.error);
@@ -75,7 +80,14 @@ export function gameHealth(s) {
     };
   }
   const age = beacon.age_s;
-  const ageText = age == null ? "" : age < 10 ? `${age.toFixed(1)} s` : age < 120 ? `${Math.round(age)} s` : `${Math.round(age / 60)} min`;
+  const ageText =
+    age == null
+      ? ""
+      : age < 10
+        ? `${age.toFixed(1)} s`
+        : age < 120
+          ? `${Math.round(age)} s`
+          : `${Math.round(age / 60)} min`;
   let health;
   switch (beacon.state) {
     case "ok":
@@ -90,7 +102,12 @@ export function gameHealth(s) {
       };
       break;
     case "game_closed":
-      health = { tone: "idle", pill: "closed", state: "game closed", detail: "The game was closed, so the session has ended." };
+      health = {
+        tone: "idle",
+        pill: "closed",
+        state: "game closed",
+        detail: "The game was closed, so the session has ended.",
+      };
       break;
     case "error":
       health = {
@@ -122,7 +139,8 @@ export function gameHealth(s) {
       }
   }
   if (s.source.manual.active) {
-    health.detail = `Manual mode is on, so the game signal is ignored until you end the manual session. ${health.detail}`.trim();
+    health.detail =
+      `Manual mode is on, so the game signal is ignored until you end the manual session. ${health.detail}`.trim();
     health.ignored = true;
   }
   return health;
@@ -263,7 +281,8 @@ export function describe(s) {
           icon: "go",
           title: "Manual session running",
           short: "Manual",
-          detail: "The belt holds the speed set under Manual control. The game signal is ignored until you end the manual session.",
+          detail:
+            "The belt holds the speed set under Manual control. The game signal is ignored until you end the manual session.",
         };
       }
       const asked = s.source.frame ? s.source.frame.target_kmh : 0;
@@ -286,7 +305,7 @@ export function describe(s) {
         return {
           tone: "warn",
           icon: "warn",
-          title: "Game signal lost - holding speed",
+          title: "Signal lost: holding speed",
           short: "Signal lost",
           detail: `The belt keeps its speed and ${next} in ${aboutSeconds(left)} unless the signal returns. ${WINDOW_ADVICE}`,
         };
@@ -324,9 +343,10 @@ export function describe(s) {
       return {
         tone: "ok",
         icon: "pause",
-        title: "Standing - belt paused",
+        title: "Standing: belt paused",
         short: "Standing",
-        detail: "Your character is standing still, so the belt is paused. It starts again by itself when your character moves.",
+        detail:
+          "Your character is standing still, so the belt is paused. It starts again by itself when your character moves.",
       };
 
     case "paused":
@@ -363,7 +383,7 @@ export function describe(s) {
       return {
         tone: "warn",
         icon: "warn",
-        title: "Paused - game signal lost",
+        title: "Paused: game signal lost",
         short: "Waiting",
         detail: `The belt was paused because the game signal stayed away. ${WINDOW_ADVICE} Then move your character, or press Resume.`,
         action: { kind: "resume", label: "Resume", note: "The belt starts once the signal is back." },
@@ -394,7 +414,13 @@ export function describe(s) {
     default: {
       if (g.phase !== "idle") {
         // A phase this page does not know yet: say what the companion says.
-        return { tone: "idle", icon: "idle", title: capitalise(g.phase.replace(/_/g, " ")), short: capitalise(g.phase.replace(/_/g, " ")), detail: sentence(reason) };
+        return {
+          tone: "idle",
+          icon: "idle",
+          title: capitalise(g.phase.replace(/_/g, " ")),
+          short: capitalise(g.phase.replace(/_/g, " ")),
+          detail: sentence(reason),
+        };
       }
       // idle: no session - the governor keeps its hands off the belt.
       if (s.session && s.session.source === "free" && t.speed_kmh > 0.05) {
@@ -408,7 +434,7 @@ export function describe(s) {
         };
       }
       const how = s.source.beacon
-        ? "In game, type /walka start or press Start on the Walka HUD. For any other game, start a manual session."
+        ? "Start one in game with /walka start, or start a manual session here."
         : "Screen reading is off, so start a manual session to walk.";
       return {
         tone: "idle",

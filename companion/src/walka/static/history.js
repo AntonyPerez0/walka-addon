@@ -42,7 +42,8 @@ function updateTotals(s) {
   setText($("tot-streak"), fmt.int(totals.streak));
   setText($("tot-streak-unit"), totals.streak === 1 ? "day" : "days");
   let note = "Walk today to start a streak.";
-  if (totals.streak > 0) note = totals.today.sessions ? "in a row, including today" : "in a row - walk today to keep it going";
+  if (totals.streak > 0)
+    note = totals.today.sessions ? "in a row, including today" : "in a row - walk today to keep it going";
   setText($("tot-streak-sub"), note);
 }
 
@@ -140,7 +141,9 @@ function renderDetail(panel, walk, record) {
   const keep = h("button", { class: "btn", type: "button", text: "Keep it" });
   const reallyRemove = h("button", { class: "btn danger solid", type: "button", text: "Delete permanently" });
   confirm.append(
-    h("p", { text: "Delete this walk? It disappears from your totals here and from the addon's history. This cannot be undone." }),
+    h("p", {
+      text: "Delete this walk? It disappears from your totals here and from the addon's history. This cannot be undone.",
+    }),
     keep,
     reallyRemove,
   );
@@ -221,7 +224,13 @@ function renderList() {
       const panel = h("div", { class: "sdetail", id: panelId, hidden: true });
       const button = h(
         "button",
-        { class: "srow srow-btn", type: "button", "aria-expanded": "false", "aria-controls": panelId, "aria-label": rowLabel(walk) },
+        {
+          class: "srow srow-btn",
+          type: "button",
+          "aria-expanded": "false",
+          "aria-controls": panelId,
+          "aria-label": rowLabel(walk),
+        },
         h("span", { class: "when", text: fmt.dateTime(walk.start) }),
         h("span", { class: "src", text: SOURCE[walk.source] || walk.source }),
         cell(fmt.clock(walk.seconds)),

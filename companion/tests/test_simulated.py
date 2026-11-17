@@ -4,12 +4,13 @@ because every higher-level test (and the demo) stands on it."""
 from __future__ import annotations
 
 import asyncio
+import itertools
 
 import pytest
-from walka_fakes import us_firmware_mph_tenths
 
 from walka.treadmill.base import KMH_PER_MPH, BeltState, TreadmillError, TreadmillEvent
 from walka.treadmill.simulated import SimulatedTreadmill
+from walka_fakes import us_firmware_mph_tenths
 
 MPH = KMH_PER_MPH
 
@@ -127,12 +128,12 @@ def test_belt_ramps_instead_of_jumping():
         await started(sim)
         await sim.set_speed(3.0 * MPH)
         speeds = [sim.status.speed_kmh] + advance(sim, 10)
-        steps = [b - a for a, b in zip(speeds, speeds[1:])]
+        steps = [b - a for a, b in itertools.pairwise(speeds)]
         assert max(steps) <= 0.8 * 0.1 + 1e-9
         assert speeds[-1] == pytest.approx(3.0 * MPH)
         await sim.set_speed(1.0 * MPH)
         speeds = [sim.status.speed_kmh] + advance(sim, 10)
-        steps = [b - a for a, b in zip(speeds, speeds[1:])]
+        steps = [b - a for a, b in itertools.pairwise(speeds)]
         assert min(steps) >= -0.8 * 0.1 - 1e-9
         assert speeds[-1] == pytest.approx(1.0 * MPH)
 
@@ -229,7 +230,7 @@ def test_halting_coasts_to_zero_quickly():
         await sim.stop()
         speeds = advance(sim, 4)
         assert speeds[0] > 5.0 and speeds[-1] == 0.0
-        assert all(b <= a for a, b in zip(speeds, speeds[1:]))
+        assert all(b <= a for a, b in itertools.pairwise(speeds))
 
     run(scenario())
 

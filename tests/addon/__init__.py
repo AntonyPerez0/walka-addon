@@ -29,6 +29,19 @@ What a green run proves
   tables, its widgets or the upvalues of its functions.
 * The logic: protocol, speed model, calorie/step estimates, session
   lifecycle, history merge and totals, slash commands.
+* The windows (once Walka/UI exists) survive every control being clicked,
+  dragged, typed into and scrolled, in and out of combat.
+
+How to run
+----------
+``python -m pytest`` from the repository root (needs ``lupa`` and
+``pytest``; the companion's ``dev`` extra installs both). To regenerate the
+API snapshot from a copy of Blizzard's interface source::
+
+    python tools/gen_api_snapshot.py /path/to/Interface/AddOns
+
+and with ``WALKA_UI_SOURCE`` set to that folder the test-suite checks that
+the committed snapshot is exactly what the generator produces.
 
 What it cannot prove
 --------------------
@@ -46,8 +59,10 @@ What it cannot prove
   an ordinary value is just false, it is always truthy, and it works as a
   key. Arithmetic, ordering, concatenation, length, indexing, calling,
   ``tostring`` and passing it to a widget or library function do raise. So
-  code that only *branches* on a secret is not caught - Walka/Game.lua, the
-  one file that touches such APIs, has to be read with that in mind.
+  code that only *branches* on a secret is not caught by running it.
+  ``test_static.py`` covers the careless cases by reading the source: only
+  Walka/Game.lua may call an API that can return secrets, and it may not
+  test or combine such a result before issecretvalue() has cleared it.
 * That the snapshot is right. It is built from Blizzard's published UI
   source: documented functions are exact, widget method lists are exact for
   documented widget types (GameTooltip's own methods are inferred from

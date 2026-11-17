@@ -3873,6 +3873,22 @@ function M.descendants(root, widgetType, visibility)
     return out
 end
 
+--- The visible widgets below `root` that a player can do something with:
+-- buttons, sliders, edit boxes and anything with a mouse script.
+function M.interactive(root)
+    local out = {}
+    local kinds = { Button = true, CheckButton = true, Slider = true, EditBox = true }
+    for _, widget in ipairs(M.descendants(root, nil, true)) do
+        local s = W[widget]
+        local scripts = s.scripts
+        if kinds[s.type] or scripts.OnEnter or scripts.OnMouseWheel or scripts.OnMouseUp
+            or scripts.OnMouseDown or scripts.OnDragStart then
+            out[#out + 1] = widget
+        end
+    end
+    return out
+end
+
 --- Does the widget have a handler for this script?
 function M.script_set(widget, scriptName)
     return W[widget].scripts[scriptName] ~= nil

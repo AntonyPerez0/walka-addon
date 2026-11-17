@@ -43,9 +43,9 @@ def busy_rt(make_rt):
     rt.M.set_screen(2560, 1440)
     rt.M.set_ui_scale(0.8)
     if ui_files_present():
-        for name in ("WalkaHUD", "WalkaHistoryFrame", "WalkaOptionsPanel"):
-            frame = rt.global_(name)
-            if frame is None:
+        frames = [rt.global_(name) for name in sorted(rt.created_globals()) if name != "WalkaBeaconFrame"]
+        for frame in [frame for frame in frames if rt.M.is_widget(frame)]:
+            if "Frame" not in rt.snapshot.type_chain(rt.inspect(frame)["type"]):
                 continue
             for widget in rt.descendants(frame, visible=True):
                 if rt.M.script_set(widget, "OnEnter"):

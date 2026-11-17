@@ -49,11 +49,28 @@ const floorTo = (value, digits) => Math.floor(value * 10 ** digits + 1e-9) / 10 
 
 const same = (value) => value;
 const KINDS = {
-  speed: { unit: () => U.speedUnit, digits: () => 1, fixed: true, shown: (kmh) => U.speed(kmh), metric: (v) => U.toKmh(v) },
-  rate: { unit: () => `${U.speedUnit} per second`, digits: () => 2, fixed: true, shown: (kmh) => U.speed(kmh), metric: (v) => U.toKmh(v) },
+  speed: {
+    unit: () => U.speedUnit,
+    digits: () => 1,
+    fixed: true,
+    shown: (kmh) => U.speed(kmh),
+    metric: (v) => U.toKmh(v),
+  },
+  rate: {
+    unit: () => `${U.speedUnit} per second`,
+    digits: () => 2,
+    fixed: true,
+    shown: (kmh) => U.speed(kmh),
+    metric: (v) => U.toKmh(v),
+  },
   seconds: { unit: () => "s", digits: () => 1, shown: same, metric: same },
   minutes: { unit: () => "min", digits: () => 1, shown: (s) => s / 60, metric: (m) => m * 60 },
-  weight: { unit: () => U.weightUnit, digits: () => (U.mph ? 0 : 1), shown: (kg) => U.weight(kg), metric: (v) => U.toKg(v) },
+  weight: {
+    unit: () => U.weightUnit,
+    digits: () => (U.mph ? 0 : 1),
+    shown: (kg) => U.weight(kg),
+    metric: (v) => U.toKg(v),
+  },
   years: { unit: () => "years", digits: () => 0, shown: same, metric: same },
 };
 
@@ -105,13 +122,24 @@ class NumberField extends Field {
     this.helpEl.append(" ", this.rangeEl);
     const label = h("label", { for: this.id, text: spec.label });
     if (spec.optional) label.append(" ", h("span", { class: "opt", text: "(optional)" }));
-    this.el = h("div", { class: "field" }, label, h("div", { class: "control" }, this.input, this.unitEl), this.helpEl, this.errorEl);
+    this.el = h(
+      "div",
+      { class: "field" },
+      label,
+      h("div", { class: "control" }, this.input, this.unitEl),
+      this.helpEl,
+      this.errorEl,
+    );
     this.base = "";
   }
 
   bounds() {
     const digits = this.kind.digits();
-    return { lo: ceilTo(this.kind.shown(this.spec.min), digits), hi: floorTo(this.kind.shown(this.spec.max), digits), digits };
+    return {
+      lo: ceilTo(this.kind.shown(this.spec.min), digits),
+      hi: floorTo(this.kind.shown(this.spec.max), digits),
+      digits,
+    };
   }
 
   fill(source) {
@@ -135,7 +163,8 @@ class NumberField extends Field {
     const value = parseNumber(text);
     const { lo, hi, digits } = this.bounds();
     if (Number.isNaN(value)) return "Enter a number, for example " + trim((lo + hi) / 2, digits) + ".";
-    if (value < lo - 1e-9 || value > hi + 1e-9) return `Between ${trim(lo, digits)} and ${trim(hi, digits)} ${this.kind.unit()}.`;
+    if (value < lo - 1e-9 || value > hi + 1e-9)
+      return `Between ${trim(lo, digits)} and ${trim(hi, digits)} ${this.kind.unit()}.`;
     return "";
   }
 
@@ -162,7 +191,14 @@ class HeightField extends Field {
   constructor(spec) {
     super(spec);
     const input = (label) =>
-      h("input", { class: "short", type: "text", inputmode: "decimal", autocomplete: "off", "aria-label": label, "aria-describedby": this.describedBy() });
+      h("input", {
+        class: "short",
+        type: "text",
+        inputmode: "decimal",
+        autocomplete: "off",
+        "aria-label": label,
+        "aria-describedby": this.describedBy(),
+      });
     this.major = input("Height");
     this.minor = input("Height, inches");
     this.majorUnit = h("span", { class: "unit" });
@@ -214,8 +250,10 @@ class HeightField extends Field {
 
   error() {
     const cm = this.cm();
-    if (Number.isNaN(cm)) return U.mph ? "Enter feet and inches, for example 5 ft 9 in." : "Enter a number, for example 175.";
-    if (cm < 120 - 0.7 || cm > 230 + 0.7) return U.mph ? "Between 3 ft 11.5 in and 7 ft 6.5 in." : "Between 120 and 230 cm.";
+    if (Number.isNaN(cm))
+      return U.mph ? "Enter feet and inches, for example 5 ft 9 in." : "Enter a number, for example 175.";
+    if (cm < 120 - 0.7 || cm > 230 + 0.7)
+      return U.mph ? "Between 3 ft 11.5 in and 7 ft 6.5 in." : "Between 120 and 230 cm.";
     return "";
   }
 
@@ -298,7 +336,13 @@ class CheckField extends Field {
     this.input = h("input", { type: "checkbox", id: this.id, "aria-describedby": `${this.id}-help` });
     this.inputs = [];
     this.helpEl = h("span", { class: "help", id: `${this.id}-help`, text: spec.help || "" });
-    this.el = h("label", { class: "check full", for: this.id }, this.input, h("strong", { text: spec.label }), this.helpEl);
+    this.el = h(
+      "label",
+      { class: "check full", for: this.id },
+      this.input,
+      h("strong", { text: spec.label }),
+      this.helpEl,
+    );
     this.base = false;
   }
 
@@ -338,7 +382,16 @@ class Form {
     root.append(...this.main.map((field) => field.el));
     if (this.advanced.length) {
       root.append(
-        h("details", null, h("summary", { text: "Advanced timing" }), h("div", { class: "details-grid" }, this.advanced.map((field) => field.el))),
+        h(
+          "details",
+          null,
+          h("summary", { text: "Advanced timing" }),
+          h(
+            "div",
+            { class: "details-grid" },
+            this.advanced.map((field) => field.el),
+          ),
+        ),
       );
     }
     root.append(h("div", { class: "form-foot" }, this.saveButton, this.revertButton, this.statusEl));
@@ -408,8 +461,21 @@ const FORMS = {
   profile: {
     confirm: "profile",
     fields: [
-      { type: "number", kind: "weight", path: "profile.weight_kg", min: 30, max: 250, label: "Weight", help: "Calories burned scale with your weight." },
-      { type: "height", path: "profile.height_cm", label: "Height", help: "Sets your stride for the step estimate when the pad does not count steps itself." },
+      {
+        type: "number",
+        kind: "weight",
+        path: "profile.weight_kg",
+        min: 30,
+        max: 250,
+        label: "Weight",
+        help: "Calories burned scale with your weight.",
+      },
+      {
+        type: "height",
+        path: "profile.height_cm",
+        label: "Height",
+        help: "Sets your stride for the step estimate when the pad does not count steps itself.",
+      },
       {
         type: "number",
         kind: "years",
@@ -445,8 +511,24 @@ const FORMS = {
         label: "Max speed",
         help: "The hard cap. Nothing - the game, manual mode or a glitch - can drive the belt faster than this.",
       },
-      { type: "number", kind: "rate", path: "limits.accel_kmh_per_s", min: 0.05, max: 1, label: "Speeding up", help: "The most speed the belt may gain each second." },
-      { type: "number", kind: "rate", path: "limits.decel_kmh_per_s", min: 0.1, max: 2, label: "Slowing down", help: "The most speed the belt may lose each second." },
+      {
+        type: "number",
+        kind: "rate",
+        path: "limits.accel_kmh_per_s",
+        min: 0.05,
+        max: 1,
+        label: "Speeding up",
+        help: "The most speed the belt may gain each second.",
+      },
+      {
+        type: "number",
+        kind: "rate",
+        path: "limits.decel_kmh_per_s",
+        min: 0.1,
+        max: 2,
+        label: "Slowing down",
+        help: "The most speed the belt may lose each second.",
+      },
       {
         type: "number",
         kind: "seconds",
@@ -543,7 +625,12 @@ const FORMS = {
         ],
         help: "How the pad's own firmware counts speed. Walka rounds its commands to this grid. Applies the next time the pad connects.",
       },
-      { type: "check", path: "treadmill.auto_connect", label: "Connect automatically", help: "Look for the pad as soon as the companion starts." },
+      {
+        type: "check",
+        path: "treadmill.auto_connect",
+        label: "Connect automatically",
+        help: "Look for the pad as soon as the companion starts.",
+      },
       {
         type: "check",
         path: "treadmill.stop_on_exit",
@@ -624,9 +711,21 @@ async function findGameFolders(button) {
       );
     }
     for (const dir of dirs) {
-      const install = h("button", { class: "btn small", type: "button", text: "Install here", disabled: !data.bundled });
+      const install = h("button", {
+        class: "btn small",
+        type: "button",
+        text: "Install here",
+        disabled: !data.bundled,
+      });
       install.addEventListener("click", () => installAddon(install, dir));
-      rows.push(h("div", { class: "device" }, h("div", { class: "device-text" }, h("strong", { text: dir, title: dir })), install));
+      rows.push(
+        h(
+          "div",
+          { class: "device" },
+          h("div", { class: "device-text" }, h("strong", { text: dir, title: dir })),
+          install,
+        ),
+      );
     }
     out.replaceChildren(...rows);
   });
@@ -661,9 +760,13 @@ export function initSettings({ onUnits }) {
       empty: () =>
         "No heart-rate sensor found. Wear it so it wakes up; on a watch, switch on heart-rate broadcasting. A sensor already connected to another app may not show up.",
       onPick: (device, button) =>
-        run(button, () => post("/api/heart-rate/connect", { address: device.address, name: device.name || "", enabled: true }), {
-          success: `Connecting to ${device.name || device.address}.`,
-        }),
+        run(
+          button,
+          () => post("/api/heart-rate/connect", { address: device.address, name: device.name || "", enabled: true }),
+          {
+            success: `Connecting to ${device.name || device.address}.`,
+          },
+        ),
     }),
   );
   $("hr-off").addEventListener("click", (event) =>

@@ -91,7 +91,7 @@ def assert_decodes(packet: bytes, expected: dict) -> TreadmillData:
 
 def test_urevo_packet_layout_0x0484():
     """Speed, total distance (u24), expended energy, elapsed time - as sent by UREVO pads."""
-    packet = bytes.fromhex("8404" "4101" "d20400" "3800" "ffff" "ff" "f202")
+    packet = bytes.fromhex("84044101d204003800fffffff202")
     data = parse_treadmill_data(packet)
     assert data.flags == 0x0484
     assert data.speed_kmh == pytest.approx(3.21)
@@ -105,7 +105,7 @@ def test_urevo_packet_layout_0x0484():
 
 
 def test_urevo_packet_with_trailing_step_counter():
-    packet = bytes.fromhex("8424" "6000" "0a0000" "0100" "ffff" "ff" "1e00" "39 30 01".replace(" ", ""))
+    packet = bytes.fromhex("842460000a00000100ffffff1e0039 30 01".replace(" ", ""))
     data = parse_treadmill_data(packet)
     assert data.flags == 0x2484
     assert data.speed_kmh == pytest.approx(0.96)
@@ -115,21 +115,21 @@ def test_urevo_packet_with_trailing_step_counter():
 
 
 def test_idle_pad_packet():
-    data = parse_treadmill_data(bytes.fromhex("8404" "0000" "000000" "0000" "ffff" "ff" "0000"))
+    data = parse_treadmill_data(bytes.fromhex("840400000000000000ffffff0000"))
     assert data.speed_kmh == 0 and data.total_distance_m == 0 and data.total_energy_kcal == 0
     assert data.elapsed_time_s == 0
 
 
 def test_more_data_bit_is_inverted():
     # Bit 0 clear: speed present.
-    assert parse_treadmill_data(bytes.fromhex("0000" "c800")).speed_kmh == pytest.approx(2.0)
+    assert parse_treadmill_data(bytes.fromhex("0000c800")).speed_kmh == pytest.approx(2.0)
     # Bit 0 set: no speed field - the next field starts right after the flags.
-    data = parse_treadmill_data(bytes.fromhex("0500" "e80300"))
+    data = parse_treadmill_data(bytes.fromhex("0500e80300"))
     assert data.speed_kmh is None
     assert data.total_distance_m == 1000
     assert not data.truncated
     # A continuation packet carrying only elapsed time.
-    data = parse_treadmill_data(bytes.fromhex("0104" "3c00"))
+    data = parse_treadmill_data(bytes.fromhex("01043c00"))
     assert data.speed_kmh is None and data.elapsed_time_s == 60
 
 
@@ -227,16 +227,16 @@ def test_garbage_never_raises():
 
 
 def test_merge_keeps_old_fields_and_takes_new_ones():
-    first = parse_treadmill_data(bytes.fromhex("8404" "4101" "d20400" "3800" "ffff" "ff" "f202"))
-    second = parse_treadmill_data(bytes.fromhex("0101" "5a"))  # continuation: heart rate only
+    first = parse_treadmill_data(bytes.fromhex("84044101d204003800fffffff202"))
+    second = parse_treadmill_data(bytes.fromhex("01015a"))  # continuation: heart rate only
     merged = first.merge(second)
     assert merged.speed_kmh == pytest.approx(3.21) and merged.total_distance_m == 1234
     assert merged.heart_rate_bpm == 90
     assert merged.flags == 0x0101
     assert first.heart_rate_bpm is None  # merge does not mutate
-    third = parse_treadmill_data(bytes.fromhex("0000" "0000"))
+    third = parse_treadmill_data(bytes.fromhex("00000000"))
     assert merged.merge(third).speed_kmh == 0.0  # zero is a value, not "absent"
-    cut = parse_treadmill_data(bytes.fromhex("8404" "41"))
+    cut = parse_treadmill_data(bytes.fromhex("840441"))
     assert merged.merge(cut).truncated and merged.merge(cut).speed_kmh == pytest.approx(3.21)
 
 
@@ -268,7 +268,7 @@ def test_build_parse_round_trip():
         assert data.vendor_steps == fields.get("vendor_steps")
     # The UREVO layout comes out with the UREVO flags.
     urevo = build_treadmill_data(3.21, total_distance_m=1234, total_energy_kcal=56, elapsed_time_s=754)
-    assert urevo == bytes.fromhex("8404" "4101" "d20400" "3800" "ffff" "ff" "f202")
+    assert urevo == bytes.fromhex("84044101d204003800fffffff202")
 
 
 def test_build_clamps_out_of_range_values():
@@ -286,7 +286,7 @@ def test_build_clamps_out_of_range_values():
 
 
 def test_supported_speed_range():
-    urevo = parse_supported_speed_range(bytes.fromhex("6000" "8302" "1000"))
+    urevo = parse_supported_speed_range(bytes.fromhex("600083021000"))
     assert urevo == ftms.SpeedRange(0.96, 6.43, 0.16)
     metric = parse_supported_speed_range(struct.pack("<HHH", 100, 600, 10))
     assert metric is not None and (metric.min_kmh, metric.max_kmh, metric.step_kmh) == (1.0, 6.0, 0.1)
@@ -499,10 +499,10 @@ def test_heart_rate_monitor_configure_and_dict():
 
 
 def test_probe_describes_what_it_understands():
-    line = probe.describe_value(ftms.TREADMILL_DATA, bytes.fromhex("8424" "6000" "0a0000" "0100" "ffff" "ff" "1e00" "393001"))
+    line = probe.describe_value(ftms.TREADMILL_DATA, bytes.fromhex("842460000a00000100ffffff1e00393001"))
     assert "flags=0x2484" in line and "speed=0.96" in line and "vendor_steps=77881" in line
-    assert "TRUNCATED" in probe.describe_value(ftms.TREADMILL_DATA, bytes.fromhex("8404" "41"))
-    line = probe.describe_value(ftms.SUPPORTED_SPEED_RANGE, bytes.fromhex("6000" "8302" "1000"))
+    assert "TRUNCATED" in probe.describe_value(ftms.TREADMILL_DATA, bytes.fromhex("840441"))
+    line = probe.describe_value(ftms.SUPPORTED_SPEED_RANGE, bytes.fromhex("600083021000"))
     assert "min=0.96 max=6.43 step=0.16" in line and "US firmware" in line
     assert "US firmware" not in probe.describe_value(ftms.SUPPORTED_SPEED_RANGE, struct.pack("<HHH", 100, 600, 10))
     assert "speed_target=yes" in probe.describe_value(ftms.FITNESS_MACHINE_FEATURE, struct.pack("<II", 4, 1))
