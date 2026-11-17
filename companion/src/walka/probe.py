@@ -1,11 +1,16 @@
 """Read-only Bluetooth probe: what does this treadmill actually expose?
 
 ``walka probe`` connects to the pad, lists every GATT service and
-characteristic, reads the readable ones and listens to every notification
-for a while - without writing a single byte, so the belt cannot move. The
-report answers the questions no manual does (speed range and step, where the
-step counter lives, what the pad says when you press its buttons) and is the
-thing to attach to a bug report.
+characteristic, reads the readable ones and listens to notifications for a
+while. It never writes a command, so the belt cannot move. The one thing it
+does write is the switch that turns notifications on, and by default only
+for the standard characteristics Walka knows (Fitness Machine, Device
+Information, Heart Rate): what switching them on does on a vendor's own
+channels is not known, so those are listened to only with ``--all``.
+
+The report answers the questions no manual does (speed range and step, where
+the step counter lives, what the pad says when you press its buttons) and is
+the thing to attach to a bug report.
 """
 
 from __future__ import annotations
@@ -17,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from . import ftms
-from .treadmill.ftms_ble import DEFAULT_NAME_PREFIXES, is_treadmill_candidate
+from .treadmill.ftms_ble import DEFAULT_NAME_PREFIXES, is_treadmill_candidate, name_matches
 
 Emit = Callable[[str], None]
 
@@ -36,6 +41,15 @@ _KNOWN = {
     ftms.RSC_MEASUREMENT: "RSC Measurement",
     ftms.DEVICE_INFORMATION_SERVICE: "Device Information",
 }
+
+# Services whose notifications the probe switches on without being asked to:
+# standard ones, where doing so is what every fitness app does.
+LISTEN_SERVICES = frozenset({ftms.FTMS_SERVICE, ftms.DEVICE_INFORMATION_SERVICE, ftms.HEART_RATE_SERVICE})
+
+
+def listens_to(service_uuid: str, *, all_characteristics: bool = False) -> bool:
+    """Does the probe switch on notifications for characteristics of this service?"""
+    return all_characteristics or service_uuid.lower() in LISTEN_SERVICES
 
 
 def describe_value(uuid: str, data: bytes) -> str:
@@ -94,9 +108,13 @@ async def probe(
     name_prefixes: Sequence[str] = DEFAULT_NAME_PREFIXES,
     listen_s: float = 30.0,
     scan_s: float = 8.0,
+    all_characteristics: bool = False,
     emit: Emit = print,
 ) -> list[str]:
-    """Run the probe; returns the report lines (also passed to ``emit``)."""
+    """Run the probe; returns the report lines (also passed to ``emit``).
+
+    ``all_characteristics`` also listens to the vendor's own channels.
+    """
     from bleak import BleakClient, BleakScanner
 
     from .treadmill.bleak_backend import prepare_windows_threading
@@ -109,7 +127,8 @@ async def probe(
         emit(line)
 
     out(f"Walka Bluetooth probe - {time.strftime('%Y-%m-%d %H:%M:%S')}")
-    out("This tool only reads. It never writes to the treadmill, so the belt cannot move.")
+    out("This tool only reads and listens. It never writes a command to the treadmill, so the belt")
+    out("cannot move. (The only thing it writes is the switch that turns notifications on.)")
     out("")
     out(f"Scanning for {scan_s:.0f} s ...")
     found = await BleakScanner.discover(timeout=scan_s, return_adv=True)
@@ -118,9 +137,11 @@ async def probe(
     for device, adv in found.values():
         name = adv.local_name or device.name or ""
         candidate = is_treadmill_candidate(name, adv.service_uuids, name_prefixes)
-        rows.append((not candidate, -(adv.rssi or -999), name, device, adv, candidate))
-    rows.sort(key=lambda r: (r[0], r[1]))
-    for _, _, name, device, adv, candidate in rows:
+        # Known names first: the first candidate listed is the one probed.
+        order = (not name_matches(name, name_prefixes), not candidate, -(adv.rssi or -999))
+        rows.append((order, name, device, adv, candidate))
+    rows.sort(key=lambda r: r[0])
+    for _, name, device, adv, candidate in rows:
         marker = "*" if candidate else " "
         services = ",".join(u[4:8] for u in adv.service_uuids) or "-"
         out(f" {marker} {device.address}  rssi={adv.rssi:>4}  name={name or '(none)':<24} services={services}")
@@ -139,6 +160,7 @@ async def probe(
     async with BleakClient(target, timeout=20.0) as client:
         out("Connected. GATT table:")
         notifiable = []
+        skipped = []
         for service in client.services:
             out(f"  service {service.uuid}  {_KNOWN.get(service.uuid.lower(), '')}")
             for char in service.characteristics:
@@ -151,8 +173,17 @@ async def probe(
                     except Exception as exc:
                         out(f"      read failed: {exc}")
                 if "notify" in char.properties or "indicate" in char.properties:
-                    notifiable.append(char)
+                    if listens_to(service.uuid, all_characteristics=all_characteristics):
+                        notifiable.append(char)
+                    else:
+                        skipped.append(char)
         out("")
+        if skipped:
+            out(
+                f"Not listening to {len(skipped)} characteristic(s) outside the standard services: "
+                + ", ".join(char.uuid[4:8] for char in skipped)
+            )
+            out("(run 'walka probe --all' to listen to those too, for example to look for a step counter).")
         out(f"Listening to {len(notifiable)} characteristic(s) for {listen_s:.0f} s.")
         out("Now is a good time to: start the belt with the remote, change speed, pause, stop.")
         started = time.monotonic()

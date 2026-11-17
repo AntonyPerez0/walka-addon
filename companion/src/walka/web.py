@@ -34,6 +34,7 @@ log = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).parent / "static"
 PUSH_INTERVAL_S = 0.5
+SHUTDOWN_TIMEOUT_S = 1.0
 
 # The dashboard is a self-contained page: it may load and talk to this server
 # only, and no other page may frame it (a framed dashboard could be used to
@@ -144,12 +145,19 @@ def create_app(app: App) -> web.Application:
             }
         )
         await response.prepare(request)
+        # The stream ends when the companion is stopping (or the server
+        # cancels it): a handler that never finished would keep the program
+        # from quitting for as long as a dashboard tab stayed open.
+        stopping = app._stopping
         try:
-            while True:
+            while not stopping.is_set():
                 payload = json.dumps(app.snapshot(), separators=(",", ":"))
                 await response.write(f"data: {payload}\n\n".encode())
-                await asyncio.sleep(PUSH_INTERVAL_S)
-        except (asyncio.CancelledError, ConnectionResetError, ConnectionError):
+                try:
+                    await asyncio.wait_for(stopping.wait(), PUSH_INTERVAL_S)
+                except asyncio.TimeoutError:
+                    pass
+        except (ConnectionResetError, ConnectionError):
             pass
         return response
 
@@ -322,7 +330,9 @@ def create_app(app: App) -> web.Application:
 
 async def serve(app: App, host: str, port: int) -> web.AppRunner:
     """Start the dashboard server; returns the runner (call ``cleanup()`` to stop)."""
-    runner = web.AppRunner(create_app(app), access_log=None)
+    # shutdown_timeout: how long quitting waits for requests in flight (the
+    # default is a minute; nothing here takes that long to finish).
+    runner = web.AppRunner(create_app(app), access_log=None, shutdown_timeout=SHUTDOWN_TIMEOUT_S)
     await runner.setup()
     site = web.TCPSite(runner, host, port)
     await site.start()

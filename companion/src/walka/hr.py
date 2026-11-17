@@ -15,11 +15,13 @@ from collections.abc import Callable
 from typing import Any
 
 from . import ftms
+from .treadmill.ftms_ble import describe_bluetooth_error
 
 log = logging.getLogger(__name__)
 
 FRESH_S = 10.0  # a reading older than this is not used
 RETRY_S = 15.0
+SENSOR_TIMEOUT_HINT = "is the sensor on, in range and broadcasting its heart rate?"
 
 # Name fragments of watches and straps that can act as a Bluetooth
 # heart-rate sensor (lower case).
@@ -99,7 +101,10 @@ class HeartRateMonitor:
         from .treadmill.bleak_backend import prepare_windows_threading
 
         prepare_windows_threading()
-        found = await BleakScanner.discover(timeout=timeout, return_adv=True)
+        try:
+            found = await BleakScanner.discover(timeout=timeout, return_adv=True)
+        except Exception as exc:  # Bluetooth switched off, no adapter: say so in plain words
+            raise RuntimeError(describe_bluetooth_error(exc, SENSOR_TIMEOUT_HINT)) from exc
         devices = []
         for device, adv in found.values():
             name = adv.local_name or device.name or ""
@@ -167,8 +172,8 @@ class HeartRateMonitor:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                self.detail = f"heart-rate sensor error: {exc}"
-                log.debug("heart-rate connection failed: %s", exc)
+                self.detail = f"heart-rate sensor error: {describe_bluetooth_error(exc, SENSOR_TIMEOUT_HINT)}"
+                log.debug("heart-rate connection failed: %s", self.detail)
             if self._closing:
                 break
             try:

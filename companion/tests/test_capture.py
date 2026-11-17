@@ -449,3 +449,141 @@ def test_is_game_executable(exe: str, expected: bool):
     """The game is recognised by where its executable lives, so that it is
     found even if its window class or title is not what we expect."""
     assert capture.is_game_executable(exe) is expected
+
+
+# ---- the process-id -> executable cache --------------------------------------------------
+
+GAME_EXE = r"C:\Program Files (x86)\World of Warcraft\_forever_\Wow.exe"
+OTHER_EXE = r"C:\Program Files\Notes\notes.exe"
+GAME_CLASS = "GxWindowClassD3d"
+
+
+class Processes:
+    """Which executable each process id belongs to right now."""
+
+    def __init__(self, **exes: str) -> None:
+        self.exes = {int(pid.lstrip("p")): exe for pid, exe in exes.items()}
+        self.asked: list[int] = []
+
+    def query(self, pid: int) -> str:
+        self.asked.append(pid)
+        return self.exes.get(pid, "")
+
+
+@pytest.fixture
+def exe_cache(monkeypatch) -> dict[int, str]:
+    cache: dict[int, str] = {}
+    monkeypatch.setattr(capture, "_EXE_CACHE", cache)
+    return cache
+
+
+def test_executables_are_looked_up_once_per_process(exe_cache):
+    processes = Processes(p100=OTHER_EXE, p200=GAME_EXE)
+    for _ in range(5):
+        assert capture._exe_for_window("Notes", "NotesWindow", 100, processes.query) == OTHER_EXE
+        assert capture._exe_for_window("World of Warcraft", GAME_CLASS, 200, processes.query) == GAME_EXE
+    assert processes.asked == [100, 200]  # not once a second for every window on the desktop
+
+
+def test_the_game_is_recognised_when_it_gets_a_recycled_process_id(exe_cache):
+    """A program with a window exits; hours later Windows gives its process
+    id to the game. The remembered path must not make the game's window
+    look like somebody else's."""
+    processes = Processes(p4242=OTHER_EXE)
+    assert capture._exe_for_window("Notes", "NotesWindow", 4242, processes.query) == OTHER_EXE
+    processes.exes[4242] = GAME_EXE  # the same id, a new process
+    for title, class_name in (("World of Warcraft", GAME_CLASS), ("World of Warcraft", ""), ("", GAME_CLASS)):
+        exe_cache[4242] = OTHER_EXE
+        exe = capture._exe_for_window(title, class_name, 4242, processes.query)
+        assert exe == GAME_EXE and capture.is_wow_window(title, exe, class_name)
+    assert exe_cache[4242] == GAME_EXE
+
+
+def test_another_program_is_not_taken_for_the_game_because_of_its_recycled_process_id(exe_cache):
+    """The other way round: the game exits and some other program gets its
+    id. A window is taken for the game on the strength of its executable
+    alone when its class and title are unknown - so that executable is
+    checked afresh."""
+    processes = Processes(p4242=GAME_EXE)
+    assert capture._exe_for_window("", "UnknownClass", 4242, processes.query) == GAME_EXE
+    processes.exes[4242] = OTHER_EXE
+    exe = capture._exe_for_window("Notes", "NotesWindow", 4242, processes.query)
+    assert exe == OTHER_EXE and not capture.is_game_executable(exe)
+    assert exe_cache[4242] == OTHER_EXE
+
+
+def test_a_window_that_only_looks_like_the_game_is_still_rejected(exe_cache):
+    """Asking again does not turn a "no" into a "yes"."""
+    processes = Processes(p7=OTHER_EXE)
+    exe = capture._exe_for_window("World of Warcraft", "", 7, processes.query)
+    assert exe == OTHER_EXE and not capture.is_wow_window("World of Warcraft", exe, "")
+    # A process that cannot be opened (no path) is left alone: nothing to disagree with.
+    assert capture._exe_for_window("World of Warcraft", GAME_CLASS, 8, processes.query) == ""
+    assert processes.asked.count(8) == 1
+
+
+def test_the_exe_cache_does_not_grow_without_bound(exe_cache):
+    processes = Processes()
+    for pid in range(1, 2000):
+        capture._exe_for_window("", "", pid, processes.query)
+    assert len(exe_cache) <= 513
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="walks the windows of a real desktop")
+def test_the_window_finder_runs_on_a_real_desktop(exe_cache):
+    """No game on a test machine - but every visible window there is has
+    been looked at, and its process asked for its executable."""
+    window = capture.find_wow_window()
+    assert window is None or isinstance(window, GameWindow)
+    assert all(isinstance(pid, int) and isinstance(path, str) for pid, path in exe_cache.items())
+    again = capture.find_wow_window()  # (this time from the cache)
+    assert (again is None) == (window is None)
+
+
+# ---- the mss backend ----------------------------------------------------------------------
+
+
+def test_mss_grabber_uses_the_class_and_falls_back_to_the_old_factory(monkeypatch):
+    """mss 10.2 deprecates ``mss.mss()`` in favour of ``mss.MSS``; either
+    spelling must work, and the class is preferred when there is one."""
+    import types
+
+    made: list[str] = []
+
+    class Capture:
+        monitors = [{"left": 0, "top": 0, "width": 30, "height": 20}, {"left": 0, "top": 0, "width": 30, "height": 20}]
+
+        def grab(self, box):
+            return types.SimpleNamespace(
+                width=box["width"], height=box["height"], bgra=bytes(4 * box["width"] * box["height"])
+            )
+
+        def close(self):
+            made.append("closed")
+
+    def new_style():
+        made.append("MSS")
+        return Capture()
+
+    def old_style():
+        made.append("mss")
+        return Capture()
+
+    monkeypatch.setitem(sys.modules, "mss", types.SimpleNamespace(MSS=new_style, mss=old_style))
+    grabber = capture.MssGrabber()
+    assert made == ["MSS"]
+    assert grabber.monitors() == [(0, 0, 30, 20)]
+    shot = grabber.grab(1, 2, 3, 4)
+    assert (shot.width, shot.height, len(shot.bgra)) == (3, 4, 48)
+    grabber.close()
+
+    monkeypatch.setitem(sys.modules, "mss", types.SimpleNamespace(mss=old_style))
+    capture.MssGrabber().close()
+    assert made == ["MSS", "closed", "mss", "closed"]
+
+
+def test_the_installed_mss_has_the_class():
+    """... so that the deprecated factory is not what actually gets used."""
+    import mss
+
+    assert callable(getattr(mss, "MSS", None))

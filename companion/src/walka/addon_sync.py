@@ -321,20 +321,44 @@ def find_addon_dir(configured: str | None = None, exe_path: str | None = None) -
     return None
 
 
+# Where the addon sits inside the packaged executable. Not at the top level:
+# on a file system that ignores case, "Walka" there would be the very folder
+# that holds this package's own files ("walka"), dashboard and all.
+BUNDLED_ADDON_PATH = ("_addon", ADDON_NAME)
+
+# What an addon is made of. Anything else in the source folder - a
+# half-written temp file, files that are not the addon's at all - stays out
+# of the game's AddOns folder.
+ADDON_FILE_SUFFIXES = frozenset(
+    {".toc", ".lua", ".xml", ".tga", ".blp", ".png", ".jpg", ".ttf", ".otf", ".ogg", ".mp3", ".wav", ".txt", ".md"}
+)
+
+
 def bundled_addon_dir() -> Path | None:
     """The copy of the addon shipped with the companion (for installing)."""
     candidates = []
     frozen_root = getattr(sys, "_MEIPASS", None)  # PyInstaller bundle
     if frozen_root:
-        candidates.append(Path(frozen_root) / ADDON_NAME)
-    here = Path(__file__).resolve()
-    candidates.append(here.parent / "_addon" / ADDON_NAME)
-    for parent in here.parents:
-        candidates.append(parent / ADDON_NAME)  # running from a source checkout
+        # Only where the build puts it: no looking around the user's disk.
+        candidates.append(Path(frozen_root).joinpath(*BUNDLED_ADDON_PATH))
+    else:
+        here = Path(__file__).resolve()
+        candidates.append(here.parent.joinpath(*BUNDLED_ADDON_PATH))
+        for parent in here.parents:
+            candidates.append(parent / ADDON_NAME)  # running from a source checkout
     for candidate in candidates:
         if (candidate / f"{ADDON_NAME}.toc").exists():
             return candidate
     return None
+
+
+def addon_files(source: Path) -> list[Path]:
+    """The addon's own files under ``source``, relative to it."""
+    return sorted(
+        path.relative_to(source)
+        for path in Path(source).rglob("*")
+        if path.is_file() and path.suffix.lower() in ADDON_FILE_SUFFIXES
+    )
 
 
 def install_addon(addons_dir: Path, source: Path | None = None) -> Path:
@@ -353,7 +377,11 @@ def install_addon(addons_dir: Path, source: Path | None = None) -> Path:
     data_path = target / DATA_FILE
     if data_path.exists():
         kept = data_path.read_bytes()
-    shutil.copytree(source, target, dirs_exist_ok=True, ignore=shutil.ignore_patterns("*.tmp"))
+    target.mkdir(exist_ok=True)
+    for relative in addon_files(source):
+        destination = target / relative
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(Path(source) / relative, destination)
     if kept is not None:
         data_path.write_bytes(kept)
     return target

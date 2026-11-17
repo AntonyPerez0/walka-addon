@@ -21,7 +21,7 @@ from typing import Any
 from walka import beacon, ftms
 from walka.capture import Shot
 from walka.protocol import Frame
-from walka.treadmill.ftms_ble import FoundDevice, is_treadmill_candidate
+from walka.treadmill.ftms_ble import FoundDevice, name_matches
 
 # ---- Lua ---------------------------------------------------------------------
 
@@ -547,13 +547,18 @@ class FakeBackend:
         self.finds += 1
         if self.scan_error is not None:
             raise self.scan_error
-        for pad in self._visible():
-            uuids = [ftms.FTMS_SERVICE] if pad.advertises_ftms else []
-            if address:
+        visible = self._visible()
+        if address:
+            for pad in visible:
                 if pad.address.upper() == address.upper():
                     return self._found(pad)
-            elif is_treadmill_candidate(pad.name, uuids, name_prefixes):
-                return self._found(pad)
+            return None
+        # As the real backend: a known name first, and a device that only
+        # advertises the Fitness Machine Service when no such name is around.
+        for wanted in (lambda pad: name_matches(pad.name, name_prefixes), lambda pad: pad.advertises_ftms):
+            for pad in visible:
+                if wanted(pad):
+                    return self._found(pad)
         return None
 
     def client(self, device: FoundDevice, on_disconnect: Callable[[], None]) -> FakeClient:

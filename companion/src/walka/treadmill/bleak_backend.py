@@ -6,8 +6,10 @@ machines without a Bluetooth stack.
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from collections.abc import Callable, Sequence
+from contextlib import aclosing
 from typing import Any
 
 from bleak import BleakClient, BleakScanner
@@ -15,7 +17,7 @@ from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
 
 from .. import ftms
-from .ftms_ble import FoundDevice, is_treadmill_candidate
+from .ftms_ble import FoundDevice, name_matches
 
 
 def prepare_windows_threading() -> None:
@@ -108,23 +110,40 @@ class BleakBackend:
         return found
 
     async def find(self, address: str | None, name_prefixes: Sequence[str], timeout: float) -> FoundDevice | None:
+        """Scan for the treadmill to connect to (see ``BleBackend.find``).
+
+        With an address, or once a device with a known name is heard, the
+        scan ends at once. A device that only advertises the Fitness Machine
+        Service could just as well be a bike trainer or the neighbours'
+        treadmill - and "Start" in the game would then start *that* belt -
+        so it is only settled for when the whole scan has turned up no known
+        name, and then the one with the strongest signal is taken.
+        """
         prepare_windows_threading()
         wanted = address.upper() if address else None
-        seen: dict[str, AdvertisementData] = {}
+        nameless: dict[str, FoundDevice] = {}  # Fitness Machine advertisers without a known name
 
-        def match(device: BLEDevice, adv: AdvertisementData) -> bool:
-            if wanted is not None:
-                ok = device.address.upper() == wanted
-            else:
-                ok = is_treadmill_candidate(adv.local_name or device.name, _advertised_services(adv), name_prefixes)
-            if ok:
-                seen[device.address] = adv
-            return ok
+        async def listen(scanner: BleakScanner) -> FoundDevice:
+            async with aclosing(scanner.advertisement_data()) as advertisements:
+                async for device, adv in advertisements:
+                    found = _found(device, adv)
+                    if wanted is not None:
+                        if device.address.upper() == wanted:
+                            return found
+                    elif name_matches(found.name, name_prefixes):
+                        return found
+                    elif found.ftms:
+                        nameless[found.address] = found
+            raise RuntimeError("the Bluetooth scan ended by itself")
 
-        device = await BleakScanner.find_device_by_filter(match, timeout=timeout)
-        if device is None:
+        async with BleakScanner() as scanner:
+            try:
+                return await asyncio.wait_for(listen(scanner), timeout)
+            except asyncio.TimeoutError:
+                pass
+        if not nameless:
             return None
-        return _found(device, seen.get(device.address))
+        return max(nameless.values(), key=lambda d: d.rssi if d.rssi is not None else -999)
 
     def client(self, device: FoundDevice, on_disconnect: Callable[[], None]) -> BleakClientAdapter:
         return BleakClientAdapter(device.handle or device.address, on_disconnect)

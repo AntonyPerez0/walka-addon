@@ -656,16 +656,22 @@ def test_commands_need_a_connection():
 
 
 def test_commands_are_serialised():
-    """Two commands issued together are written one after the other, each
-    waiting for its own answer."""
+    """Commands issued together are written one after the other, each
+    waiting for its own answer. (A pause or stop is the exception: it goes
+    first - see test_ftms_ble_hardening.py.)"""
     driver, pad, *_ = rig(command_timeout_s=1.0)
 
     async def scenario():
         await running(driver, pad)
-        await asyncio.gather(driver.set_speed(2.0 * KMH_PER_MPH), driver.set_speed(3.0 * KMH_PER_MPH), driver.pause())
+        await asyncio.gather(
+            driver.set_speed(2.0 * KMH_PER_MPH),
+            driver.set_speed(3.0 * KMH_PER_MPH),
+            driver.set_speed(2.5 * KMH_PER_MPH),
+        )
+        await driver.pause()
 
     run(scenario())
-    assert pad.writes[2:] == [bytes.fromhex("024a01"), bytes.fromhex("02ea01"), PAUSE]
+    assert pad.writes[2:] == [bytes.fromhex("024a01"), bytes.fromhex("02ea01"), bytes.fromhex("029a01"), PAUSE]
     assert pad.state == "paused"
 
 

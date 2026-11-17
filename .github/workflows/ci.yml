@@ -50,13 +50,21 @@ jobs:
           $exe = "companion/dist/Walka.exe"
           & $exe --version
           if ($LASTEXITCODE -ne 0) { throw "version check failed" }
+          # Everything the frozen app imports only at run time (the Windows
+          # Runtime modules behind Bluetooth, the screen capture backend),
+          # the dashboard page and the bundled addon. The runner has no
+          # Bluetooth adapter, so the scan below stops before it would
+          # touch most of these: this is what notices a module missing
+          # from the bundle.
+          & $exe selfcheck
+          if ($LASTEXITCODE -ne 0) { throw "selfcheck failed: something the app needs at run time is missing from Walka.exe" }
           # The Bluetooth stack must load inside the frozen app. The runner
           # has no Bluetooth adapter, so the scan itself is expected to say
           # so - what must not happen is an import error.
           $scan = (& $exe scan --seconds 2 2>&1 | Out-String)
           Write-Host $scan
           if ($scan -match "ModuleNotFoundError|ImportError|AttributeError|Traceback") { throw "Bluetooth stack did not load in the frozen app" }
-          # "No Bluetooth adapter" is the expected answer here and exits 1;
+          # "No Bluetooth adapter" is the expected answer here and exits 2;
           # do not let that become this step's exit code.
           $global:LASTEXITCODE = 0
           $env:WALKA_DATA_DIR = Join-Path $env:RUNNER_TEMP "walka-data"

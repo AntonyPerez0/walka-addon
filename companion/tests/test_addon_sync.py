@@ -6,6 +6,7 @@ from __future__ import annotations
 import math
 import os
 import random
+import sys
 import time
 from pathlib import Path
 
@@ -677,6 +678,65 @@ def test_install_preserves_existing_history_and_updates_the_code(tmp_path: Path,
     assert (target / "Walka.lua").read_bytes() == (addon_source / "Walka.lua").read_bytes()
     assert (target / "MyNotes.txt").read_text("utf-8") == "keep me\n"
     assert not list(target.rglob("*.tmp"))
+
+
+def test_install_copies_addon_files_and_nothing_else(tmp_path: Path, addon_source):
+    """Whatever else lies in the source folder stays out of the game. (In
+    the first Windows builds the bundled addon folder "Walka" and the
+    package's own "walka" were one and the same folder, and installing
+    copied the dashboard's page and scripts into Interface\\AddOns.)"""
+    import shutil
+
+    source = tmp_path / "bundle" / "Walka"
+    shutil.copytree(addon_source, source)
+    (source / "static").mkdir()
+    for name in ("index.html", "app.js", "app.css", "favicon.svg"):
+        (source / "static" / name).write_text("not part of the addon", "utf-8")
+    (source / "addon_sync.py").write_text("# nor is this", "utf-8")
+    (source / "__pycache__").mkdir()
+    (source / "__pycache__" / "addon_sync.cpython-312.pyc").write_bytes(b"\x00")
+    (source / "Core" / "notes.tmp").write_text("half-written", "utf-8")
+
+    addons = tmp_path / "Interface" / "AddOns"
+    addons.mkdir(parents=True)
+    installed = addon_sync.install_addon(addons, source)
+    copied = sorted(path.relative_to(installed).as_posix() for path in installed.rglob("*"))
+    expected = sorted(path.relative_to(addon_source).as_posix() for path in addon_source.rglob("*"))
+    assert copied == expected  # the addon, whole - and no "static" folder, not even an empty one
+
+
+def test_every_file_of_the_addon_is_of_a_kind_that_gets_installed(addon_source):
+    """Guards the list of file types: a new kind of file added to the addon
+    (a texture, a sound) must be added to ADDON_FILE_SUFFIXES, or installing
+    would silently leave it out."""
+    files = [path.relative_to(addon_source) for path in addon_source.rglob("*") if path.is_file()]
+    assert files and sorted(files) == addon_sync.addon_files(addon_source)
+    assert {".toc", ".lua", ".xml", ".tga", ".blp"} <= addon_sync.ADDON_FILE_SUFFIXES
+    assert not {".tmp", ".py", ".pyc", ".html", ".js", ".css", ".svg", ".exe", ".dll"} & addon_sync.ADDON_FILE_SUFFIXES
+
+
+def test_bundled_addon_in_the_packaged_app(tmp_path: Path, monkeypatch, addon_source):
+    """Inside Walka.exe the addon lives under _addon/Walka - a place that
+    cannot be the package's own folder on a file system that ignores case."""
+    import shutil
+
+    bundle = tmp_path / "_MEI12345"
+    (bundle / "walka" / "static").mkdir(parents=True)
+    (bundle / "walka" / "static" / "index.html").write_text("<html>", "utf-8")
+    monkeypatch.setattr(sys, "_MEIPASS", str(bundle), raising=False)
+    assert addon_sync.bundled_addon_dir() is None  # not bundled: say so, rather than search the disk
+
+    shutil.copytree(addon_source, bundle / "_addon" / "Walka")
+    assert addon_sync.bundled_addon_dir() == bundle / "_addon" / "Walka"
+    assert addon_sync.BUNDLED_ADDON_PATH[0].lower() != "walka"
+
+    # The old location is not looked at any more: on Windows it *is* the
+    # package folder, which holds a Walka.toc only by accident of the build.
+    (bundle / "Walka").mkdir(exist_ok=True)
+    (bundle / "Walka" / "Walka.toc").write_text("## Interface: 16001\n", "utf-8")
+    assert addon_sync.bundled_addon_dir() == bundle / "_addon" / "Walka"
+    shutil.rmtree(bundle / "_addon")
+    assert addon_sync.bundled_addon_dir() is None
 
 
 def test_install_errors(tmp_path: Path, addon_source, monkeypatch):

@@ -261,3 +261,275 @@ def test_module_entry_point_reports_its_version():
         [sys.executable, "-m", "walka", "--version"], env=env, capture_output=True, text=True, timeout=30
     )
     assert result.returncode == 0 and result.stdout.strip() == f"walka {__version__}"
+
+
+# ---- the hidden "selfcheck" command and the build script ----------------------------------------
+
+
+def load_build_script(repo_root: Path):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("walka_build_exe", repo_root / "companion" / "build_exe.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_selfcheck_finds_everything_in_a_source_checkout(capsys):
+    """On Windows this imports the Windows Runtime modules and the capture
+    backend by the same names the packaged app is checked with."""
+    assert cli.main(["selfcheck"]) == 0
+    out = capsys.readouterr().out.strip().splitlines()
+    assert len(out) == 1 and out[0].startswith("selfcheck OK")
+
+
+def test_selfcheck_says_what_is_missing(capsys, monkeypatch):
+    from walka import addon_sync
+
+    monkeypatch.setattr(cli, "RUNTIME_MODULES", (*cli.RUNTIME_MODULES, "walka.no_such_module"))
+    monkeypatch.setattr(addon_sync, "bundled_addon_dir", lambda: None)
+    assert cli.main(["selfcheck"]) == 1
+    out = capsys.readouterr().out.strip().splitlines()
+    assert len(out) == 1 and out[0].startswith("selfcheck FAILED")
+    assert "walka.no_such_module" in out[0] and "addon folder is missing" in out[0]
+
+
+def test_selfcheck_is_not_advertised():
+    assert "selfcheck" not in cli.build_parser().format_help()
+    assert cli.build_parser().parse_args(["selfcheck"]).command == "selfcheck"
+
+
+def test_the_build_bundles_what_selfcheck_looks_for(repo_root: Path):
+    """winrt.windows.foundation.collections is imported by name from inside
+    winrt's compiled modules: without a hidden import it is left out of
+    Walka.exe, and every Bluetooth scan in the packaged app fails."""
+    from walka import addon_sync
+
+    build = load_build_script(repo_root)
+    windows = build.pyinstaller_args("win32")
+    hidden = {windows[i + 1] for i, arg in enumerate(windows) if arg == "--hidden-import"}
+    assert "winrt.windows.foundation.collections" in hidden
+    assert {name for name in cli.WINDOWS_RUNTIME_MODULES if name.startswith("winrt.")} <= hidden
+    # ... and every Windows Runtime package the project depends on is among them.
+    pyproject = (repo_root / "companion" / "pyproject.toml").read_text("utf-8")
+    import re
+
+    packages = re.findall(r'"winrt-(Windows\.[A-Za-z.]+)', pyproject)
+    assert len(packages) >= 8
+    assert {"winrt." + package.lower() for package in packages} <= hidden
+    assert "--hidden-import" not in build.pyinstaller_args("linux")
+
+    # The addon is bundled where addon_sync looks for it, and not in a folder
+    # that Windows would merge with the package's own ("Walka" vs "walka").
+    destinations = [windows[i + 1].split(os.pathsep)[-1] for i, arg in enumerate(windows) if arg == "--add-data"]
+    assert "/".join(addon_sync.BUNDLED_ADDON_PATH) in destinations
+    top_level = [destination.split("/")[0].lower() for destination in destinations]
+    assert len(set(top_level)) == len(top_level) == 2 and "walka" in top_level
+
+
+# ---- the console -------------------------------------------------------------------------------------
+
+
+def test_quick_edit_is_the_only_console_mode_bit_changed():
+    assert cli._without_quick_edit(0x01F7) == 0x01B7  # QuickEdit off, the rest untouched
+    assert cli._without_quick_edit(0x0007) == 0x0087  # "extended flags" is what makes Windows honour it
+    assert cli._without_quick_edit(cli._without_quick_edit(0x01F7)) == 0x01B7
+    restore = cli._disable_console_quick_edit()  # no console here (or not Windows): must do nothing, quietly
+    restore()
+
+
+def test_logging_does_not_wait_for_the_console():
+    """A console whose writes block (a text selection in the window) must
+    not block whoever logs - the event loop, in the middle of a STOP."""
+    import logging
+    import threading
+
+    writing, release = threading.Event(), threading.Event()
+    written: list[str] = []
+
+    class StuckConsole:
+        def write(self, text: str) -> int:
+            writing.set()
+            release.wait(20)
+            written.append(text)
+            return len(text)
+
+        def flush(self) -> None:
+            pass
+
+    stop_logging = cli._start_logging(verbose=False, stream=StuckConsole())
+    try:
+        logging.getLogger("walka.test").warning("STOP pressed - belt stopped.")
+        logging.getLogger("walka.test").info("a second line")
+        # Both calls came back although nothing has been written yet ...
+        assert writing.wait(5) and written == []
+    finally:
+        release.set()
+        stop_logging()
+    # ... and nothing is lost: stopping flushes the queue.
+    text = "".join(written)
+    assert "WARNING STOP pressed - belt stopped." in text and "a second line" in text
+    assert not any(isinstance(h, logging.handlers.QueueHandler) for h in logging.getLogger().handlers)
+
+
+def test_debug_lines_only_with_verbose():
+    import io
+    import logging
+
+    for verbose, expected in ((False, False), (True, True)):
+        stream = io.StringIO()
+        stop_logging = cli._start_logging(verbose=verbose, stream=stream)
+        logging.getLogger("walka.test").debug("fine detail")
+        stop_logging()
+        assert ("fine detail" in stream.getvalue()) is expected
+
+
+# ---- Ctrl+C twice ---------------------------------------------------------------------------------------
+
+
+def test_a_second_ctrl_c_during_shutdown_does_not_leave_the_belt_running(tmp_path: Path, monkeypatch):
+    """The first Ctrl+C starts the shutdown, which ends with the belt being
+    stopped. A second one while that stop is on its way used to abort the
+    shutdown: the companion exited and the belt kept turning."""
+    built: list[SimulatedTreadmill] = []
+    interrupts: list[str] = []
+
+    class SlowToStop(SimulatedTreadmill):
+        async def set_speed(self, kmh: float) -> None:
+            await super().set_speed(kmh)
+            if not interrupts and self.status.speed_kmh > 0.5:
+                interrupts.append("first")
+                signal.raise_signal(signal.SIGINT)  # Ctrl+C, with the belt running
+
+        async def stop(self) -> None:
+            if interrupts == ["first"]:
+                interrupts.append("second")
+                signal.raise_signal(signal.SIGINT)  # ... and again, while the stop is being sent
+            await asyncio.sleep(0.1)
+            await super().stop()
+
+    def build(cfg, simulate):
+        treadmill = SlowToStop(us_firmware=True)
+        treadmill.countdown_s = 0.2
+        treadmill.ramp_kmh_per_s = 20.0
+        built.append(treadmill)
+        return treadmill
+
+    monkeypatch.setattr(cli, "_build_treadmill", build)
+    monkeypatch.setattr(cli, "DEMO_SESSION_STARTS_AFTER_S", 0.3)
+    before = signal.getsignal(signal.SIGINT)
+    try:
+        code = cli.main(["--demo", "--no-browser", "--port", str(free_port()), "--data-dir", str(tmp_path)])
+    except KeyboardInterrupt:
+        pytest.fail("the second Ctrl+C aborted the shutdown")
+    assert interrupts == ["first", "second"]
+    assert built[0].status.state is BeltState.STOPPED, "the belt was left running"
+    assert code in (0, 130)  # (130 on Python 3.10, whose asyncio.run re-raises the first interrupt)
+    assert (tmp_path / "config.json").exists()  # App.stop() ran to its end
+    assert signal.getsignal(signal.SIGINT) is before  # Ctrl+C works again afterwards
+
+
+def test_ctrl_c_is_listened_to_again_after_the_shutdown():
+    before = signal.getsignal(signal.SIGINT)
+    listen_again = cli._ignore_interrupts()
+    assert signal.getsignal(signal.SIGINT) is signal.SIG_IGN
+    listen_again()
+    assert signal.getsignal(signal.SIGINT) is before
+
+    import threading
+
+    # Off the main thread signal handlers cannot be changed: nothing happens, nothing breaks.
+    outcome: list[object] = []
+    worker = threading.Thread(target=lambda: outcome.append(cli._ignore_interrupts()()))
+    worker.start()
+    worker.join(5)
+    assert outcome == [None] and signal.getsignal(signal.SIGINT) is before
+
+
+# ---- being closed from outside (console window, log-off, shutdown) -----------------------------------------
+
+
+def test_windows_is_held_off_until_the_belt_has_been_stopped():
+    import threading
+
+    async def scenario():
+        loop = asyncio.get_running_loop()
+        stop, stopped = asyncio.Event(), threading.Event()
+        returned = threading.Event()
+
+        def windows_thread():  # the console handler / the hidden window's thread
+            cli._stop_and_wait(loop, stop, stopped, wait_s=20.0)
+            returned.set()
+
+        threading.Thread(target=windows_thread, daemon=True).start()
+        await asyncio.wait_for(stop.wait(), 5)  # the event loop is asked to shut down ...
+        await asyncio.sleep(0.05)
+        assert not returned.is_set()  # ... and Windows gets no answer while it is still doing so
+        stopped.set()
+        assert await loop.run_in_executor(None, returned.wait, 5)
+        return loop, stop, stopped
+
+    loop, stop, stopped = asyncio.run(scenario())
+    # After the loop has gone there is nothing left to stop, and nothing to wait for.
+    started = time.monotonic()
+    cli._stop_and_wait(loop, asyncio.Event(), threading.Event(), wait_s=20.0)
+    assert time.monotonic() - started < 5
+
+
+def test_the_wait_for_the_belt_is_bounded():
+    """Windows kills a program that does not answer within about five
+    seconds; the answer must come before that even if stopping hangs."""
+    import threading
+
+    async def scenario():
+        started = time.monotonic()
+        await asyncio.get_running_loop().run_in_executor(
+            None, cli._stop_and_wait, asyncio.get_running_loop(), asyncio.Event(), threading.Event(), 0.1
+        )
+        return time.monotonic() - started
+
+    assert asyncio.run(scenario()) < 3
+
+
+# ---- readable Bluetooth failures on the command line ----------------------------------------------------------
+
+
+def test_scan_says_in_plain_words_that_bluetooth_is_off(tmp_path: Path, capsys, monkeypatch):
+    from bleak.exc import BleakBluetoothNotAvailableError, BleakBluetoothNotAvailableReason
+
+    from walka_fakes import FakeBackend, FakePad
+
+    backend = FakeBackend(FakePad())
+    monkeypatch.setattr(FtmsTreadmill, "_get_backend", lambda self: backend)
+    backend.scan_error = BleakBluetoothNotAvailableError(
+        "No Bluetooth adapter found", BleakBluetoothNotAvailableReason.NO_BLUETOOTH
+    )
+    assert cli.main(["--data-dir", str(tmp_path), "scan", "--seconds", "1"]) == 2
+    assert capsys.readouterr().out.strip().splitlines()[-1] == "Bluetooth is not available: No Bluetooth adapter found"
+
+    backend.scan_error = None
+    assert cli.main(["--data-dir", str(tmp_path), "scan", "--seconds", "1"]) == 0
+    assert "URTM030  [FTMS]" in capsys.readouterr().out
+
+
+def test_probe_reports_a_time_out_readably_and_passes_all_on(tmp_path: Path, capsys, monkeypatch):
+    from walka import probe
+
+    seen: dict = {}
+
+    async def fake_probe(**kwargs):
+        seen.update(kwargs)
+        if kwargs["all_characteristics"]:
+            return ["report"]
+        raise asyncio.TimeoutError()  # how bleak reports a connection that timed out: no text
+
+    monkeypatch.setattr(probe, "probe", fake_probe)
+    assert cli.main(["--data-dir", str(tmp_path), "probe", "--seconds", "1", "--out", str(tmp_path)]) == 2
+    assert seen["all_characteristics"] is False
+    last = capsys.readouterr().out.strip().splitlines()[-1]
+    assert last == (
+        "Bluetooth problem: timed out - is the pad switched on and in range, and is the UREVO phone app closed?"
+    )
+    assert cli.main(["--data-dir", str(tmp_path), "probe", "--all", "--out", str(tmp_path)]) == 0
+    assert seen["all_characteristics"] is True
+    assert list(tmp_path.glob("walka-probe-*.txt"))

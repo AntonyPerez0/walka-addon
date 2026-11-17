@@ -4,7 +4,8 @@ What is known about controlling this pad over Bluetooth, where it comes
 from, and what still needs confirming on a real unit. None of this was
 measured by Walka's author; it is collected from the manual and from
 open-source projects that control UREVO pads. Run `walka probe` on your pad
-to check it (the probe only reads - it cannot move the belt).
+to check it. The probe never sends a command, so it cannot move the belt;
+the only thing it writes is the switch that turns notifications on.
 
 ## Summary
 
@@ -14,6 +15,7 @@ to check it (the probe only reads - it cannot move the belt).
 | Protocol | Standard Bluetooth FTMS (Fitness Machine Service `0x1826`). No vendor handshake needed. |
 | Pairing | None. **Do not pair it in Windows Bluetooth settings.** |
 | Connections | One at a time. The UREVO phone app must be closed or the pad is invisible. |
+| Which device Walka picks | The address you chose in the dashboard, if any. Otherwise a device whose Bluetooth name starts with `URTM`; some other Fitness Machine (a bike trainer, another treadmill) is only used if no such name is heard during the whole 15-second scan, and then the one with the strongest signal. |
 | Speed range (US) | 0.6-4.0 mph with the handle folded (desk mode), 0.6-6.2 mph with it raised |
 | Speed step | 0.1 mph over Bluetooth on sibling models (the console buttons step 0.2 mph) |
 | Start | 3-2-1 countdown, then the belt starts at its minimum speed |
@@ -57,7 +59,18 @@ Each command is answered by an indication `80 <opcode> <result>` (`01` =
 success, `05` = control not permitted: request control again). A missing
 answer does not mean the command was not applied, so Walka never blindly
 repeats a start or a speed change. (A stop is different: Walka watches the
-reported speed and asks again for as long as the belt keeps moving.)
+reported speed and asks again for as long as the belt keeps moving.) An
+answer is only taken for the command it names: one that arrives late, for
+an earlier command, is ignored.
+
+**A pause or stop goes first.** The driver sends one command at a time and
+normally waits up to three seconds for each answer. A pause or stop does
+not wait behind that: it cuts the wait short, a start or speed change that
+has not been written yet is dropped, and for a stop the driver does not
+wait for the answer to Request Control either. What remains is the 0.4 s
+the pad needs between two writes, so a stop is on its way within about
+half a second. A Bluetooth write that does not complete within two seconds
+(a dying link) is given up on rather than waited for.
 
 Things other projects learnt the hard way, which the driver follows:
 
@@ -90,6 +103,17 @@ Things other projects learnt the hard way, which the driver follows:
   10 minutes; its timer display wraps at 99:59 and its calorie counter stops
   at 6553. Walka therefore keeps its own totals and uses the pad's counters
   only as increments.
+* **Who stopped the belt?** The pad reports a stop or pause the same way
+  whoever caused it ("stopped or paused by the user"). After a pause or stop
+  of its own, Walka expects exactly one such report, saying the same thing
+  it asked for (paused for a pause, stopped for a stop), within ten seconds
+  - time for a pad that only reports once the belt has run down. Anything
+  else is taken as somebody at the pad, and is final: a second report, a
+  stop when Walka paused, anything from the safety key, however soon after
+  Walka's own command it comes.
+* **A speed range with a minimum of zero.** Some treadmills advertise
+  0.00 km/h as their minimum. Walka then uses its default minimum but keeps
+  the advertised maximum: it never commands more than the pad says it can do.
 * **The top speed step may be unreachable.** For 4.0 mph the rounded-up
   value is 6.5 km/h, above the 6.43 km/h the pad advertises. If the pad
   refuses it, Walka sends 6.43 instead (which lands on 3.9 mph) and treats
@@ -115,7 +139,17 @@ Found by reading the probe report:
 * whether targets above 4.0 mph are refused with the handle folded;
 * where (or whether) it reports steps - its manual and at least one review
   describe a display with speed, distance, time and calories only, while
-  UREVO's product page mentions steps;
+  UREVO's product page mentions steps. By default the probe listens to the
+  standard services only; `walka probe --all` also switches on the
+  notifications of the vendor's own channels (`0xFFF1` and the like), which
+  is where a step counter would show. What switching those on does on this
+  firmware is not known - nothing, on the sibling models;
+* how it reports a pause or stop that was sent over Bluetooth: at once or
+  when the belt has stopped, and whether a pause is reported as "paused"
+  (`02 02`) and a stop as "stopped" (`02 01`). The probe cannot show this -
+  it sends no commands. If, after the belt has paused because your
+  character stood still, the dashboard says "Belt stopped at the treadmill"
+  although nobody touched the pad, this is why: please report it;
 * whether it counts down before starting, and how fast the belt accelerates;
 * whether it stops by itself when nobody is walking;
 * whether it switches itself off, and drops the connection, after a long
@@ -129,6 +163,17 @@ Found by reading the probe report:
   there: Windows then holds the connection and the pad stops advertising.
 * Weak built-in Bluetooth (no external antenna) is a common cause of
   dropouts; a USB Bluetooth 5 adapter is the usual fix.
+* The companion's console window: clicking inside a classic Windows console
+  starts a text selection, which freezes any program that then writes to
+  it. The companion switches that ("QuickEdit") off for its own window
+  while it runs and writes its log lines from a separate thread, so the
+  window cannot hold up the belt control. To copy text from the window, use
+  its menu (*Edit -> Mark*).
+* Logging off or shutting Windows down: Windows does not tell a program
+  like the companion through its console, so the companion keeps a hidden
+  window to be told, and stops the belt as it does when its own window is
+  closed. This has not been tried on a real PC yet - stop the belt yourself
+  before you shut down.
 
 ## Sources
 

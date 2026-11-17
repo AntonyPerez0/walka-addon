@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import importlib
 import logging
+import logging.handlers
 import math
+import queue
+import signal
 import sys
 import threading
 import time
 import webbrowser
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from . import __version__, addon_sync, capture
@@ -114,7 +118,120 @@ async def _demo_character(beacon, stop: asyncio.Event) -> None:
         await asyncio.sleep(0.1)
 
 
-def _install_console_close_handler(loop: asyncio.AbstractEventLoop, stop: asyncio.Event) -> None:
+# ---- the console, and being closed from outside --------------------------------------
+
+ENABLE_QUICK_EDIT_MODE = 0x0040
+ENABLE_EXTENDED_FLAGS = 0x0080
+STD_INPUT_HANDLE = 0xFFFFFFF6  # (DWORD)-10
+
+
+def _without_quick_edit(mode: int) -> int:
+    """A console input mode with QuickEdit switched off."""
+    return (mode & ~ENABLE_QUICK_EDIT_MODE) | ENABLE_EXTENDED_FLAGS
+
+
+def _disable_console_quick_edit() -> Callable[[], None]:
+    """Switch off the console window's QuickEdit mode; returns a function
+    that puts it back.
+
+    With QuickEdit on (the default in the classic Windows console) one click
+    inside the window starts a text selection, and from then on every write
+    to the console blocks until the selection is dismissed.
+    """
+
+    def nothing() -> None:
+        pass
+
+    if sys.platform != "win32":
+        return nothing
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.GetStdHandle.argtypes = [wintypes.DWORD]
+        kernel32.GetStdHandle.restype = wintypes.HANDLE
+        kernel32.GetConsoleMode.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+        kernel32.GetConsoleMode.restype = wintypes.BOOL
+        kernel32.SetConsoleMode.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        kernel32.SetConsoleMode.restype = wintypes.BOOL
+        handle = kernel32.GetStdHandle(STD_INPUT_HANDLE)
+        mode = wintypes.DWORD()
+        if not handle or not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            return nothing  # no console window, or input comes from a file or pipe
+        original = mode.value
+        if original == _without_quick_edit(original) or not kernel32.SetConsoleMode(
+            handle, _without_quick_edit(original)
+        ):
+            return nothing
+
+        def restore() -> None:
+            kernel32.SetConsoleMode(handle, original)
+
+        return restore
+    except Exception:  # cosmetic next to everything else: never worth failing to start over
+        return nothing
+
+
+def _start_logging(verbose: bool, stream=None) -> Callable[[], None]:
+    """Send log records to the console (``stream``: stderr unless given) by
+    way of a queue; returns a function that flushes and undoes it.
+
+    The console is written to on a thread of its own. A console that is
+    slow or stuck - a text selection, a paused scroll, a pipe nobody reads -
+    can then hold up that thread only, never the event loop that is watching
+    the belt (and whose STOP handling logs a line too).
+    """
+    console = logging.StreamHandler(stream)
+    console.setFormatter(logging.Formatter("%(asctime)s %(levelname)-7s %(message)s", datefmt="%H:%M:%S"))
+    records: queue.SimpleQueue = queue.SimpleQueue()  # unbounded: handing a record over never blocks
+    listener = logging.handlers.QueueListener(records, console)
+    handler = logging.handlers.QueueHandler(records)
+    root = logging.getLogger()
+    previous_level = root.level
+    root.addHandler(handler)
+    root.setLevel(logging.DEBUG if verbose else logging.INFO)
+    listener.start()
+
+    def stop() -> None:
+        root.removeHandler(handler)
+        root.setLevel(previous_level)
+        # Write out what is still queued - but a stuck console must not keep
+        # the program from exiting either.
+        flusher = threading.Thread(target=listener.stop, name="walka-log-flush", daemon=True)
+        flusher.start()
+        flusher.join(2.0)
+
+    return stop
+
+
+def _ignore_interrupts() -> Callable[[], None]:
+    """Ignore Ctrl+C from now on; returns a function that listens again."""
+    try:
+        previous = signal.signal(signal.SIGINT, signal.SIG_IGN)
+    except ValueError:  # not the main thread (embedded, or under test): not ours to change
+        return lambda: None
+    return lambda: signal.signal(signal.SIGINT, signal.SIG_DFL if previous is None else previous)
+
+
+def _stop_and_wait(
+    loop: asyncio.AbstractEventLoop, stop: asyncio.Event, stopped: threading.Event, wait_s: float = 4.0
+) -> None:
+    """Windows is about to kill the process (console closed, log-off,
+    shutdown) and is waiting for our answer on one of its own threads: ask
+    the event loop for an orderly stop, and hold the answer back until the
+    belt has been stopped and the walk saved - or the few seconds Windows
+    allows are nearly up."""
+    try:
+        loop.call_soon_threadsafe(stop.set)
+    except RuntimeError:  # the loop is already closed: everything is stopped
+        return
+    stopped.wait(wait_s)
+
+
+def _install_console_close_handler(
+    loop: asyncio.AbstractEventLoop, stop: asyncio.Event, stopped: threading.Event
+) -> None:
     """On Windows, closing the console window kills the process within
     seconds. Catch that so the belt is stopped first."""
     if sys.platform != "win32":
@@ -123,15 +240,29 @@ def _install_console_close_handler(loop: asyncio.AbstractEventLoop, stop: asynci
 
     @ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_uint)
     def handler(event: int) -> int:
-        # CTRL_CLOSE_EVENT=2, CTRL_LOGOFF_EVENT=5, CTRL_SHUTDOWN_EVENT=6
+        # CTRL_CLOSE_EVENT=2. (CTRL_LOGOFF_EVENT=5 and CTRL_SHUTDOWN_EVENT=6
+        # are not delivered to a program that has loaded user32, as this one
+        # has: see _watch_for_session_end.)
         if event in (2, 5, 6):
-            loop.call_soon_threadsafe(stop.set)
-            time.sleep(4.0)  # Windows waits for this handler before killing us
+            _stop_and_wait(loop, stop, stopped)  # Windows waits for this handler before killing us
             return 1
         return 0
 
     _install_console_close_handler.keep = handler  # type: ignore[attr-defined]  # keep a reference
     ctypes.windll.kernel32.SetConsoleCtrlHandler(handler, 1)
+
+
+def _watch_for_session_end(loop: asyncio.AbstractEventLoop, stop: asyncio.Event, stopped: threading.Event):
+    """Stop the belt when Windows logs off or shuts down, the same way as
+    when the console window is closed. Returns the watcher (to be stopped)."""
+    from .hotkey import SessionEndWatcher
+
+    watcher = SessionEndWatcher(lambda: _stop_and_wait(loop, stop, stopped))
+    try:
+        watcher.start()  # does nothing off Windows
+    except Exception as exc:  # the companion runs without it
+        log.debug("not watching for Windows shutting down: %s", exc)
+    return watcher
 
 
 async def _run(args: argparse.Namespace) -> int:
@@ -157,8 +288,10 @@ async def _run(args: argparse.Namespace) -> int:
     app = App(cfg, data_dir, treadmill=treadmill, beacon=beacon, heart_rate=heart_rate)
 
     stop = asyncio.Event()
+    stopped = threading.Event()  # set once app.stop() has run: belt stopped, walk saved
     loop = asyncio.get_running_loop()
-    _install_console_close_handler(loop, stop)
+    _install_console_close_handler(loop, stop, stopped)
+    session_end = _watch_for_session_end(loop, stop, stopped)
 
     runner = None
     demo_task = None
@@ -193,18 +326,25 @@ async def _run(args: argparse.Namespace) -> int:
     except asyncio.CancelledError:
         pass
     finally:
+        # Shutdown has begun, and it ends with the belt being stopped. A
+        # second Ctrl+C (a double tap, key repeat) would abort it half way
+        # and leave the belt running, so it is ignored until that is done.
+        listen_to_interrupts = _ignore_interrupts()
         if demo_task is not None:
             demo_task.cancel()
         try:
             await app.stop()
         finally:
+            stopped.set()
+            listen_to_interrupts()
+            session_end.stop()
             if runner is not None:
                 await runner.cleanup()
     return 0
 
 
 async def _scan(args: argparse.Namespace) -> int:
-    from .treadmill.ftms_ble import FtmsTreadmill
+    from .treadmill.ftms_ble import FtmsTreadmill, describe_bluetooth_error
 
     cfg = config_module.load(_data_dir(args))
     treadmill = FtmsTreadmill(name_prefixes=cfg.treadmill.name_prefixes)
@@ -212,7 +352,7 @@ async def _scan(args: argparse.Namespace) -> int:
     try:
         found = await treadmill.discover(args.seconds)
     except Exception as exc:  # no adapter, Bluetooth switched off, ...
-        print(f"Bluetooth is not available: {exc}")
+        print(f"Bluetooth is not available: {describe_bluetooth_error(exc)}")
         return 2
     if not found:
         print("None found. Is the pad on, in range, and the UREVO phone app closed?")
@@ -225,6 +365,7 @@ async def _scan(args: argparse.Namespace) -> int:
 
 async def _probe(args: argparse.Namespace) -> int:
     from . import probe
+    from .treadmill.ftms_ble import describe_bluetooth_error
 
     cfg = config_module.load(_data_dir(args))
     try:
@@ -232,9 +373,10 @@ async def _probe(args: argparse.Namespace) -> int:
             address=args.address or cfg.treadmill.address or None,
             name_prefixes=cfg.treadmill.name_prefixes,
             listen_s=args.seconds,
+            all_characteristics=args.all,
         )
     except Exception as exc:  # no adapter, Bluetooth switched off, the pad dropped the link, ...
-        print(f"Bluetooth problem: {exc}")
+        print(f"Bluetooth problem: {describe_bluetooth_error(exc)}")
         return 2
     path = probe.save_report(lines, Path(args.out) if args.out else Path.cwd())
     print(f"\nReport saved to {path}")
@@ -299,12 +441,66 @@ def _install_addon(args: argparse.Namespace) -> int:
     return 0
 
 
+# What the packaged Walka.exe must be able to import at run time. Most of the
+# Windows list is imported by name from inside compiled modules, or chosen
+# at run time, where PyInstaller cannot see it - so a build can be missing
+# one and still start. "walka selfcheck" imports them all, and the build's
+# smoke test runs it: a missing module then fails the build, not the first
+# Bluetooth scan on somebody's PC.
+RUNTIME_MODULES: tuple[str, ...] = (
+    "aiohttp.web",
+    "bleak",
+    "mss",
+    "walka.web",
+    "walka.probe",
+    "walka.treadmill.bleak_backend",
+)
+WINDOWS_RUNTIME_MODULES: tuple[str, ...] = (
+    "winrt.windows.foundation",
+    "winrt.windows.foundation.collections",  # the vectors every advertisement and service list arrives in
+    "winrt.windows.devices.bluetooth",
+    "winrt.windows.devices.bluetooth.advertisement",
+    "winrt.windows.devices.bluetooth.genericattributeprofile",
+    "winrt.windows.devices.enumeration",
+    "winrt.windows.devices.radios",
+    "winrt.windows.storage.streams",
+    "bleak.backends.winrt.scanner",
+    "bleak.backends.winrt.client",
+    "bleak.backends.winrt.util",
+    "mss.windows",
+    "mss.windows.gdi",
+)
+
+
+def _selfcheck() -> int:
+    """Hidden command: is everything this build needs at run time there?
+    Prints one line; exits 0 if so."""
+    modules = RUNTIME_MODULES + (WINDOWS_RUNTIME_MODULES if sys.platform == "win32" else ())
+    problems = []
+    for name in modules:
+        try:
+            importlib.import_module(name)
+        except Exception as exc:
+            problems.append(f"cannot import {name} ({type(exc).__name__}: {exc})")
+    page = Path(__file__).parent / "static" / "index.html"
+    if not page.is_file():
+        problems.append(f"the dashboard page is missing ({page})")
+    if addon_sync.bundled_addon_dir() is None:
+        problems.append("the addon folder is missing")
+    if problems:
+        print("selfcheck FAILED: " + "; ".join(problems))
+        return 1
+    print(f"selfcheck OK: {len(modules)} modules, the dashboard page and the addon folder are all there")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="walka", description="Walka companion: links a walking pad to your game.")
     parser.add_argument("--version", action="version", version=f"walka {__version__}")
     parser.add_argument("--data-dir", help="folder for config and recorded walks")
     parser.add_argument("-v", "--verbose", action="store_true", help="debug logging")
-    sub = parser.add_subparsers(dest="command")
+    # (The metavar lists the commands meant for people; "selfcheck" is for the build.)
+    sub = parser.add_subparsers(dest="command", metavar="{run,scan,probe,beacon,install-addon}")
 
     run = sub.add_parser("run", help="run the companion and its dashboard (default)")
     for target in (parser, run):
@@ -321,27 +517,32 @@ def build_parser() -> argparse.ArgumentParser:
     probe.add_argument("--address", help="Bluetooth address (default: first treadmill found)")
     probe.add_argument("--seconds", type=float, default=30.0, help="how long to listen for notifications")
     probe.add_argument("--out", help="folder for the report (default: current folder)")
+    probe.add_argument(
+        "--all",
+        action="store_true",
+        help="also listen to the vendor's own channels (switches their notifications on)",
+    )
 
     beacon = sub.add_parser("beacon", help="check that the addon's beacon can be read off the screen")
     beacon.add_argument("--seconds", type=float, default=30.0)
 
     install = sub.add_parser("install-addon", help="copy the Walka addon into the game's AddOns folder")
     install.add_argument("--dir", help="the Interface\\AddOns folder to install into")
+
+    sub.add_parser("selfcheck")
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
-        format="%(asctime)s %(levelname)-7s %(message)s",
-        datefmt="%H:%M:%S",
-    )
+    command = args.command or "run"
+    # (Before the first line is written: only "run" stays up long enough to matter.)
+    restore_console = _disable_console_quick_edit() if command == "run" else None
+    stop_logging = _start_logging(args.verbose)
     if not args.verbose:
         logging.getLogger("bleak").setLevel(logging.WARNING)
         logging.getLogger("aiohttp").setLevel(logging.WARNING)
-    command = args.command or "run"
     try:
         if command == "run":
             return asyncio.run(_run(args))
@@ -353,8 +554,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _beacon(args)
         if command == "install-addon":
             return _install_addon(args)
+        if command == "selfcheck":
+            return _selfcheck()
     except KeyboardInterrupt:
         return 130
+    finally:
+        stop_logging()
+        if restore_console is not None:
+            restore_console()
     parser.print_help()
     return 2
 

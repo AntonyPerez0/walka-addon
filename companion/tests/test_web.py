@@ -766,3 +766,48 @@ def test_serve_binds_and_cleans_up(rig: Rig):
             again.bind(("127.0.0.1", port))
 
     asyncio.run(asyncio.wait_for(scenario(), 15))
+
+
+# ---- quitting with a dashboard tab open ---------------------------------------------------------
+
+
+def test_event_stream_ends_when_the_companion_is_stopping(rig: Rig):
+    """App.stop() marks the app as stopping before anything else; the open
+    streams must finish by themselves rather than wait to be killed."""
+
+    async def scenario(client: TestClient):
+        response = await client.get("/api/events")
+        await asyncio.wait_for(response.content.readuntil(b"\n\n"), 5)
+        rig.app._stopping.set()
+        rest = await asyncio.wait_for(response.content.read(), 5)  # reads to the end of the stream
+        assert rest.count(b"data: ") <= 1
+
+    serve(rig, scenario)
+
+
+@pytest.mark.parametrize("app_is_stopping", [True, False])
+def test_the_server_shuts_down_promptly_with_a_dashboard_tab_open(rig: Rig, app_is_stopping: bool):
+    """Ctrl+C used to take two minutes to return while a tab held the event
+    stream open: a minute waiting for the request to finish and another
+    after the handler swallowed its cancellation."""
+    import socket
+
+    import aiohttp
+
+    async def scenario():
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+        runner = await web.serve(rig.app, "127.0.0.1", port)
+        async with aiohttp.ClientSession() as session:
+            response = await session.get(f"http://127.0.0.1:{port}/api/events")
+            await asyncio.wait_for(response.content.readuntil(b"\n\n"), 5)
+            if app_is_stopping:
+                rig.app._stopping.set()  # the normal order: App.stop(), then the server
+            # Otherwise the server has to end the stream itself, after its
+            # (now short) grace period - and the handler must let it.
+            await asyncio.wait_for(runner.cleanup(), 10)
+            response.close()
+
+    asyncio.run(asyncio.wait_for(scenario(), 30))
+    assert web.SHUTDOWN_TIMEOUT_S <= 2.0

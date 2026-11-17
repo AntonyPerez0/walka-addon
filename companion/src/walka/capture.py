@@ -225,7 +225,10 @@ class MssGrabber:
     def __init__(self) -> None:
         import mss
 
-        self._sct = mss.mss()
+        # mss 10.2 deprecates the ``mss.mss()`` factory in favour of the
+        # ``mss.MSS`` class; older releases only have the factory.
+        factory = getattr(mss, "MSS", None) or mss.mss
+        self._sct = factory()
 
     def grab(self, left: int, top: int, width: int, height: int) -> Shot | None:
         shot = self._sct.grab({"left": int(left), "top": int(top), "width": int(width), "height": int(height)})
@@ -306,6 +309,40 @@ _EXE_CACHE: dict[int, str] = {}
 MIN_GAME_WINDOW = (320, 240)
 
 
+def _cached_exe(pid: int, query: Callable[[int], str], *, refresh: bool = False) -> str:
+    """Executable path of process ``pid``, asked for once and remembered."""
+    if not refresh:
+        cached = _EXE_CACHE.get(pid)
+        if cached is not None:
+            return cached
+    path = query(pid)
+    if len(_EXE_CACHE) > 512:
+        _EXE_CACHE.clear()
+    _EXE_CACHE[pid] = path
+    return path
+
+
+def _exe_for_window(title: str, class_name: str, pid: int, query: Callable[[int], str]) -> str:
+    """Executable behind a window, by way of the per-process cache.
+
+    Windows hands the process ids of programs that have exited to new ones,
+    so a remembered path can belong to a process that is long gone. It is
+    asked for again in the two cases where being wrong matters: a window
+    that looks like the game but whose remembered executable is something
+    else (the game got a recycled id and would be rejected), and a window
+    that is only taken for the game because of its remembered executable
+    (some other program got the game's old id).
+    """
+    exe = _cached_exe(pid, query)
+    if is_wow_window(title, "", class_name):
+        suspect = not is_wow_window(title, exe, class_name)
+    else:
+        suspect = is_game_executable(exe)
+    if suspect:
+        exe = _cached_exe(pid, query, refresh=True)
+    return exe
+
+
 def _window_rank(window: GameWindow) -> tuple[bool, bool, int]:
     """Sort key: visible first, then the preferred game flavour, then largest."""
     folder = window.exe_path.replace("/", "\\").lower()
@@ -358,15 +395,10 @@ def find_wow_window() -> GameWindow | None:
     kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
     kernel32.CloseHandle.restype = wintypes.BOOL
 
-    def exe_of(hwnd: int) -> str:
-        pid = wintypes.DWORD()
-        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-        cached = _EXE_CACHE.get(pid.value)
-        if cached is not None:
-            return cached
+    def query_exe(pid: int) -> str:
         path = ""
         # PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-        handle = kernel32.OpenProcess(0x1000, False, pid.value)
+        handle = kernel32.OpenProcess(0x1000, False, pid)
         if handle:
             try:
                 size = wintypes.DWORD(1024)
@@ -375,9 +407,6 @@ def find_wow_window() -> GameWindow | None:
                     path = buffer.value
             finally:
                 kernel32.CloseHandle(handle)
-        if len(_EXE_CACHE) > 512:
-            _EXE_CACHE.clear()
-        _EXE_CACHE[pid.value] = path
         return path
 
     def callback(hwnd: int, _lparam: int) -> bool:
@@ -396,7 +425,9 @@ def find_wow_window() -> GameWindow | None:
         if not user32.GetClientRect(hwnd, ctypes.byref(rect)):
             return True
         minimized = bool(user32.IsIconic(hwnd))
-        exe = exe_of(hwnd)
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        exe = _exe_for_window(title, class_name, pid.value, query_exe)
         if is_wow_window(title, "", class_name):
             # Looks like the game by class or title: the executable, when it
             # can be read, must agree.

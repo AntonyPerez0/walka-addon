@@ -128,6 +128,12 @@ class CommandRejected(TreadmillError):
         self.result = result
 
 
+class CommandSuperseded(TreadmillError):
+    """A start or speed command was not sent because a stop or pause was
+    asked for while it was still waiting its turn (so it was definitely not
+    carried out, and the belt is being halted)."""
+
+
 def mph_tenths_to_command_kmh(mph_tenths: int) -> float:
     """Speed to send so that mph-firmware lands on exactly ``mph_tenths``/10 mph.
 
