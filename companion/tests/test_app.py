@@ -1353,7 +1353,7 @@ def test_heart_rate_reaches_the_recording(tmp_path: Path):
     async def scenario():
         await rig.connect()
         await rig.run(1, active=False)
-        await rig.run(120, target=3.2)
+        await rig.run(200, target=3.2)  # 118 bpm is above the threshold for a 40-year-old (108)
         live = rig.app.snapshot()
         assert live["session"]["hr"] == 118 and live["session"]["calories_source"] == "heart_rate"
         assert live["heart_rate"]["bpm"] == 118

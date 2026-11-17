@@ -173,7 +173,8 @@ function updateSession(s) {
       "Calories",
       fmt.int(live.kcal),
       "",
-      live.calories_source === "heart_rate" ? "from heart rate" : "estimate: speed and weight",
+      (live.calories_source === "heart_rate" ? "from heart rate" : "estimate: speed and weight") +
+        (live.kcal_extra >= 1 ? ` · ${fmt.int(live.kcal_extra)} more than sitting` : ""),
     );
     const hrNote = live.avg_hr
       ? `avg ${Math.round(live.avg_hr)}, max ${live.max_hr || "-"}`

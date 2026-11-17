@@ -309,12 +309,24 @@ def test_counters_only_present_for_part_of_the_walk_are_not_trusted_blindly():
 # ---- SessionRecorder: heart rate -------------------------------------------------------
 
 
+def hr_split(seconds_with_hr: float) -> tuple[float, float]:
+    """(minutes on the speed model, minutes on the heart-rate model) for a
+    stretch walked with a qualifying heart rate: the first minute - until
+    the rate has been sustained - still uses the speed model."""
+    sustained = metrics.HR_SUSTAIN_S
+    return sustained / 60, (seconds_with_hr - sustained) / 60
+
+
 def test_heart_rate_calories_need_age_and_sex():
     with_profile = Profile(weight_kg=75, height_cm=172, age=40, sex="male")
     rec = recorder()
-    walk(rec, 600, 4.0, profile=with_profile, heart_rate=120)
+    walk(rec, 600, 4.0, profile=with_profile, heart_rate=120)  # threshold for 40: 108 bpm
     assert rec.calories_source == "heart_rate"
-    assert rec.kcal == pytest.approx(metrics.kcal_per_minute_from_hr(120, with_profile) * 10)
+    speed_minutes, hr_minutes = hr_split(600)
+    assert rec.kcal == pytest.approx(
+        metrics.kcal_per_minute(4.0, with_profile) * speed_minutes
+        + metrics.kcal_per_minute_from_hr(120, with_profile) * hr_minutes
+    )
     assert rec.avg_hr == pytest.approx(120) and rec.max_hr == 120 and rec.last_hr == 120
 
     for incomplete in (Profile(), Profile(age=40), Profile(sex="female"), Profile(age=40, sex="other")):
@@ -325,36 +337,75 @@ def test_heart_rate_calories_need_age_and_sex():
         assert plain.avg_hr == pytest.approx(120)  # still recorded and shown
 
 
-def test_heart_rate_below_the_floor_is_not_used_for_calories():
+def test_heart_rate_below_the_threshold_is_not_used_for_calories():
+    """The heart-rate formula was fitted at 57-90% of maximum heart rate and
+    reads up to double at desk-walking heart rates, so below 60% of the
+    age-predicted maximum the speed model is used."""
     profile = Profile(age=40, sex="female")
+    threshold = metrics.hr_threshold_bpm(profile)
+    assert threshold == pytest.approx(108)
     rec = recorder()
-    walk(rec, 600, 2.0, profile=profile, heart_rate=metrics.HR_FLOOR_BPM - 1)
+    walk(rec, 600, 2.0, profile=profile, heart_rate=int(threshold) - 1)
     assert rec.calories_source == "speed"
     assert rec.kcal == pytest.approx(metrics.kcal_per_minute(2.0, profile) * 10)
-    assert rec.avg_hr == pytest.approx(metrics.HR_FLOOR_BPM - 1)
-    at_floor = recorder()
-    walk(at_floor, 600, 2.0, profile=profile, heart_rate=metrics.HR_FLOOR_BPM)
-    assert at_floor.calories_source == "heart_rate"
+    assert rec.avg_hr == pytest.approx(threshold - 1)
+    at_threshold = recorder()
+    walk(at_threshold, 600, 2.0, profile=profile, heart_rate=int(threshold))
+    assert at_threshold.calories_source == "heart_rate"
+
+
+def test_a_brief_heart_rate_spike_is_not_exercise():
+    """A jump scare in a dungeon raises the heart rate, not the energy cost:
+    the rate has to stay up for a minute before it counts."""
+    profile = Profile(age=40, sex="male")
+    rec = recorder()
+    for _ in range(10):
+        walk(rec, 45, 2.0, profile=profile, heart_rate=140)
+        walk(rec, 15, 2.0, profile=profile, heart_rate=85)
+    assert rec.calories_source == "speed" and rec.hr_seconds == 0
+    assert rec.kcal == pytest.approx(metrics.kcal_per_minute(2.0, profile) * 10)
 
 
 def test_heart_rate_for_part_of_the_walk():
     profile = Profile(age=35, sex="male")
     speed_rate = metrics.kcal_per_minute(4.0, profile)
     hr_rate = metrics.kcal_per_minute_from_hr(130, profile)
-    # Sensor present for 80 % of the walk: HR calories for that part, speed model for the rest.
+    # Sensor present for 80 % of the walk: HR calories for that part (once
+    # sustained), speed model for the rest.
     mostly = recorder()
     walk(mostly, 480, 4.0, profile=profile, heart_rate=130)
     walk(mostly, 120, 4.0, profile=profile, heart_rate=None)
+    speed_minutes, hr_minutes = hr_split(480)
     assert mostly.calories_source == "heart_rate"
-    assert mostly.kcal == pytest.approx(hr_rate * 8 + speed_rate * 2, rel=1e-6)
+    assert mostly.kcal == pytest.approx(hr_rate * hr_minutes + speed_rate * (speed_minutes + 2), rel=1e-6)
     assert mostly.last_hr is None  # the live value disappears with the sensor
-    # Sensor present for only 20 %: not representative, speed model throughout.
+    # Sensor present for only 20 %: what it contributed is counted, but the
+    # walk as a whole is labelled as a speed estimate.
     barely = recorder()
     walk(barely, 120, 4.0, profile=profile, heart_rate=130)
     walk(barely, 480, 4.0, profile=profile, heart_rate=None)
+    speed_minutes, hr_minutes = hr_split(120)
     assert barely.calories_source == "speed"
-    assert barely.kcal == pytest.approx(speed_rate * 10)
+    assert barely.kcal == pytest.approx(hr_rate * hr_minutes + speed_rate * (speed_minutes + 8), rel=1e-6)
     assert barely.avg_hr == pytest.approx(130)
+
+
+def test_extra_calories_versus_sitting_are_recorded():
+    profile = Profile(weight_kg=80)
+    rec = recorder()
+    walk(rec, 3600, 2.0, profile=profile)
+    assert rec.kcal_extra == pytest.approx(metrics.kcal_per_minute(2.0, profile, net=True) * 60)
+    assert rec.kcal - rec.kcal_extra == pytest.approx(1.3 * 80)  # an hour of sitting
+    record = rec.finish(rec.last_at)
+    assert record is not None and record.kcal_extra == pytest.approx(rec.kcal_extra, abs=0.06)
+    assert rec.live()["kcal_extra"] == pytest.approx(rec.kcal_extra, abs=0.06)
+
+
+def test_step_calibration_scales_the_estimate():
+    base, calibrated = recorder(), recorder()
+    walk(base, 600, 3.0, profile=Profile())
+    walk(calibrated, 600, 3.0, profile=Profile(step_calibration=1.2))
+    assert calibrated.steps == pytest.approx(base.steps * 1.2)
 
 
 def test_heart_rate_statistics_only_cover_time_on_the_belt():

@@ -22,10 +22,11 @@ HERE = Path(__file__).resolve().parent
 VECTORS_PATH = HERE.parent.parent / "tests" / "shared" / "metrics_vectors.json"
 
 # Belt speeds (km/h): stopped, the pad's grid ends and typical speeds in mph
-# and km/h, both sides of the walk/run switch at 8 km/h, and a few runs.
+# and km/h, the edges and middle of the walk/run blends (1.9-2.2 m/s is
+# 6.84-7.92 km/h), and a few runs.
 SPEEDS_KMH = [
     0.0, 0.5, 0.965606, 1.0, 1.609344, 2.0, 2.4, 3.218688, 4.0, 4.828032,
-    5.5, 6.437376, 7.0, 7.99, 8.0, 8.01, 9.0, 9.977933, 12.0, 16.0,
+    5.5, 6.437376, 6.84, 7.0, 7.2, 7.5, 7.92, 8.0, 9.0, 9.977933, 12.0, 16.0,
 ]  # fmt: skip
 WEIGHTS_KG = [50.0, 75.0, 110.5]
 HEIGHTS_CM = [155.0, 172.0, 190.5]
@@ -48,7 +49,7 @@ def build() -> dict:
                         "kmh": kmh,
                         "weight_kg": weight,
                         "height_cm": height,
-                        "vo2": metrics.vo2(kmh, height / 100.0),
+                        "w_per_kg": metrics.watts_per_kg(kmh),
                         "kcal_per_min": metrics.kcal_per_minute(kmh, profile),
                         "kcal_per_min_net": metrics.kcal_per_minute(kmh, profile, net=True),
                         "steps_per_min": metrics.steps_per_minute(kmh, height),
@@ -65,9 +66,9 @@ def build() -> dict:
             "kmh": "belt speed, km/h",
             "weight_kg": "body weight, kg",
             "height_cm": "body height, cm",
-            "vo2": "gross oxygen uptake, ml/kg/min",
+            "w_per_kg": "gross metabolic rate, watts per kg",
             "kcal_per_min": "gross kcal per minute",
-            "kcal_per_min_net": "kcal per minute above resting",
+            "kcal_per_min_net": "kcal per minute on top of sitting",
             "steps_per_min": "cadence, steps per minute",
         },
         "vectors": vectors,

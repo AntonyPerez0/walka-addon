@@ -30,60 +30,81 @@ Metrics.DEFAULT_PROFILE = {
     heightCm = 172,
 }
 
--- Speed (km/h) above which the running equations apply.
-Metrics.RUN_THRESHOLD_KMH = 8.0
+Metrics.JOULES_PER_KCAL = 4184
 
--- Resting oxygen uptake, ml O2 per kg per minute (1 MET).
-local VO2_REST = 3.5
--- kcal released per litre of oxygen.
-local KCAL_PER_LITRE_O2 = 5.0
+-- Walking and running formulas are blended linearly across these belt
+-- speeds (m/s). About half of adults still walk at 2.0 m/s (4.5 mph).
+local ENERGY_BLEND_START, ENERGY_BLEND_END = 2.0, 2.2
+local CADENCE_BLEND_START, CADENCE_BLEND_END = 1.9, 2.2
 
---- Gross oxygen uptake while walking/running on a level belt,
--- in ml O2 per kg per minute. `heightM` is the walker's height in metres.
-function Metrics.vo2(kmh, heightM)
-    if not kmh or kmh <= 0 then
-        return VO2_REST
+-- What sitting at a desk costs (Compendium of Physical Activities:
+-- 1.3 MET), in watts per kg - subtracted for "extra calories versus sitting".
+local SITTING_W_PER_KG = 1.3 * Metrics.JOULES_PER_KCAL / 3600
+
+-- Per-user correction of the step estimate (counted / estimated).
+Metrics.STEP_CALIBRATION_MIN = 0.7
+Metrics.STEP_CALIBRATION_MAX = 1.5
+
+local function blend(v, blendStart, blendEnd, low, high)
+    if v <= blendStart then
+        return low
+    elseif v >= blendEnd then
+        return high
     end
-    if kmh >= Metrics.RUN_THRESHOLD_KMH then
-        -- ACSM running equation (level): 0.2 ml/kg/min per m/min + rest.
-        return VO2_REST + 0.2 * (kmh * 1000 / 60)
-    end
-    -- Ludlow & Weyand (2016) height-weight-speed walking model: rest + a
-    -- minimum walking cost + a term in speed squared over height. Unlike
-    -- the ACSM walking equation it stays accurate at slow desk-walking speeds.
-    local v = kmh / 3.6
-    return VO2_REST + 3.85 + 5.97 * v * v / heightM
+    local share = (v - blendStart) / (blendEnd - blendStart)
+    return low + (high - low) * share
 end
 
---- Calories burned per minute at a belt speed.
--- With `net` true, resting metabolism is subtracted ("active calories").
-function Metrics.kcalPerMinute(kmh, weightKg, heightCm, net)
+--- Gross metabolic rate on a moving level belt, in watts per kg of body
+-- mass.
+--
+-- Walking: the LCDA equation (Looney et al. 2019), fitted to 48 studies and
+-- valid from a standstill to 2 m/s. The textbook treadmill equation (ACSM
+-- walking) reads 11-35% low at desk-walking speeds; this one was validated
+-- there. Running: the ACSM running equation.
+function Metrics.wattsPerKg(kmh)
+    if not kmh or kmh <= 0 then
+        return 0
+    end
+    local v = kmh / 3.6
+    local walking = 1.44 + 1.94 * v ^ 0.43 + 0.24 * v ^ 4
+    -- ACSM: VO2 [ml/kg/min] = 0.2 * speed [m/min] + 3.5; 1 litre O2 = 5 kcal.
+    local running = (0.2 * (v * 60) + 3.5) * 5 * Metrics.JOULES_PER_KCAL / 60000
+    return blend(v, ENERGY_BLEND_START, ENERGY_BLEND_END, walking, running)
+end
+
+--- Calories burned per minute at a belt speed by someone weighing
+-- `weightKg`. With `net` true the cost of sitting is subtracted: what the
+-- walk burned on top of sitting at the desk.
+function Metrics.kcalPerMinute(kmh, weightKg, net)
     if not kmh or kmh <= 0 then
         return 0
     end
     weightKg = weightKg or Metrics.DEFAULT_PROFILE.weightKg
-    local heightM = (heightCm or Metrics.DEFAULT_PROFILE.heightCm) / 100
-    local vo2 = Metrics.vo2(kmh, heightM)
+    local rate = Metrics.wattsPerKg(kmh)
     if net then
-        vo2 = vo2 - VO2_REST
+        rate = max(0, rate - SITTING_W_PER_KG)
     end
-    return vo2 * weightKg / 1000 * KCAL_PER_LITRE_O2
+    return rate * weightKg * 60 / Metrics.JOULES_PER_KCAL
 end
 
---- Steps per minute at a belt speed for someone `heightCm` tall.
-function Metrics.stepsPerMinute(kmh, heightCm)
+--- Estimated steps per minute at a belt speed for someone `heightCm` tall.
+--
+-- Walking: 128 * (speed / height)^0.465 with speed in m/s and height in m,
+-- a fit to hand-counted treadmill cadence of 156 adults from 0.5 to 4.5 mph
+-- (CADENCE-Adults), within 3 steps/min of the group means. Individuals
+-- differ by 6-20%, most at slow speeds, hence `calibration` (counted steps
+-- divided by estimated steps; 1 by default). Running: Hoeger et al. 2008.
+function Metrics.stepsPerMinute(kmh, heightCm, calibration)
     if not kmh or kmh <= 0 then
         return 0
     end
-    local heightM = (heightCm or Metrics.DEFAULT_PROFILE.heightCm) / 100
-    if kmh >= Metrics.RUN_THRESHOLD_KMH then
-        -- Running cadence rises slowly with speed.
-        return (150 + 2.2 * (kmh - Metrics.RUN_THRESHOLD_KMH)) * (1.70 / heightM) ^ 0.5
-    end
-    -- Walking: cadence grows with speed^0.427 and shrinks with height^0.71
-    -- (dynamic similarity), anchored at 93 steps/min at 2 mph and 125 at
-    -- 4 mph for a 1.70 m adult.
-    return 56.5 * kmh ^ 0.427 * (1.70 / heightM) ^ 0.71
+    local v = kmh / 3.6
+    local h = (heightCm or Metrics.DEFAULT_PROFILE.heightCm) / 100
+    local walking = 128 * (v / h) ^ 0.465
+    local running = 143.6 + (1084 - 531.5 * h) * v / 26.82
+    calibration = min(Metrics.STEP_CALIBRATION_MAX, max(Metrics.STEP_CALIBRATION_MIN, calibration or 1))
+    return blend(v, CADENCE_BLEND_START, CADENCE_BLEND_END, walking, running) * calibration
 end
 
 ----------------------------------------------------------------------------
@@ -130,7 +151,8 @@ end
 
 --- Advance by `dt` seconds towards `targetKmh` (0 = belt stopped) and add
 -- what was walked to `totals` (a table with seconds, distanceM, steps, kcal).
--- `profile` supplies weightKg and heightCm. Returns the estimated belt speed.
+-- `profile` supplies weightKg, heightCm and optionally stepCalibration.
+-- Returns the estimated belt speed.
 function Estimator:update(dt, targetKmh, totals, profile)
     dt = max(0, dt or 0)
     targetKmh = targetKmh or 0
@@ -161,8 +183,9 @@ function Estimator:update(dt, targetKmh, totals, profile)
         local minutes = dt / 60
         totals.seconds = (totals.seconds or 0) + dt
         totals.distanceM = (totals.distanceM or 0) + belt / 3.6 * dt
-        totals.steps = (totals.steps or 0) + Metrics.stepsPerMinute(belt, profile.heightCm) * minutes
-        totals.kcal = (totals.kcal or 0) + Metrics.kcalPerMinute(belt, profile.weightKg, profile.heightCm) * minutes
+        totals.steps = (totals.steps or 0)
+            + Metrics.stepsPerMinute(belt, profile.heightCm, profile.stepCalibration) * minutes
+        totals.kcal = (totals.kcal or 0) + Metrics.kcalPerMinute(belt, profile.weightKg) * minutes
         if belt > (totals.maxKmh or 0) then
             totals.maxKmh = belt
         end

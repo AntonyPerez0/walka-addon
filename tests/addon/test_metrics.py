@@ -14,46 +14,56 @@ SPEEDS = [step / 10 for step in range(1, 141)]      # 0.1 .. 14.0 km/h
 
 
 def test_calories_rise_with_speed(ns):
-    values = [ns.Metrics.kcalPerMinute(kmh, 75, 172) for kmh in SPEEDS]
+    values = [ns.Metrics.kcalPerMinute(kmh, 75) for kmh in SPEEDS]
     assert all(later > earlier for earlier, later in zip(values, values[1:], strict=False))
 
 
 def test_calorie_magnitudes_are_sensible(ns):
     kcal = ns.Metrics.kcalPerMinute
-    # A 75 kg adult strolling at 3 km/h burns very roughly 3 kcal a minute.
-    assert 2.0 <= kcal(3.0, 75, 172) <= 4.0
-    # Desk-walking pace for an hour: 150-250 kcal.
-    assert 150 <= kcal(2.0 * KMH_PER_MPH, 75, 172) * 60 <= 250
-    # A brisk 6 km/h walk: 4-7 kcal a minute.
-    assert 4.0 <= kcal(6.0, 75, 172) <= 7.0
+    # 2024 Compendium of Physical Activities, treadmill desk at 1-2 mph:
+    # 2.8 MET, i.e. about 210 kcal an hour for 75 kg.
+    assert 180 <= kcal(2.0 * KMH_PER_MPH, 75) * 60 <= 240
+    # The equation's authors: about 217 kcal an hour for 80 kg at 2.5 km/h.
+    assert kcal(2.5, 80) * 60 == pytest.approx(217, abs=2)
+    # A brisk 6 km/h walk: 5-7 kcal a minute.
+    assert 5.0 <= kcal(6.0, 75) <= 7.0
     # Running at 10 km/h: 10-15.
-    assert 10.0 <= kcal(10.0, 75, 172) <= 15.0
+    assert 10.0 <= kcal(10.0, 75) <= 15.0
+
+
+def test_calories_match_measured_oxygen_uptake_where_the_textbook_equation_does_not(ns):
+    """Measured on treadmills (CADENCE-Adults, n=76): ml O2 per kg per minute
+    at 1.0, 1.5, 2.0 and 2.5 mph. The ACSM walking equation reads 11-35% low
+    there; this one stays within 8%."""
+    for mph, vo2 in ((1.0, 8.3), (1.5, 9.2), (2.0, 10.2), (2.5, 11.8)):
+        measured = vo2 * 20.9 / 60  # watts per kg
+        assert ns.Metrics.wattsPerKg(mph * KMH_PER_MPH) == pytest.approx(measured, rel=0.08)
 
 
 def test_standing_still_counts_nothing(ns):
-    assert ns.Metrics.kcalPerMinute(0, 75, 172) == 0
-    assert ns.Metrics.kcalPerMinute(-1, 75, 172) == 0
-    assert ns.Metrics.kcalPerMinute(None, 75, 172) == 0
+    assert ns.Metrics.kcalPerMinute(0, 75) == 0
+    assert ns.Metrics.kcalPerMinute(-1, 75) == 0
+    assert ns.Metrics.kcalPerMinute(None, 75) == 0
+    assert ns.Metrics.wattsPerKg(0) == 0 and ns.Metrics.wattsPerKg(None) == 0
 
 
-def test_calories_scale_with_weight_and_shrink_with_height(ns):
+def test_calories_scale_with_weight(ns):
     kcal = ns.Metrics.kcalPerMinute
-    assert kcal(3.0, 150, 172) == pytest.approx(2 * kcal(3.0, 75, 172))
-    assert kcal(3.0, 75, 160) > kcal(3.0, 75, 190)
+    assert kcal(3.0, 150) == pytest.approx(2 * kcal(3.0, 75))
 
 
-def test_net_calories_leave_out_resting_metabolism(ns):
+def test_net_calories_leave_out_what_sitting_would_have_burned(ns):
     kcal = ns.Metrics.kcalPerMinute
     for kmh in (1.0, 3.0, 6.0, 10.0):
-        gross, net = kcal(kmh, 75, 172), kcal(kmh, 75, 172, True)
+        gross, net = kcal(kmh, 75), kcal(kmh, 75, True)
         assert 0 < net < gross
-        # Resting: 3.5 ml O2/kg/min at 5 kcal per litre.
-        assert gross - net == pytest.approx(3.5 * 75 / 1000 * 5)
+        # Sitting at a desk: 1.3 kcal per kg per hour.
+        assert gross - net == pytest.approx(1.3 * 75 / 60)
 
 
 def test_profile_defaults(ns):
     kcal = ns.Metrics.kcalPerMinute
-    assert kcal(3.0) == pytest.approx(kcal(3.0, 75, 172))
+    assert kcal(3.0) == pytest.approx(kcal(3.0, 75))
     assert ns.Metrics.DEFAULT_PROFILE.weightKg == 75
     assert ns.Metrics.DEFAULT_PROFILE.heightCm == 172
 
@@ -66,16 +76,25 @@ def test_cadence_rises_with_speed(ns):
     assert all(later > earlier for earlier, later in zip(values, values[1:], strict=False))
 
 
-def test_cadence_anchors_and_magnitudes(ns):
+def test_cadence_matches_hand_counted_steps(ns):
     steps = ns.Metrics.stepsPerMinute
-    # The anchors named in the source: 93 steps/min at 2 mph, 125 at 4 mph (1.70 m).
-    assert steps(2 * KMH_PER_MPH, 170) == pytest.approx(93, abs=1.5)
-    assert steps(4 * KMH_PER_MPH, 170) == pytest.approx(125, abs=1.5)
-    assert 60 <= steps(1.6, 172) <= 85
-    assert 80 <= steps(3.0, 172) <= 100
+    # Hand-counted on treadmills (CADENCE-Adults, 170.7 cm): steps a minute
+    # at 1, 2, 3 and 4 mph.
+    for mph, counted in ((1.0, 67.8), (2.0, 96.1), (3.0, 113.6), (4.0, 129.0)):
+        assert steps(mph * KMH_PER_MPH, 170.7) == pytest.approx(counted, abs=3.2)
     assert 150 <= steps(10.0, 172) <= 175
     assert steps(0, 172) == 0
     assert steps(None, 172) == 0
+
+
+def test_step_calibration(ns):
+    steps = ns.Metrics.stepsPerMinute
+    base = steps(3.0, 172)
+    assert steps(3.0, 172, 1.2) == pytest.approx(base * 1.2)
+    assert steps(3.0, 172, None) == pytest.approx(base)
+    # Clamped to 0.7-1.5.
+    assert steps(3.0, 172, 9) == pytest.approx(base * 1.5)
+    assert steps(3.0, 172, 0.1) == pytest.approx(base * 0.7)
 
 
 def test_shorter_people_take_more_steps(ns):
@@ -180,7 +199,7 @@ def test_totals_accumulate_only_while_the_belt_moves(rt):
     # Ten minutes at 3 km/h (less a little for the ramp).
     assert totals["distanceM"] == pytest.approx(500, rel=0.02)
     assert totals["steps"] == pytest.approx(10 * rt.ns.Metrics.stepsPerMinute(3.0, 172), rel=0.02)
-    assert totals["kcal"] == pytest.approx(10 * rt.ns.Metrics.kcalPerMinute(3.0, 75, 172), rel=0.02)
+    assert totals["kcal"] == pytest.approx(10 * rt.ns.Metrics.kcalPerMinute(3.0, 75), rel=0.02)
     assert totals["maxKmh"] == pytest.approx(3.0)
 
     before = lua_dict(belt.totals)

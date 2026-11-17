@@ -322,6 +322,7 @@ class App:
         profile = {
             "weightKg": round(self.config.profile.weight_kg, 1),
             "heightCm": round(self.config.profile.height_cm, 1),
+            "stepCalibration": round(self.config.profile.step_calibration, 3),
         }
         known = self._state.get("treadmill")
         name = known.get("name", "") if isinstance(known, dict) else ""

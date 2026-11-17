@@ -67,7 +67,7 @@ def test_estimates_use_the_companions_profile(crt):
     belt = crt.walka.GetLiveSpeed(crt.walka)[0]
     crt.tick(600)
     later = lua_dict(crt.walka.GetSession(crt.walka))
-    assert later["kcal"] - session["kcal"] == pytest.approx(metrics.kcalPerMinute(belt, 90.5, 185), rel=0.01)
+    assert later["kcal"] - session["kcal"] == pytest.approx(metrics.kcalPerMinute(belt, 90.5), rel=0.01)
     assert later["steps"] - session["steps"] == pytest.approx(metrics.stepsPerMinute(belt, 185), rel=0.01)
 
 

@@ -12,7 +12,7 @@ from typing import Any
 
 from .governor import Limits
 from .hotkey import parse_hotkey
-from .metrics import KMH_PER_MPH, Profile
+from .metrics import KMH_PER_MPH, STEP_CALIBRATION_RANGE, Profile
 
 log = logging.getLogger(__name__)
 
@@ -115,6 +115,7 @@ _BOUNDS: dict[tuple[str, str], tuple[float, float]] = {
     ("limits", "restart_holdoff_s"): (0.0, 60.0),
     ("profile", "weight_kg"): (30.0, 250.0),
     ("profile", "height_cm"): (120.0, 230.0),
+    ("profile", "step_calibration"): STEP_CALIBRATION_RANGE,
     ("manual", "speed_kmh"): (0.5, MAX_SPEED_CAP_KMH),
     ("wow", "capture_fps"): (2.0, 60.0),
     ("web", "port"): (1.0, 65535.0),

@@ -177,6 +177,11 @@ function Walka:GetProfile()
         if weightKg then
             companionProfile.weightKg = weightKg
             companionProfile.heightCm = numberWithin(data.profile.heightCm, 120, 230) or own.heightCm
+            companionProfile.stepCalibration = numberWithin(
+                data.profile.stepCalibration,
+                Metrics.STEP_CALIBRATION_MIN,
+                Metrics.STEP_CALIBRATION_MAX
+            )
             return companionProfile
         end
     end

@@ -552,7 +552,13 @@ def test_config_read_and_clamped_update(rig: Rig):
         assert body["config"]["limits"]["max_speed_kmh"] == MAX_SPEED_CAP_KMH  # clamped, not obeyed
         assert body["config"]["limits"]["accel_kmh_per_s"] == 1.0
         assert body["config"]["limits"]["signal_timeout_s"] == 1.0
-        assert body["config"]["profile"] == {"weight_kg": 82.5, "height_cm": 172.0, "age": 41, "sex": "female"}
+        assert body["config"]["profile"] == {
+            "weight_kg": 82.5,
+            "height_cm": 172.0,
+            "age": 41,
+            "sex": "female",
+            "step_calibration": 1.0,
+        }
         assert body["config"]["units"] == "kmh" and "bogus" not in body["config"]
         assert rig.app.governor.limits.max_speed_kmh == MAX_SPEED_CAP_KMH  # the governor sees it at once
         saved = json.loads((rig.app.data_dir / "config.json").read_text("utf-8"))

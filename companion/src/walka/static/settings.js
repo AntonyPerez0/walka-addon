@@ -72,6 +72,7 @@ const KINDS = {
     metric: (v) => U.toKg(v),
   },
   years: { unit: () => "years", digits: () => 0, shown: same, metric: same },
+  factor: { unit: () => "x", digits: () => 2, fixed: true, shown: same, metric: same },
 };
 
 // ---- fields ----------------------------------------------------------------------------
@@ -484,7 +485,7 @@ const FORMS = {
         max: 110,
         optional: true,
         label: "Age",
-        help: "With sex, lets Walka work out calories from your heart rate when a sensor is connected.",
+        help: "With sex, lets Walka work out calories from your heart rate when a sensor is connected and your heart rate is in exercise territory (above 60% of the maximum for your age).",
       },
       {
         type: "select",
@@ -497,6 +498,15 @@ const FORMS = {
           ["male", "Male"],
         ],
         help: "Only used by the heart-rate calorie formula.",
+      },
+      {
+        type: "number",
+        kind: "factor",
+        path: "profile.step_calibration",
+        min: 0.7,
+        max: 1.5,
+        label: "Step calibration",
+        help: "Only used when the pad does not count steps itself. Count your own steps for one minute at your usual speed, divide by the steps Walka counted in that minute, and enter the result. 1.00 means no correction.",
       },
     ],
   },

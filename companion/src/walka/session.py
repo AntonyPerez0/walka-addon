@@ -70,6 +70,7 @@ class SessionRecord:
     distance_m: float
     steps: int
     kcal: float
+    kcal_extra: float = 0.0  # of which on top of sitting at the desk (0 in older records)
     max_kmh: float = 0.0
     avg_hr: float | None = None
     max_hr: int | None = None
@@ -121,9 +122,11 @@ class SessionRecorder:
         # Our own integration of the reported belt speed.
         self.distance_speed_m = 0.0
         self.steps_estimate = 0.0
-        self.kcal_speed = 0.0
-        self.kcal_hr = 0.0
-        self.hr_seconds = 0.0
+        self.kcal_speed = 0.0  # speed-and-weight model over the whole walk
+        self.kcal_total = 0.0  # what is reported: heart-rate model where it applies
+        self.kcal_extra = 0.0  # on top of what sitting at the desk would have burned
+        self.hr_seconds = 0.0  # time the heart-rate model was used
+        self._hr_high_since: float | None = None
         # The pad's counters, as deltas.
         self._distance = CounterTracker()
         self._steps = CounterTracker()
@@ -166,13 +169,7 @@ class SessionRecorder:
 
     @property
     def kcal(self) -> float:
-        # Heart-rate calories only replace the speed model for the time a
-        # usable heart rate was actually present.
-        if self.hr_seconds > 0 and self.seconds > 0:
-            share = min(1.0, self.hr_seconds / self.seconds)
-            if share >= 0.5:
-                return self.kcal_hr + self.kcal_speed * (1.0 - share)
-        return self.kcal_speed
+        return self.kcal_total
 
     @property
     def calories_source(self) -> str:
@@ -194,6 +191,7 @@ class SessionRecorder:
             "distance_m": round(self.distance_m, 1),
             "steps": int(self.steps),
             "kcal": round(self.kcal, 1),
+            "kcal_extra": round(self.kcal_extra, 1),
             "max_kmh": round(self.max_kmh, 2),
             "speed_kmh": round(self.speed_kmh, 2),
             "avg_hr": round(self.avg_hr, 1) if self.avg_hr else None,
@@ -246,18 +244,35 @@ class SessionRecorder:
             self._saw_steps = True
             self._steps.update(machine_steps, max_delta=max(dt, 1.0) * 5 + 10)
 
+        # The heart-rate formula is only valid for real exertion: the heart
+        # rate must have been above 60% of the age-predicted maximum for a
+        # minute. At desk-walking heart rates it would read up to double.
+        hr_rate = None
+        threshold = metrics.hr_threshold_bpm(profile)
+        if heart_rate and threshold is not None and heart_rate >= threshold:
+            if self._hr_high_since is None:
+                self._hr_high_since = now
+            if now - self._hr_high_since >= metrics.HR_SUSTAIN_S:
+                hr_rate = metrics.kcal_per_minute_from_hr(heart_rate, profile)
+        else:
+            self._hr_high_since = None
+
         if moving and dt > 0:
             minutes = dt / 60.0
             self.seconds += dt
             self.max_kmh = max(self.max_kmh, speed_kmh)
             self.distance_speed_m += speed_kmh / 3.6 * dt
-            self.steps_estimate += metrics.steps_per_minute(speed_kmh, profile.height_cm) * minutes
-            self.kcal_speed += metrics.kcal_per_minute(speed_kmh, profile) * minutes
-            if heart_rate and heart_rate >= metrics.HR_FLOOR_BPM:
-                per_minute = metrics.kcal_per_minute_from_hr(heart_rate, profile)
-                if per_minute is not None:
-                    self.kcal_hr += per_minute * minutes
-                    self.hr_seconds += dt
+            self.steps_estimate += (
+                metrics.steps_per_minute(speed_kmh, profile.height_cm, profile.step_calibration) * minutes
+            )
+            speed_rate = metrics.kcal_per_minute(speed_kmh, profile)
+            self.kcal_speed += speed_rate * minutes
+            self.kcal_extra += metrics.kcal_per_minute(speed_kmh, profile, net=True) * minutes
+            if hr_rate is not None:
+                self.kcal_total += hr_rate * minutes
+                self.hr_seconds += dt
+            else:
+                self.kcal_total += speed_rate * minutes
 
         if heart_rate and heart_rate > 0:
             self.last_hr = heart_rate
@@ -290,6 +305,7 @@ class SessionRecorder:
             distance_m=round(self.distance_m, 1),
             steps=int(round(self.steps)),
             kcal=round(self.kcal, 1),
+            kcal_extra=round(self.kcal_extra, 1),
             max_kmh=round(self.max_kmh, 2),
             avg_hr=round(avg_hr, 1) if avg_hr else None,
             max_hr=self.max_hr or None,
