@@ -90,6 +90,15 @@ local state = {
     -- the character
     level = 17,
     maxLevel = 60,           -- GetMaxPlayerLevel()
+    -- where the character is (C_Map, IsInInstance)
+    guid = "Player-4321-0ABCDEF1",
+    instance = false,        -- inside a dungeon, raid or battleground
+    continent = 1,           -- world continent id; nil: the game cannot place the character
+    worldX = -600,           -- world yards, north positive
+    worldY = -4200,          -- world yards, west positive
+    mapId = nil,             -- GetBestMapForUnit(); nil: worked out from the position
+    facing = 0,              -- GetPlayerFacing(), radians
+    positionSecret = false,  -- the position calls return secrets
     className = "Rogue",     -- UnitClass("player"): localised name, file name, id
     classFile = "ROGUE",
     classId = 4,
@@ -823,11 +832,153 @@ function C_AddOns.DoesAddOnExist(name)
     return name == addon.name
 end
 
+-- C_Map: a small world. The world map (947) has two continents; each
+-- continent map covers a rectangle of world yards (x grows to the north, y
+-- to the west, as in the game), and one zone lies inside Kalimdor. Map art
+-- comes in 256-pixel tiles, as file ids.
+local MAPS = {
+    [947] = { name = "Azeroth", type = "World" },
+    [1414] = { name = "Kalimdor", type = "Continent", parent = 947, continent = 1,
+               top = 12000, bottom = -12000, left = 4000, right = -12000 },
+    [1415] = { name = "Eastern Kingdoms", type = "Continent", parent = 947, continent = 0,
+               top = 7000, bottom = -17000, left = 6000, right = -10000 },
+    [1411] = { name = "Durotar", type = "Zone", parent = 1414, continent = 1,
+               top = 2000, bottom = -2000, left = -3000, right = -6000 },
+}
+M.maps = MAPS
+
+local function mapArgument(fn, mapId)
+    if type(mapId) ~= "number" then
+        fail(fn .. "(): uiMapID must be a number, got " .. type(mapId), 3)
+    end
+    return MAPS[mapId]
+end
+
+local function mapTypeValue(name)
+    return G.Enum.UIMapType[name]
+end
+
+local function vector(x, y)
+    return { x = x, y = y, GetXY = function(self) return self.x, self.y end }
+end
+define("CreateVector2D", function(x, y)
+    if type(x) ~= "number" or type(y) ~= "number" then
+        fail("CreateVector2D(): two numbers expected", 2)
+    end
+    return vector(x, y)
+end)
+
+local function mapInfo(mapId)
+    local map = MAPS[mapId]
+    return { mapID = mapId, name = map.name, mapType = mapTypeValue(map.type), parentMapID = map.parent or 0 }
+end
+
+local C_Map = {}
+function C_Map.GetBestMapForUnit(unit)
+    playerOnly("C_Map.GetBestMapForUnit", unitArgument("C_Map.GetBestMapForUnit", unit))
+    if state.positionSecret then
+        return makeSecret("number")
+    end
+    if state.mapId ~= nil then
+        return state.mapId
+    end
+    if state.instance or state.continent == nil then
+        return nil
+    end
+    local zone = MAPS[1411]
+    if state.continent == zone.continent and state.worldX <= zone.top and state.worldX >= zone.bottom
+        and state.worldY <= zone.left and state.worldY >= zone.right then
+        return 1411
+    end
+    for mapId, map in pairs(MAPS) do
+        if map.type == "Continent" and map.continent == state.continent then
+            return mapId
+        end
+    end
+    return nil
+end
+function C_Map.GetPlayerMapPosition(mapId, unit)
+    local map = mapArgument("C_Map.GetPlayerMapPosition", mapId)
+    playerOnly("C_Map.GetPlayerMapPosition", unitArgument("C_Map.GetPlayerMapPosition", unit))
+    if state.positionSecret then
+        return makeSecret("table")
+    end
+    if not map or not map.continent or state.instance or state.continent ~= map.continent then
+        return nil
+    end
+    local u = (state.worldY - map.left) / (map.right - map.left)
+    local v = (state.worldX - map.top) / (map.bottom - map.top)
+    if u < 0 or u > 1 or v < 0 or v > 1 then
+        return nil
+    end
+    return vector(u, v)
+end
+function C_Map.GetWorldPosFromMapPos(mapId, position)
+    local map = mapArgument("C_Map.GetWorldPosFromMapPos", mapId)
+    if type(position) ~= "table" or type(position.x) ~= "number" or type(position.y) ~= "number" then
+        fail("C_Map.GetWorldPosFromMapPos(): a Vector2D expected", 2)
+    end
+    if not map or not map.continent then
+        return nil
+    end
+    return map.continent, vector(
+        map.top + position.y * (map.bottom - map.top),
+        map.left + position.x * (map.right - map.left)
+    )
+end
+function C_Map.GetMapInfo(mapId)
+    return mapArgument("C_Map.GetMapInfo", mapId) and mapInfo(mapId) or nil
+end
+function C_Map.GetMapChildrenInfo(mapId, mapType, allDescendants)
+    mapArgument("C_Map.GetMapChildrenInfo", mapId)
+    local children = {}
+    for childId, map in pairs(MAPS) do
+        if map.parent == mapId and (mapType == nil or mapTypeValue(map.type) == mapType) then
+            children[#children + 1] = mapInfo(childId)
+        end
+    end
+    table.sort(children, function(a, b) return a.mapID < b.mapID end)
+    return children
+end
+function C_Map.GetMapArtLayers(mapId)
+    if not mapArgument("C_Map.GetMapArtLayers", mapId) then
+        return {}
+    end
+    return { { layerWidth = 1002, layerHeight = 668, tileWidth = 256, tileHeight = 256,
+               minScale = 0.4, maxScale = 1.5, additionalZoomSteps = 2 } }
+end
+function C_Map.GetMapArtLayerTextures(mapId, layerIndex)
+    if not mapArgument("C_Map.GetMapArtLayerTextures", mapId) or layerIndex ~= 1 then
+        return {}
+    end
+    local textures = {}
+    for index = 1, 12 do     -- four columns by three rows
+        textures[index] = mapId * 100 + index
+    end
+    return textures
+end
+
+define("IsInInstance", function()
+    if state.instance then
+        return true, "party"
+    end
+    return false, "none"
+end)
+define("UnitGUID", function(unit)
+    playerOnly("UnitGUID", unitArgument("UnitGUID", unit))
+    if state.identitySecret then
+        return makeSecret("string")
+    end
+    return state.guid
+end)
+define("GetPlayerFacing", function() return state.facing end)
+
 local namespaceImpl = {
     C_Secrets = C_Secrets,
     C_Timer = C_Timer,
     C_AddOns = C_AddOns,
     C_UI = C_UI,
+    C_Map = C_Map,
 }
 M.namespace_impl = namespaceImpl
 

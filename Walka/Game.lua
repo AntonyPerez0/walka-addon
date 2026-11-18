@@ -169,6 +169,17 @@ function Game.Read()
     return state
 end
 
+--- The character's GUID, or nil if the game hides it right now. (The road
+-- is saved per character *name*; the GUID tells a new character apart
+-- from a deleted one of the same name.)
+function Game.CharacterGUID()
+    local guid = UnitGUID and UnitGUID("player")
+    if isSecret(guid) or type(guid) ~= "string" then
+        return nil
+    end
+    return guid
+end
+
 --- "Name-Realm" of the current character.
 function Game.CharacterName()
     -- Rule 2 above: look at a value only after issecretvalue() has cleared

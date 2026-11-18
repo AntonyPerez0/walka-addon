@@ -32,7 +32,7 @@ SNAPSHOT_PATH = HERE / "data" / "forever_api.json.gz"
 ENV_SOURCE = HERE / "lua" / "wow_env.lua"
 
 # The only globals the addon may create (frame names must start with "Walka").
-ALLOWED_GLOBALS = {"Walka", "WalkaDB", "WalkaCompanionData", "SLASH_WALKA1", "Walka_OnCompartmentClick"}
+ALLOWED_GLOBALS = {"Walka", "WalkaDB", "WalkaCharDB", "WalkaCompanionData", "SLASH_WALKA1", "Walka_OnCompartmentClick"}
 
 # Globals the addon reads although this client does not have them, with the
 # reason each read is fine. Keep this short: every entry is a place where the

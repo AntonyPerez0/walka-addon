@@ -4,6 +4,7 @@
 ## Author: Walka
 ## Version: 0.1.0
 ## SavedVariables: WalkaDB
+## SavedVariablesPerCharacter: WalkaCharDB
 ## IconTexture: Interface\Icons\Ability_Rogue_Sprint
 ## AddonCompartmentFunc: Walka_OnCompartmentClick
 ## Category: Miscellaneous
@@ -14,9 +15,11 @@ Core\SpeedModel.lua
 Core\Metrics.lua
 Core\SessionLog.lua
 Core\Journey.lua
+Core\Road.lua
 Game.lua
 Beacon.lua
 Tracker.lua
+RoadRecorder.lua
 Walka.lua
 UI\Widgets.lua
 UI\HUD.lua

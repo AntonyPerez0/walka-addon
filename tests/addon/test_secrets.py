@@ -342,11 +342,31 @@ def test_everything_secret_at_once_for_a_long_fight(rt):
     assert fresh.find_secrets() == []
 
 
+def test_a_hidden_guid_and_hidden_positions_leave_the_road_alone(make_rt):
+    """Logging in while the game hides who the character is (and where):
+    the road is opened without a GUID rather than with a hidden one, nothing
+    is recorded, nothing raises, and nothing hidden is saved."""
+    rt = make_rt(state={"identitySecret": True, "positionSecret": True})
+    assert rt.ns.Game.CharacterGUID() is None
+    rt.set(speed=7.0)
+    for step in range(120):
+        rt.set(worldX=-600 + step * 2)
+        tick_checked(rt, 3)
+    road = rt.ns.RoadRecorder.GetDatabase()
+    assert road.guid is None and len(lua_plain(road.segments)) == 0
+    assert rt.ns.RoadRecorder.problem is None
+    assert rt.find_secrets() == []
+    # Visible again: the GUID is taken at the next login, the road goes on.
+    fresh = rt.reload()
+    fresh.set(identitySecret=False, positionSecret=False)
+    assert fresh.find_secrets() == []
+
+
 def test_every_secret_capable_api_the_addon_calls_is_exercised_here(rt, snapshot):
     # If Game.lua starts calling another API that can return secrets, this
     # test names it so that the mock (and the tests above) learn about it.
     source = (rt.addon_dir / "Game.lua").read_text(encoding="utf-8")
-    covered = {"GetUnitSpeed", "UnitIsAFK", "UnitName", "UnitClass"}
+    covered = {"GetUnitSpeed", "UnitIsAFK", "UnitName", "UnitClass", "UnitGUID"}
     for name, tags in snapshot.secret.items():
         bare = name.split(".")[-1]
         if bare + "(" in source and "." not in name:

@@ -94,8 +94,8 @@ def test_known_but_unimplemented_functions_fail_loudly_when_called(bare):
     assert bare.run("return type(UnitHealth)") == "function"           # exists in the client ...
     raises(bare, "UnitHealth('player')", "no implementation")          # ... but not in the mock
     assert "UnitHealth" in bare.keys(bare.log.unimplemented)
-    assert bare.run("return type(C_Map.GetBestMapForUnit)") == "function"
-    raises(bare, "C_Map.GetBestMapForUnit('player')", "no implementation")
+    assert bare.run("return type(C_Map.GetAreaInfo)") == "function"
+    raises(bare, "C_Map.GetAreaInfo(1)", "no implementation")
     assert bare.run("return C_Timer.NoSuchFunction") is None
     assert "C_Timer.NoSuchFunction" in bare.undefined_globals()
 

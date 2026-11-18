@@ -15,6 +15,7 @@ local SessionLog = ns.SessionLog
 local Game = ns.Game
 local Beacon = ns.Beacon
 local Tracker = ns.Tracker
+local RoadRecorder = ns.RoadRecorder
 
 local Walka = {}
 ns.Walka = Walka
@@ -56,6 +57,7 @@ local function buildDefaults()
         beacon = { enabled = true, cellPx = Beacon.DEFAULT_CELL_PX },
         hud = { shown = true, locked = false, scale = 1.0, alpha = 0.9 },
         autoPauseAFK = true,
+        recordRoad = true,      -- keep the character's path for the map
         dailyStepGoal = 6000,
         announce = true,
     }
@@ -589,6 +591,7 @@ function Walka:Tick(dt)
     self.gameState = state
     -- The journey counts every yard, with or without a session.
     Tracker.Travel(state, dt)
+    RoadRecorder.Watchdog()
     local session = self.session
     local flags = stateFlags(state)
     local target = 0
@@ -759,6 +762,9 @@ function Walka:OnLoad()
     self:ApplySettings()
     restoreSession(self)
     Tracker.Settle()
+    -- The road recorder runs on its own timer; nothing it does can reach
+    -- the tick below.
+    pcall(RoadRecorder.Load, self)
     Beacon.GetFrame():SetScript("OnUpdate", onUpdate)
     self.loaded = true
     self:Fire("LOADED")

@@ -608,6 +608,7 @@ def test_settings_of_a_fresh_install(rt):
         "beacon": {"enabled": True, "cellPx": 4},
         "hud": {"shown": True, "locked": False, "scale": 1.0, "alpha": 0.9},
         "autoPauseAFK": True,
+        "recordRoad": True,
         "dailyStepGoal": 6000,
         "announce": True,
     }, "exactly these settings: nothing that no code reads (such as the old netCalories)"
