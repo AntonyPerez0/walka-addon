@@ -56,6 +56,20 @@ function updateChrome(s, summary, links, online) {
     hotkey ? `STOP - stop the belt now (also ${hotkey}, from anywhere on this PC)` : "STOP - stop the belt now",
   );
   setAttr($("stop"), "title", hotkey ? `${hotkey} also stops the belt - even from inside the game` : null);
+  // The hotkey, written the way it is printed on keys: "ctrl+alt+x" -> "Ctrl+Alt+X".
+  const keys = hotkey
+    .split("+")
+    .map((key) => key.charAt(0).toUpperCase() + key.slice(1))
+    .join("+");
+  setText($("stop-key"), keys);
+  setShown($("stop-key"), !!keys);
+  // What the belt is doing, beside STOP on every view (the Live view says it in full).
+  const belt = $("belt");
+  setTone(belt, summary.tone, `#i-${summary.icon}`);
+  setText($("belt-title"), summary.short);
+  const moving = online && s && s.treadmill.connected;
+  setText($("belt-speed"), moving ? fmt.speedU(s.treadmill.speed_kmh) : "");
+  setAttr(belt, "aria-label", `Belt: ${summary.title}. Show the live view.`);
   let title = "Walka";
   if (online && s) {
     const speed = s.treadmill.connected ? `${fmt.speedU(s.treadmill.speed_kmh)} · ` : "";

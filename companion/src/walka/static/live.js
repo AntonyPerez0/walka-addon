@@ -492,6 +492,7 @@ function updateSetup(s) {
   if (hidden) return;
   for (const name of names) setAttr($(`step-${name}`), "data-done", steps[name] ? "true" : "false");
   setText($("setup-count"), `${done} of ${names.length} done`);
+  setTransform($("setup-bar"), `scaleX(${done / names.length})`);
 }
 
 // ---- wiring ----------------------------------------------------------------------------------------------

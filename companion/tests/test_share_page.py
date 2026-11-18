@@ -50,7 +50,7 @@ def read(name: str) -> str:
 
 def test_the_share_view_is_part_of_the_dashboard():
     page = read("index.html")
-    assert '<a href="#share" data-view="share">Share</a>' in page
+    assert re.search(r'<a href="#share" data-view="share">.*?<span>Share</span></a>', page)
     assert 'id="view-share"' in page and 'id="share-canvas"' in page
     app = read("app.js")
     assert '"share"' in app and "initShare()" in app and "updateShare(s)" in app

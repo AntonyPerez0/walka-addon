@@ -151,7 +151,7 @@ export function heartHealth(s) {
   if (!hr) {
     return {
       tone: "idle",
-      pill: "n/a",
+      pill: "N/A",
       state: "not available",
       available: false,
       detail: "Heart-rate sensors are not used with the simulated treadmill.",
