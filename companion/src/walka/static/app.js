@@ -41,7 +41,7 @@ let stopHotkey = "";
 function nameStop() {
   const button = $("stop");
   const lead = button.dataset.busy === "1" ? "STOPPING - stop request sent" : "STOP - stop the belt now";
-  setAttr(button, "aria-label", stopHotkey ? `${lead} (also ${stopHotkey}, from anywhere on this PC)` : lead);
+  setAttr(button, "aria-label", stopHotkey ? `${lead} (also ${stopHotkey}, from anywhere on this computer)` : lead);
 }
 
 // What cannot work without the companion is switched off while it is silent (and looks it),

@@ -21,7 +21,8 @@ Tip: `/console scriptErrors 1` makes Lua errors pop up instead of hiding.
 
 - [ ] With the companion running, the dashboard's *Game signal* turns green
       within a few seconds.
-- [ ] Or run `Walka.exe beacon`: it should print `OK ... cell=4.00px`. A
+- [ ] Or run `Walka.exe beacon` (`Walka beacon` on a Mac): it should print
+      `OK ... cell=4.00px`. A
       cell size that is not a whole number means the strip is being scaled
       (it still works; tell me the number).
 - [ ] Press Alt+Z (hide the UI). The strip should stay. Press Alt+Z again.

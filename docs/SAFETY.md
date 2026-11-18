@@ -13,9 +13,10 @@ not restart it.
 Ways to stop, fastest first:
 
 1. the treadmill's remote, stop button or safety key;
-2. **Ctrl+Alt+X** - a system-wide hotkey the companion registers on
-   Windows; it works while the game has focus and the key press is not
-   passed on to the game (change it under *Settings -> Safety limits*);
+2. **Ctrl+Alt+X** (**Control+Option+X** on a Mac) - a system-wide hotkey
+   the companion registers; it works while the game has focus and the key
+   press is not passed on to the game (change it under *Settings -> Safety
+   limits*);
 3. the STOP button on the dashboard;
 4. *Stop* on the in-game HUD, or `/walka stop`.
 
@@ -105,7 +106,8 @@ with no I/O, so every rule below is covered by automated tests.
    hour) and stops the belt as soon as it can reach it.
 
 8. **Closing the companion stops the belt** it was driving (Ctrl+C, or
-   closing its window) - before anything else is tidied up, and including a
+   closing its window; on a Mac also logging out or shutting down, which
+   reach it as a signal) - before anything else is tidied up, and including a
    belt whose earlier stop had not been confirmed. *Disconnect* on the
    dashboard does the same: a belt in use is stopped first. A crash or a
    killed process cannot do that: the belt then keeps its current speed

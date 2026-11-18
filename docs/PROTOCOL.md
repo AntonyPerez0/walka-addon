@@ -183,10 +183,18 @@ run backwards.
 
 ### Where it looks
 
-When Windows can say where the game window is, the strip is at the top-left
-corner of that window's client area or it is nowhere: nothing else on the
-screen is looked at, so nothing else on the screen can be mistaken for the
-strip. If the game is minimised or closed, nothing is read.
+When the system can say where the game window is (Windows and macOS), the
+strip is at the top-left corner of that window's client area or it is
+nowhere: nothing else on the screen is looked at, so nothing else on the
+screen can be mistaken for the strip. If the game is minimised or closed,
+nothing is read.
+
+macOS gives the window's frame with its title bar, and not the height of
+that bar. There the corner is looked for from the window's top edge down
+to 48 points below it, and the first strip found is the one. Positions on
+a Mac are in points; the picture is read at the display's full resolution
+(two pixels to the point on a Retina display), so a cell is as many pixels
+wide as the addon drew it.
 
 Only where the window cannot be asked for (other platforms, or a window
 search that has never found the game since the companion started) the

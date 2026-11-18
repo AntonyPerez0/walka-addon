@@ -7,7 +7,7 @@
 import { capitalise, fmt, sentence } from "./util.js";
 
 const PAD_ADVICE =
-  "Switch the treadmill on and close its own phone app - most treadmills accept only one Bluetooth connection. No pairing in Windows is needed.";
+  "Switch the treadmill on and close its own phone app - most treadmills accept only one Bluetooth connection. No pairing in the computer's Bluetooth settings is needed.";
 const WINDOW_ADVICE = "Bring the game window to the front; nothing may cover its top-left corner.";
 
 /** Seconds since the game signal was declared lost (0 while it is fresh). */
@@ -57,7 +57,7 @@ export function treadmillHealth(s) {
   }
   if (t.error) {
     let detail = sentence(t.error);
-    if (/bluetooth scan failed/i.test(t.error)) detail += " Check that Bluetooth is switched on on this PC.";
+    if (/bluetooth scan failed/i.test(t.error)) detail += " Check that Bluetooth is switched on on this computer.";
     else if (!/phone app/i.test(t.error)) detail += ` ${PAD_ADVICE}`;
     return { tone: "bad", pill: "not found", state: "not connected", detail: `${detail} Walka keeps trying.` };
   }
@@ -114,7 +114,10 @@ export function gameHealth(s) {
         tone: "bad",
         pill: "error",
         state: "error",
-        detail: `${sentence(beacon.detail || "screen capture is unavailable")} Restart the companion on the same desktop as the game.`,
+        // (On a Mac the reason says which switch in System Settings it is.)
+        detail: /System Settings/.test(beacon.detail || "")
+          ? sentence(beacon.detail)
+          : `${sentence(beacon.detail || "screen capture is unavailable")} Restart the companion on the same desktop as the game.`,
       };
       break;
     case "starting":
