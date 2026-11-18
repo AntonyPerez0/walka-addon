@@ -16,6 +16,11 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/AntonyPerez0/walka-addon/releases/latest/download/Walka-addon.zip"><img src="docs/images/download-addon-button.svg" width="250" alt="Download the game addon"></a><br>
+  <sub>The Walka addon for World of Warcraft. Walka.exe can also put it in the game for you (step 3).</sub>
+</p>
+
+<p align="center">
   <a href="#get-started">Get started</a> ·
   <a href="#what-you-get">What you get</a> ·
   <a href="#stopping-the-belt">Stopping the belt</a> ·
@@ -62,9 +67,10 @@ Warcraft: Forever.
    * **Connect the treadmill:** switch the pad on and close the UREVO
      phone app. Don't pair it in Windows Bluetooth settings - Walka finds
      it by itself.
-   * **Install the game addon:** if you got Walka from CurseForge it is
-     already there. If not, click *Install* on the dashboard, then restart
-     the game and tick *Walka* in the AddOns list.
+   * **Install the game addon:** click *Install* on the dashboard, then
+     restart the game and tick *Walka* in the AddOns list. (By hand
+     instead: unzip the [addon download](https://github.com/AntonyPerez0/walka-addon/releases/latest/download/Walka-addon.zip)
+     into `World of Warcraft\_forever_\Interface\AddOns`.)
    * **Let Walka see the game:** start World of Warcraft in *Windowed* or
      *Windowed (Fullscreen)* mode and keep the top-left corner of the game
      uncovered.
@@ -245,9 +251,11 @@ Details: [docs/PROTOCOL.md](docs/PROTOCOL.md).
 2. **Run it.** A console window opens and your browser shows the dashboard
    at <http://127.0.0.1:8787>.
 3. **Install the addon.** With the game closed, on the dashboard:
-   *Settings → Game addon → Install automatically*. (Or copy the `Walka`
-   folder to `World of Warcraft\_forever_\Interface\AddOns\` yourself.)
-   Start the game and tick *Walka* in the AddOns list.
+   *Settings → Game addon → Install automatically*. Or by hand: download
+   [`Walka-addon.zip`](https://github.com/AntonyPerez0/walka-addon/releases/latest/download/Walka-addon.zip)
+   and unzip it into `World of Warcraft\_forever_\Interface\AddOns\`, so
+   that there is a `Walka` folder in it. Start the game and tick *Walka* in
+   the AddOns list.
 4. **Connect the treadmill.** Switch it on: Walka looks for it by itself.
    To pick one yourself: dashboard → *Treadmill → Scan*, then *Connect*
    next to `URTM030`.
