@@ -6,7 +6,7 @@
 // Everything that changes state goes out as a JSON POST/DELETE (util.js: api).
 
 import { $, U, fmt, post, setAttr, setShown, setText, setTone, state, toast } from "./util.js";
-import { OFFLINE, describe, health } from "./status.js";
+import { OFFLINE, describe, health, staleHealth } from "./status.js";
 import { initLive, updateLive } from "./live.js";
 import { historyUnitsChanged, initHistory, updateHistory } from "./history.js";
 import { initSettings, settingsUnitsChanged, updateSettings } from "./settings.js";
@@ -90,7 +90,8 @@ function render() {
   const online = state.online && !!s;
   const offlineLong = performance.now() - offlineSince > 2000;
   const summary = online ? describe(s) : everOnline || offlineLong ? OFFLINE : CONNECTING;
-  const links = s ? health(s) : null;
+  // A snapshot from before the companion went silent says nothing about now.
+  const links = s ? (online ? health(s) : staleHealth(s)) : null;
   updateChrome(s, summary, links, online);
   if (view === "live") updateLive(s, summary, links, online);
   else if (s && view === "history") updateHistory(s);
@@ -189,7 +190,11 @@ function route() {
 // ---- STOP ----------------------------------------------------------------------------------------
 
 async function stop(button) {
+  // Say that the press was taken, in words: the request can take seconds when something is wrong.
+  const word = $("stop-word");
   button.dataset.busy = "1";
+  button.setAttribute("aria-busy", "true");
+  setText(word, "STOPPING");
   try {
     await post("/api/stop", {}, { timeoutMs: 5000 });
     toast("Stop sent. The belt stays off until you resume.", "warn");
@@ -199,6 +204,8 @@ async function stop(button) {
     });
   } finally {
     delete button.dataset.busy;
+    button.removeAttribute("aria-busy");
+    setText(word, "STOP");
   }
 }
 

@@ -215,6 +215,22 @@ export function health(s) {
   return { treadmill: treadmillHealth(s), game: gameHealth(s), hr: heartHealth(s), addon: addonHealth(s) };
 }
 
+/**
+ * The same links while the page cannot hear the companion: the last answers are
+ * old, so none of them is shown as if it were still true.
+ */
+export function staleHealth(s) {
+  const links = health(s);
+  for (const link of Object.values(links)) {
+    link.tone = "idle";
+    link.pill = "unknown";
+    link.state = "unknown";
+    link.ignored = false;
+    link.detail = "Not known while the companion is not running.";
+  }
+  return links;
+}
+
 // ---- the headline -------------------------------------------------------------------
 
 const RESUME_NOTE = "The belt starts after the pad's 3-2-1 countdown.";

@@ -67,9 +67,16 @@ function updateHero(s, view, online) {
 
   setText($("speed-unit"), U.speedUnit);
   if (!online || !s) {
+    // Nothing here may look live: the last readings are old, so they go.
     setText($("speed-num"), NO_SPEED);
     setAttr($("speed-num"), "data-void", "1");
+    setAttr($("speed-num"), "data-wide", null);
     setText($("hero-meta"), "");
+    for (const id of ["ro-target", "ro-ask", "ro-char"]) setText($(id), "-");
+    setText($("ro-belt"), s ? "unknown" : "-");
+    setTransform($("meter-fill"), "scaleX(0)");
+    setShown($("meter-target"), false);
+    setShown($("key-target"), false);
     return;
   }
 
@@ -128,15 +135,20 @@ function updateHero(s, view, online) {
   const capLine = $("meter-cap-line");
   setShown(capLine, capAt < 0.995);
   setTransform(capLine, `translateX(${(capAt * 100).toFixed(2)}%)`);
-  const capIsEnd = capAt > 0.88;
-  // The minimum's label gives way when the maximum's label would sit on top of it.
+  // Labels under the bar. The maximum's label hangs from its line: centred in the middle
+  // of the bar, starting at the line near the left end, ending at it further right. Close
+  // to the pad's top speed there is no room for two labels, so the end label names both.
+  const capIsEnd = capAt > 0.995;
+  const capNearEnd = !capIsEnd && capAt > 0.78;
   setShown($("meter-min-at"), capIsEnd || capAt - minAt > 0.14);
   setTransform($("meter-min-at"), `translateX(${(minAt * 100).toFixed(2)}%)`);
   setText($("meter-min"), fmt.speed(t.min_kmh));
-  setShown($("meter-cap-at"), !capIsEnd);
+  setShown($("meter-cap-at"), !capIsEnd && !capNearEnd);
   setTransform($("meter-cap-at"), `translateX(${(capAt * 100).toFixed(2)}%)`);
+  setAttr($("meter-cap-at"), "data-edge", capAt < 0.2 ? "start" : capAt > 0.6 ? "end" : null);
   setText($("meter-cap"), `${fmt.speed(top)} max`);
-  setText($("meter-max"), capIsEnd ? `${fmt.speed(top)} ${U.speedUnit} max` : `${fmt.speed(scale)} ${U.speedUnit}`);
+  const padTop = `${fmt.speed(scale)} ${U.speedUnit}`;
+  setText($("meter-max"), capIsEnd ? `${padTop} max` : capNearEnd ? `${fmt.speed(top)} max \u00b7 ${padTop}` : padTop);
   setAttr(
     $("meter"),
     "aria-label",
@@ -393,11 +405,11 @@ const FLAG_HELP = {
 
 let flagsKey = null;
 
-function updateLinks(s, links) {
-  // Game signal.
+function updateLinks(s, links, online) {
+  // Game signal. Offline, the last frame is old: no sentence about it, no flags.
   const game = links.game;
-  const beacon = s.source.beacon;
-  const frame = s.source.frame;
+  const beacon = online ? s.source.beacon : null;
+  const frame = online ? s.source.frame : null;
   setTone($("link-game"), game.ignored && game.tone === "ok" ? "idle" : game.tone);
   setText($("game-state"), game.ignored ? `${game.pill}, ignored` : game.state);
   let detail = game.detail;
@@ -572,7 +584,7 @@ export function updateLive(s, view, links, online) {
   updateSession(s);
   updateManual(s);
   updateTreadmill(s, links.treadmill);
-  updateLinks(s, links);
+  updateLinks(s, links, online);
   updateLog(s);
   updateSetup(s);
 }

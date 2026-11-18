@@ -319,7 +319,15 @@ export const tooltip = {
     el.hidden = false;
     const box = el.getBoundingClientRect();
     const left = Math.min(Math.max(8, x + 14), window.innerWidth - box.width - 8);
-    const top = y - box.height - 12 < 8 ? y + 18 : y - box.height - 12;
+    // Above the pointer, unless that is off the window or over STOP and the belt's state
+    // (fixed top right; a bar at the bottom on a phone): those are never covered.
+    const dockEl = document.querySelector(".stopdock");
+    const dock = dockEl ? dockEl.getBoundingClientRect() : null;
+    const covers = (t) =>
+      !!dock && left < dock.right && left + box.width > dock.left && t < dock.bottom && t + box.height > dock.top;
+    let top = y - box.height - 12;
+    if (top < 8 || covers(top)) top = y + 18;
+    if (covers(top)) top = dock.top - box.height - 8;
     el.style.transform = `translate(${Math.round(left)}px, ${Math.round(top)}px)`;
   },
   hide() {

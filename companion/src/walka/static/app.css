@@ -83,8 +83,8 @@
   --gap: 20px;
   --pad: 24px;
   --rail-w: 232px;
-  --bar-h: 64px;
-  --dock-w: 508px; /* room kept clear along the top for the belt's state and STOP */
+  --bar-h: 72px;
+  --dock-w: 530px; /* room kept clear along the top for the belt's state and STOP */
   --page-w: 1440px; /* the widest the content gets; beyond that it is centred */
   --gutter: max(32px, calc((100% - var(--page-w)) / 2)); /* for what sits inside the main column */
   --dock-right: max(32px, calc((100% - var(--rail-w) - var(--page-w)) / 2)); /* the same edge, from the window */
@@ -383,16 +383,18 @@ code {
   align-items: center;
   justify-content: center;
   gap: 10px;
-  min-width: 148px;
-  height: 48px;
-  padding: 0 24px;
+  min-width: 204px; /* also holds "STOPPING" without growing */
+  height: 56px;
+  padding: 0 26px;
   border: 0;
   border-radius: var(--r);
   background: var(--stop);
   color: #ffffff;
-  font-size: 19px;
-  font-weight: 700;
+  font-size: 22px;
+  font-weight: 800;
   letter-spacing: 0.08em;
+  touch-action: manipulation; /* a double tap is two presses, never a zoom */
+  -webkit-tap-highlight-color: transparent;
   cursor: pointer;
   box-shadow: 0 1px 2px rgba(120, 20, 20, 0.35), inset 0 -2px 0 rgba(0, 0, 0, 0.16);
 }
@@ -403,6 +405,11 @@ code {
 .stop[data-busy="1"] {
   background: var(--stop-press);
   box-shadow: inset 0 2px 0 rgba(0, 0, 0, 0.2);
+}
+.stop[data-busy="1"] {
+  outline: 3px solid var(--ink);
+  outline-offset: 3px;
+  cursor: progress;
 }
 .stop:focus-visible {
   outline: 3px solid var(--ink);
@@ -426,7 +433,7 @@ code {
   align-items: center;
   gap: 12px;
   height: 48px;
-  max-width: 230px;
+  max-width: 250px;
   padding: 0 16px 0 10px;
   border: 1px solid var(--field);
   border-radius: var(--r);
@@ -440,8 +447,12 @@ code {
 .belt[data-tone="warn"] {
   --tone-tint: var(--warn-tint);
 }
+/* Stopped or broken: a red edge and red words, but not a red slab - that is STOP alone. */
 .belt[data-tone="bad"] {
-  --tone-tint: var(--bad-tint);
+  border-color: var(--bad);
+}
+.belt[data-tone="bad"] .belt-title {
+  color: var(--bad-ink);
 }
 .belt:hover {
   border-color: var(--ink-2);
@@ -460,19 +471,19 @@ code {
 }
 .belt-title {
   overflow: hidden;
-  color: var(--ink-2);
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 15px;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 17px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .belt-speed {
   font-family: var(--font-display);
-  font-size: 19px;
+  font-size: 18px;
   font-weight: 700;
   letter-spacing: -0.01em;
-  line-height: 22px;
+  line-height: 21px;
   white-space: nowrap;
 }
 .belt-speed:empty {
@@ -480,7 +491,6 @@ code {
 }
 /* No speed to show (no treadmill, offline): the word takes its place. */
 .belt-title:has(+ .belt-speed:empty) {
-  color: var(--ink);
   font-size: 16px;
   line-height: 22px;
 }
@@ -658,17 +668,17 @@ main {
   align-items: baseline;
   gap: 48px 14px;
   height: var(--bar-h);
-  padding: 19px calc(var(--gutter) + var(--dock-w)) 0 var(--gutter);
+  padding: 22px calc(var(--gutter) + var(--dock-w)) 0 var(--gutter);
   border-bottom: 1px solid var(--line);
   background: var(--canvas);
   overflow: hidden;
 }
 .view-head h2 {
   font-family: var(--font-display);
-  font-size: 22px;
+  font-size: 24px;
   font-weight: 600;
-  letter-spacing: -0.01em;
-  line-height: 26px;
+  letter-spacing: -0.015em;
+  line-height: 28px;
 }
 .view-head h2,
 .view-head p {
@@ -714,13 +724,13 @@ main {
 }
 .offline strong {
   display: block;
+  font-size: 15px;
 }
 
 /* While the companion is silent, what the page last knew is dimmed. */
 body[data-offline="1"] .view .card:not(.hero),
-body[data-offline="1"] .hero-body,
-body[data-offline="1"] .health {
-  opacity: 0.5;
+body[data-offline="1"] .hero-body > :is(.speed, .readout, .meter) {
+  opacity: 0.5; /* not the note: what to do now stays at full strength */
 }
 
 .noscript {
@@ -883,6 +893,7 @@ body[data-offline="1"] .health {
   min-height: 48px;
   padding: 0 28px;
   font-size: 16px;
+  touch-action: manipulation;
 }
 .btn.square {
   width: 44px;
@@ -1188,6 +1199,13 @@ body[data-offline="1"] .health {
   color: var(--ink);
   font-weight: 600;
 }
+/* Near the left end the label starts at its line; further right it ends there. */
+.meter-scale .meter-layer[data-edge="start"] span {
+  transform: none;
+}
+.meter-scale .meter-layer[data-edge="end"] span {
+  transform: translateX(-100%);
+}
 .meter-zero {
   position: absolute;
   left: 0;
@@ -1279,12 +1297,6 @@ body[data-offline="1"] .health {
   }
   .readout div:nth-last-child(2) {
     border-bottom: 0;
-  }
-}
-/* A very narrow one: the maximum's label ends at its tick, clear of the end of the scale. */
-@container hero (max-width: 480px) {
-  .meter-scale #meter-cap {
-    transform: translateX(-100%);
   }
 }
 .hero-action-note {
@@ -2424,7 +2436,7 @@ details[open] > summary::before {
 
 .tooltip {
   position: fixed;
-  z-index: 70;
+  z-index: 55; /* under STOP and the belt's state (60), whatever the script works out */
   top: 0;
   left: 0;
   max-width: 240px;
@@ -2464,9 +2476,16 @@ details[open] > summary::before {
 @media (max-width: 1179px) {
   :root {
     --rail-w: 72px;
-    --dock-w: 404px;
+    --dock-w: 472px;
   }
   .stop-key {
+    display: none;
+  }
+  /* The dock takes most of the bar here: the notice's words start under it, at full width. */
+  .offline {
+    padding-top: calc(var(--bar-h) + 6px);
+  }
+  .offline > p::before {
     display: none;
   }
   .brand {
@@ -2755,6 +2774,9 @@ details[open] > summary::before {
     margin: 0;
     padding: 12px 16px;
   }
+  .stop {
+    min-width: 0;
+  }
   .noscript {
     margin: 12px 12px 0;
   }
@@ -3007,7 +3029,7 @@ details[open] > summary::before {
     display: none;
   }
   body[data-offline="1"] .view .card:not(.hero),
-  body[data-offline="1"] .hero-body {
+  body[data-offline="1"] .hero-body > :is(.speed, .readout, .meter) {
     opacity: 1;
   }
   .view-head {
