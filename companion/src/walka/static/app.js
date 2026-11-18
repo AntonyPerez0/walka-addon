@@ -67,9 +67,14 @@ function updateChrome(s, summary, links, online) {
   const belt = $("belt");
   setTone(belt, summary.tone, `#i-${summary.icon}`);
   setText($("belt-title"), summary.short);
-  const moving = online && s && s.treadmill.connected;
-  setText($("belt-speed"), moving ? fmt.speedU(s.treadmill.speed_kmh) : "");
-  setAttr(belt, "aria-label", `Belt: ${summary.title}. Show the live view.`);
+  const beltSpeed = online && s && s.treadmill.connected ? fmt.speedU(s.treadmill.speed_kmh) : "";
+  setText($("belt-speed"), beltSpeed);
+  // The name starts with what is shown, so it is what a voice user would say.
+  setAttr(
+    belt,
+    "aria-label",
+    `${summary.short}${beltSpeed ? `, ${beltSpeed}` : ""} - belt: ${summary.title}. Show the live view.`,
+  );
   let title = "Walka";
   if (online && s) {
     const speed = s.treadmill.connected ? `${fmt.speedU(s.treadmill.speed_kmh)} · ` : "";

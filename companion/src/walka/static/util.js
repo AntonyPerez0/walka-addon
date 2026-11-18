@@ -276,12 +276,17 @@ export async function run(button, action, { success, quiet } = {}) {
 
 // ---- toasts ------------------------------------------------------------------
 
+// A notice says what kind it is with a shape as well as a colour.
+const TOAST_ICON = { info: "note", ok: "check", warn: "warn", error: "x" };
+
 export function toast(message, kind = "info", { sticky = false } = {}) {
   const host = $("toasts");
   const dismiss = h("button", { type: "button", "aria-label": "Dismiss" }, icon("x", 14));
+  const lamp = h("span", { class: "lamp" }, icon(TOAST_ICON[kind] || TOAST_ICON.info, 14));
   const item = h(
     "div",
     { class: "toast", "data-kind": kind, role: kind === "error" ? "alert" : "status" },
+    lamp,
     h("p", { text: message }),
     dismiss,
   );

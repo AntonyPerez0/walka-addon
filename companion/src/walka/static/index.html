@@ -31,6 +31,7 @@
   <symbol id="i-nav-history" viewBox="0 0 24 24"><path d="M6 19v-6m6 6V6m6 13v-9" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/><path d="M3.5 21.2h17" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></symbol>
   <symbol id="i-nav-share" viewBox="0 0 24 24"><path d="M12 14.5V4m0 0L8.2 7.8M12 4l3.8 3.8" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/><path d="M5.5 11.5v6.2A2.3 2.3 0 0 0 7.8 20h8.4a2.3 2.3 0 0 0 2.3-2.3v-6.2" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="i-nav-settings" viewBox="0 0 24 24"><path d="M4 7.5h7.5m5 0H20M4 16.5h3.5m5 0H20" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/><circle cx="14" cy="7.5" r="2.4" fill="none" stroke="currentColor" stroke-width="1.9"/><circle cx="10" cy="16.5" r="2.4" fill="none" stroke="currentColor" stroke-width="1.9"/></symbol>
+  <symbol id="i-note" viewBox="0 0 24 24"><path d="M12 11v6.5" stroke="currentColor" stroke-width="3" stroke-linecap="round"/><circle cx="12" cy="6.6" r="1.8" fill="currentColor"/></symbol>
   <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 11v5.2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="7.7" r="1.2" fill="currentColor"/></symbol>
   <symbol id="i-mark" viewBox="0 0 32 32"><rect class="mark-tile" width="32" height="32" rx="8"/><path class="mark-stride" d="M8.2 15.6 12.4 8l3.6 5.6L19.6 9l4.2 6.6" fill="none" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><rect class="mark-belt" x="6" y="20" width="20" height="4.6" rx="2.3"/></symbol>
 </svg>
@@ -42,7 +43,7 @@
     <span>STOP</span>
     <span class="stop-key" id="stop-key" aria-hidden="true" hidden></span>
   </button>
-  <a class="belt" id="belt" href="#live" data-tone="idle" aria-label="Belt: connecting. Show the live view.">
+  <a class="belt" id="belt" href="#live" data-tone="idle" aria-label="Connecting - belt: connecting. Show the live view.">
     <span class="lamp"><svg aria-hidden="true"><use href="#i-idle"/></svg></span>
     <span class="belt-text"><span class="belt-title" id="belt-title">Connecting</span><span class="belt-speed num" id="belt-speed"></span></span>
   </a>
@@ -96,7 +97,7 @@
       </div>
       <div class="hero-body">
         <div class="speed" aria-live="off">
-          <span class="speed-num num" id="speed-num" data-void="1">--</span>
+          <span class="speed-num num" id="speed-num" data-void="1">–</span>
           <span class="speed-side"><span class="speed-unit" id="speed-unit">mph</span><span class="speed-cap">belt speed</span></span>
         </div>
         <dl class="readout">
@@ -108,6 +109,7 @@
         <div class="meter" id="meter" role="img" aria-label="Belt speed against your maximum">
           <div class="meter-bar">
             <div class="meter-track"><div class="meter-range" id="meter-range"></div><div class="meter-fill" id="meter-fill"></div></div>
+            <div class="meter-layer" id="meter-min-line" hidden><b></b></div>
             <div class="meter-layer" id="meter-cap-line" hidden><b></b></div>
             <div class="meter-layer" id="meter-target" hidden><i></i></div>
           </div>
@@ -119,8 +121,8 @@
           </div>
           <ul class="meter-key" aria-hidden="true">
             <li><i class="key-fill"></i>Belt speed</li>
-            <li><i class="key-range"></i>What the pad can do, up to your maximum</li>
-            <li><i class="key-target"></i>Target</li>
+            <li id="key-range"><i class="key-range"></i>Allowed range</li>
+            <li id="key-target" hidden><i class="key-target"></i>Target</li>
           </ul>
         </div>
         <div class="hero-note">
@@ -221,7 +223,7 @@
         <header class="card-head">
           <span class="lamp"><svg aria-hidden="true"><use href="#i-off"/></svg></span>
           <h3 id="treadmill-title">Treadmill</h3>
-          <span class="head-state" id="tm-state">-</span>
+          <span class="head-state" id="tm-state"></span>
         </header>
         <p class="link-detail" id="tm-detail"></p>
         <dl class="facts" id="tm-facts">
@@ -257,7 +259,7 @@
         <div class="link-head">
           <span class="lamp"><svg aria-hidden="true"><use href="#i-off"/></svg></span>
           <h4>Game signal</h4>
-          <span class="head-state num" id="game-state">-</span>
+          <span class="head-state num" id="game-state"></span>
         </div>
         <p class="link-detail" id="game-detail"></p>
         <div class="chips" id="game-flags" aria-label="What the character is doing"></div>
@@ -267,7 +269,7 @@
         <div class="link-head">
           <span class="lamp"><svg aria-hidden="true"><use href="#i-off"/></svg></span>
           <h4>Heart-rate sensor</h4>
-          <span class="head-state num" id="hr-state">-</span>
+          <span class="head-state num" id="hr-state"></span>
         </div>
         <p class="link-detail" id="hr-detail"></p>
         <div class="btn-row"><a class="btn small" id="hr-setup" href="#settings/set-hr">Set up</a></div>
@@ -277,7 +279,7 @@
         <div class="link-head">
           <span class="lamp"><svg aria-hidden="true"><use href="#i-off"/></svg></span>
           <h4>Addon sync</h4>
-          <span class="head-state num" id="addon-state">-</span>
+          <span class="head-state num" id="addon-state"></span>
         </div>
         <p class="link-detail" id="addon-detail"></p>
         <div class="btn-row">
@@ -483,7 +485,7 @@
         <header class="card-head">
           <span class="lamp"><svg aria-hidden="true"><use href="#i-off"/></svg></span>
           <h3 id="set-hr-h">Heart-rate sensor</h3>
-          <span class="head-state num" id="set-hr-state">-</span>
+          <span class="head-state num" id="set-hr-state"></span>
         </header>
         <p class="muted">Optional. Any Bluetooth heart-rate sensor works: a chest strap, an arm band, or a watch that can broadcast heart rate over Bluetooth. With age and sex set in the body profile, calories are then computed from heart rate.</p>
         <p class="link-detail" id="set-hr-detail"></p>
@@ -505,7 +507,7 @@
         <header class="card-head">
           <span class="lamp"><svg aria-hidden="true"><use href="#i-off"/></svg></span>
           <h3 id="set-addon-h">Game addon</h3>
-          <span class="head-state num" id="set-addon-state">-</span>
+          <span class="head-state num" id="set-addon-state"></span>
         </header>
         <p class="link-detail" id="set-addon-detail"></p>
         <form class="form" data-form="addon" novalidate></form>

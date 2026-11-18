@@ -39,7 +39,7 @@ function remember(key, value) {
 
 // Shown instead of a number when the belt's speed is not known (no treadmill,
 // no companion). Never a zero: an unseen belt may well be moving.
-const NO_SPEED = "--";
+const NO_SPEED = "–"; // one dash: at this size two hyphens read as a glitch
 
 const BELT_WORDS = {
   unknown: "state unknown",
@@ -116,11 +116,21 @@ function updateHero(s, view, online) {
   const target = $("meter-target");
   setShown(target, steering);
   if (steering) setTransform(target, `translateX(${(Math.min(1, g.wanted_kmh / scale) * 100).toFixed(2)}%)`);
+  // The legend names only what is drawn.
+  const hasRange = capAt > minAt;
+  setShown($("key-range"), hasRange);
+  setShown($("key-target"), steering);
+  // Where the allowed range begins: a tick, so its ends do not rest on a faint tint alone.
+  const minLine = $("meter-min-line");
+  setShown(minLine, hasRange && minAt > 0.005);
+  setTransform(minLine, `translateX(${(minAt * 100).toFixed(2)}%)`);
 
   const capLine = $("meter-cap-line");
   setShown(capLine, capAt < 0.995);
   setTransform(capLine, `translateX(${(capAt * 100).toFixed(2)}%)`);
   const capIsEnd = capAt > 0.88;
+  // The minimum's label gives way when the maximum's label would sit on top of it.
+  setShown($("meter-min-at"), capIsEnd || capAt - minAt > 0.14);
   setTransform($("meter-min-at"), `translateX(${(minAt * 100).toFixed(2)}%)`);
   setText($("meter-min"), fmt.speed(t.min_kmh));
   setShown($("meter-cap-at"), !capIsEnd);
