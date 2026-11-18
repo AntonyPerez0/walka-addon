@@ -81,7 +81,7 @@ used.
       target arrow are triangles, not rectangles; no text is clipped
       ("Paused (AFK)" fits beside the four buttons, in mph and in km/h).
 - [ ] Right-click the HUD: a menu with *Lock position*, *Keep walking when
-      standing*, *History*, *Journey*, *Options* and *Hide*. All of them
+      standing*, *History*, *Journey*, *Road map*, *Options* and *Hide*. All of them
       work, also in combat.
 - [ ] Drag the HUD into a corner, then `/reload`: it is back in the same
       place.
@@ -173,7 +173,36 @@ And the companion:
       belt keeps following the character as before (the *Game signal* stays
       green).
 
-## 8. With the treadmill (after the checks in the README)
+## 8. The road map
+
+The road recorder and the map use game calls that could only be checked
+against Blizzard's documentation and another addon's source, not in the
+game. This section matters most.
+
+- [ ] Run around outdoors for a minute, then `/walka mapcheck`. It should
+      list two or more continents with "art 1002x668 ... 12 picture
+      file(s)" (the numbers may differ), say which continent you are on,
+      and count more than one point. If it says "0 continent map(s)" or
+      "the recorder ran into: ...", copy the lines for me.
+- [ ] `/walka map`: the continent's map appears - the real picture, not
+      black or green squares - with your road on it as a line and an arrow
+      where you stand. **Take a screenshot** (the window has a button):
+      only a picture shows whether the art loaded.
+- [ ] Mouse wheel zooms towards the cursor, dragging moves the map, *Me*
+      centres on your character, *Fit* shows the whole continent, `<` `>`
+      change continent. The line stays about two pixels wide at every zoom.
+- [ ] Walk a square: the corners are kept (not cut diagonally).
+- [ ] Start a session and walk: after `/walka map` is reopened, that
+      stretch is brighter than the rest, and the footer's percentage is
+      above zero.
+- [ ] Take a flight path: a thin pale line. Use your hearthstone or a
+      portal: no line across the map between the two places.
+- [ ] Enter a dungeon and leave again: nothing drawn for the time inside,
+      no Lua error.
+- [ ] `/reload`: the road is still there and carries on.
+- [ ] The window opens, moves and closes in combat; Escape closes it.
+
+## 9. With the treadmill (after the checks in the README)
 
 - [ ] Stand on the pad, `/walka start`: countdown, belt starts at minimum
       speed, then follows.

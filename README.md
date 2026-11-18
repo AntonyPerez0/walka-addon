@@ -254,6 +254,39 @@ Private by default:
 `py -m walka --demo` has a made-up character to try the page with; it is
 never saved.
 
+## The road map
+
+From the moment the addon is installed it keeps the road your character
+travels - install it before you start a character and the road begins at
+level 1. `/walka map` (or *Road map* in the HUD's right-click menu) shows
+it on the game's own map of the continent:
+
+* the road is coloured by level, a colour for every ten levels;
+* the stretches you walked **on the treadmill** are bright, with a soft
+  glow; what your character travelled while the belt stood still is dim;
+* flight paths are thin and pale;
+* a mark shows where you are now. The mouse wheel zooms, dragging moves the
+  map, *Me* centres it on your character, *Fit* shows the whole continent,
+  `<` and `>` change continent, and *Screenshot* saves a picture of the
+  screen, map included, to the game's Screenshots folder.
+
+What is recorded: a point every twenty yards (fewer on flight paths, more
+where the road bends), nothing while you stand still, nothing inside
+dungeons, raids and battlegrounds (the game does not say where you are
+there). It is saved per character with your other addon settings and never
+leaves your PC. `/walka road off` stops the recording (`on` starts it
+again); what is recorded so far is kept. A road from level 1 to 60 comes to
+about a megabyte.
+
+If the map does not show, `/walka mapcheck` prints what the game answered
+when Walka asked for its maps.
+
+The way the road is recorded and the map is drawn follows
+[Road to Sixty](https://github.com/Jordanburch101/road-to-sixty) by Jordan
+Burch (MIT licence, see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)) -
+an addon made for exactly this, with a replay of the whole journey, a
+journal of quests and kills, and much more. It runs fine next to Walka.
+
 ## Other games, or no game
 
 The dashboard has a **manual session**: start, pause, stop and speed
@@ -335,6 +368,8 @@ order:
 
 ## Ideas for later
 
+* The road as line art on the Share picture (the companion would read it
+  from the game's saved files after a `/reload` or logout).
 * A foot pod or other Bluetooth cadence sensor for true step counts.
 * Goals and streak rewards in game; milestones announced in chat.
 * Per-game plugins for other games (the companion's manual mode already

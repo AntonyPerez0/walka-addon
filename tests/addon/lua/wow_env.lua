@@ -99,6 +99,7 @@ local state = {
     mapId = nil,             -- GetBestMapForUnit(); nil: worked out from the position
     facing = 0,              -- GetPlayerFacing(), radians
     positionSecret = false,  -- the position calls return secrets
+    mapsBroken = false,      -- the game answers nothing useful about its maps
     className = "Rogue",     -- UnitClass("player"): localised name, file name, id
     classFile = "ROGUE",
     classId = 4,
@@ -915,6 +916,9 @@ function C_Map.GetPlayerMapPosition(mapId, unit)
 end
 function C_Map.GetWorldPosFromMapPos(mapId, position)
     local map = mapArgument("C_Map.GetWorldPosFromMapPos", mapId)
+    if state.mapsBroken then
+        return nil
+    end
     if type(position) ~= "table" or type(position.x) ~= "number" or type(position.y) ~= "number" then
         fail("C_Map.GetWorldPosFromMapPos(): a Vector2D expected", 2)
     end
@@ -932,6 +936,9 @@ end
 function C_Map.GetMapChildrenInfo(mapId, mapType, allDescendants)
     mapArgument("C_Map.GetMapChildrenInfo", mapId)
     local children = {}
+    if state.mapsBroken then
+        return children
+    end
     for childId, map in pairs(MAPS) do
         if map.parent == mapId and (mapType == nil or mapTypeValue(map.type) == mapType) then
             children[#children + 1] = mapInfo(childId)
@@ -1893,6 +1900,40 @@ function TextureBase:GetVertexOffset(vertexIndex)
     return 0, 0
 end
 function TextureBase:SetRotation(radians) W[self].rotation = numberArgument("SetRotation", radians, "angle") end
+
+-- ---- Line ---------------------------------------------------------------------
+-- A line is drawn between two points, each an offset from a point of
+-- another region - not anchored like a texture.
+
+local Line = class("Line")
+
+local function linePoint(fn, point, relativeTo, x, y)
+    if type(point) ~= "string" then
+        fail(fn .. "(): the relative point must be a string such as \"TOPLEFT\"", 3)
+    end
+    if type(relativeTo) ~= "table" or not W[relativeTo] then
+        fail(fn .. "(): the region the point is relative to is missing", 3)
+    end
+    return {
+        point = point, relativeTo = relativeTo,
+        x = x == nil and 0 or numberArgument(fn, x, "x offset"),
+        y = y == nil and 0 or numberArgument(fn, y, "y offset"),
+    }
+end
+function Line:SetStartPoint(point, relativeTo, x, y)
+    W[self].startPoint = linePoint("SetStartPoint", point, relativeTo, x, y)
+end
+function Line:SetEndPoint(point, relativeTo, x, y)
+    W[self].endPoint = linePoint("SetEndPoint", point, relativeTo, x, y)
+end
+function Line:SetThickness(thickness)
+    thickness = numberArgument("SetThickness", thickness, "thickness")
+    if thickness <= 0 then
+        fail("SetThickness(): thickness must be positive", 2)
+    end
+    W[self].thickness = thickness
+end
+function Line:GetThickness() return W[self].thickness or 0 end
 function TextureBase:GetRotation() return W[self].rotation or 0 end
 
 -- ---- Fonts and FontString ----------------------------------------------------
@@ -4308,6 +4349,12 @@ function M.inspect(widget)
         checked = s.checked == true,
         value = s.value,
         mouse = s.mouse == true,
+        -- lines
+        startX = s.startPoint and s.startPoint.x, startY = s.startPoint and s.startPoint.y,
+        endX = s.endPoint and s.endPoint.x, endY = s.endPoint and s.endPoint.y,
+        thickness = s.thickness,
+        ownScale = s.scale,
+        rotation = s.rotation,
     }
 end
 

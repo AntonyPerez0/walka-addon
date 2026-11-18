@@ -25,4 +25,5 @@ UI\Widgets.lua
 UI\HUD.lua
 UI\History.lua
 UI\Journey.lua
+UI\RoadMap.lua
 UI\Options.lua

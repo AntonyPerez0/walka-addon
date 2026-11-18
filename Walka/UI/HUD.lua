@@ -420,6 +420,11 @@ local function openMenu(owner)
                 ns.JourneyWindow.Show()
             end
         end)
+        root:CreateButton("Road map", function()
+            if ns.RoadMap then
+                ns.RoadMap.Show()
+            end
+        end)
         root:CreateButton("Options", function()
             if ns.Options then
                 ns.Options.Open()

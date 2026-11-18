@@ -813,6 +813,7 @@ local HELP = {
     "/walka start | pause | resume | stop - control the walking session",
     "/walka history - past sessions and totals",
     "/walka journey - your character's journey so far: level, time played, your steps and its steps",
+    "/walka map - the road your character has travelled, on the map (road on | off switches recording)",
     "/walka options - settings",
     "/walka status - what the addon is doing right now",
     "/walka weight 180lb (or 82kg) - your weight, for calorie estimates",
@@ -859,6 +860,25 @@ local function slash(message)
     elseif command == "journey" or command == "card" then
         if ns.JourneyWindow then
             ns.JourneyWindow.Toggle()
+        end
+    elseif command == "map" or (command == "road" and rest == "") then
+        if ns.RoadMap then
+            ns.RoadMap.Toggle()
+        end
+    elseif command == "road" then
+        if rest == "on" or rest == "off" then
+            self:Set("recordRoad", rest == "on")
+            RoadRecorder.SetEnabled(rest == "on")
+            self:Print(rest == "on" and "recording your character's road." or
+                "no longer recording your character's road (what is recorded so far is kept).")
+        else
+            self:Print("use /walka road on, /walka road off, or /walka map to see it.")
+        end
+    elseif command == "mapcheck" then
+        if ns.RoadMap then
+            ns.RoadMap.Check(function(text)
+                self:Print(text)
+            end)
         end
     elseif command == "options" or command == "config" or command == "settings" then
         if ns.Options then
