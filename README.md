@@ -1,60 +1,168 @@
-# Walka
+<h1 align="center">
+  <img src="docs/images/logo.svg" width="44" height="44" align="top" alt=""> Walka
+</h1>
 
-**Walk on your walking pad while you play World of Warcraft.** The belt
-follows your character: faster when it runs, slower when it stands still.
+<p align="center">
+  <b>Walk on your walking pad while you play World of Warcraft.</b><br>
+  The belt follows your character: faster when it runs, slower when it stands still.
+</p>
 
-## [⬇ Download Walka for Windows](https://github.com/AntonyPerez0/walka-addon/releases/latest/download/Walka.exe)
+<p align="center">
+  <a href="https://github.com/AntonyPerez0/walka-addon/releases/latest/download/Walka.exe"><img src="docs/images/download-button.svg" width="360" alt="Download Walka for Windows"></a>
+</p>
 
-One file, `Walka.exe`. Free. Nothing to install - you just run it.
+<p align="center">
+  One file, <code>Walka.exe</code> · Free · No setup - you just open it
+</p>
+
+<p align="center">
+  <a href="#get-started">Get started</a> ·
+  <a href="#what-you-get">What you get</a> ·
+  <a href="#stopping-the-belt">Stopping the belt</a> ·
+  <a href="#safety">Safety</a> ·
+  <a href="#troubleshooting">Troubleshooting</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/AntonyPerez0/walka-addon/actions/workflows/ci.yml"><img src="https://github.com/AntonyPerez0/walka-addon/actions/workflows/ci.yml/badge.svg" alt="Tests and Windows build"></a>
+  <img src="https://img.shields.io/badge/Windows-10%20%26%2011-0078d4" alt="Windows 10 and 11">
+  <img src="https://img.shields.io/badge/World%20of%20Warcraft-Forever-c79c3e" alt="World of Warcraft: Forever">
+  <img src="https://img.shields.io/badge/walking%20pad-UREVO%20Strol%202E-256abf" alt="Walking pad: UREVO Strol 2E">
+</p>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/images/dashboard-dark.png">
+    <img src="docs/images/dashboard-light.png" width="880" alt="The Walka dashboard: the belt's speed, this session's time, distance, steps and calories, and a red STOP button">
+  </picture>
+</p>
 
 This is the Windows program that goes with the **Walka addon** in the
 game. You need both: the addon watches your character, and this program
 talks to your walking pad.
 
+**You need:** a Windows 10 or 11 PC with Bluetooth, a UREVO Strol 2E
+walking pad (other Bluetooth walking pads may work), and World of
+Warcraft: Forever.
+
 ## Get started
 
-1. **Download `Walka.exe`** with the link above. Save it somewhere you will
-   find it again, like your Desktop.
-2. **Double-click it.** A small black window opens and stays open - that is
-   Walka running - and a page called the *dashboard* opens in your web
-   browser.
+1. **Download `Walka.exe`** with the button above. It goes to your
+   *Downloads* folder. If the browser says it "isn't commonly downloaded",
+   choose **Keep** (in Edge: **...** → **Keep** → **Keep anyway**).
+2. **Double-click it.** A black window opens: that is Walka. **Leave it
+   open while you walk** - closing it stops Walka. The *dashboard* page
+   opens in your browser (if not, go to `127.0.0.1:8787`).
 
    The first time, Windows may say *"Windows protected your PC"*. Click
    **More info**, then **Run anyway**. (Walka is not signed by a company,
    so Windows does not recognise it yet.)
 3. **Follow "Getting started" on the dashboard.** It ticks each step off as
    you do it:
-   * **Walking pad:** switch it on and close the UREVO phone app (the pad
-     talks to one thing at a time). Walka finds the pad by itself.
-   * **Game addon:** if you got Walka from CurseForge it is already there.
-     If not, press *Install* and Walka puts it in the game for you.
-   * **Game:** start World of Warcraft in *Windowed* or *Windowed
-     (Fullscreen)* mode.
-   * **You:** enter your weight and height, for the calorie count.
-4. **Walk.** In the game, type `/walka`, step onto the pad and press
-   **Start**.
+   * **Connect the treadmill:** switch the pad on and close the UREVO
+     phone app. Don't pair it in Windows Bluetooth settings - Walka finds
+     it by itself.
+   * **Install the game addon:** if you got Walka from CurseForge it is
+     already there. If not, click *Install* on the dashboard, then restart
+     the game and tick *Walka* in the AddOns list.
+   * **Let Walka see the game:** start World of Warcraft in *Windowed* or
+     *Windowed (Fullscreen)* mode and keep the top-left corner of the game
+     uncovered.
+   * **Enter your weight and height:** for the calorie count.
+
+> [!WARNING]
+> **Early version - not yet tried on a real walking pad.** Read
+> [Before your first walk](#before-your-first-walk) and keep the pad's
+> remote in your hand the first time.
+
+4. **Walk.** Step onto the pad and, in the game, click the ▶ button on the
+   small Walka box (or type `/walka start`).
 
 **To stop the belt at any time:** the pad's own remote, **Ctrl+Alt+X** on
 the keyboard, or the red **STOP** on the dashboard.
 
-**You need:** Windows 10 or 11 with Bluetooth · a UREVO Strol 2E walking
-pad (other pads that speak standard Bluetooth "FTMS" should work too) ·
-World of Warcraft: Forever.
+## What you get
 
-**Stuck?** [Troubleshooting](#troubleshooting) ·
-[Stopping the belt](#stopping-the-belt) · [Safety](#safety) ·
-[Is this allowed?](#is-this-allowed)
+<table>
+  <tr>
+    <td width="33%" valign="top">
+      <b>🏃 Follows your character</b><br>
+      Run in the game and the belt speeds up. Stand still and it eases off. You choose every speed.
+    </td>
+    <td width="33%" valign="top">
+      <b>🛑 Built around stopping</b><br>
+      A hard speed cap, a STOP key that works from inside the game, and a belt that never speeds up when the signal is lost.
+    </td>
+    <td width="33%" valign="top">
+      <b>📊 Counts every walk</b><br>
+      Time, distance, steps and calories - live on the dashboard, and in the game while you play.
+    </td>
+  </tr>
+  <tr>
+    <td width="33%" valign="top">
+      <b>🗺️ Your road on the map</b><br>
+      The path your character has travelled, drawn on the game's world map - brightest where you really walked.
+    </td>
+    <td width="33%" valign="top">
+      <b>🖼️ A picture to share</b><br>
+      Your journey so far as a picture, made on your own computer. You choose what is on it and where it goes.
+    </td>
+    <td width="33%" valign="top">
+      <b>🔒 Stays on your PC</b><br>
+      Nothing is uploaded, and nothing is ever sent to the game: no key presses, no mouse input, no memory reading.
+    </td>
+  </tr>
+</table>
 
-![The Walka dashboard: the belt's speed, today's numbers and a red STOP button](docs/images/dashboard.png)
-
-> **Early version: not yet tested on a real walking pad or in the real
-> game.** Everything here was built and tested against a simulated pad and
-> a simulated game (about 2,000 automated tests). Do the short checks in
-> [Before your first walk](#before-your-first-walk) before you step on.
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/images/history-dark.png">
+        <img src="docs/images/history-light.png" alt="The History page: steps today, this week and all time, a chart of steps per day and the list of walks">
+      </picture>
+      <br><sub><b>History</b> - every walk, with totals and a chart of your week</sub>
+    </td>
+    <td width="50%" align="center">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/images/share-dark.png">
+        <img src="docs/images/share-light.png" alt="The Share page: a picture of your character's journey with steps, miles walked and the road travelled">
+      </picture>
+      <br><sub><b>Share</b> - your journey as a picture</sub>
+    </td>
+  </tr>
+</table>
 
 ---
 
-Everything below is the long version, for when you want the details.
+## The details
+
+Everything below is the long version, for when you want it.
+
+**The basics** ·
+[What Walka is](#what-walka-is) ·
+[How it works](#how-it-works) ·
+[What you need](#what-you-need) ·
+[Install, step by step](#install-step-by-step) ·
+[Using it](#using-it)
+
+**Walking** ·
+[Stopping the belt](#stopping-the-belt) ·
+[Safety](#safety) ·
+[Before your first walk](#before-your-first-walk) ·
+[Heart rate](#heart-rate-optional) ·
+[Other games, or no game](#other-games-or-no-game)
+
+**Your numbers** ·
+[Garmin Connect, Strava and others](#garmin-connect-strava-and-others) ·
+[Your journey, and a picture to share](#your-journey-and-a-picture-to-share) ·
+[The road map](#the-road-map)
+
+**Help** ·
+[Is this allowed?](#is-this-allowed) ·
+[Troubleshooting](#troubleshooting) ·
+[Ideas for later](#ideas-for-later) ·
+[Development](#development)
 
 ## What Walka is
 
@@ -79,17 +187,21 @@ do with just the remote.
 
 ## How it works
 
-```
- WoW: Forever                         Windows                      Treadmill
-┌───────────────────────┐      ┌───────────────────────┐      ┌──────────────┐
-│ Walka addon           │      │ Walka companion       │      │ UREVO pad    │
-│  character speed      │      │                       │      │              │
-│   → belt target       │      │  screen capture       │      │              │
-│   → pixel strip ░█░█  │ ───► │   → safety governor   │ ───► │ belt speed   │
-│  HUD: live estimates  │ look │   → Bluetooth (FTMS)  │ BLE  │              │
-│                       │      │  records the walk     │ ◄─── │ speed, dist. │
-│  history ◄────────────│◄──── │  writes CompanionData │      │              │
-└───────────────────────┘ file └───────────────────────┘      └──────────────┘
+```mermaid
+flowchart LR
+  subgraph game["World of Warcraft: Forever"]
+    addon["Walka addon<br/>reads your character's speed<br/>draws it as a strip of squares<br/>shows the HUD and your history"]
+  end
+  subgraph pc["Your PC"]
+    exe["Walka.exe, the companion<br/>reads the strip off the screen<br/>applies the safety rules<br/>records the walk"]
+  end
+  subgraph pad["Walking pad"]
+    belt["UREVO pad<br/>belt speed"]
+  end
+  addon -- "looks at the screen" --> exe
+  exe -- "Bluetooth" --> belt
+  belt -- "speed, distance" --> exe
+  exe -. "a file the game loads" .-> addon
 ```
 
 An addon cannot use Bluetooth, files or the network, so it *draws* its state
@@ -144,9 +256,9 @@ Details: [docs/PROTOCOL.md](docs/PROTOCOL.md).
 
 ## Using it
 
-In game, type `/walka` to show the HUD, step onto the pad and press
-**Start** (or `/walka start`). The treadmill counts down and the belt
-starts slowly; from then on it follows your character:
+In game, step onto the pad and press the ▶ button on the HUD (or type
+`/walka start`). `/walka` shows or hides the HUD. The treadmill counts down
+and the belt starts slowly; from then on it follows your character:
 
 | Your character is…          | Belt (defaults)  |
 |-----------------------------|------------------|
@@ -539,13 +651,21 @@ py -m pytest          # companion tests + addon tests (the addon runs under a mo
   this client build (`tools/gen_api_snapshot.py` regenerates the snapshot).
 * `py -m walka --demo` runs everything against a simulated treadmill and a
   scripted character.
-* **Publishing a version:** set the same version number in
+* **Publishing a version:** put the same number in
   `companion/pyproject.toml`, `companion/src/walka/__init__.py` and
-  `Walka/Walka.toc`, then push a tag with that number
-  (`git tag v0.1.0`, `git push origin v0.1.0`). Once the tests and the
-  build have passed for it, CI publishes a release with `Walka.exe` - the
-  download link at the top of this page always gives the latest one - and
-  `Walka-addon.zip`, the addon folder zipped the way CurseForge wants it.
+  `Walka/Walka.toc`, commit and push. Then `git tag v0.1.0` and
+  `git push origin v0.1.0`. When the run on the **Actions** tab finishes,
+  the **Releases** page has `Walka.exe` (the download button at the top of
+  this page always gives the latest one) and `Walka-addon.zip`, which you
+  upload to CurseForge yourself. If it fails, delete the tag
+  (`git tag -d v0.1.0`, `git push origin :refs/tags/v0.1.0`), fix it and
+  tag again.
 
 More: [docs/PROTOCOL.md](docs/PROTOCOL.md) ·
 [docs/SAFETY.md](docs/SAFETY.md) · [docs/HARDWARE.md](docs/HARDWARE.md)
+
+---
+
+<p align="center">
+  <sub>Walka is a fan-made tool. It is not affiliated with or endorsed by Blizzard Entertainment or UREVO.</sub>
+</p>

@@ -130,11 +130,16 @@ jobs:
       - name: Publish
         run: |
           test -s release/Walka.exe
-          notes="Download **Walka.exe** below and run it - there is nothing to install. The steps are at the top of the [README](https://github.com/$GH_REPO#readme).
+          notes="**To get Walka:** under **Assets** below, click **Walka.exe**, then open it. If Windows says *Windows protected your PC*, click **More info**, then **Run anyway**. The steps are at the top of the [README](https://github.com/$GH_REPO#readme).
 
-          Walka-addon.zip is the game addon on its own. You do not need it if you got Walka from CurseForge, or if you let Walka.exe install the addon for you."
+          You can ignore the other files: Walka-addon.zip is the game addon on its own (CurseForge or Walka.exe installs it for you), and the Source code files are for developers."
+          # A tag like v0.2.0-rc1 is a trial: published, but never "the latest" that the README's button gives.
+          pre=""
+          case "$TAG" in *-*) pre="--prerelease" ;; esac
           if gh release view "$TAG" >/dev/null 2>&1; then
+            # A second run for the same tag: replace the files, and publish it if a first try left a draft.
             gh release upload "$TAG" release/Walka.exe Walka-addon.zip --clobber
+            gh release edit "$TAG" --draft=false
           else
-            gh release create "$TAG" release/Walka.exe Walka-addon.zip --verify-tag --title "Walka ${TAG#v}" --notes "$notes" --generate-notes
+            gh release create "$TAG" release/Walka.exe Walka-addon.zip --verify-tag --title "Walka ${TAG#v}" --notes "$notes" $pre
           fi
