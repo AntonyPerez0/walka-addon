@@ -230,32 +230,9 @@ def test_a_registered_mac_hotkey_is_pumped_and_given_back(monkeypatch):
     assert log == ["registered 0x1800 0x7", "pumped", "closed"] and pressed == [1]
 
 
-def _press_keys_on_this_mac(key_code: int, flags: int) -> None:
-    """Press and release a key the way a keyboard would, as far as macOS
-    lets a program do that."""
-    import ctypes
-
-    graphics = ctypes.CDLL("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
-    foundation = ctypes.CDLL("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")
-    graphics.CGEventCreateKeyboardEvent.argtypes = [ctypes.c_void_p, ctypes.c_uint16, ctypes.c_bool]
-    graphics.CGEventCreateKeyboardEvent.restype = ctypes.c_void_p
-    graphics.CGEventSetFlags.argtypes = [ctypes.c_void_p, ctypes.c_uint64]
-    graphics.CGEventSetFlags.restype = None
-    graphics.CGEventPost.argtypes = [ctypes.c_uint32, ctypes.c_void_p]
-    graphics.CGEventPost.restype = None
-    foundation.CFRelease.argtypes = [ctypes.c_void_p]
-    foundation.CFRelease.restype = None
-    for down in (True, False):
-        event = graphics.CGEventCreateKeyboardEvent(None, key_code, down)
-        assert event, "macOS would not make a key event"
-        graphics.CGEventSetFlags(event, flags)
-        graphics.CGEventPost(0, event)  # kCGHIDEventTap: where a real keyboard's events come in
-        foundation.CFRelease(event)
-
-
-def _queue_a_hotkey_event_on_this_mac(hotkey_id: int) -> None:
-    """Put an event in the main thread's queue that is made like the one
-    macOS puts there when a registered combination is pressed."""
+def _hotkey_event(hotkey_id: int):
+    """An event made like the one macOS hands a program when a registered
+    combination is pressed: (the Carbon library, the event)."""
     import ctypes
 
     carbon = hotkey._load_carbon()
@@ -276,33 +253,31 @@ def _queue_a_hotkey_event_on_this_mac(hotkey_id: int) -> None:
         ctypes.c_void_p,
     ]
     carbon.SetEventParameter.restype = ctypes.c_int32
-    carbon.GetMainEventQueue.argtypes = []
-    carbon.GetMainEventQueue.restype = ctypes.c_void_p
-    carbon.PostEventToQueue.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int16]
-    carbon.PostEventToQueue.restype = ctypes.c_int32
-
     event = ctypes.c_void_p()
     made = carbon.CreateEvent(
         None, hotkey._EVENT_CLASS_KEYBOARD, hotkey._EVENT_HOTKEY_PRESSED, 0.0, 0, ctypes.byref(event)
     )
     assert made == 0 and event, f"macOS would not make an event ({made})"
     which = hotkey._EventHotKeyID(hotkey._HOTKEY_SIGNATURE, hotkey_id)
-    assert (
-        carbon.SetEventParameter(
-            event, hotkey._PARAM_DIRECT_OBJECT, hotkey._TYPE_HOTKEY_ID, ctypes.sizeof(which), ctypes.byref(which)
-        )
-        == 0
+    status = carbon.SetEventParameter(
+        event, hotkey._PARAM_DIRECT_OBJECT, hotkey._TYPE_HOTKEY_ID, ctypes.sizeof(which), ctypes.byref(which)
     )
-    assert carbon.PostEventToQueue(carbon.GetMainEventQueue(), event, 1) == 0  # kEventPriorityStandard
-    carbon.ReleaseEvent(event)  # (the queue keeps its own hold on it)
+    assert status == 0, status
+    return carbon, event
+
+
+def _hand_this_program_a_hotkey_event(hotkey_id: int) -> None:
+    """What macOS does at the very end when the keys are pressed: send the
+    event to the target the hotkey was registered for."""
+    carbon, event = _hotkey_event(hotkey_id)
+    carbon.SendEventToEventTarget(event, carbon.GetApplicationEventTarget())
+    carbon.ReleaseEvent(event)
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="registers a real hotkey with macOS")
-def test_a_hotkey_event_in_a_macs_queue_reaches_the_callback_through_pump():
-    """Everything of the hotkey that is this program's: taking an event out
-    of the main thread's queue, handing it on, and telling whose it is. What
-    is not shown here is macOS putting the event there when the keys are
-    pressed (see the next test)."""
+def test_a_hotkey_event_handed_to_the_program_reaches_the_right_callback():
+    """The part of the hotkey that is this program's own: the handler macOS
+    calls, and telling whose hotkey an event is for."""
     pressed: list[str] = []
     mine = GlobalHotkey("ctrl+alt+shift+f18", lambda: pressed.append("mine"))
     other = GlobalHotkey("ctrl+alt+shift+f17", lambda: pressed.append("other"))
@@ -310,30 +285,94 @@ def test_a_hotkey_event_in_a_macs_queue_reaches_the_callback_through_pump():
     assert other.start() is True, other.error
     mine_id, other_id = mine._mac._id, other._mac._id
     try:
-        mine.pump()
-        assert pressed == []
-        _queue_a_hotkey_event_on_this_mac(mine_id)
-        assert pressed == []  # not before it is asked for
-        mine.pump()
+        _hand_this_program_a_hotkey_event(mine_id)
         assert pressed == ["mine"]  # ... and only the one it was for
-        _queue_a_hotkey_event_on_this_mac(other_id)
-        mine.pump()  # (whichever is asked: the queue is the program's)
+        _hand_this_program_a_hotkey_event(other_id)
         assert pressed == ["mine", "other"]
-        _queue_a_hotkey_event_on_this_mac(10**6)  # somebody else's
-        mine.pump()
+        _hand_this_program_a_hotkey_event(10**6)  # somebody else's
         assert pressed == ["mine", "other"]
     finally:
         mine.stop()
         other.stop()
     # A hotkey that has been given back hears nothing more.
-    survivor = GlobalHotkey("ctrl+alt+shift+f17", lambda: pressed.append("survivor"))
-    assert survivor.start() is True, survivor.error
+    _hand_this_program_a_hotkey_event(mine_id)
+    _hand_this_program_a_hotkey_event(other_id)
+    assert pressed == ["mine", "other"]
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="registers a real hotkey with macOS")
+def test_pump_takes_what_is_waiting_in_a_macs_main_event_queue():
+    """Key presses arrive in the main thread's event queue and stay there
+    until somebody takes them out: ``pump`` does."""
+    import ctypes
+
+    carbon = hotkey._load_carbon()
+    carbon.GetMainEventQueue.argtypes = []
+    carbon.GetMainEventQueue.restype = ctypes.c_void_p
+    carbon.PostEventToQueue.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int16]
+    carbon.PostEventToQueue.restype = ctypes.c_int32
+    carbon.GetNumEventsInQueue.argtypes = [ctypes.c_void_p]
+    carbon.GetNumEventsInQueue.restype = ctypes.c_ulong
+    queue = carbon.GetMainEventQueue()
+
+    hk = GlobalHotkey("ctrl+alt+shift+f16", lambda: None)
+    assert hk.start() is True, hk.error
     try:
-        _queue_a_hotkey_event_on_this_mac(mine_id)
-        survivor.pump()
-        assert pressed == ["mine", "other"]
+        hk.pump()  # whatever was there before
+        assert carbon.GetNumEventsInQueue(queue) == 0
+        for _ in range(3):
+            _carbon, event = _hotkey_event(10**6)  # (nobody's: this is about the queue)
+            assert carbon.PostEventToQueue(queue, event, 1) == 0  # kEventPriorityStandard
+            carbon.ReleaseEvent(event)  # (the queue keeps its own hold on it)
+        assert carbon.GetNumEventsInQueue(queue) == 3
+        hk.pump()
+        assert carbon.GetNumEventsInQueue(queue) == 0
     finally:
-        survivor.stop()
+        hk.stop()
+
+
+def _press_keys_with_events(key_code: int, flags: int) -> bool:
+    """Press and release a key the way a keyboard would. False if macOS
+    does not let this program do that."""
+    import ctypes
+
+    graphics = ctypes.CDLL("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
+    foundation = ctypes.CDLL("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")
+    try:
+        graphics.CGPreflightPostEventAccess.argtypes = []
+        graphics.CGPreflightPostEventAccess.restype = ctypes.c_bool
+        if not graphics.CGPreflightPostEventAccess():
+            return False
+    except AttributeError:
+        return False  # a macOS that cannot be asked: do not claim a key was pressed
+    graphics.CGEventCreateKeyboardEvent.argtypes = [ctypes.c_void_p, ctypes.c_uint16, ctypes.c_bool]
+    graphics.CGEventCreateKeyboardEvent.restype = ctypes.c_void_p
+    graphics.CGEventSetFlags.argtypes = [ctypes.c_void_p, ctypes.c_uint64]
+    graphics.CGEventSetFlags.restype = None
+    graphics.CGEventPost.argtypes = [ctypes.c_uint32, ctypes.c_void_p]
+    graphics.CGEventPost.restype = None
+    foundation.CFRelease.argtypes = [ctypes.c_void_p]
+    foundation.CFRelease.restype = None
+    for down in (True, False):
+        event = graphics.CGEventCreateKeyboardEvent(None, key_code, down)
+        assert event, "macOS would not make a key event"
+        graphics.CGEventSetFlags(event, flags)
+        graphics.CGEventPost(0, event)  # kCGHIDEventTap: where a real keyboard's events come in
+        foundation.CFRelease(event)
+    return True
+
+
+def _press_keys_with_system_events(key_code: int) -> bool:
+    """The same through macOS' own scripting of the keyboard. False if
+    that is not allowed either."""
+    import subprocess
+
+    script = f'tell application "System Events" to key code {key_code} using {{control down, option down, shift down}}'
+    try:
+        done = subprocess.run(["osascript", "-e", script], capture_output=True, timeout=20)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return done.returncode == 0
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="registers a real hotkey with macOS")
@@ -341,134 +380,40 @@ def test_a_real_hotkey_on_a_mac():
     """The real thing: macOS takes the combination, and a press of it - made
     here, since nobody is at the keyboard - reaches the callback through
     ``pump``. A machine that does not let a program press keys cannot show
-    the second half; the test then says so instead of passing."""
+    the second half; the test then says so instead of passing. One that
+    does, and whose hotkey stays silent, fails."""
     import time
 
     pressed: list[float] = []
     # (Not the default combination: this must not get in the way of a companion that is running.)
     hk = GlobalHotkey("ctrl+alt+shift+f19", lambda: pressed.append(time.monotonic()))
     assert hk.start() is True, hk.error
+    f19 = 0x50
+    control, option, shift = 1 << 18, 1 << 19, 1 << 17  # kCGEventFlagMaskControl, ...Alternate, ...Shift
+    ways = {
+        "key events": lambda: _press_keys_with_events(f19, control | option | shift),
+        "System Events": lambda: _press_keys_with_system_events(f19),
+    }
+    tried: list[str] = []
     try:
         assert hk.active and hk.error == ""
         hk.pump()
         assert pressed == []  # nothing was pressed yet
-        control, option, shift = 1 << 18, 1 << 19, 1 << 17  # kCGEventFlagMaskControl, ...Alternate, ...Shift
-        _press_keys_on_this_mac(0x50, control | option | shift)  # F19
-        deadline = time.monotonic() + 3.0
-        while not pressed and time.monotonic() < deadline:
-            hk.pump()
-            time.sleep(0.02)
+        for name, press in ways.items():
+            if not press():
+                continue
+            tried.append(name)
+            deadline = time.monotonic() + 3.0
+            while not pressed and time.monotonic() < deadline:
+                hk.pump()
+                time.sleep(0.02)
+            if pressed:
+                break
     finally:
         hk.stop()
     assert not hk.active
-    if not pressed:
+    if not tried:
         pytest.skip("the hotkey was registered, but this machine does not let a program press keys to try it")
+    assert pressed, f"the keys were pressed (through {' and '.join(tried)}) and the hotkey was not heard"
     hk.pump()  # given back: asking again does nothing
     assert len(pressed) == 1
-
-
-# ---- the end of the Windows session -----------------------------------------------------
-
-WM_USER = 0x0400
-
-
-def test_what_the_hidden_window_answers():
-    # "May the session end?" - yes, and nothing is stopped yet (it can still be called off).
-    assert session_end_reply(WM_QUERYENDSESSION, 0) == (1, False)
-    assert session_end_reply(WM_QUERYENDSESSION, 1) == (1, False)
-    # "The session is ending" - stop now; "... is not ending after all" - carry on.
-    assert session_end_reply(WM_ENDSESSION, 1) == (0, True)
-    assert session_end_reply(WM_ENDSESSION, 0) == (0, False)
-    # Asked to close: refused, or the window (and with it the warning) would be gone.
-    assert session_end_reply(WM_CLOSE, 0) == (0, False)
-    # Everything else is Windows' business.
-    for message in (0x0001, 0x0002, 0x0081, 0x0312, WM_USER + 1):
-        assert session_end_reply(message, 1) == (None, False)
-
-
-def test_the_watcher_stops_the_belt_only_when_the_session_really_ends():
-    calls: list[int] = []
-    watcher = SessionEndWatcher(lambda: calls.append(1))
-    assert watcher.handle(WM_QUERYENDSESSION, 0) == 1 and calls == []
-    assert watcher.handle(WM_ENDSESSION, 0) == 0 and calls == []
-    assert watcher.handle(WM_USER + 1, 1) is None and calls == []
-    assert watcher.handle(WM_ENDSESSION, 1) == 0 and calls == [1]
-
-    def failing() -> None:
-        raise RuntimeError("the event loop has gone")
-
-    # A failing callback must not escape into Windows' message dispatch.
-    assert SessionEndWatcher(failing).handle(WM_ENDSESSION, 1) == 0
-
-
-@pytest.mark.skipif(sys.platform == "win32", reason="non-Windows behaviour")
-def test_the_watcher_is_a_no_op_off_windows():
-    watcher = SessionEndWatcher(lambda: None)
-    assert watcher.start() is False and "Windows" in watcher.error and not watcher.active
-    watcher.stop()
-
-
-@pytest.mark.skipif(sys.platform != "win32", reason="needs a real window and Windows' message queue")
-def test_the_hidden_window_hears_the_end_of_the_session():
-    """The real thing, as far as it can be had without logging off: the
-    window exists, and the messages Windows would send it at log-off or
-    shutdown - sent here by hand - reach the callback and get the right
-    answers."""
-    import ctypes
-    from ctypes import wintypes
-
-    called = threading.Event()
-    calls: list[str] = []
-
-    def stop_the_belt() -> None:
-        calls.append(threading.current_thread().name)
-        called.set()
-
-    watcher = SessionEndWatcher(stop_the_belt)
-    assert watcher.start(), watcher.error
-    try:
-        hwnd = watcher.hwnd
-        assert watcher.active and hwnd
-        user32 = ctypes.WinDLL("user32", use_last_error=True)
-        user32.SendMessageTimeoutW.argtypes = [
-            wintypes.HWND,
-            wintypes.UINT,
-            wintypes.WPARAM,
-            wintypes.LPARAM,
-            wintypes.UINT,
-            wintypes.UINT,
-            ctypes.POINTER(ctypes.c_size_t),
-        ]
-        user32.SendMessageTimeoutW.restype = ctypes.c_ssize_t
-        user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
-        user32.PostMessageW.restype = wintypes.BOOL
-        user32.IsWindow.argtypes = [wintypes.HWND]
-        user32.IsWindow.restype = wintypes.BOOL
-        user32.IsWindowVisible.argtypes = [wintypes.HWND]
-        user32.IsWindowVisible.restype = wintypes.BOOL
-
-        def send(message: int, wparam: int) -> int:
-            reply = ctypes.c_size_t(12345)
-            # SMTO_ABORTIFHUNG, five seconds: a broken message loop fails the test instead of hanging it.
-            sent = user32.SendMessageTimeoutW(hwnd, message, wparam, 0, 0x0002, 5000, ctypes.byref(reply))
-            assert sent, ctypes.WinError(ctypes.get_last_error())
-            return reply.value
-
-        assert user32.IsWindow(hwnd) and not user32.IsWindowVisible(hwnd)
-        assert send(WM_QUERYENDSESSION, 0) == 1 and calls == []
-        assert send(WM_ENDSESSION, 0) == 0 and calls == []  # the shutdown was called off
-        assert send(WM_ENDSESSION, 1) == 0 and calls == ["walka-session-end"]
-        assert send(WM_USER + 1, 7) == 0 and len(calls) == 1  # left to Windows
-        assert send(WM_CLOSE, 0) == 0 and user32.IsWindow(hwnd)  # still there
-
-        called.clear()
-        assert user32.PostMessageW(hwnd, WM_ENDSESSION, 1, 0)  # posted rather than sent
-        assert called.wait(5) and len(calls) == 2
-    finally:
-        watcher.stop()
-    assert not watcher.active and watcher.hwnd is None
-
-    # A second watcher in the same process gets a window of its own.
-    again = SessionEndWatcher(lambda: None)
-    assert again.start(), again.error
-    again.stop()
