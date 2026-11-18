@@ -95,6 +95,57 @@ jobs:
           Copy-Item companion/dist/Walka.exe release/
           Copy-Item -Recurse Walka release/Walka
           Copy-Item README.md release/
+      # Microsoft Defender - the antivirus that is part of Windows, the one
+      # most people who download Walka have - is on this machine too. It
+      # scans what is about to be published: Walka.exe and the addon's
+      # files. If it finds anything this job fails, and a release needs
+      # this job, so nothing is published. What it found (nothing), when,
+      # and with which virus definitions goes into virus-scan.json, which
+      # is published with the release: the badge at the top of the README
+      # reads it.
+      - name: Virus scan (Microsoft Defender)
+        shell: pwsh
+        run: |
+          $mp = Join-Path $env:ProgramFiles "Windows Defender\MpCmdRun.exe"
+          if (-not (Test-Path $mp)) { throw "Microsoft Defender is not on this machine" }
+          # Today's virus definitions. If they cannot be fetched, the ones
+          # on the machine are used, and virus-scan.json says how old they are.
+          & $mp -SignatureUpdate | Out-Host
+          # -DisableRemediation: only look and report. It also makes the
+          # scan ignore the folders this machine is set up to skip (all of
+          # them: C:\ and D:\) and look inside archives.
+          function Scan($path) {
+            $text = (& $mp -Scan -ScanType 3 -File $path -DisableRemediation 2>&1 | Out-String)
+            Write-Host $text
+            [pscustomobject]@{ Code = $LASTEXITCODE; Text = $text }
+          }
+          # First, is the scanner awake? It must catch the test file that
+          # every antivirus is meant to catch (EICAR: harmless, 68 letters).
+          # Written in two halves, so that this file is not one itself.
+          $test = Join-Path $env:RUNNER_TEMP "scanner-test"
+          New-Item -ItemType Directory -Force -Path $test | Out-Null
+          [IO.File]::WriteAllText((Join-Path $test "eicar.com"), 'X5O!P%@AP[4\PZX54(P^)7CC)7}$' + 'EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*')
+          $r = Scan $test
+          if ($r.Code -ne 2 -or $r.Text -notmatch "EICAR") { throw "Microsoft Defender did not catch the test file, so a scan by it would say nothing" }
+          Remove-Item -Recurse -Force $test
+          # Then the files of the release.
+          $r = Scan (Resolve-Path release).Path
+          if ($r.Code -ne 0 -or $r.Text -notmatch "found no threats") { throw "Microsoft Defender flags a file of the release (see above). Nothing is published." }
+          $status = Get-MpComputerStatus
+          $today = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd")
+          [ordered]@{
+            badge = "Microsoft Defender found nothing on $today"
+            scanner = "Microsoft Defender"
+            result = "no threats found"
+            scanned = $today
+            files = @("Walka.exe", "the files of the addon (Walka-addon.zip)")
+            virus_definitions = "$($status.AntivirusSignatureVersion)"
+            virus_definitions_from = $status.AntivirusSignatureLastUpdated.ToUniversalTime().ToString("yyyy-MM-dd")
+            engine = "$($status.AMEngineVersion)"
+            walka_exe_sha256 = (Get-FileHash release/Walka.exe -Algorithm SHA256).Hash.ToLower()
+          } | ConvertTo-Json | Set-Content -Encoding utf8 release/virus-scan.json
+          Get-Content release/virus-scan.json
+          $global:LASTEXITCODE = 0
       - uses: actions/upload-artifact@v4
         with:
           name: Walka-windows
@@ -138,41 +189,26 @@ jobs:
       - name: Publish
         run: |
           test -s release/Walka.exe
+          test -s release/virus-scan.json
           notes="**To get Walka:** under **Assets** below, click **Walka.exe**, then open it. If Windows says *Windows protected your PC*, click **More info**, then **Run anyway**. The steps are at the top of the [README](https://github.com/$GH_REPO#readme).
 
           **Early version:** not yet tried on a real walking pad. Read *Before your first walk* in the README, and keep the pad's remote in your hand the first time.
+
+          **Virus scan:** before this was published, Microsoft Defender scanned Walka.exe and the addon's files on the machine that built them, and found nothing. *virus-scan.json* under Assets says when, and with which virus definitions.
 
           **Walka-addon.zip** is the game addon on its own. Walka.exe can put it in the game for you; to do it by hand, unzip it into the game's Interface\\AddOns folder. The Source code files are for developers."
           # A tag like v0.2.0-rc1 is a trial: published, but never "the latest" that the README's button gives.
           pre=""
           case "$TAG" in *-*) pre="--prerelease" ;; esac
-          # What the badge in the README says until VirusTotal has answered
-          # for these files (the job after this one puts the answer here).
-          echo '{"badge": "Walka.exe: not checked yet"}' > virus-scan.json
           if gh release view "$TAG" >/dev/null 2>&1; then
             # A second run for the same tag: replace the files, and publish it if a first try left a draft.
-            gh release upload "$TAG" release/Walka.exe Walka-addon.zip virus-scan.json --clobber
+            gh release upload "$TAG" release/Walka.exe Walka-addon.zip release/virus-scan.json --clobber
             gh release edit "$TAG" --draft=false
           else
             # From a pushed tag: the tag must be there. Run by hand: the tag is made now, on this commit.
             if [ "$GITHUB_REF_TYPE" = "tag" ]; then at="--verify-tag"; else at="--target $GITHUB_SHA"; fi
-            gh release create "$TAG" release/Walka.exe Walka-addon.zip virus-scan.json $at --title "Walka ${TAG#v}" --notes "$notes" $pre || {
+            gh release create "$TAG" release/Walka.exe Walka-addon.zip release/virus-scan.json $at --title "Walka ${TAG#v}" --notes "$notes" $pre || {
               echo "::error::The release was refused. If the message above is 'Resource not accessible by integration': GitHub does not let a workflow put a tag on a commit that itself changes a file under .github/workflows. Make any other commit on top of it and run this again."
               exit 1
             }
           fi
-
-  # Has VirusTotal check the files that were just published, and puts the
-  # answer in the release notes and in the badge at the top of the README
-  # (see virus-scan.yml). After the release, not before it: what is checked
-  # is what people download, and a scanner's false alarm - or VirusTotal
-  # being out of reach - does not hold a release back.
-  virus-scan:
-    name: Virus scan
-    needs: release
-    permissions:
-      contents: write
-    uses: ./.github/workflows/virus-scan.yml
-    with:
-      tag: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', inputs.release_version) || github.ref_name }}
-    secrets: inherit

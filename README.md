@@ -16,8 +16,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/AntonyPerez0/walka-addon/releases/latest"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fgithub.com%2FAntonyPerez0%2Fwalka-addon%2Freleases%2Flatest%2Fdownload%2Fvirus-scan.json&amp;query=%24.badge&amp;label=virus%20scan&amp;color=256abf" alt="The latest virus scan of Walka.exe by VirusTotal: how many antivirus scanners flag it"></a><br>
-  <sub>Checked for viruses after every release, and again every week · <a href="#is-the-download-safe">Is the download safe?</a></sub>
+  <a href="https://github.com/AntonyPerez0/walka-addon/releases/latest"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fgithub.com%2FAntonyPerez0%2Fwalka-addon%2Freleases%2Flatest%2Fdownload%2Fvirus-scan.json&amp;query=%24.badge&amp;label=virus%20scan&amp;color=256abf" alt="The virus scan of the latest release: what Microsoft Defender found, and when"></a><br>
+  <sub>Scanned for viruses before every release · <a href="#is-the-download-safe">Is the download safe?</a></sub>
 </p>
 
 <p align="center">
@@ -583,27 +583,25 @@ Bluetooth is not an emergency stop: keep the remote within reach.
 `Walka.exe` is a program from the internet that Windows does not
 recognise, so it is right to ask. This is what there is to go on:
 
-* **Every release is checked for viruses.**
-  [VirusTotal](https://www.virustotal.com/) runs a file past the scanners
-  of about 70 antivirus makers. It gets the files of every release - the
-  very ones the buttons at the top give you - and checks them again every
-  Monday, because scanners learn. The badge under the download button is
-  the latest result for `Walka.exe`. The
+* **Every release is scanned for viruses before it is published.**
+  Microsoft Defender - the antivirus that is part of Windows - scans
+  `Walka.exe` and the addon's files on the machine that builds them, with
+  the virus definitions of that day. If it finds anything, nothing is
+  published. The badge under the download button is the result for the
+  latest release; `virus-scan.json` on the
   [release page](https://github.com/AntonyPerez0/walka-addon/releases/latest)
-  has the result for each file, with a link to VirusTotal's full report.
+  has the details.
 * **You can check it yourself.** Drop the file you downloaded on
-  [virustotal.com](https://www.virustotal.com/gui/home/upload). It shows
-  the file's SHA-256 (its fingerprint), which is also on the release page:
-  if the two are the same, your file is the file that was checked.
-  (`certutil -hashfile Walka.exe SHA256` in a Command Prompt prints it
-  too.)
+  [virustotal.com](https://www.virustotal.com/gui/home/upload) - no
+  account needed. It runs the file past the scanners of about 70
+  antivirus makers.
 * **It is built in the open.** Nobody makes `Walka.exe` on their own PC:
   GitHub [builds it](https://github.com/AntonyPerez0/walka-addon/actions/workflows/ci.yml)
   from the code on this page, and all of that code is here to read.
 
-**If the badge says that a scanner or two flag it:** `Walka.exe` is a
-Python program packed into one file, and it is not signed by a company. A
-few scanners are wary of every file like that, so one or two flags with a
+**If a scanner or two on VirusTotal flag it:** `Walka.exe` is a Python
+program packed into one file, and it is not signed by a company. A few
+scanners are wary of every file like that, so one or two flags with a
 vague name (*Generic*, *Suspicious*, ...) are usually a false alarm. The
 report shows which scanners flag it and what they call it: you decide. If
 many of them flag it, do not open it, and
@@ -715,16 +713,12 @@ py -m pytest          # companion tests + addon tests (the addon runs under a mo
   button at the top of this page always gives the latest one) and
   `Walka-addon.zip`, which you upload to CurseForge yourself. If the run
   fails nothing is published: fix it and run it again.
-* **The virus scan** (`.github/workflows/virus-scan.yml`, which runs
-  `tools/virus_scan.py`) sends the files of a release to VirusTotal and
-  puts the answer in the release notes and in `virus-scan.json` next to
-  the files, which the badge at the top of this page reads. It runs after
-  every release and every Monday; by hand it is **Actions** → **Virus
-  scan** → **Run workflow**. It needs a free VirusTotal API key
-  (virustotal.com → your profile → *API key*) stored as the repository
-  secret `VT_API_KEY` (**Settings** → **Secrets and variables** →
-  **Actions**). Without the key it does nothing, and the badge says
-  *not checked yet*.
+* **The virus scan** is a step of the Windows build
+  (`.github/workflows/ci.yml`): Microsoft Defender scans the files of the
+  release, after showing that it catches the standard test file. A
+  release needs that step, and it writes `virus-scan.json`, which is
+  published next to `Walka.exe` and is what the badge at the top of this
+  page shows. Nothing to set up.
 
 More: [docs/PROTOCOL.md](docs/PROTOCOL.md) ·
 [docs/SAFETY.md](docs/SAFETY.md) · [docs/HARDWARE.md](docs/HARDWARE.md)
