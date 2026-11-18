@@ -1,28 +1,81 @@
 # Walka
 
-Walk where your character walks. Walka links an under-desk walking pad to
-**World of Warcraft: Forever**: the belt speeds up when your character runs,
-eases off when it stands, and an in-game HUD counts your speed, steps,
-distance and calories - for this session and every one before it.
+**Walk on your walking pad while you play World of Warcraft.** The belt
+follows your character: faster when it runs, slower when it stands still.
+
+## [⬇ Download Walka for Windows](https://github.com/AntonyPerez0/walka-addon/releases/latest/download/Walka.exe)
+
+One file, `Walka.exe`. Free. Nothing to install - you just run it.
+
+This is the Windows program that goes with the **Walka addon** in the
+game. You need both: the addon watches your character, and this program
+talks to your walking pad.
+
+## Get started
+
+1. **Download `Walka.exe`** with the link above. Save it somewhere you will
+   find it again, like your Desktop.
+2. **Double-click it.** A small black window opens and stays open - that is
+   Walka running - and a page called the *dashboard* opens in your web
+   browser.
+
+   The first time, Windows may say *"Windows protected your PC"*. Click
+   **More info**, then **Run anyway**. (Walka is not signed by a company,
+   so Windows does not recognise it yet.)
+3. **Follow "Getting started" on the dashboard.** It ticks each step off as
+   you do it:
+   * **Walking pad:** switch it on and close the UREVO phone app (the pad
+     talks to one thing at a time). Walka finds the pad by itself.
+   * **Game addon:** if you got Walka from CurseForge it is already there.
+     If not, press *Install* and Walka puts it in the game for you.
+   * **Game:** start World of Warcraft in *Windowed* or *Windowed
+     (Fullscreen)* mode.
+   * **You:** enter your weight and height, for the calorie count.
+4. **Walk.** In the game, type `/walka`, step onto the pad and press
+   **Start**.
+
+**To stop the belt at any time:** the pad's own remote, **Ctrl+Alt+X** on
+the keyboard, or the red **STOP** on the dashboard.
+
+**You need:** Windows 10 or 11 with Bluetooth · a UREVO Strol 2E walking
+pad (other pads that speak standard Bluetooth "FTMS" should work too) ·
+World of Warcraft: Forever.
+
+**Stuck?** [Troubleshooting](#troubleshooting) ·
+[Stopping the belt](#stopping-the-belt) · [Safety](#safety) ·
+[Is this allowed?](#is-this-allowed)
+
+![The Walka dashboard: the belt's speed, today's numbers and a red STOP button](docs/images/dashboard.png)
+
+> **Early version: not yet tested on a real walking pad or in the real
+> game.** Everything here was built and tested against a simulated pad and
+> a simulated game (about 2,000 automated tests). Do the short checks in
+> [Before your first walk](#before-your-first-walk) before you step on.
+
+---
+
+Everything below is the long version, for when you want the details.
+
+## What Walka is
+
+Walka links an under-desk walking pad to **World of Warcraft: Forever**:
+the belt speeds up when your character runs, eases off when it stands, and
+an in-game HUD counts your speed, steps, distance and calories - for this
+session and every one before it.
 
 It is two pieces:
 
 * **the addon** (`Walka/`) - reads your character's movement, decides how
   fast the belt should go, and shows the HUD, history and settings in game;
-* **the companion** (`companion/`) - a small Windows app that reads the
-  addon's signal off the screen, drives the treadmill over Bluetooth with a
-  set of safety rules, records your walks, and shows a live dashboard in
-  your browser.
+* **the companion** (`companion/`, the `Walka.exe` you download above) - a
+  small Windows app that reads the addon's signal off the screen, drives
+  the treadmill over Bluetooth with a set of safety rules, records your
+  walks, and shows a live dashboard in your browser.
 
 Built for the **UREVO Strol 2E (URTM030)**; it should work with any
 treadmill that speaks standard Bluetooth FTMS with speed control. The
 companion also works without any game (manual sessions), and logs walks you
 do with just the remote.
-
-> **Status: untested on real hardware and in the real game.** Everything
-> here was built and tested against a simulated treadmill and a simulated
-> game client (about 2,000 automated tests). Read
-> [Before your first walk](#before-your-first-walk).
 
 ## How it works
 
@@ -63,11 +116,13 @@ Details: [docs/PROTOCOL.md](docs/PROTOCOL.md).
 * WoW: Forever in *Windowed* or *Windowed (Fullscreen)* mode, with the
   top-left corner of the game visible.
 
-## Install
+## Install, step by step
 
-1. **Get the companion.** Either download `Walka.exe` from this
-   repository's *Actions* tab (latest run → *Walka-windows* artifact), or
-   run it from source (Python 3.10 or newer):
+1. **Get the companion.** Download
+   [`Walka.exe`](https://github.com/AntonyPerez0/walka-addon/releases/latest/download/Walka.exe)
+   (every version is on the
+   [Releases page](https://github.com/AntonyPerez0/walka-addon/releases)),
+   or run it from source (Python 3.10 or newer):
 
    ```
    cd companion
@@ -81,8 +136,9 @@ Details: [docs/PROTOCOL.md](docs/PROTOCOL.md).
    *Settings → Game addon → Install automatically*. (Or copy the `Walka`
    folder to `World of Warcraft\_forever_\Interface\AddOns\` yourself.)
    Start the game and tick *Walka* in the AddOns list.
-4. **Connect the treadmill.** Dashboard → *Treadmill → Scan*, pick
-   `URTM030`, *Connect*.
+4. **Connect the treadmill.** Switch it on: Walka looks for it by itself.
+   To pick one yourself: dashboard → *Treadmill → Scan*, then *Connect*
+   next to `URTM030`.
 5. **Tell it about you.** *Settings → Body profile*: weight and height
    (used for calories and steps).
 
@@ -483,6 +539,13 @@ py -m pytest          # companion tests + addon tests (the addon runs under a mo
   this client build (`tools/gen_api_snapshot.py` regenerates the snapshot).
 * `py -m walka --demo` runs everything against a simulated treadmill and a
   scripted character.
+* **Publishing a version:** set the same version number in
+  `companion/pyproject.toml`, `companion/src/walka/__init__.py` and
+  `Walka/Walka.toc`, then push a tag with that number
+  (`git tag v0.1.0`, `git push origin v0.1.0`). Once the tests and the
+  build have passed for it, CI publishes a release with `Walka.exe` - the
+  download link at the top of this page always gives the latest one - and
+  `Walka-addon.zip`, the addon folder zipped the way CurseForge wants it.
 
 More: [docs/PROTOCOL.md](docs/PROTOCOL.md) ·
 [docs/SAFETY.md](docs/SAFETY.md) · [docs/HARDWARE.md](docs/HARDWARE.md)

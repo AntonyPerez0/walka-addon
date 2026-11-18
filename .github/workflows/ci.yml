@@ -95,3 +95,46 @@ jobs:
           name: Walka-windows
           path: release/
           if-no-files-found: error
+
+  # A version tag (v0.1.0) publishes a release: the program people download
+  # from the link at the top of the README, and the addon as a zip that is
+  # ready to upload to CurseForge. Only after the tests and the build above
+  # have passed for that same commit.
+  release:
+    name: Publish release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [test, windows-exe]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: The tag is the version written in the code
+        run: |
+          version="${TAG#v}"
+          fail() { echo "::error::tag $TAG does not match $1"; exit 1; }
+          grep -qx "version = \"$version\"" companion/pyproject.toml || fail "version in companion/pyproject.toml"
+          grep -qx "__version__ = \"$version\"" companion/src/walka/__init__.py || fail "__version__ in companion/src/walka/__init__.py"
+          grep -qx "## Version: $version" Walka/Walka.toc || fail "## Version in Walka/Walka.toc"
+      - uses: actions/download-artifact@v4
+        with:
+          name: Walka-windows
+          path: release
+      - name: Pack the addon
+        working-directory: release
+        run: zip -r -q ../Walka-addon.zip Walka
+      - name: Publish
+        run: |
+          test -s release/Walka.exe
+          notes="Download **Walka.exe** below and run it - there is nothing to install. The steps are at the top of the [README](https://github.com/$GH_REPO#readme).
+
+          Walka-addon.zip is the game addon on its own. You do not need it if you got Walka from CurseForge, or if you let Walka.exe install the addon for you."
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" release/Walka.exe Walka-addon.zip --clobber
+          else
+            gh release create "$TAG" release/Walka.exe Walka-addon.zip --verify-tag --title "Walka ${TAG#v}" --notes "$notes" --generate-notes
+          fi
