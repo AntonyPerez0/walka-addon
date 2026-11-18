@@ -2,8 +2,9 @@
 
 ## Road to Sixty
 
-Walka's road recorder and map (`Walka/Core/Road.lua`,
-`Walka/RoadRecorder.lua`, `Walka/UI/RoadMap.lua`) follow approaches worked
+Walka's road recorder and maps (`Walka/Core/Road.lua`,
+`Walka/RoadRecorder.lua`, `Walka/UI/RoadMap.lua`, `Walka/UI/WorldMapRoad.lua`)
+follow approaches worked
 out in Road to Sixty by Jordan Burch - <https://github.com/Jordanburch101/road-to-sixty> -
 an addon that records a character's road from level 1 to 60 and replays it
 on a map: which game calls say where the character is, how often a point of
@@ -38,6 +39,20 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## OpenMap
+
+When the addon OpenMap - <https://github.com/openmap-world/openmap> - is
+installed, Walka draws the road on OpenMap's seamless world map
+(`Walka/UI/WorldMapRoad.lua`). It does so by calling the interface OpenMap
+offers other addons (`OpenMapAPI`, described in OpenMap's `docs/api.md`):
+where a world position is on its map, how high its map art reaches, and a
+switch in its menu. How a frame of another addon is to be placed on the
+world map's canvas is taken from that description, and what the game does
+not allow on the map in combat from OpenMap's own notes on it. No code,
+data or art of OpenMap is in Walka, and Walka works the same without it.
+OpenMap's code is published under the MIT licence (its map textures are
+Blizzard's and its artists', and are not used here).
 
 ## The continents on the Share picture
 

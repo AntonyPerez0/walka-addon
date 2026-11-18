@@ -15,12 +15,14 @@ import pytest
 
 from .conftest import ui_files_present
 from .harness import ALLOWED_GLOBALS, ALLOWED_UNDEFINED, lua_list
+from .test_ui_worldmap import OPEN_MAP
 
 
 @pytest.fixture
 def busy_rt(make_rt):
-    """A client that has been through everything: session, pause, combat
-    with secrets, slash commands, every window (when present), a reload."""
+    """Clients that have been through everything: session, pause, combat
+    with secrets, slash commands, every window (when present), a reload -
+    and one that has a world map and OpenMap, with the road drawn on it."""
     companion = (
         "WalkaCompanionData = { written = 1795000000, profile = { weightKg = 80, heightCm = 180 },\n"
         "  limits = { minKmh = 1, maxKmh = 6, stepKmh = 0.1 },\n"
@@ -30,7 +32,7 @@ def busy_rt(make_rt):
     rt.set(speed=7.0)
     for command in ("start", "status", "pause", "resume", "history", "journey", "options", "weight 80kg",
                     "height 180cm", "units kmh", "units mph", "beacon size 4", "beacon off", "beacon on", "help",
-                    "hide", "show"):
+                    "hide", "show", "map", "mapcheck", "map off", "map on", "map window", "road off", "road on"):
         rt.slash("/walka " + command)
         rt.tick(3)
     rt.tick(250)
@@ -72,7 +74,48 @@ def busy_rt(make_rt):
     fresh = rt.reload()
     fresh.slash("/walka start")
     fresh.tick(50)
-    return rt, fresh
+    return rt, fresh, on_the_world_map(make_rt)
+
+
+def on_the_world_map(make_rt):
+    """A client with a world map and (a stand-in for) OpenMap: the road is
+    drawn on Blizzard's map and on OpenMap's, zoomed, switched off and on,
+    through combat and a reload."""
+    rt = make_rt(load=False)
+    rt.M.world_map()
+    api = rt.run(OPEN_MAP, rt.M.maps)
+    rt.M.set_global("OpenMapAPI", api)
+    rt.load_addon()
+    for step in range(1, 200):
+        rt.set(worldX=-600 + 7 * step, worldY=-4200 + 3 * step, speed=7.6)
+        rt.tick(3)
+    for command in ("map", "mapcheck", "start"):
+        rt.slash("/walka " + command)
+        rt.tick(3)
+    for map_id, stitched in ((1411, True), (1414, True), (947, True), (1415, False), (1429, False), (1411, False)):
+        api.state.stitched = stitched
+        rt.M.world_map_show(map_id)
+        rt.tick(5)
+        for zoom in (2, 6, 1):
+            rt.M.world_map_view(zoom, 0.4, 0.3)
+            rt.tick(5)
+    rt.enter_combat()
+    rt.set(positionSecret=True)
+    rt.M.world_map_show(1414)
+    rt.tick(30)
+    rt.set(positionSecret=False)
+    rt.leave_combat()
+    rt.fire_event("PLAYER_REGEN_ENABLED")
+    for name in ("WalkaWorldMapRoadButton",):
+        button = rt.global_(name)
+        rt.hover(button)
+        rt.click(button)
+        rt.click(button)
+    for command in ("map off", "map on", "map window", "mapcheck", "stop"):
+        rt.slash("/walka " + command)
+        rt.tick(3)
+    assert rt.ns.WorldMapRoad.problem is None
+    return rt
 
 
 def test_no_undefined_globals_are_read(busy_rt, snapshot):

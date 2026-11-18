@@ -421,7 +421,7 @@ local function openMenu(owner)
             end
         end)
         root:CreateButton("Road map", function()
-            if ns.RoadMap then
+            if not (ns.WorldMapRoad and ns.WorldMapRoad.Open()) and ns.RoadMap then
                 ns.RoadMap.Show()
             end
         end)

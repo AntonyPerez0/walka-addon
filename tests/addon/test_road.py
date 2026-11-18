@@ -304,6 +304,305 @@ def test_simplify_keeps_what_the_line_needs(rt):
     assert kept == 100
 
 
+# ---- lines for a map ---------------------------------------------------------------------------
+
+# How world yards become map units in these tests: a tenth of a unit a
+# yard, x to the right and y down, nothing turned.
+PLACE = [0.1, 0.0, 0.0, 0.0, 0.1, 0.0]
+WIDE = dict(left=-1e9, top=-1e9, right=1e9, bottom=1e9)
+
+
+def segment_of(points, *, continent=1, mode="w", belt=False, level=10):
+    """A saved segment through `points` (whole world yards). (Continent 1
+    is the one the tests' map shows; see lines_of.)"""
+    steps = [f"1,{bx - ax},{by - ay}" for (ax, ay), (bx, by) in zip(points, points[1:])]
+    belt_text = ",b=1" if belt else ""
+    return (
+        f"{{c={continent},m='{mode}',l={level},t={T0}{belt_text},x={points[0][0]},y={points[0][1]},"
+        f"n={len(steps)},d='{';'.join(steps)}'}}"
+    )
+
+
+def database(rt, *segments):
+    return rt.run("return { version = 1, yards = 0, beltYards = 0, segments = {" + ",".join(segments) + "} }")
+
+
+def lines_of(rt, db, *, place=PLACE, tolerance=0.5, most=1000, **view):
+    """Road.lines for `db`: the pieces as ((x1, y1), (x2, y2), look) and the table it filled."""
+    road = rt.ns.Road
+    chapters = road.chapters(db)[0]
+    box = rt.to_lua({**WIDE, **view, "tolerance": tolerance, "most": most})
+    coefficients = rt.to_lua(place)
+    out = rt.run(
+        "local road, chapters, place, box = ...\n"
+        "return road.lines(chapters, function(chapter) return chapter.c == 1 and place or nil end, box)",
+        road, chapters, coefficients, box,
+    )
+    pieces = [((out.x1[i], out.y1[i]), (out.x2[i], out.y2[i]), out["from"][i]) for i in range(1, out.count + 1)]
+    return pieces, out
+
+
+def chapters_of(rt, db):
+    chapters, whole = rt.ns.Road.chapters(db)
+    assert whole is True
+    return lua_list(chapters)
+
+
+def path_of(chapter):
+    return [(chapter.xs[i], chapter.ys[i]) for i in range(1, chapter.count + 1)]
+
+
+def same_table(rt, a, b) -> bool:
+    return bool(rt.run("return rawequal(...)", a, b))
+
+
+def test_the_road_is_read_into_chapters_that_carry_on_from_one_another(rt):
+    db = database(
+        rt,
+        segment_of([(0, 0), (100, 0), (100, 100)], belt=True, level=12),
+        segment_of([(100, 100), (300, 100)], mode="r", level=13),   # carries on where the first ends
+        segment_of([(5000, 5000), (5100, 5000)]),                   # a jump away
+        "{c=1,m='w',l=1,t=1,x=7,y=7,n=0}",                          # a single point is no road
+        segment_of([(5100, 5000), (5100, 5200)], continent=0),      # the same numbers on another continent
+    )
+    first, second, third = chapters_of(rt, db)
+    # The first two segments are one chapter: the point they share is there once.
+    assert path_of(first) == [(0, 0), (100, 0), (100, 100), (300, 100)]
+    assert (first.minX, first.maxX, first.minY, first.maxY) == (0, 300, 0, 100)
+    looks = [lua_plain(look) for look in lua_list(first.looks)]
+    assert looks == [{"mode": "w", "belt": True, "level": 12}, {"mode": "r", "belt": False, "level": 13}]
+    assert [first.own[i] for i in range(2, 5)] == [1, 1, 2], "which look each piece of the chapter has"
+    assert (first.joined, second.joined, third.joined) == (False, False, False)
+    assert (second.c, third.c) == (1, 0) and path_of(third) == [(5100, 5000), (5100, 5200)]
+
+
+def test_a_long_run_of_road_is_cut_into_chapters_that_join(rt):
+    road = rt.ns.Road
+    segments, x = [], 0
+    for _ in range(40):
+        segments.append(segment_of([(x + 20 * i, 0) for i in range(51)]))
+        x += 1000
+    chapters = chapters_of(rt, database(rt, *segments))
+    assert len(chapters) == 14, "2000 points in chapters of about 200 (three segments of fifty each)"
+    assert all(chapter.count <= road.CHAPTER_POINTS for chapter in chapters)
+    assert [chapter.joined for chapter in chapters] == [False] + [True] * 13
+    assert sum(chapter.count for chapter in chapters) == 2001 + 13, "each begins on the last point of the one before"
+    assert path_of(chapters[1])[0] == path_of(chapters[0])[-1]
+
+
+def test_only_the_end_of_a_growing_road_is_read_again(rt):
+    road = rt.ns.Road
+    segments = [segment_of([(x, 0), (x + 20, 0), (x + 40, 0)]) for x in range(0, 40000, 2000)]   # twenty, apart
+    db = database(rt, *segments)
+    before = chapters_of(rt, db)
+    assert len(before) == 20
+    # The segment being recorded grows: its chapter is read anew, the others are the same tables.
+    rt.run("local s = ...; s.n = 3; s.d = s.d .. ';1,20,0'", lua_list(db.segments)[19])
+    after = chapters_of(rt, db)
+    assert all(same_table(rt, a, b) for a, b in zip(before[:19], after[:19]))
+    assert not same_table(rt, before[19], after[19]) and after[19].count == 4
+    # A new segment that carries on is added to the last chapter; an empty one at the end comes and goes.
+    rt.run(
+        "local db = ...; local s = db.segments\n"
+        "s[#s + 1] = { c = 1, m = 'r', l = 11, t = 5, x = 38060, y = 0, n = 1, d = '1,0,50' }\n"
+        "s[#s + 1] = { c = 1, m = 'w', l = 11, t = 6, x = 38060, y = 50, n = 0 }",
+        db,
+    )
+    grown = chapters_of(rt, db)
+    assert len(grown) == 20 and path_of(grown[19])[-1] == (38060, 50)
+    rt.run("local db = ...; db.segments[#db.segments] = nil", db)
+    assert len(chapters_of(rt, db)) == 20
+    # Nothing changed: nothing is read again.
+    assert all(same_table(rt, a, b) for a, b in zip(grown, chapters_of(rt, db)))
+
+
+def test_a_long_road_can_be_read_a_little_at_a_time(rt):
+    road = rt.ns.Road
+    segments = [segment_of([(x, 0), (x + 20, 0)]) for x in range(0, 30000, 1000)]
+    db = database(rt, *segments)
+    calls = rt.run("local n = 0; return function() n = n + 1; return n % 7 == 0 end")
+    rounds, whole = 0, False
+    while not whole:
+        chapters, whole = road.chapters(db, calls)
+        rounds += 1
+        assert rounds < 20
+    assert rounds == 5 and len(lua_list(chapters)) == 30
+    assert len(chapters_of(rt, db)) == 30
+
+
+def test_damaged_segments_do_not_break_the_reading(rt):
+    db = database(
+        rt,
+        segment_of([(0, 0), (100, 0)]),
+        "{c=1,m='w',l=1,t=1,x=500,y=500,n=4,d='rubbish'}",
+        "{c=1,m='w',l=1,t=1,x=900,y=900,n=3,d='1,10,0;1,10,0;oops;1,10,0'}",
+    )
+    chapters = chapters_of(rt, db)
+    assert [path_of(chapter) for chapter in chapters] == [[(0, 0), (100, 0)], [(900, 900), (910, 900), (920, 900), (930, 900)]]
+    assert chapters_of(rt, rt.run("return { segments = 7 }")) == [] and chapters_of(rt, None) == []
+
+
+def test_coarser_copies_of_a_chapter_stay_close_to_it(rt):
+    """The ladder of thinned copies: each stays within its tolerance of the
+    road, and they are made once."""
+    road = rt.ns.Road
+    points = [(round(20 * i), round(300 * math.sin(i / 9))) for i in range(1500)]
+    (chapter,) = chapters_of(rt, database(rt, segment_of(points)))
+
+    def distance_to_path(px, py, path):
+        best = float("inf")
+        for (ax, ay), (bx, by) in zip(path, path[1:]):
+            dx, dy = bx - ax, by - ay
+            t = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)))
+            best = min(best, math.hypot(px - (ax + t * dx), py - (ay + t * dy)))
+        return best
+
+    counts = []
+    for tolerance in (10, 30, 100, 400, 1600):
+        xs, ys, own, count = road.thinned(chapter, tolerance)
+        path = [(xs[i], ys[i]) for i in range(1, count + 1)]
+        counts.append(count)
+        assert path[0] == points[0] and path[-1] == points[-1]
+        assert max(distance_to_path(px, py, path) for px, py in points[::3]) <= tolerance
+        assert all(own[i] == 1 for i in range(1, count + 1))
+    assert counts[0] == 1500, "below the first rung the chapter itself is used"
+    assert counts == sorted(counts, reverse=True) and counts[-1] < 100
+    xs, _, _, _ = road.thinned(chapter, 400)
+    assert same_table(rt, xs, road.thinned(chapter, 400)[0]), "a copy is made once"
+    road.prepare(chapter)
+    assert len(lua_list(chapter.rungs)) >= 4 and chapter.ready is True
+
+
+def test_a_coarse_piece_has_the_look_of_most_of_the_road_it_stands_for(rt):
+    road = rt.ns.Road
+    db = database(
+        rt,
+        segment_of([(0, 0), (20, 1), (40, 0)], level=10),
+        segment_of([(40, 0), (60, 1), (80, 0), (100, 1), (2000, 0)], level=20, belt=True),
+        segment_of([(2000, 0), (2020, 1), (2040, 600)], level=30),
+    )
+    (chapter,) = chapters_of(rt, db)
+    xs, ys, own, count = road.thinned(chapter, 30)
+    path = [(xs[i], ys[i]) for i in range(1, count + 1)]
+    assert path == [(0, 0), (2000, 0), (2040, 600)] or path == [(0, 0), (2020, 1), (2040, 600)]
+    looks = lua_list(chapter.looks)
+    assert looks[own[2] - 1].level == 20 and looks[own[3] - 1].level == 30
+
+
+def test_lines_follow_the_road_and_cut_bends_too_small_to_see(rt):
+    db = database(rt, segment_of([(0, 0), (500, 0), (500, 2), (1000, 2), (1000, 800)], belt=True))
+    pieces, out = lines_of(rt, db, tolerance=0.5)
+    # A tenth of a unit a yard: the two-yard jog is 0.2 units, under the tolerance.
+    assert [(a, b) for a, b, _ in pieces] == [((0, 0), (100, 0.2)), ((100, 0.2), (100, 80))]
+    assert all(look.belt is True for _, _, look in pieces)
+    assert (out.count, out.cut, out.passes) == (2, 0, 1) and out.tolerance == 0.5
+    # Drawn finer, the jog is there.
+    fine, _ = lines_of(rt, db, tolerance=0.05)
+    assert len(fine) == 4
+
+
+def test_lines_out_of_sight_are_left_out(rt):
+    db = database(
+        rt,
+        segment_of([(0, 0), (1000, 0)]),
+        segment_of([(0, 5000), (1000, 5000)]),
+        segment_of([(0, 100), (300, 100), (600, 100), (900, 100), (1200, 100)], continent=0),
+    )
+    pieces, _ = lines_of(rt, db, left=-10, top=-10, right=200, bottom=50)
+    assert [(a, b) for a, b, _ in pieces] == [((0, 0), (100, 0))]
+    # A stretch that crosses the view is drawn where it does: only the piece in sight.
+    zig = database(rt, segment_of([(0, 0), (1000, 300), (2000, 0), (3000, 300), (4000, 0)]))
+    pieces, _ = lines_of(rt, zig, left=190, top=-10, right=210, bottom=40)
+    assert [(a, b) for a, b, _ in pieces] == [((100, 30), (200, 0)), ((200, 0), (300, 30))]
+    # (The stretch on continent 0 is not on this map at all.)
+    everything, _ = lines_of(rt, db)
+    assert len(everything) == 2
+
+
+def test_a_road_in_thousands_of_short_segments_is_drawn_as_a_few_lines(rt):
+    """Each is a segment of its own (the level, the mount, the belt
+    changed); together they are one long road. Too short to see one by one,
+    they are joined - else there would be a line each, without end."""
+    segments, x = [], 0
+    for index in range(5000):
+        segments.append(segment_of([(x, 0), (x + 4, 0)], belt=index % 2 == 0, level=1 + index // 100))
+        x += 4
+    db = database(rt, *segments)
+    pieces, out = lines_of(rt, db, tolerance=0.5, most=300)
+    # 20000 yards are 2000 units, in a straight line: a handful of pieces do.
+    assert 1 <= len(pieces) <= 300 and out.cut == 0
+    assert pieces[0][0] == (0, 0) and pieces[-1][1] == (2000, 0)
+    assert all(a[1] == b[0] for a, b in zip([p[:2] for p in pieces], [p[:2] for p in pieces][1:])), "one unbroken line"
+    assert out.passes <= 3
+    # However small the budget, it ends - and says what it left out.
+    few, out = lines_of(rt, db, tolerance=0.5, most=3)
+    assert len(few) <= 3 and out.cut == 0
+    # Pieces of road that do not join (jumps) cannot be made fewer than they are:
+    apart = database(rt, *[segment_of([(i * 1000, 0), (i * 1000 + 600, 0)]) for i in range(50)])
+    cut, out = lines_of(rt, apart, tolerance=0.5, most=10)
+    assert len(cut) < 50 and out.count == len(cut) <= 10
+
+
+def test_a_winding_road_far_too_long_for_the_budget_is_drawn_from_its_coarse_copies(rt):
+    """Twenty thousand points winding over a stretch of country, seen
+    whole: the lines come from the coarse copies of its chapters, in a pass
+    or two - not from thinning all twenty thousand points."""
+    road = rt.ns.Road
+    points, x, y, heading = [(0, 0)], 0.0, 0.0, 0.0
+    for index in range(20000):
+        heading += 0.35 * math.sin(index / 7.0) + 0.002 * math.sin(index / 900.0)
+        x, y = x + 20 * math.cos(heading), y + 20 * math.sin(heading)
+        points.append((round(x), round(y)))
+    segments = [segment_of(points[i:i + 201], level=1 + i // 400) for i in range(0, 20000, 200)]
+    db = database(rt, *segments)
+    pieces, out = lines_of(rt, db, tolerance=0.05, most=1000)
+    assert 50 < len(pieces) <= 1000 and out.cut == 0
+    assert out.passes <= 2 and out.tolerance > 0.05
+    assert pieces[0][0] == (0, 0)
+    assert pieces[-1][1] == pytest.approx((points[-1][0] / 10, points[-1][1] / 10)), "to the very end"
+    # Drawn again (the map was moved): the coarse copies are there, and little is thinned.
+    thinned = rt.run(
+        "local road = ...; local seen = 0; local inner = road.simplify\n"
+        "road.simplify = function(xs, ys, count, ...) seen = seen + count; return inner(xs, ys, count, ...) end\n"
+        "return function() return seen end",
+        road,
+    )
+    lines_of(rt, db, tolerance=0.05, most=1000)
+    assert thinned() < 3000, "points looked at for a drawing of a thousand pieces"
+    # Seen close up, a corner of it is drawn from the points themselves.
+    x0, y0 = points[300][0] / 10, points[300][1] / 10
+    close, out = lines_of(rt, db, tolerance=0.05, most=1000, left=x0 - 20, top=y0 - 20, right=x0 + 20, bottom=y0 + 20)
+    assert close and out.tolerance == 0.05 and out.passes == 1
+
+
+def test_a_speck_of_road_far_from_any_other_is_not_drawn(rt):
+    db = database(rt, segment_of([(0, 0), (3, 0)]), segment_of([(5000, 0), (9000, 0)]))
+    pieces, _ = lines_of(rt, db, tolerance=0.5)
+    assert [(a, b) for a, b, _ in pieces] == [((500, 0), (900, 0))], "0.3 units long, with nothing to join"
+
+
+def test_a_joined_piece_takes_the_look_of_its_longest_part(rt):
+    db = database(
+        rt,
+        segment_of([(0, 0), (2, 0)], level=10),
+        segment_of([(2, 0), (4, 0)], level=20, belt=True),
+        segment_of([(4, 0), (10, 0)], level=30),
+        segment_of([(10, 0), (5000, 0)], level=40),
+    )
+    pieces, _ = lines_of(rt, db, tolerance=0.5)
+    assert [(a, b, look.level) for a, b, look in pieces] == [((0, 0), (1, 0), 30), ((1, 0), (500, 0), 40)]
+    # ... and where the parts are told apart, each has its own.
+    fine, _ = lines_of(rt, db, tolerance=0.01)
+    assert [look.level for _, _, look in fine] == [10, 20, 30, 40]
+
+
+def test_lines_turn_with_the_map(rt):
+    """The game's maps have world x running up the map and world y to the left."""
+    db = database(rt, segment_of([(0, 0), (1000, 0), (1000, -500)]))
+    pieces, _ = lines_of(rt, db, place=[0.0, -0.1, 50.0, -0.1, 0.0, 200.0])
+    assert [(a, b) for a, b, _ in pieces] == [((50, 200), (50, 100)), ((50, 100), (100, 100))]
+
+
 # ---- with the game -----------------------------------------------------------------------------
 
 

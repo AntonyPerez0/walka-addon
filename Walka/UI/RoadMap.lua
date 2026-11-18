@@ -1,4 +1,7 @@
--- Walka road map: the road a character has travelled, on the game's map.
+-- Walka road map: the road a character has travelled, on the game's map,
+-- in a window of Walka's own (/walka map window). The road is first of all
+-- drawn on the game's world map (UI/WorldMapRoad.lua); this window is what
+-- there is where that map cannot be found, and it has the screenshot button.
 --
 --   Walka  road - Kalimdor                [<] [>] [Me] [Fit] [Screenshot] [x]
 --   +--------------------------------------------------------------------+
@@ -47,7 +50,7 @@ local KNOWN_CONTINENT_MAPS = { 1414, 1415 }
 
 local ZOOM_STEP = 1.4
 local MAX_ZOOM = 12
-local MAX_LINES = 2500
+local MAX_PIECES = 1250         -- stretches of line at once (one walked on the treadmill is two lines)
 local REBUILD_DELAY = 0.15      -- after the last turn of the wheel
 local DEFAULT_POINT = { "CENTER", "CENTER", 0, 20 }
 
@@ -62,6 +65,7 @@ RoadMap.LEVEL_COLORS = {
 }
 local FLIGHT_COLOR = { 0.62, 0.72, 0.82 }
 local GHOST_COLOR = { 0.55, 0.55, 0.60 }
+RoadMap.FLIGHT_COLOR, RoadMap.GHOST_COLOR = FLIGHT_COLOR, GHOST_COLOR
 
 local frame, canvas, content, overlay
 local parts = {}
@@ -72,7 +76,8 @@ local maps = nil            -- { { mapId, name, continent, toMap, layer }, ... }
 local shown = 1             -- index into maps
 local zoom, fitZoom = 1, 1
 local ox, oy = 0, 0         -- the content point at the canvas's top-left corner
-local cache = nil           -- the road on the shown continent, in content units
+local cache = nil           -- the road as read: { chapters = .., shown = how many lie on this continent }
+local pieces = {}           -- what Road.lines made of it for the present view
 local rebuildAt = nil       -- GetTime() at which the lines are to be drawn again
 local dragging = nil
 
@@ -107,14 +112,16 @@ end
 -- A map as this window needs it, or nil if the game cannot place it.
 local function describe(mapId, name)
     local continent, x0, y0 = worldAt(mapId, 0, 0)
-    local _, x1, y1 = worldAt(mapId, 1, 0)
-    local _, x2, y2 = worldAt(mapId, 0, 1)
+    local _, x1, y1 = worldAt(mapId, 0.5, 0)
+    local _, x2, y2 = worldAt(mapId, 0, 0.5)
     if not continent or not x1 or not x2 then
         return nil
     end
-    -- The map is a straight (affine) picture of the world: three corners
-    -- give the way back from world yards to a place on it.
-    local ax, ay, bx, by = x1 - x0, y1 - y0, x2 - x0, y2 - y0
+    -- The map is a straight (affine) picture of the world: three places on
+    -- it give the way back from world yards to a place on it. (Its top-left
+    -- corner and the middles of two edges, not its far corners: on some
+    -- maps the game is said to be less exact at the far edge.)
+    local ax, ay, bx, by = (x1 - x0) * 2, (y1 - y0) * 2, (x2 - x0) * 2, (y2 - y0) * 2
     local det = ax * by - bx * ay
     if det == 0 then
         return nil
@@ -136,8 +143,20 @@ local function describe(mapId, name)
             local dx, dy = x - x0, y - y0
             return (dx * by - bx * dy) / det * width, (ax * dy - dx * ay) / det * height
         end,
+        -- ... and the same as numbers, for Road.lines
+        place = {
+            by / det * width, -bx / det * width, (bx * y0 - by * x0) / det * width,
+            -ay / det * height, ax / det * height, (ay * x0 - ax * y0) / det * height,
+        },
+        -- ... and from 0 to 1 across and down the map, as the game counts
+        -- places on a map (for the road on the world map)
+        unit = {
+            by / det, -bx / det, (bx * y0 - by * x0) / det,
+            -ay / det, ax / det, (ay * x0 - ax * y0) / det,
+        },
     }
 end
+RoadMap.Describe = describe
 
 local function findMaps()
     local found = {}
@@ -166,6 +185,7 @@ local function findMaps()
     end
     return found
 end
+RoadMap.FindMaps = findMaps
 
 ----------------------------------------------------------------------------
 -- The road, ready to draw
@@ -176,41 +196,20 @@ local function levelColor(level)
     local band = floor((tonumber(level) or 1) / 10) + 1
     return colors[max(1, min(#colors, band))]
 end
+RoadMap.LevelColor = levelColor
 
--- Read the road on the shown continent into content units, once per
--- opening (and when the continent changes): the arithmetic per point is
--- done here, not every time the lines are drawn.
+-- Read the road once per opening (and when the continent changes).
 local function readRoad()
     local map = maps and maps[shown]
-    cache = { segments = {}, points = 0 }
+    cache = { chapters = {}, shown = 0 }
     if not map then
         return
     end
     RoadRecorder.Flush()
-    local db = RoadRecorder.GetDatabase()
-    if not db then
-        return
-    end
-    local xs, ys = {}, {}
-    for _, segment in ipairs(db.segments) do
-        if segment.c == map.continent then
-            local _, _, count = Road.points(segment, xs, ys)
-            if count >= 2 then
-                local px, py = {}, {}
-                local left, right, top, bottom = math.huge, -math.huge, math.huge, -math.huge
-                for index = 1, count do
-                    local x, y = map.toMap(xs[index], ys[index])
-                    px[index], py[index] = x, y
-                    left, right = min(left, x), max(right, x)
-                    top, bottom = min(top, y), max(bottom, y)
-                end
-                cache.segments[#cache.segments + 1] = {
-                    px = px, py = py, count = count,
-                    left = left, right = right, top = top, bottom = bottom,
-                    mode = segment.m, belt = segment.b == 1, level = segment.l,
-                }
-                cache.points = cache.points + count
-            end
+    cache.chapters = Road.chapters(RoadRecorder.GetDatabase())
+    for _, chapter in ipairs(cache.chapters) do
+        if chapter.c == map.continent then
+            cache.shown = cache.shown + 1
         end
     end
 end
@@ -239,56 +238,46 @@ local function drawLine(x1, y1, x2, y2, color, alpha, thickness, sublevel)
     item:Show()
 end
 
-local keep = {}
+local view = {}
 
 -- Draw the road for the present zoom and view. Stretches out of sight are
--- left out, and what is drawn is thinned to what the eye can tell apart;
--- if that is still too many lines, it is thinned further.
+-- left out, and what is drawn is thinned to what the eye can tell apart
+-- (Road.lines keeps the number of lines bounded however long the road).
 local function drawRoad()
     rebuildAt = nil
     if not cache then
         readRoad()
     end
-    local viewWidth, viewHeight = CANVAS_WIDTH / zoom, CANVAS_HEIGHT / zoom
-    -- One view further in every direction, so that dragging shows road.
-    local left, right = ox - viewWidth, ox + 2 * viewWidth
-    local top, bottom = oy - viewHeight, oy + 2 * viewHeight
-    local tolerance = 0.6 / zoom
-    local thin = 1 / zoom
-    repeat
-        lineCount = 0
-        for _, segment in ipairs(cache.segments) do
-            if segment.right >= left and segment.left <= right and segment.bottom >= top and segment.top <= bottom then
-                local px, py = segment.px, segment.py
-                Road.simplify(px, py, segment.count, tolerance, keep)
-                local color, alpha, thickness = levelColor(segment.level), 0.55, 2 * thin
-                if segment.mode == "t" then
-                    color, alpha, thickness = FLIGHT_COLOR, 0.35, 1.2 * thin
-                elseif segment.mode == "g" then
-                    color, alpha = GHOST_COLOR, 0.45
-                elseif segment.belt then
-                    alpha, thickness = 1, 2.6 * thin
-                end
-                local lastX, lastY = px[1], py[1]
-                for index = 2, segment.count do
-                    if keep[index] then
-                        local x, y = px[index], py[index]
-                        if lineCount < MAX_LINES + 1 then
-                            if segment.belt and segment.mode ~= "t" then
-                                -- A soft, wider line under the bright one.
-                                drawLine(lastX, lastY, x, y, color, 0.28, 7 * thin, 1)
-                            end
-                            drawLine(lastX, lastY, x, y, color, alpha, thickness, 2)
-                        else
-                            lineCount = lineCount + 1
-                        end
-                        lastX, lastY = x, y
-                    end
-                end
+    local map = maps and maps[shown]
+    lineCount = 0
+    if map then
+        local viewWidth, viewHeight = CANVAS_WIDTH / zoom, CANVAS_HEIGHT / zoom
+        -- One view further in every direction, so that dragging shows road.
+        view.left, view.right = ox - viewWidth, ox + 2 * viewWidth
+        view.top, view.bottom = oy - viewHeight, oy + 2 * viewHeight
+        view.tolerance = 0.6 / zoom
+        view.most = MAX_PIECES
+        local continent, place = map.continent, map.place
+        Road.lines(cache.chapters, function(chapter)
+            return chapter.c == continent and place or nil
+        end, view, pieces)
+        local thin = 1 / zoom
+        for index = 1, pieces.count do
+            local from = pieces.from[index]
+            local x1, y1, x2, y2 = pieces.x1[index], pieces.y1[index], pieces.x2[index], pieces.y2[index]
+            local color, alpha, thickness = levelColor(from.level), 0.55, 2 * thin
+            if from.mode == "t" then
+                color, alpha, thickness = FLIGHT_COLOR, 0.35, 1.2 * thin
+            elseif from.mode == "g" then
+                color, alpha = GHOST_COLOR, 0.45
+            elseif from.belt then
+                alpha, thickness = 1, 2.6 * thin
+                -- A soft, wider line under the bright one.
+                drawLine(x1, y1, x2, y2, color, 0.28, 7 * thin, 1)
             end
+            drawLine(x1, y1, x2, y2, color, alpha, thickness, 2)
         end
-        tolerance = tolerance * 1.7
-    until lineCount <= MAX_LINES
+    end
     for index = lineCount + 1, #lines do
         lines[index]:Hide()
     end
@@ -424,7 +413,7 @@ local function refreshText()
     if not map then
         message = "The game did not say where its continents are, so there is no map to draw on.\n"
             .. "Your road is still being recorded. (/walka mapcheck prints what the game answered.)"
-    elseif cache and #cache.segments == 0 then
+    elseif cache and cache.shown == 0 then
         message = "No road on this continent yet."
     end
     parts.message:SetText(message or "")
@@ -461,7 +450,7 @@ local function showMap(index)
         maps = findMaps()
     end
     if #maps == 0 then
-        cache = { segments = {}, points = 0 }
+        cache = { chapters = {}, shown = 0 }
         refreshText()
         return
     end

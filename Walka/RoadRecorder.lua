@@ -185,6 +185,21 @@ function RoadRecorder.Flush()
     end
 end
 
+--- The end of the road that is not stored yet: from the last stored point
+-- of the stretch being recorded to where the character was at the last
+-- look. Returns continent, fromX, fromY, toX, toY, mode, belt (true if the
+-- treadmill belt is moving), level and the segment being recorded (to
+-- tell one stretch from the next) - or nil when no stretch is being
+-- recorded (standing in a dungeon, recording switched off).
+function RoadRecorder.Tail()
+    local segment = recorder and enabled and recorder.segment
+    if not segment or not recorder.prevX then
+        return nil
+    end
+    return segment.c, recorder.lastX, recorder.lastY, recorder.prevX, recorder.prevY,
+        segment.m, segment.b == 1, segment.l, segment
+end
+
 --- Where the character is right now (continent, x, y in world yards), or nil.
 function RoadRecorder.WhereAmI()
     local ok, continent, x, y = pcall(whereAmI)

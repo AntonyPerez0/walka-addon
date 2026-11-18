@@ -835,16 +835,22 @@ end
 
 -- C_Map: a small world. The world map (947) has two continents; each
 -- continent map covers a rectangle of world yards (x grows to the north, y
--- to the west, as in the game), and one zone lies inside Kalimdor. Map art
--- comes in 256-pixel tiles, as file ids.
+-- to the west, as in the game), one zone lies inside Kalimdor and one
+-- inside the Eastern Kingdoms. `place` is where a continent's map lies on
+-- the world map (minX, maxX, minY, maxY of it). Map art comes in 256-pixel
+-- tiles, as file ids.
 local MAPS = {
     [947] = { name = "Azeroth", type = "World" },
     [1414] = { name = "Kalimdor", type = "Continent", parent = 947, continent = 1,
-               top = 12000, bottom = -12000, left = 4000, right = -12000 },
+               top = 12000, bottom = -12000, left = 4000, right = -12000,
+               place = { 0.05, 0.45, 0.10, 0.90 } },
     [1415] = { name = "Eastern Kingdoms", type = "Continent", parent = 947, continent = 0,
-               top = 7000, bottom = -17000, left = 6000, right = -10000 },
+               top = 7000, bottom = -17000, left = 6000, right = -10000,
+               place = { 0.55, 0.95, 0.10, 0.90 } },
     [1411] = { name = "Durotar", type = "Zone", parent = 1414, continent = 1,
                top = 2000, bottom = -2000, left = -3000, right = -6000 },
+    [1429] = { name = "Elwynn Forest", type = "Zone", parent = 1415, continent = 0,
+               top = -8000, bottom = -10400, left = 1600, right = -2000 },
 }
 M.maps = MAPS
 
@@ -932,6 +938,40 @@ function C_Map.GetWorldPosFromMapPos(mapId, position)
 end
 function C_Map.GetMapInfo(mapId)
     return mapArgument("C_Map.GetMapInfo", mapId) and mapInfo(mapId) or nil
+end
+-- Where a map lies on another: minX, maxX, minY, maxY of that other map
+-- (0..1, x to the right, y down). A map that is not on the other one has
+-- no extent there.
+function C_Map.GetMapRectOnMap(mapId, topMapId)
+    local map = mapArgument("C_Map.GetMapRectOnMap", mapId)
+    local top = mapArgument("C_Map.GetMapRectOnMap", topMapId)
+    if state.mapsBroken or not map or not top then
+        return 0, 0, 0, 0
+    end
+    if map == top then
+        return 0, 1, 0, 1
+    end
+    local function within(inner, outer)
+        return (inner.left - outer.left) / (outer.right - outer.left),
+            (inner.right - outer.left) / (outer.right - outer.left),
+            (inner.top - outer.top) / (outer.bottom - outer.top),
+            (inner.bottom - outer.top) / (outer.bottom - outer.top)
+    end
+    if map.continent and top.continent == map.continent then
+        return within(map, top)
+    end
+    if top.type == "World" and map.continent then
+        for _, continent in pairs(MAPS) do
+            if continent.type == "Continent" and continent.continent == map.continent then
+                local minX, maxX, minY, maxY = within(map, continent)
+                local place = continent.place
+                local width, height = place[2] - place[1], place[4] - place[3]
+                return place[1] + minX * width, place[1] + maxX * width,
+                    place[3] + minY * height, place[3] + maxY * height
+            end
+        end
+    end
+    return 0, 0, 0, 0
 end
 function C_Map.GetMapChildrenInfo(mapId, mapType, allDescendants)
     mapArgument("C_Map.GetMapChildrenInfo", mapId)
@@ -4063,6 +4103,138 @@ do
     local ui = newWidget("Frame", "UIParent", nil)
     ScriptRegion.SetAllPoints(ui, nil)
     define("UIParent", ui)
+end
+
+----------------------------------------------------------------------------
+-- The world map
+----------------------------------------------------------------------------
+-- Blizzard_WorldMap is not in the snapshot (the interface code it was made
+-- from does not load it for this game type), but the addons written for
+-- this client - OpenMap, Questie, HereBeDragons - all work on WorldMapFrame,
+-- a MapCanvasMixin frame. A client without one is the default, as the
+-- snapshot has it; a test that wants one calls M.world_map():
+--
+--   WorldMapFrame                 the window (closed until it is opened)
+--     .ScrollContainer            what the map is seen through: it clips
+--       canvas (GetCanvas())      the map itself, as large as the art of the
+--                                 map shown, scaled and moved by zooming and
+--                                 panning; pins and art are its children
+--
+-- Only what an addon can be seen to need is here: the map shown, the
+-- canvas, the frame levels of the map's layers and ToggleWorldMap().
+local worldMap = nil
+
+-- (The level of the first layer and the layers above it: the real numbers
+-- are not known here, only that pins are levelled by name through this
+-- manager.)
+local PIN_LEVELS = {
+    PIN_FRAME_LEVEL_MAP_EXPLORATION = 2000,
+    PIN_FRAME_LEVEL_MAP_HIGHLIGHT = 2060,
+}
+
+--- Give the client a world map. options.manager = false leaves out the
+-- frame level manager (a map of another kind).
+function M.world_map(options)
+    options = options or {}
+    if worldMap then
+        return worldMap.frame
+    end
+    local frame = newWidget("Frame", "WorldMapFrame", G.UIParent)
+    frame:SetSize(1024, 720)
+    frame:SetPoint("CENTER", G.UIParent, "CENTER", 0, 0)
+    frame:SetFrameLevel(10)
+    local container = newWidget("ScrollFrame", nil, frame)
+    container:SetPoint("TOPLEFT", frame, "TOPLEFT", 11, -40)
+    container:SetSize(1002, 668)
+    container:SetClipsChildren(true)
+    local canvas = newWidget("Frame", nil, container)
+    canvas:SetSize(1002, 668)
+    container:SetScrollChild(canvas)
+    worldMap = { frame = frame, container = container, canvas = canvas, mapId = 947, opened = 0 }
+    rawset(frame, "ScrollContainer", container)
+    rawset(container, "Child", canvas)
+    rawset(frame, "GetCanvas", function() return canvas end)
+    rawset(frame, "GetMapID", function() return worldMap.mapId end)
+    rawset(frame, "SetMapID", function(_, mapId) M.world_map_show(mapId) end)
+    rawset(frame, "GetCanvasScale", function() return W[canvas].scale end)
+    rawset(frame, "OnMapChanged", function() end)
+    if options.manager ~= false then
+        local manager = {}
+        function manager:GetValidFrameLevel(name)
+            if type(name) ~= "string" then
+                fail("GetValidFrameLevel(): a frame level name expected", 2)
+            end
+            local level = PIN_LEVELS[name]
+            if not level then
+                fail("GetValidFrameLevel(): no frame level type " .. name, 2)
+            end
+            return level
+        end
+        rawset(frame, "GetPinFrameLevelsManager", function() return manager end)
+    end
+    W[frame].shown = false
+    define("WorldMapFrame", frame)
+    -- Opening the map from addon code makes the map's own code run as the
+    -- addon's; in combat the game then blocks part of it. An addon must not.
+    define("ToggleWorldMap", function()
+        if G.InCombatLockdown() then
+            fail("ToggleWorldMap(): addon code must not open or close the world map in combat", 2)
+        end
+        if W[frame].shown then
+            frame:Hide()
+        else
+            worldMap.opened = worldMap.opened + 1
+            M.world_map_show(nil)
+        end
+    end)
+    M.world_map_view(1, 0.5, 0.5)
+    return frame
+end
+
+--- The view of the map: zoom 1 shows the whole map (it just fits what it
+-- is seen through), 2 shows half of it across, ...; (x, y) is the point of
+-- the map (0..1, as C_Map has it) in the middle of the view. It may lie
+-- off the map, as on OpenMap's map, which shows the country around.
+function M.world_map_view(zoom, x, y)
+    local container, canvas = worldMap.container, worldMap.canvas
+    local width, height = W[canvas].width, W[canvas].height
+    local scale = math.min(W[container].width / width, W[container].height / height) * zoom
+    W[canvas].scale = scale
+    -- (Set as the map does, not through the widget methods: these offsets
+    -- are in the canvas's own units and may be negative.)
+    W[container].horizontalScroll = x * width - W[container].width / scale / 2
+    W[container].verticalScroll = y * height - W[container].height / scale / 2
+    worldMap.zoom, worldMap.x, worldMap.y = zoom, x, y
+end
+
+--- The player opens the map (mapId nil: on the map where the character
+-- is), or - with the map open - looks at another map.
+function M.world_map_show(mapId)
+    local frame, canvas = worldMap.frame, worldMap.canvas
+    if mapId == nil then
+        mapId = C_Map.GetBestMapForUnit("player")
+        if type(mapId) ~= "number" then
+            mapId = 947
+        end
+    end
+    if not MAPS[mapId] then
+        fail("world_map_show: no map " .. tostring(mapId), 2)
+    end
+    local changed = worldMap.mapId ~= mapId
+    worldMap.mapId = mapId
+    local layer = C_Map.GetMapArtLayers(mapId)[1]
+    canvas:SetSize(layer.layerWidth, layer.layerHeight)
+    M.world_map_view(1, 0.5, 0.5)
+    if not W[frame].shown then
+        frame:Show()
+    end
+    if changed then
+        M.call(frame.OnMapChanged, frame)
+    end
+end
+
+function M.world_map_info()
+    return worldMap
 end
 
 ----------------------------------------------------------------------------

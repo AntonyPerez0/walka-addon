@@ -313,17 +313,41 @@ never saved.
 
 From the moment the addon is installed it keeps the road your character
 travels - install it before you start a character and the road begins at
-level 1. `/walka map` (or *Road map* in the HUD's right-click menu) shows
-it on the game's own map of the continent:
+level 1. It is drawn **on the game's own world map**: open the map as you
+always do (or type `/walka map`, or pick *Road map* in the HUD's
+right-click menu) and the road is on it, on every map of the world - all
+of Azeroth, a continent, or a zone in the game's full detail.
 
 * the road is coloured by level, a colour for every ten levels;
 * the stretches you walked **on the treadmill** are bright, with a soft
-  glow; what your character travelled while the belt stood still is dim;
+  glow; what your character travelled while the belt stood still is dimmer;
 * flight paths are thin and pale;
-* a mark shows where you are now. The mouse wheel zooms, dragging moves the
-  map, *Me* centres it on your character, *Fit* shows the whole continent,
-  `<` and `>` change continent, and *Screenshot* saves a picture of the
-  screen, map included, to the game's Screenshots folder.
+* the road runs right up to your character and grows as you walk, with the
+  map open;
+* it lies over the map's picture and under everything the map marks (quest
+  icons, your arrow), and it takes no clicks: the map works as it did.
+
+**With [OpenMap](https://github.com/openmap-world/openmap)** installed the
+road is drawn on OpenMap's seamless map in the same way - Walka asks
+OpenMap where a place is on its map, through the interface OpenMap offers
+other addons - and *My road (Walka)* is a switch in OpenMap's menu (under
+*On the map*) that can be starred onto the map like OpenMap's own. Nothing
+has to be set up; without OpenMap the road is on Blizzard's map.
+
+A small *Walka road* button in the top-left corner of the map hides and
+shows the road, and its tooltip says what the colours mean. `/walka map
+off` and `/walka map on` do the same, and the options page (*Your road*)
+has both the road and the button as tick boxes.
+
+Walka does not open the map for you in combat (`/walka map` says so then):
+the game restricts what an addon may do to the map during a fight. Open it
+yourself and the road is there.
+
+Walka's own road window is still there as `/walka map window`: one
+continent at a time, the mouse wheel zooms, dragging moves the map, *Me*
+centres it on your character, *Fit* shows the whole continent, `<` and `>`
+change continent, and *Screenshot* saves a picture of the screen. It is
+also what `/walka map` opens should the game's world map not be found.
 
 What is recorded: a point every twenty yards (fewer on flight paths, more
 where the road bends), nothing while you stand still, nothing inside
@@ -334,14 +358,17 @@ leaves your PC (the companion reads it there, to draw it on the
 recording (`on` starts it again); what is recorded so far is kept. A road
 from level 1 to 60 comes to about a megabyte.
 
-If the map does not show, `/walka mapcheck` prints what the game answered
-when Walka asked for its maps.
+If the road does not show, `/walka mapcheck` prints what the game answered
+when Walka asked for its maps, whether it found the world map and OpenMap,
+and what it drew.
 
-The way the road is recorded and the map is drawn follows
+The way the road is recorded and drawn follows
 [Road to Sixty](https://github.com/Jordanburch101/road-to-sixty) by Jordan
 Burch (MIT licence, see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)) -
 an addon made for exactly this, with a replay of the whole journey, a
 journal of quests and kills, and much more. It runs fine next to Walka.
+Nothing of OpenMap is in Walka: it only calls OpenMap when OpenMap is
+there.
 
 ## Other games, or no game
 

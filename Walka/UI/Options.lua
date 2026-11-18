@@ -336,6 +336,11 @@ local function refreshControls()
     controls.hudAlpha:Setup(0.3, 1.0, 0.05)
     controls.hudAlpha:Display(tonumber(Walka:Get("hud.alpha")) or 0.9)
 
+    -- Road.
+    controls.recordRoad:SetChecked(Walka:Get("recordRoad") ~= false)
+    controls.roadOnMap:SetChecked(Walka:Get("worldMap.road") ~= false)
+    controls.roadButton:SetChecked(Walka:Get("worldMap.button") ~= false)
+
     -- Companion.
     local synced = Walka:GetSyncTime()
     if synced then
@@ -687,6 +692,26 @@ local function build()
     controls.hudAlpha = sliderRow("Opacity", function(value)
         Walka:Set("hud.alpha", value)
     end, formatPercent)
+
+    -- Your road ---------------------------------------------------------------
+    header("Your road")
+    note(
+        "Walka keeps the path your character travels and draws it on the world map (on OpenMap's map too, "
+            .. "if you use OpenMap): coloured by level, bright where you walked it on the treadmill.",
+        2
+    )
+    controls.recordRoad = checkRow("Record my character's road", function(checked)
+        Walka:Set("recordRoad", checked)
+        if ns.RoadRecorder then
+            ns.RoadRecorder.SetEnabled(checked)
+        end
+    end)
+    controls.roadOnMap = checkRow("Draw it on the world map", function(checked)
+        Walka:Set("worldMap.road", checked)
+    end)
+    controls.roadButton = checkRow("Show the Walka road button on the world map", function(checked)
+        Walka:Set("worldMap.button", checked)
+    end)
 
     -- Companion app ---------------------------------------------------------------
     header("Companion app")

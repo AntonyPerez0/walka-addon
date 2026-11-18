@@ -58,6 +58,7 @@ local function buildDefaults()
         hud = { shown = true, locked = false, scale = 1.0, alpha = 0.9 },
         autoPauseAFK = true,
         recordRoad = true,      -- keep the character's path for the map
+        worldMap = { road = true, button = true },  -- the road on the game's world map, and its button there
         dailyStepGoal = 6000,
         announce = true,
     }
@@ -813,7 +814,9 @@ local HELP = {
     "/walka start | pause | resume | stop - control the walking session",
     "/walka history - past sessions and totals",
     "/walka journey - your character's journey so far: level, time played, your steps and its steps",
-    "/walka map - the road your character has travelled, on the map (road on | off switches recording)",
+    "/walka map - open the world map with the road your character has travelled on it",
+    "/walka map on | off | window - show or hide the road on the world map; Walka's own road window",
+    "/walka road on | off - record the road, or stop",
     "/walka options - settings",
     "/walka status - what the addon is doing right now",
     "/walka weight 180lb (or 82kg) - your weight, for calorie estimates",
@@ -862,7 +865,19 @@ local function slash(message)
             ns.JourneyWindow.Toggle()
         end
     elseif command == "map" or (command == "road" and rest == "") then
-        if ns.RoadMap then
+        local onWorldMap = ns.WorldMapRoad
+        if command == "map" and rest == "window" then
+            if ns.RoadMap then
+                ns.RoadMap.Toggle()
+            end
+        elseif command == "map" and (rest == "on" or rest == "off") and onWorldMap then
+            onWorldMap.SetShown(rest == "on")
+            self:Print(rest == "on" and "your road is drawn on the world map."
+                or "your road is no longer drawn on the world map (it is still recorded).")
+        elseif command == "map" and rest ~= "" then
+            self:Print("use /walka map, /walka map on, /walka map off or /walka map window.")
+        elseif not (onWorldMap and onWorldMap.Open()) and ns.RoadMap then
+            -- No world map to draw on in this client: Walka's own window.
             ns.RoadMap.Toggle()
         end
     elseif command == "road" then
@@ -875,10 +890,14 @@ local function slash(message)
             self:Print("use /walka road on, /walka road off, or /walka map to see it.")
         end
     elseif command == "mapcheck" then
+        local function say(text)
+            self:Print(text)
+        end
         if ns.RoadMap then
-            ns.RoadMap.Check(function(text)
-                self:Print(text)
-            end)
+            ns.RoadMap.Check(say)
+        end
+        if ns.WorldMapRoad then
+            ns.WorldMapRoad.Check(say)
         end
     elseif command == "options" or command == "config" or command == "settings" then
         if ns.Options then

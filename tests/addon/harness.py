@@ -37,7 +37,17 @@ ALLOWED_GLOBALS = {"Walka", "WalkaDB", "WalkaCharDB", "WalkaCompanionData", "SLA
 # Globals the addon reads although this client does not have them, with the
 # reason each read is fine. Keep this short: every entry is a place where the
 # tests cannot tell a typo from a deliberate probe.
-ALLOWED_UNDEFINED: dict[str, str] = {}
+ALLOWED_UNDEFINED: dict[str, str] = {
+    "WorldMapFrame": (
+        "the world map, which UI/WorldMapRoad.lua draws the road on. Blizzard_WorldMap is not in the snapshot "
+        "(the interface code it was made from does not load it for this game type), but the addons made for "
+        "this client - OpenMap, Questie, HereBeDragons - all work on it; Walka waits for it and does without"
+    ),
+    "ToggleWorldMap": (
+        "opens the world map; defined by the same Blizzard_WorldMap. Called only out of combat, and only if there"
+    ),
+    "OpenMapAPI": "the third-party addon OpenMap's interface for other addons: there only when OpenMap is installed",
+}
 
 
 # ---------------------------------------------------------------------------

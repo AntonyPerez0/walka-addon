@@ -175,8 +175,8 @@ And the companion:
 
 ## 8. The road map
 
-The road recorder and the map use game calls that could only be checked
-against Blizzard's documentation and another addon's source, not in the
+The road recorder and the maps use game calls that could only be checked
+against Blizzard's documentation and other addons' source, not in the
 game. This section matters most.
 
 - [ ] Run around outdoors for a minute, then `/walka mapcheck`. It should
@@ -184,23 +184,60 @@ game. This section matters most.
       file(s)" (the numbers may differ), say which continent you are on,
       and count more than one point. If it says "0 continent map(s)" or
       "the recorder ran into: ...", copy the lines for me.
-- [ ] `/walka map`: the continent's map appears - the real picture, not
-      black or green squares - with your road on it as a line and an arrow
-      where you stand. **Take a screenshot** (the window has a button):
-      only a picture shows whether the art loaded.
+
+On the game's world map (first without OpenMap, if you can spare the
+minute to switch it off; then with it):
+
+- [ ] Open the world map as you always do. Your road is on the zone's map
+      as a line through where you ran, ending at your arrow. **Take a
+      screenshot.** If there is no line, `/walka mapcheck` and copy what
+      it prints (the lines from "world map:" on).
+- [ ] Zoom out to the continent and to the whole world: the line is in the
+      same place on each (the right zone, not mirrored, not out at sea).
+- [ ] Is the line **over** the map's picture everywhere - also over the
+      places you have explored - and **under** the icons and your arrow?
+      If it is hidden in places or covers icons, tell me the "frame level"
+      number from `/walka mapcheck`.
+- [ ] Zoom the map with the wheel and drag it: the line stays the same
+      width, follows without lagging behind, and nothing flickers.
+- [ ] Walk with the map open: the line grows up to your arrow.
+- [ ] The small *Walka road* button in the top-left corner of the map: is
+      anything of the game's under it or over it? Click it: the road goes
+      and comes back. Its tooltip explains the colours.
+- [ ] `/walka map` opens the map. In a fight it prints "open it yourself"
+      instead - and with the map open during a fight, does the game print
+      "interface action failed because of an addon" or blame Walka for a
+      blocked action? (That would be the one serious problem here.)
+- [ ] With OpenMap: all of the above on its map. Drag slowly across a zone
+      border and stop: half a second later OpenMap swaps the map
+      underneath - the road must stay where it is, with no jump (a blink
+      of one frame is expected). Zoom far in and far out.
+- [ ] With OpenMap: its menu has *My road (Walka)* under *On the map*; the
+      switch hides and shows the road; star it, and the button on
+      OpenMap's rail does the same.
+
+And Walka's own road window (`/walka map window`), which is also what
+`/walka map` falls back to if the world map cannot be found:
+
+- [ ] The continent's map appears - the real picture, not black or green
+      squares - with your road on it as a line and an arrow where you
+      stand. **Take a screenshot** (the window has a button): only a
+      picture shows whether the art loaded.
 - [ ] Mouse wheel zooms towards the cursor, dragging moves the map, *Me*
       centres on your character, *Fit* shows the whole continent, `<` `>`
       change continent. The line stays about two pixels wide at every zoom.
+- [ ] The window opens, moves and closes in combat; Escape closes it.
+
+On either map:
+
 - [ ] Walk a square: the corners are kept (not cut diagonally).
-- [ ] Start a session and walk: after `/walka map` is reopened, that
-      stretch is brighter than the rest, and the footer's percentage is
-      above zero.
+- [ ] Start a session and walk: that stretch is brighter than the rest,
+      with a glow.
 - [ ] Take a flight path: a thin pale line. Use your hearthstone or a
       portal: no line across the map between the two places.
 - [ ] Enter a dungeon and leave again: nothing drawn for the time inside,
       no Lua error.
 - [ ] `/reload`: the road is still there and carries on.
-- [ ] The window opens, moves and closes in combat; Escape closes it.
 
 And the road on the picture (the companion reads it from the file the game
 writes at a `/reload` or logout):

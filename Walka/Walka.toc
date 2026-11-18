@@ -5,6 +5,7 @@
 ## Version: 0.1.0
 ## SavedVariables: WalkaDB
 ## SavedVariablesPerCharacter: WalkaCharDB
+## OptionalDeps: OpenMap
 ## IconTexture: Interface\Icons\Ability_Rogue_Sprint
 ## AddonCompartmentFunc: Walka_OnCompartmentClick
 ## Category: Miscellaneous
@@ -26,4 +27,5 @@ UI\HUD.lua
 UI\History.lua
 UI\Journey.lua
 UI\RoadMap.lua
+UI\WorldMapRoad.lua
 UI\Options.lua
