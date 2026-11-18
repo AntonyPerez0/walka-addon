@@ -1,10 +1,12 @@
-"""Build the stand-alone Windows executable with PyInstaller.
+"""Build the stand-alone program with PyInstaller.
 
     pip install -e ".[build]"
     python build_exe.py
 
-Produces dist/Walka.exe: the companion, its dashboard page and a copy of
-the addon (so the dashboard's "Install addon" button works) in one file.
+Produces dist/Walka.exe on Windows and dist/Walka on a Mac: the companion,
+its dashboard page and a copy of the addon (so the dashboard's "Install
+addon" button works) in one file. It is built for the kind of computer it
+is built on - on a Mac, for that Mac's processor (Apple silicon or Intel).
 """
 
 from __future__ import annotations
@@ -17,9 +19,10 @@ HERE = Path(__file__).resolve().parent
 ADDON = HERE.parent / "Walka"
 
 # Where the addon goes inside the bundle (walka.addon_sync looks for it
-# there). Not "Walka" at the top level: Windows file names ignore case, so
-# that would be the same folder as the package's own "walka", and "Install
-# addon" would copy the dashboard's files into the game along with the addon.
+# there). Not "Walka" at the top level: file names on Windows - and on a
+# Mac - ignore case, so that would be the same folder as the package's own
+# "walka", and "Install addon" would copy the dashboard's files into the
+# game along with the addon.
 ADDON_DESTINATION = "_addon/Walka"
 
 # The Windows Runtime packages bleak needs. winrt 3.x is a namespace package
@@ -41,6 +44,16 @@ WINRT_HIDDEN_IMPORTS = (
 )
 
 
+# What only a Mac build needs: the screen capture's macOS backend and the
+# companion's own questions to macOS. "Walka selfcheck" imports them too.
+MACOS_HIDDEN_IMPORTS = (
+    "mss.darwin",
+    "walka.macos",
+    "bleak.backends.corebluetooth.scanner",
+    "bleak.backends.corebluetooth.client",
+)
+
+
 def pyinstaller_args(platform: str = sys.platform) -> list[str]:
     """The PyInstaller command line for this build."""
     sep = os.pathsep  # ';' on Windows, ':' elsewhere
@@ -54,8 +67,8 @@ def pyinstaller_args(platform: str = sys.platform) -> list[str]:
         "--paths", str(HERE / "src"),
         "--add-data", f"{HERE / 'src' / 'walka' / 'static'}{sep}walka/static",
         "--add-data", f"{ADDON}{sep}{ADDON_DESTINATION}",
-        # bleak picks its Bluetooth backend (and the WinRT projections) at
-        # run time, which PyInstaller's static analysis cannot see.
+        # bleak picks its Bluetooth backend (WinRT on Windows, CoreBluetooth
+        # on a Mac) at run time, which PyInstaller's static analysis cannot see.
         "--collect-submodules", "bleak",
         "--distpath", str(HERE / "dist"),
         "--workpath", str(HERE / "build"),
@@ -64,6 +77,10 @@ def pyinstaller_args(platform: str = sys.platform) -> list[str]:
     if platform == "win32":
         args += ["--collect-submodules", "winrt"]
         for module in WINRT_HIDDEN_IMPORTS:
+            args += ["--hidden-import", module]
+    if platform == "darwin":
+        # Only imported where sys.platform says so, and from inside functions.
+        for module in MACOS_HIDDEN_IMPORTS:
             args += ["--hidden-import", module]
     return args
 

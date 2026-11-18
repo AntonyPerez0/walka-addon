@@ -1,4 +1,4 @@
-"""Entry script for the packaged Windows executable (see build_exe.py)."""
+"""Entry script for the packaged program: Walka.exe, or Walka on a Mac (see build_exe.py)."""
 
 import sys
 

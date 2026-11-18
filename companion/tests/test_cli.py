@@ -147,6 +147,13 @@ def test_install_addon_command(tmp_path: Path, capsys, monkeypatch):
     monkeypatch.setattr(addon_sync, "find_addons_dirs", lambda: [])
     assert cli.main(["install-addon"]) == 1
     assert "--dir" in capsys.readouterr().out
+    # The example is a folder as this kind of computer has them.
+    monkeypatch.setattr(cli.sys, "platform", "win32")
+    assert cli.main(["install-addon"]) == 1
+    assert "C:\\Program Files" in capsys.readouterr().out
+    monkeypatch.setattr(cli.sys, "platform", "darwin")
+    assert cli.main(["install-addon"]) == 1
+    assert '"/Applications/World of Warcraft/' in capsys.readouterr().out
 
 
 # ---- running ---------------------------------------------------------------------------
@@ -222,8 +229,12 @@ def test_run_falls_back_to_the_next_port_when_the_port_is_taken(tmp_path: Path, 
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals; see the Windows checklist")
-def test_demo_subprocess_serves_a_moving_belt_and_exits_cleanly_on_sigint(tmp_path: Path):
-    """The real thing: ``python -m walka --demo --no-browser --port N``."""
+@pytest.mark.parametrize("how", ["SIGINT", "SIGTERM", "SIGHUP"])
+def test_demo_subprocess_serves_a_moving_belt_and_exits_cleanly_when_told_to(tmp_path: Path, how: str):
+    """The real thing: ``python -m walka --demo --no-browser --port N``,
+    ended the three ways a program is ended off Windows - Ctrl+C, a log-out
+    or shutdown (SIGTERM), and its terminal window being closed (SIGHUP,
+    which is how Walka is closed on a Mac). Each must stop the belt first."""
     port = free_port()
     env = dict(os.environ)
     env["PYTHONPATH"] = str(SRC) + os.pathsep + env.get("PYTHONPATH", "")
@@ -258,13 +269,14 @@ def test_demo_subprocess_serves_a_moving_belt_and_exits_cleanly_on_sigint(tmp_pa
         assert state["governor"]["phase"] == "following" and state["source"]["kind"] == "wow"
         assert state["session"]["source"] == "wow"
 
-        process.send_signal(signal.SIGINT)
+        process.send_signal(getattr(signal, how))
         out, err = process.communicate(timeout=15)
     finally:
         if process.poll() is None:
             process.kill()
             process.communicate()
-    assert process.returncode in (0, 130), err
+    # (Not "killed by the signal", which would be a negative number here.)
+    assert process.returncode in ((0, 130) if how == "SIGINT" else (0,)), err
     assert "Traceback" not in err, err
     assert f"dashboard: http://127.0.0.1:{port}/" in out and "SIMULATED" in out
     # App.stop() ran to its last step (stop the belt, save the walk, disconnect, save the config).
@@ -358,12 +370,107 @@ def test_the_build_bundles_what_selfcheck_looks_for(repo_root: Path):
     assert {"winrt." + package.lower() for package in packages} <= hidden
     assert "--hidden-import" not in build.pyinstaller_args("linux")
 
+    # A Mac build: what is only imported there, and nothing of Windows'.
+    mac = build.pyinstaller_args("darwin")
+    mac_hidden = {mac[i + 1] for i, arg in enumerate(mac) if arg == "--hidden-import"}
+    assert set(cli.MACOS_RUNTIME_MODULES) <= mac_hidden
+    assert not any(name.startswith("winrt") for name in mac_hidden) and "winrt" not in mac
+    assert [arg for arg in mac if arg not in mac_hidden][: len(build.pyinstaller_args("linux"))] == [
+        arg for arg in build.pyinstaller_args("linux")
+    ]
+
     # The addon is bundled where addon_sync looks for it, and not in a folder
     # that Windows would merge with the package's own ("Walka" vs "walka").
     destinations = [windows[i + 1].split(os.pathsep)[-1] for i, arg in enumerate(windows) if arg == "--add-data"]
     assert "/".join(addon_sync.BUNDLED_ADDON_PATH) in destinations
     top_level = [destination.split("/")[0].lower() for destination in destinations]
     assert len(set(top_level)) == len(top_level) == 2 and "walka" in top_level
+
+
+def test_selfcheck_imports_what_this_kind_of_computer_needs():
+    everywhere = set(cli.RUNTIME_MODULES)
+    assert set(cli.runtime_modules("linux")) == everywhere
+    assert set(cli.runtime_modules("win32")) == everywhere | set(cli.WINDOWS_RUNTIME_MODULES)
+    assert set(cli.runtime_modules("darwin")) == everywhere | set(cli.MACOS_RUNTIME_MODULES)
+    assert "walka.macos" in cli.runtime_modules("darwin") and "mss.darwin" in cli.runtime_modules("darwin")
+    assert not any("winrt" in name or "windows" in name for name in cli.runtime_modules("darwin"))
+    assert cli.runtime_modules() == cli.runtime_modules(sys.platform)
+
+
+def test_beacon_command_says_what_to_do_when_macos_hides_the_screen(tmp_path: Path, capsys, monkeypatch):
+    """Without the Screen Recording permission there is nothing to diagnose:
+    say which switch to flip, and do not start looking."""
+    from walka import capture
+
+    def refuse() -> None:
+        raise capture.ScreenAccessError("macOS has not allowed this program to record the screen")
+
+    def no_grabber():
+        raise AssertionError("the screen must not be looked at")
+
+    monkeypatch.setattr(capture, "require_screen_access", refuse)
+    monkeypatch.setattr(capture, "MssGrabber", no_grabber)
+    assert cli.main(["--data-dir", str(tmp_path), "beacon", "--seconds", "1"]) == 2
+    out = capsys.readouterr().out
+    assert "record the screen." in out and "Traceback" not in out
+
+
+def test_the_screen_reader_asks_for_access_before_it_looks(monkeypatch):
+    from walka import capture
+
+    order: list[str] = []
+    monkeypatch.setattr(capture, "require_screen_access", lambda: order.append("asked"))
+    monkeypatch.setattr(capture, "MssGrabber", lambda: order.append("grabber") or object())
+    source = cli._build_beacon(config_module.Config())
+    reader = source._reader_factory()
+    assert order == ["asked", "grabber"] and isinstance(reader, capture.BeaconReader)
+
+    def refuse() -> None:
+        raise capture.ScreenAccessError("not allowed")
+
+    monkeypatch.setattr(capture, "require_screen_access", refuse)
+    with pytest.raises(capture.ScreenAccessError):
+        source._reader_factory()
+    assert order == ["asked", "grabber"]  # (no second grabber)
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
+def test_a_signal_from_outside_asks_for_the_orderly_stop():
+    async def scenario() -> bool:
+        loop = asyncio.get_running_loop()
+        stop = asyncio.Event()
+        cli._stop_on_signals(loop, stop)
+        os.kill(os.getpid(), signal.SIGTERM)
+        await asyncio.wait_for(stop.wait(), 5)
+        stop.clear()
+        os.kill(os.getpid(), signal.SIGHUP)
+        await asyncio.wait_for(stop.wait(), 5)
+        return stop.is_set()
+
+    assert asyncio.run(scenario()) is True
+
+
+def test_listening_for_signals_never_stops_the_companion_starting():
+    """Off the main thread (embedded, under test) signals cannot be listened
+    for - and on Windows there are none: either way, carry on without."""
+    import threading
+
+    outcome: list[object] = []
+
+    async def scenario() -> None:
+        cli._stop_on_signals(asyncio.get_running_loop(), asyncio.Event())
+
+    def elsewhere() -> None:
+        try:
+            asyncio.run(scenario())
+            outcome.append("fine")
+        except Exception as exc:  # pragma: no cover - what must not happen
+            outcome.append(exc)
+
+    thread = threading.Thread(target=elsewhere)
+    thread.start()
+    thread.join()
+    assert outcome == ["fine"]
 
 
 # ---- the console -------------------------------------------------------------------------------------

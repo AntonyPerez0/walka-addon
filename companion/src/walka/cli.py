@@ -59,6 +59,7 @@ def _build_beacon(cfg: config_module.Config, *, read_screen: bool = True):
         return BeaconSource(None)  # frames are injected (demo)
 
     def make_reader() -> capture.BeaconReader:
+        capture.require_screen_access()  # (macOS: without the permission there is no game to see)
         return capture.BeaconReader(
             capture.MssGrabber(),
             capture.default_window_finder(),
@@ -265,6 +266,23 @@ def _install_console_close_handler(
     ctypes.windll.kernel32.SetConsoleCtrlHandler(handler, 1)
 
 
+def _stop_on_signals(loop: asyncio.AbstractEventLoop, stop: asyncio.Event) -> None:
+    """Off Windows a program is closed from outside with a signal: SIGHUP
+    when its terminal window is closed - which is how Walka is closed on a
+    Mac - and SIGTERM at log-out, at shutdown and from ``kill``. Left alone,
+    either ends the process on the spot, with the belt running. Here they
+    ask for the same orderly stop as Ctrl+C: belt first, then the walk is
+    saved. (The handlers go when the event loop is closed.)"""
+    if sys.platform == "win32":
+        return
+    for name in ("SIGTERM", "SIGHUP"):
+        try:
+            loop.add_signal_handler(getattr(signal, name), stop.set)
+        except (AttributeError, NotImplementedError, RuntimeError, ValueError) as exc:
+            # (Not the main thread - embedded, or under test: not ours to change.)
+            log.debug("not listening for %s: %s", name, exc)
+
+
 def _watch_for_session_end(loop: asyncio.AbstractEventLoop, stop: asyncio.Event, stopped: threading.Event):
     """Stop the belt when Windows logs off or shuts down, the same way as
     when the console window is closed. Returns the watcher (to be stopped)."""
@@ -308,6 +326,7 @@ async def _run(args: argparse.Namespace) -> int:
     stopped = threading.Event()  # set once app.stop() has run: belt stopped, walk saved
     loop = asyncio.get_running_loop()
     _install_console_close_handler(loop, stop, stopped)
+    _stop_on_signals(loop, stop)
     session_end = _watch_for_session_end(loop, stop, stopped)
 
     runner = None
@@ -422,6 +441,11 @@ def _beacon(args: argparse.Namespace) -> int:
     """Diagnose screen capture: print what is decoded from the screen."""
     capture.enable_dpi_awareness()
     cfg = config_module.load(_data_dir(args))
+    try:
+        capture.require_screen_access()
+    except capture.ScreenAccessError as exc:
+        print(f"{exc}.")
+        return 2
     reader = capture.BeaconReader(capture.MssGrabber(), capture.default_window_finder(), manual_origin=cfg.wow.origin)
     print("Looking for the Walka beacon (top-left corner of the game window). Ctrl+C to stop.")
     deadline = time.monotonic() + args.seconds
@@ -487,6 +511,7 @@ def _beacon_elsewhere(window: capture.GameWindow) -> None:
             f"A strip was found on screen at {result.origin}, but the game window's corner is at "
             f"({window.left}, {window.top}). Walka only reads that corner, so it will not follow this strip. "
             "Please report these two positions, your display scaling and whether the game is windowed."
+            + (" (On a Mac these positions are in points, not pixels.)" if sys.platform == "darwin" else "")
         )
 
 
@@ -497,7 +522,10 @@ def _install_addon(args: argparse.Namespace) -> int:
         targets = addon_sync.find_addons_dirs()
     if not targets:
         print("No World of Warcraft AddOns folder found. Pass it with --dir, e.g.")
-        print(r'  walka install-addon --dir "C:\Program Files (x86)\World of Warcraft\_forever_\Interface\AddOns"')
+        if sys.platform == "win32":
+            print(r'  walka install-addon --dir "C:\Program Files (x86)\World of Warcraft\_forever_\Interface\AddOns"')
+        else:
+            print('  walka install-addon --dir "/Applications/World of Warcraft/_forever_/Interface/AddOns"')
         return 1
     try:
         installed = addon_sync.install_addon(targets[0])
@@ -509,12 +537,12 @@ def _install_addon(args: argparse.Namespace) -> int:
     return 0
 
 
-# What the packaged Walka.exe must be able to import at run time. Most of the
-# Windows list is imported by name from inside compiled modules, or chosen
-# at run time, where PyInstaller cannot see it - so a build can be missing
-# one and still start. "walka selfcheck" imports them all, and the build's
-# smoke test runs it: a missing module then fails the build, not the first
-# Bluetooth scan on somebody's PC.
+# What the packaged program (Walka.exe, or Walka on a Mac) must be able to
+# import at run time. Most of the Windows list is imported by name from
+# inside compiled modules, or chosen at run time, where PyInstaller cannot
+# see it - so a build can be missing one and still start. "walka selfcheck"
+# imports them all, and the build's smoke test runs it: a missing module
+# then fails the build, not the first Bluetooth scan on somebody's computer.
 RUNTIME_MODULES: tuple[str, ...] = (
     "aiohttp.web",
     "bleak",
@@ -538,6 +566,18 @@ WINDOWS_RUNTIME_MODULES: tuple[str, ...] = (
     "mss.windows",
     "mss.windows.gdi",
 )
+MACOS_RUNTIME_MODULES: tuple[str, ...] = (
+    "bleak.backends.corebluetooth.scanner",
+    "bleak.backends.corebluetooth.client",
+    "mss.darwin",
+    "walka.macos",
+)
+
+
+def runtime_modules(platform: str = sys.platform) -> tuple[str, ...]:
+    """Everything a build for ``platform`` imports at run time."""
+    extra = {"win32": WINDOWS_RUNTIME_MODULES, "darwin": MACOS_RUNTIME_MODULES}.get(platform, ())
+    return RUNTIME_MODULES + extra
 
 
 def missing_page_files(static: Path) -> list[str]:
@@ -569,7 +609,7 @@ def missing_page_files(static: Path) -> list[str]:
 def _selfcheck() -> int:
     """Hidden command: is everything this build needs at run time there?
     Prints one line; exits 0 if so."""
-    modules = RUNTIME_MODULES + (WINDOWS_RUNTIME_MODULES if sys.platform == "win32" else ())
+    modules = runtime_modules()
     problems = []
     for name in modules:
         try:

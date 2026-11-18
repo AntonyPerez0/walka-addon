@@ -274,17 +274,33 @@ def _common_roots() -> list[Path]:
             ):
                 roots.append(Path(f"{drive}:\\{base}"))
     else:
+        # Where Battle.net puts the game on a Mac, for everyone or for one user.
         roots.append(Path("/Applications/World of Warcraft"))
+        roots.append(Path.home() / "Applications" / "World of Warcraft")
     return roots
 
 
+def game_dir_from_exe(exe_path: str | os.PathLike[str]) -> Path:
+    """The game folder (the one with ``Interface`` and ``WTF``) of a running
+    game, from its executable's path.
+
+    On Windows the executable is in that folder
+    (``…\\World of Warcraft\\_forever_\\WowForever.exe``). On a Mac it is
+    inside an application bundle that is
+    (``…/World of Warcraft/_retail_/World of Warcraft.app/Contents/MacOS/World of Warcraft``).
+    """
+    path = Path(exe_path)
+    for parent in path.parents:
+        if parent.suffix.lower() == ".app":
+            return parent.parent
+    return path.parent
+
+
 def addons_dir_from_exe(exe_path: str | os.PathLike[str] | None) -> Path | None:
-    """AddOns folder of a running game, from its executable's path
-    (``…\\World of Warcraft\\_forever_\\WowForever.exe``)."""
+    """AddOns folder of a running game, from its executable's path."""
     if not exe_path:
         return None
-    folder = Path(exe_path).parent
-    candidate = folder / "Interface" / "AddOns"
+    candidate = game_dir_from_exe(exe_path) / "Interface" / "AddOns"
     return candidate if candidate.is_dir() else None
 
 

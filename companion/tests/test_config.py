@@ -362,6 +362,13 @@ def test_hand_edited_file_with_out_of_range_and_junk_values(tmp_path: Path):
     assert config.treadmill.name_prefixes == ["URTM", "WELLFIT TM Linker"]
 
 
+def test_on_a_mac_the_data_is_kept_where_mac_programs_keep_theirs(monkeypatch, tmp_path: Path):
+    monkeypatch.delenv("WALKA_DATA_DIR", raising=False)
+    monkeypatch.setattr(config_module.sys, "platform", "darwin")
+    monkeypatch.setattr(config_module.Path, "home", classmethod(lambda cls: tmp_path))
+    assert config_module.default_data_dir() == tmp_path / "Library" / "Application Support" / "Walka"
+
+
 def test_data_dir_override(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("WALKA_DATA_DIR", str(tmp_path / "custom"))
     assert config_module.default_data_dir() == tmp_path / "custom"
@@ -369,6 +376,8 @@ def test_data_dir_override(monkeypatch, tmp_path: Path):
     if sys.platform == "win32":
         monkeypatch.setenv("APPDATA", str(tmp_path / "Roaming"))
         assert config_module.default_data_dir() == tmp_path / "Roaming" / "Walka"
+    elif sys.platform == "darwin":
+        assert config_module.default_data_dir() == Path.home() / "Library" / "Application Support" / "Walka"
     else:
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
         assert config_module.default_data_dir() == tmp_path / "xdg" / "walka"
