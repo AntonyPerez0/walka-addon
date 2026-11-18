@@ -48,12 +48,18 @@ def _advertised_services(adv: AdvertisementData | None) -> list[str]:
 def _found(device: BLEDevice, adv: AdvertisementData | None) -> FoundDevice:
     uuids = _advertised_services(adv)
     name = (adv.local_name if adv and adv.local_name else device.name) or ""
+    service_data = adv.service_data if adv else {}
+    machine_type = next(
+        (ftms.advertised_machine_type(bytes(v)) for k, v in service_data.items() if k.lower() == ftms.FTMS_SERVICE),
+        None,
+    )
     return FoundDevice(
         name=name,
         address=device.address,
         rssi=adv.rssi if adv else None,
         ftms=ftms.FTMS_SERVICE in uuids,
         handle=device,
+        treadmill=ftms.says_treadmill(machine_type),
     )
 
 
@@ -106,7 +112,7 @@ class BleakBackend:
         prepare_windows_threading()
         results = await BleakScanner.discover(timeout=timeout, return_adv=True)
         found = [_found(device, adv) for device, adv in results.values()]
-        found.sort(key=lambda d: (not d.ftms, -(d.rssi or -999)))
+        found.sort(key=lambda d: (not d.ftms, -(d.rssi if d.rssi is not None else -999)))
         return found
 
     async def find(self, address: str | None, name_prefixes: Sequence[str], timeout: float) -> FoundDevice | None:
@@ -117,7 +123,9 @@ class BleakBackend:
         Service could just as well be a bike trainer or the neighbours'
         treadmill - and "Start" in the game would then start *that* belt -
         so it is only settled for when the whole scan has turned up no known
-        name, and then the one with the strongest signal is taken.
+        name, and then the one with the strongest signal is taken. One that
+        says in its advertisement that it is another kind of machine (a
+        bike, a rower) is never taken.
         """
         prepare_windows_threading()
         wanted = address.upper() if address else None
@@ -132,7 +140,7 @@ class BleakBackend:
                             return found
                     elif name_matches(found.name, name_prefixes):
                         return found
-                    elif found.ftms:
+                    elif found.ftms and found.treadmill is not False:
                         nameless[found.address] = found
             raise RuntimeError("the Bluetooth scan ended by itself")
 

@@ -27,7 +27,7 @@ def test_defaults_are_conservative():
     assert config.profile.weight_kg == 75.0 and config.profile.height_cm == 172.0
     assert config.profile.age is None and config.profile.sex is None
     assert config.treadmill.kind == "ftms" and config.treadmill.units == "auto"
-    assert config.treadmill.name_prefixes == ["URTM"]
+    assert config.treadmill.name_prefixes == ["URTM", "WELLFIT TM Linker"]
     assert config.treadmill.auto_connect is True and config.treadmill.stop_on_exit is True
     assert config.heart_rate.enabled is False
     assert config.wow.origin is None and config.wow.addon_dir == "" and config.wow.capture_fps == 15.0
@@ -47,7 +47,7 @@ def test_instances_do_not_share_mutable_defaults():
     a, b = Config(), Config()
     a.treadmill.name_prefixes.append("X")
     a.limits.max_speed_kmh = 1.0
-    assert b.treadmill.name_prefixes == ["URTM"] and b.limits.max_speed_kmh != 1.0
+    assert b.treadmill.name_prefixes == ["URTM", "WELLFIT TM Linker"] and b.limits.max_speed_kmh != 1.0
 
 
 @pytest.mark.parametrize("section,name", sorted(_BOUNDS))
@@ -263,7 +263,7 @@ def test_malformed_name_prefixes_are_refused(prefixes):
     """A bare string would be taken apart into letters - and the companion
     would try to connect to anything whose name starts with U, R, T or M."""
     config = apply_update(Config(), {"treadmill": {"name_prefixes": prefixes}})
-    assert config.treadmill.name_prefixes == ["URTM"]
+    assert config.treadmill.name_prefixes == ["URTM", "WELLFIT TM Linker"]
 
 
 def test_name_prefixes_can_be_changed():
@@ -271,6 +271,17 @@ def test_name_prefixes_can_be_changed():
     assert config.treadmill.name_prefixes == ["URTM", "KS-"]
     config = apply_update(Config(), {"treadmill": {"name_prefixes": []}})
     assert config.treadmill.name_prefixes == []  # FTMS advertisers only
+
+
+def test_a_settings_file_from_before_other_makes_were_known_gets_todays_names(tmp_path: Path):
+    """The file holds every setting, so one written when UREVO was the only
+    known make pins ["URTM"] - and a WELLFIT would never be recognised."""
+    (tmp_path / CONFIG_FILE).write_text(json.dumps({"treadmill": {"name_prefixes": ["URTM"]}}), "utf-8")
+    assert load(tmp_path).treadmill.name_prefixes == ["URTM", "WELLFIT TM Linker"]
+    # A list somebody made themselves is theirs - an empty one too.
+    for own in (["URTM", "KS-"], ["KS-"], []):
+        (tmp_path / CONFIG_FILE).write_text(json.dumps({"treadmill": {"name_prefixes": own}}), "utf-8")
+        assert load(tmp_path).treadmill.name_prefixes == own
 
 
 # ---- load / save ----------------------------------------------------------------------
@@ -348,7 +359,7 @@ def test_hand_edited_file_with_out_of_range_and_junk_values(tmp_path: Path):
     assert isinstance(config.web.port, int) and 1 <= config.web.port <= 65535
     assert config.web.host == "127.0.0.1", "anything that is not this computer itself is refused"
     assert config.wow.capture_fps == 60.0 and config.wow.origin is None
-    assert config.treadmill.name_prefixes == ["URTM"]
+    assert config.treadmill.name_prefixes == ["URTM", "WELLFIT TM Linker"]
 
 
 def test_data_dir_override(monkeypatch, tmp_path: Path):

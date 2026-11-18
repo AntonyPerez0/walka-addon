@@ -7,7 +7,7 @@
 import { capitalise, fmt, sentence } from "./util.js";
 
 const PAD_ADVICE =
-  "Switch the pad on and close the UREVO phone app - the pad accepts only one Bluetooth connection. No pairing in Windows is needed.";
+  "Switch the treadmill on and close its own phone app - most treadmills accept only one Bluetooth connection. No pairing in Windows is needed.";
 const WINDOW_ADVICE = "Bring the game window to the front; nothing may cover its top-left corner.";
 
 /** Seconds since the game signal was declared lost (0 while it is fresh). */
@@ -58,7 +58,7 @@ export function treadmillHealth(s) {
   if (t.error) {
     let detail = sentence(t.error);
     if (/bluetooth scan failed/i.test(t.error)) detail += " Check that Bluetooth is switched on on this PC.";
-    else if (!/urevo/i.test(t.error)) detail += ` ${PAD_ADVICE}`;
+    else if (!/phone app/i.test(t.error)) detail += ` ${PAD_ADVICE}`;
     return { tone: "bad", pill: "not found", state: "not connected", detail: `${detail} Walka keeps trying.` };
   }
   return {

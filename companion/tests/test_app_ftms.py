@@ -14,7 +14,7 @@ import pytest
 
 from test_app import Clock
 from walka.app import TICK_S, App
-from walka.config import Config
+from walka.config import MAX_SPEED_CAP_KMH, Config, apply_update
 from walka.governor import Phase
 from walka.protocol import Flags, Frame, kmh_to_raw
 from walka.sources import BeaconSource
@@ -421,3 +421,39 @@ def test_soak_on_the_emulated_pad(tmp_path: Path, monkeypatch, seed: int):
         assert rig.pad.client is None
 
     run(scenario())
+
+
+# ---- treadmills of other makes ----------------------------------------------------------
+
+
+def test_walk_on_an_emulated_wellfit(tmp_path: Path, monkeypatch):
+    """A full-size treadmill that goes to 10 mph: found by its name, driven
+    over the same FTMS commands, and held under Walka's own speed cap."""
+    pad = FakePad(name="WELLFIT TM Linker", address="A4:C1:38:00:29:01", max_tenths=100, says_treadmill=True)
+    rig = PadRig(tmp_path, monkeypatch, pad)
+    apply_update(rig.config, {"limits": {"max_speed_kmh": 99.0}})  # whatever a settings file asks for...
+    assert rig.config.limits.max_speed_kmh == MAX_SPEED_CAP_KMH  # ... the cap stays at walking pace
+
+    async def scenario():
+        await rig.session(16.0, seconds=120)  # the game asks for the treadmill's own top speed
+        assert rig.pad.writes[:3] == [b"\x00", b"\x00", b"\x07"]
+        assert rig.app.governor.phase is Phase.FOLLOWING
+        assert rig.pad.target_tenths == 40  # 6.5 km/h cap: 4.0 mph on the belt, not 10
+        await rig.run(3, active=False)
+        assert rig.pad.writes[-1] == b"\x08\x01" and rig.pad.state == "idle"
+
+    run(scenario())
+    assert rig.max_pad_kmh <= MAX_SPEED_CAP_KMH
+    assert rig.app.store.records[0].treadmill == "WELLFIT TM Linker"
+    assert not any("speed commands" in event["text"] for event in rig.app.events)
+
+
+def test_a_treadmill_that_says_it_takes_no_speed_commands_is_pointed_out(tmp_path: Path, monkeypatch):
+    rig = PadRig(tmp_path, monkeypatch, FakePad(name="Treadmill X", speed_target=False))
+
+    async def scenario():
+        await rig.treadmill.connect()
+
+    run(scenario())
+    warnings = [event["text"] for event in rig.app.events if event["level"] == "warning"]
+    assert len(warnings) == 1 and "does not take speed commands" in warnings[0]

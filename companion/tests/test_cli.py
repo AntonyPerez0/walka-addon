@@ -567,7 +567,7 @@ def test_probe_reports_a_time_out_readably_and_passes_all_on(tmp_path: Path, cap
     assert seen["all_characteristics"] is False
     last = capsys.readouterr().out.strip().splitlines()[-1]
     assert last == (
-        "Bluetooth problem: timed out - is the pad switched on and in range, and is the UREVO phone app closed?"
+        "Bluetooth problem: timed out - is the treadmill switched on and in range, and is its own phone app closed?"
     )
     assert cli.main(["--data-dir", str(tmp_path), "probe", "--all", "--out", str(tmp_path)]) == 0
     assert seen["all_characteristics"] is True

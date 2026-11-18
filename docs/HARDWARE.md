@@ -1,6 +1,11 @@
-# Hardware notes: UREVO Strol 2E (URTM030)
+# Hardware notes: UREVO Strol 2E (URTM030), and other treadmills
 
-What is known about controlling this pad over Bluetooth, where it comes
+Walka drives a treadmill over standard Bluetooth FTMS. It was written
+around the UREVO Strol 2E, which most of this page is about; what is known
+about other makes - the WELLFIT TM029 Pro first of all - is under
+[Other treadmills](#other-treadmills).
+
+What is known about controlling the Strol 2E over Bluetooth, where it comes
 from, and what still needs confirming on a real unit. None of this was
 measured by Walka's author; it is collected from the manual and from
 open-source projects that control UREVO pads. Run `walka probe` on your pad
@@ -15,7 +20,7 @@ the only thing it writes is the switch that turns notifications on.
 | Protocol | Standard Bluetooth FTMS (Fitness Machine Service `0x1826`). No vendor handshake needed. |
 | Pairing | None. **Do not pair it in Windows Bluetooth settings.** |
 | Connections | One at a time. The UREVO phone app must be closed or the pad is invisible. |
-| Which device Walka picks | The address you chose in the dashboard, if any. Otherwise a device whose Bluetooth name starts with `URTM`; some other Fitness Machine (a bike trainer, another treadmill) is only used if no such name is heard during the whole 15-second scan, and then the one with the strongest signal. |
+| Which device Walka picks | The address you chose in the dashboard, if any. Otherwise a device whose Bluetooth name is a known one (`URTM...`, `WELLFIT TM Linker`); some other Fitness Machine is only used if no such name is heard during the whole 15-second scan, and then the one with the strongest signal. A machine that says in its advertisement that it is not a treadmill (a bike trainer, a rower) is never used. |
 | Speed range (US) | 0.6-4.0 mph with the handle folded (desk mode), 0.6-6.2 mph with it raised |
 | Speed step | 0.1 mph over Bluetooth on sibling models (the console buttons step 0.2 mph) |
 | Start | 3-2-1 countdown, then the belt starts at its minimum speed |
@@ -155,6 +160,123 @@ Found by reading the probe report:
 * whether it switches itself off, and drops the connection, after a long
   pause (siblings do; Walka then reconnects when you next start a session).
 
+## Other treadmills
+
+The driver is not UREVO's: it is the Fitness Machine Service as the
+Bluetooth specification describes it, written carefully. Any treadmill
+that implements that service *with a speed target* can be driven. What the
+make changes is how the treadmill is found, and which firmware habits have
+to be allowed for.
+
+### How a treadmill is found
+
+1. **By address**, once Walka has connected to a treadmill (it then only
+   reconnects to that one) or you picked one from *Treadmill → Scan*.
+2. **By name**, for the names in
+   [`treadmill/known.py`](../companion/src/walka/treadmill/known.py):
+   taken the moment it is heard.
+3. **By what it advertises**: the Fitness Machine Service (`0x1826`). Such
+   a device is only taken when the whole scan has turned up no known name,
+   and then the one with the strongest signal. A fitness machine may add to
+   its advertisement what kind of machine it is (service data: one flags
+   byte, then a 16-bit type where bit 0 is "treadmill"). One that says it
+   is something else is left out, here and in the dashboard's scan; one
+   that does not say is taken to be a treadmill, and refused on connecting
+   if it turns out to have no Treadmill Data characteristic.
+
+A treadmill that advertises neither a known name nor the service does not
+show up at all. If yours is like that but does have the service once
+connected, its name can be added (below).
+
+### What Walka expects of the treadmill
+
+* Treadmill Data (`0x2ACD`) and the Control Point (`0x2AD9`). Without both
+  it is refused.
+* Start or Resume (`07`), Set Target Speed (`02`) and Stop (`08 01`). Pause
+  (`08 02`) is used where the treadmill has it; a pause that is refused, or
+  that does not stop the belt, is followed by a stop.
+* A speed in Treadmill Data while the belt moves. Walka trusts nothing
+  else: not an acknowledgement, not a status event.
+* Supported Speed Range (`0x2AD4`), if there is one, is read for the
+  minimum, maximum and step. Without it Walka assumes 1.0-6.0 km/h in steps
+  of 0.1 (0.6-4.0 mph in steps of 0.1 if the firmware grid is set to mph).
+* The feature bits (`0x2ACC`) are read. If they say "no speed target", the
+  dashboard says so and Walka tries all the same - some firmware says no
+  and obeys.
+
+What Walka does **not** do on any treadmill: go above its own speed cap
+(at most 6.5 km/h, 4.0 mph - a treadmill that reaches 16 km/h is still
+walked on at walking pace), or touch the incline.
+
+### WELLFIT (TM029 Pro, TM029, TM007 ...)
+
+| | |
+|---|---|
+| Bluetooth names | `WELLFIT TM Linker` (the treadmill, for apps) and `WELLFIT TM Audio` (its loudspeaker). Walka knows the first; the second is not a treadmill. |
+| Protocol | Standard FTMS. WELLFIT's own instructions for Kinomap say to choose the brand "FTMS"; it also connects to Zwift. |
+| Phone app | WELLFIT Fitness. Close it before connecting. |
+| Speed range | TM029 Pro: sold as up to 10 mph in the US, 1-16 km/h in Europe. What it advertises over Bluetooth is not known. |
+| Start | Counts down, then starts at 0.6 mph (reported as 0.96 km/h) on a US unit. |
+
+Where this comes from: a
+[qdomyos-zwift issue](https://github.com/cagnulein/qdomyos-zwift/issues/2659)
+in which the owner of a WELLFIT treadmill (model not named) and the
+project's author got it working over FTMS. At the end the owner reports
+that starting from the app counted down and went to 0.6 mph, that speed up
+and down "worked perfectly", that pause held the belt until resumed, and
+that stop switched it off. The
+[change that did it](https://github.com/cagnulein/qdomyos-zwift/pull/2686):
+
+* Request Control is written twice, half a second apart, when the
+  connection is set up, and **not** again before each speed change (which
+  that project does for other treadmills). Walka asks once per connection
+  on every treadmill; for a WELLFIT it asks twice, 0.4 s apart, before the
+  first command. The one exception is a stop as the very first command of
+  a connection: that goes out after a single request rather than wait.
+* The Control Point's indications are switched on before writing to it -
+  which Walka does for every treadmill.
+
+That is one treadmill, one owner, and another program's driver. It says
+the command set works; it does not say Walka's timing does.
+
+Not known for a WELLFIT, and found by a `walka probe` report or a first
+careful session:
+
+* whether it advertises the Fitness Machine Service and a machine type
+  (if not, it is still found by its name);
+* the speed range and step it reports. US units very likely report an mph
+  grid (0.96 km/h minimum, 0.16 km/h steps), which Walka then recognises by
+  itself; if the belt lands one step off the speed shown on the dashboard,
+  set *Settings → Treadmill → Firmware speed grid* by hand;
+* **how its firmware rounds a target speed.** Walka's rounding-up trick (see
+  [Quirks](#quirks-walka-handles)) is right for UREVO's US firmware, which
+  truncates twice. On firmware that rounds to the nearest step instead,
+  some targets would land 0.1 mph high - including at the speed cap. Watch
+  for this in the first manual session and report it;
+* how it reports a pause or stop sent over Bluetooth, whether it stays
+  "post-workout" after a stop, and whether steps are in its data;
+* whether the safety key being out is reported as such, or only as a
+  refused start.
+
+### Other makes
+
+Nothing is known first-hand. A treadmill that an independent app can
+*drive* (not just read) over FTMS should work as it is: let the scan run
+its 15 seconds, or pick it from *Treadmill → Scan*. qdomyos-zwift's source
+is the best public list of which Bluetooth names are FTMS treadmills, but a
+name on that list is not proof of plain FTMS - several of them need
+changes of their own there.
+
+To add a treadmill to the names Walka knows:
+
+1. Run `walka probe` on it (read-only) and keep the report: it shows the
+   advertised name, the services, the speed range and the feature bits.
+2. Do the steps in the README's *Before your first walk*, standing beside
+   the belt.
+3. Add a line to `KNOWN_TREADMILLS` in `treadmill/known.py` - the start of
+   the Bluetooth name, as exactly as the make allows - and a paragraph
+   here saying what was seen and on which model.
+
 ## Windows notes
 
 * The Bluetooth library (bleak) documents Windows 11 as its supported
@@ -182,3 +304,5 @@ Found by reading the probe report:
 * [jcpsimmons/urevo-walkpad](https://github.com/jcpsimmons/urevo-walkpad) - SpaceWalk 5L (URTM054), including the mph rounding workaround.
 * [Linemass/walking-pad](https://github.com/Linemass/walking-pad) - a Python + bleak Windows client for UREVO pads.
 * [Web3Dave/ftms-js](https://github.com/Web3Dave/ftms-js), [VRTI supported devices](https://raphii.co/vrti/supported-devices/treadmills/), [qdomyos-zwift](https://github.com/cagnulein/qdomyos-zwift).
+* WELLFIT: [the maker's app page](https://wellfittreadmill.com/pages/app) (Bluetooth names, Kinomap and Zwift), qdomyos-zwift [issue 2659](https://github.com/cagnulein/qdomyos-zwift/issues/2659) and [pull request 2686](https://github.com/cagnulein/qdomyos-zwift/pull/2686).
+* Bluetooth SIG, Fitness Machine Service 1.0 - the advertisement's service data (machine type), features and control point.

@@ -164,6 +164,16 @@ class App:
             self.connect_error = ""
             self._eager_connect = False
             self.log_event(f"Treadmill connected: {status.name or status.address}.")
+            features = getattr(self.treadmill, "features", None)
+            if features is not None and not features.speed_target_supported:
+                # Plenty of treadmills show their data to fitness apps and
+                # take no commands. Some say so and obey all the same, so
+                # this is said, not acted on.
+                self.log_event(
+                    "This treadmill says it does not take speed commands over Bluetooth. Walka can show "
+                    "what it does, but may not be able to start it or change its speed.",
+                    "warning",
+                )
             self._pin_treadmill()
             self._state["treadmill"] = {
                 "name": status.name,
