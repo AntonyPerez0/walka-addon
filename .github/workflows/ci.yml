@@ -146,15 +146,33 @@ jobs:
           # A tag like v0.2.0-rc1 is a trial: published, but never "the latest" that the README's button gives.
           pre=""
           case "$TAG" in *-*) pre="--prerelease" ;; esac
+          # What the badge in the README says until VirusTotal has answered
+          # for these files (the job after this one puts the answer here).
+          echo '{"badge": "Walka.exe: not checked yet"}' > virus-scan.json
           if gh release view "$TAG" >/dev/null 2>&1; then
             # A second run for the same tag: replace the files, and publish it if a first try left a draft.
-            gh release upload "$TAG" release/Walka.exe Walka-addon.zip --clobber
+            gh release upload "$TAG" release/Walka.exe Walka-addon.zip virus-scan.json --clobber
             gh release edit "$TAG" --draft=false
           else
             # From a pushed tag: the tag must be there. Run by hand: the tag is made now, on this commit.
             if [ "$GITHUB_REF_TYPE" = "tag" ]; then at="--verify-tag"; else at="--target $GITHUB_SHA"; fi
-            gh release create "$TAG" release/Walka.exe Walka-addon.zip $at --title "Walka ${TAG#v}" --notes "$notes" $pre || {
+            gh release create "$TAG" release/Walka.exe Walka-addon.zip virus-scan.json $at --title "Walka ${TAG#v}" --notes "$notes" $pre || {
               echo "::error::The release was refused. If the message above is 'Resource not accessible by integration': GitHub does not let a workflow put a tag on a commit that itself changes a file under .github/workflows. Make any other commit on top of it and run this again."
               exit 1
             }
           fi
+
+  # Has VirusTotal check the files that were just published, and puts the
+  # answer in the release notes and in the badge at the top of the README
+  # (see virus-scan.yml). After the release, not before it: what is checked
+  # is what people download, and a scanner's false alarm - or VirusTotal
+  # being out of reach - does not hold a release back.
+  virus-scan:
+    name: Virus scan
+    needs: release
+    permissions:
+      contents: write
+    uses: ./.github/workflows/virus-scan.yml
+    with:
+      tag: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', inputs.release_version) || github.ref_name }}
+    secrets: inherit

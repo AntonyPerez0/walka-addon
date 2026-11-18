@@ -16,6 +16,11 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/AntonyPerez0/walka-addon/releases/latest"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fgithub.com%2FAntonyPerez0%2Fwalka-addon%2Freleases%2Flatest%2Fdownload%2Fvirus-scan.json&amp;query=%24.badge&amp;label=virus%20scan&amp;color=256abf" alt="The latest virus scan of Walka.exe by VirusTotal: how many antivirus scanners flag it"></a><br>
+  <sub>Checked for viruses after every release, and again every week · <a href="#is-the-download-safe">Is the download safe?</a></sub>
+</p>
+
+<p align="center">
   <a href="https://github.com/AntonyPerez0/walka-addon/releases/latest/download/Walka-addon.zip"><img src="docs/images/download-addon-button.svg" width="250" alt="Download the game addon"></a><br>
   <sub>The Walka addon for World of Warcraft. Walka.exe can also put it in the game for you (step 3).</sub>
 </p>
@@ -67,7 +72,8 @@ and World of Warcraft: Forever.
 
    The first time, Windows may say *"Windows protected your PC"*. Click
    **More info**, then **Run anyway**. (Walka is not signed by a company,
-   so Windows does not recognise it yet.)
+   so Windows does not recognise it yet. It does not mean that anything
+   was found: see [Is the download safe?](#is-the-download-safe))
 3. **Follow "Getting started" on the dashboard.** It ticks each step off as
    you do it:
    * **Connect the treadmill:** switch it on and close its own phone app
@@ -131,6 +137,7 @@ Everything below is the long version, for when you want it.
 
 **Safety and help** ·
 [Safety](#safety) ·
+[Is the download safe?](#is-the-download-safe) ·
 [Is this allowed?](#is-this-allowed) ·
 [Before your first walk](#before-your-first-walk) ·
 [Troubleshooting](#troubleshooting) ·
@@ -571,6 +578,41 @@ Short version - the long one is [docs/SAFETY.md](docs/SAFETY.md):
 
 Bluetooth is not an emergency stop: keep the remote within reach.
 
+## Is the download safe?
+
+`Walka.exe` is a program from the internet that Windows does not
+recognise, so it is right to ask. This is what there is to go on:
+
+* **Every release is checked for viruses.**
+  [VirusTotal](https://www.virustotal.com/) runs a file past the scanners
+  of about 70 antivirus makers. It gets the files of every release - the
+  very ones the buttons at the top give you - and checks them again every
+  Monday, because scanners learn. The badge under the download button is
+  the latest result for `Walka.exe`. The
+  [release page](https://github.com/AntonyPerez0/walka-addon/releases/latest)
+  has the result for each file, with a link to VirusTotal's full report.
+* **You can check it yourself.** Drop the file you downloaded on
+  [virustotal.com](https://www.virustotal.com/gui/home/upload). It shows
+  the file's SHA-256 (its fingerprint), which is also on the release page:
+  if the two are the same, your file is the file that was checked.
+  (`certutil -hashfile Walka.exe SHA256` in a Command Prompt prints it
+  too.)
+* **It is built in the open.** Nobody makes `Walka.exe` on their own PC:
+  GitHub [builds it](https://github.com/AntonyPerez0/walka-addon/actions/workflows/ci.yml)
+  from the code on this page, and all of that code is here to read.
+
+**If the badge says that a scanner or two flag it:** `Walka.exe` is a
+Python program packed into one file, and it is not signed by a company. A
+few scanners are wary of every file like that, so one or two flags with a
+vague name (*Generic*, *Suspicious*, ...) are usually a false alarm. The
+report shows which scanners flag it and what they call it: you decide. If
+many of them flag it, do not open it, and
+[open an issue](https://github.com/AntonyPerez0/walka-addon/issues).
+
+**The *Windows protected your PC* message** is about something else:
+Windows shows it for every program that is new and not signed by a
+company. It does not mean that anything was found.
+
 ## Is this allowed?
 
 Honestly: **it is not approved by Blizzard, and you use it at your own
@@ -673,6 +715,16 @@ py -m pytest          # companion tests + addon tests (the addon runs under a mo
   button at the top of this page always gives the latest one) and
   `Walka-addon.zip`, which you upload to CurseForge yourself. If the run
   fails nothing is published: fix it and run it again.
+* **The virus scan** (`.github/workflows/virus-scan.yml`, which runs
+  `tools/virus_scan.py`) sends the files of a release to VirusTotal and
+  puts the answer in the release notes and in `virus-scan.json` next to
+  the files, which the badge at the top of this page reads. It runs after
+  every release and every Monday; by hand it is **Actions** → **Virus
+  scan** → **Run workflow**. It needs a free VirusTotal API key
+  (virustotal.com → your profile → *API key*) stored as the repository
+  secret `VT_API_KEY` (**Settings** → **Secrets and variables** →
+  **Actions**). Without the key it does nothing, and the badge says
+  *not checked yet*.
 
 More: [docs/PROTOCOL.md](docs/PROTOCOL.md) ·
 [docs/SAFETY.md](docs/SAFETY.md) · [docs/HARDWARE.md](docs/HARDWARE.md)
