@@ -6,6 +6,11 @@ on:
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      release_version:
+        description: "Publish a release with this version, for example 0.1.0 (leave empty to only run the tests and the build)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -96,13 +101,15 @@ jobs:
           path: release/
           if-no-files-found: error
 
-  # A version tag (v0.1.0) publishes a release: the program people download
-  # from the link at the top of the README, and the addon as a zip that is
-  # ready to upload to CurseForge. Only after the tests and the build above
-  # have passed for that same commit.
+  # Publishes a release: the program people download from the button at the
+  # top of the README, and the addon as a zip that is ready to upload to
+  # CurseForge. Two ways to ask for one: push a version tag (v0.1.0), or
+  # run this workflow by hand (Actions > CI > Run workflow) and type the
+  # version - the tag is then made here. Either way only after the tests
+  # and the build above have passed for that same commit.
   release:
     name: Publish release
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release_version != '')
     needs: [test, windows-exe]
     runs-on: ubuntu-latest
     permissions:
@@ -110,11 +117,12 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
-      TAG: ${{ github.ref_name }}
+      TAG: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', inputs.release_version) || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
       - name: The tag is the version written in the code
         run: |
+          echo "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$' || { echo "::error::'$TAG' is not a version like v0.1.0"; exit 1; }
           version="${TAG#v}"
           fail() { echo "::error::tag $TAG does not match $1"; exit 1; }
           grep -qx "version = \"$version\"" companion/pyproject.toml || fail "version in companion/pyproject.toml"
@@ -143,5 +151,7 @@ jobs:
             gh release upload "$TAG" release/Walka.exe Walka-addon.zip --clobber
             gh release edit "$TAG" --draft=false
           else
-            gh release create "$TAG" release/Walka.exe Walka-addon.zip --verify-tag --title "Walka ${TAG#v}" --notes "$notes" $pre
+            # From a pushed tag: the tag must be there. Run by hand: the tag is made now, on this commit.
+            if [ "$GITHUB_REF_TYPE" = "tag" ]; then at="--verify-tag"; else at="--target $GITHUB_SHA"; fi
+            gh release create "$TAG" release/Walka.exe Walka-addon.zip $at --title "Walka ${TAG#v}" --notes "$notes" $pre
           fi

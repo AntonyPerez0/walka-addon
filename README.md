@@ -653,13 +653,13 @@ py -m pytest          # companion tests + addon tests (the addon runs under a mo
   scripted character.
 * **Publishing a version:** put the same number in
   `companion/pyproject.toml`, `companion/src/walka/__init__.py` and
-  `Walka/Walka.toc`, commit and push. Then `git tag v0.1.0` and
-  `git push origin v0.1.0`. When the run on the **Actions** tab finishes,
-  the **Releases** page has `Walka.exe` (the download button at the top of
-  this page always gives the latest one) and `Walka-addon.zip`, which you
-  upload to CurseForge yourself. If it fails, delete the tag
-  (`git tag -d v0.1.0`, `git push origin :refs/tags/v0.1.0`), fix it and
-  tag again.
+  `Walka/Walka.toc`, commit and push. Then, on GitHub, open **Actions** →
+  **CI** → **Run workflow**, type the number (`0.1.0`) and run it. (Pushing
+  a tag does the same: `git tag v0.1.0`, `git push origin v0.1.0`.) When
+  the run finishes, the **Releases** page has `Walka.exe` (the download
+  button at the top of this page always gives the latest one) and
+  `Walka-addon.zip`, which you upload to CurseForge yourself. If the run
+  fails nothing is published: fix it and run it again.
 
 More: [docs/PROTOCOL.md](docs/PROTOCOL.md) ·
 [docs/SAFETY.md](docs/SAFETY.md) · [docs/HARDWARE.md](docs/HARDWARE.md)
