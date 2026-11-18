@@ -872,8 +872,13 @@ local function slash(message)
             end
         elseif command == "map" and (rest == "on" or rest == "off") and onWorldMap then
             onWorldMap.SetShown(rest == "on")
-            self:Print(rest == "on" and "your road is drawn on the world map."
-                or "your road is no longer drawn on the world map (it is still recorded).")
+            if rest == "on" then
+                self:Print("your road is drawn on the world map.")
+            elseif RoadRecorder.IsEnabled() then
+                self:Print("your road is no longer drawn on the world map (it is still being recorded).")
+            else
+                self:Print("your road is no longer drawn on the world map.")
+            end
         elseif command == "map" and rest ~= "" then
             self:Print("use /walka map, /walka map on, /walka map off or /walka map window.")
         elseif not (onWorldMap and onWorldMap.Open()) and ns.RoadMap then

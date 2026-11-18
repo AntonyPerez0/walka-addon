@@ -376,9 +376,20 @@ def test_a_very_long_road_is_drawn_with_a_bounded_number_of_lines(make_rt):
     rt = make_rt(load=False, saved_variables=saved_road(spiral(30000)))
     rt.M.world_map()
     rt.load_addon()
+    crowded = 0
     for map_id in (AZEROTH, KALIMDOR, DUROTAR):
         show(rt, map_id)
-        assert len(cores(road(rt))) <= 3000
+        lines = road(rt)
+        pieces = len(cores(lines))
+        assert 0 < pieces <= 3000 and len(lines) <= 4500
+        edges = [line for line in lines if line["subLevel"] in (0, 1)]
+        if pieces > 1500:
+            # A map crowded with road is drawn in plain lines: no dark edge, no glow.
+            crowded += 1
+            assert edges == [], map_id
+        else:
+            assert len([line for line in edges if line["subLevel"] == 0]) == pieces, map_id
+    assert crowded >= 1, "the test's road is long enough to crowd one of the maps"
     cx, cy = on_map(rt, DUROTAR, 500, -4000)
     for zoom in (2, 4, 8, 16):
         view(rt, zoom, cx / ART_W, cy / ART_H)
@@ -475,7 +486,12 @@ def test_the_road_can_be_hidden_and_shown(map_rt):
     rt.slash("/walka map off")
     rt.advance(0.3)
     assert road(rt) == [] and rt.walka.Get(rt.walka, "worldMap.road") is False
-    assert "no longer drawn on the world map" in rt.printed[-1]
+    assert "no longer drawn on the world map (it is still being recorded)" in rt.printed[-1]
+    rt.slash("/walka road off")
+    rt.slash("/walka map on")
+    rt.slash("/walka map off")
+    assert rt.printed[-1].endswith("your road is no longer drawn on the world map.")
+    rt.slash("/walka road on")
     rt.slash("/walka map on")
     rt.advance(0.3)
     assert road(rt)
@@ -514,7 +530,9 @@ def test_the_button_on_the_map(map_rt):
     left, bottom, width, height = ui.rect(rt, button)
     cleft, cbottom, cwidth, cheight = ui.rect(rt, world_map(rt).ScrollContainer)
     assert left - cleft == pytest.approx(8) and (cbottom + cheight) - (bottom + height) == pytest.approx(8)
-    assert rt.inspect(button)["level"] > 9000
+    container = world_map(rt).ScrollContainer
+    container_level = container.GetFrameLevel(container)
+    assert rt.inspect(button)["level"] == container_level + 8700, "over the map's icons, under a view laid over the map"
     tip = ui.tooltip(rt, button)
     assert tip[0] == "Walka: your road"
     text = " ".join(tip)
@@ -527,6 +545,26 @@ def test_the_button_on_the_map(map_rt):
     ui.click(rt, button)
     rt.advance(0.3)
     assert road(rt)
+
+
+def test_the_button_is_only_on_maps_that_can_show_a_road(map_rt):
+    """A dungeon's map has no place for the road: the corner is left to
+    what the game puts there (the list of a dungeon's floors)."""
+    rt = map_rt
+    rt.run("local maps = ...; maps[9001] = { name = 'Ragefire Chasm', type = 'Dungeon', parent = 1411 }", rt.M.maps)
+    show(rt, DUROTAR)
+    button = road_button(rt)
+    assert ui.is_visible(rt, button)
+    show(rt, 9001)
+    assert not ui.is_visible(rt, button) and road(rt) == []
+    show(rt, KALIMDOR)
+    assert ui.is_visible(rt, button)
+    # ... also while the road itself is switched off.
+    rt.slash("/walka map off")
+    show(rt, 9001)
+    assert not ui.is_visible(rt, button)
+    show(rt, DUROTAR)
+    assert ui.is_visible(rt, button)
 
 
 def test_the_options_page_has_the_road_settings(map_rt):
@@ -566,18 +604,30 @@ def test_walkas_own_window_is_still_there(map_rt):
 
 def test_in_combat_walka_does_not_open_the_map(map_rt):
     """Opening the map from addon code makes the map's own code run as the
-    addon's, and the game then blocks parts of it in combat (the mock's
-    ToggleWorldMap raises)."""
+    addon's, and the game then blocks parts of it in combat. Walka shows its
+    own window instead, which may be opened at any time."""
     rt = map_rt
     travel(rt, [(600, 0)])
     rt.enter_combat()
     rt.clear_printed()
     rt.slash("/walka map")
     assert not ui.is_visible(rt, world_map(rt))
-    assert "open it yourself" in rt.printed[-1]
-    # Opened by the player, the map has the road on it, combat or not.
+    assert rt.M.world_map_blocked.toggles == 0, "not even tried (the mock counts the calls, caught or not)"
+    assert "in combat Walka cannot open the world map for you" in rt.printed[-1]
+    window = rt.global_("WalkaRoadMapFrame")
+    assert ui.is_visible(rt, window), "the road is to be seen all the same"
+    # The HUD's menu does the same.
+    rt.slash("/walka map window")
+    assert not ui.is_visible(rt, window)
+    ui.context_menu(rt, ui.hud(rt))
+    ui.menu_click(rt, "Road map")
+    assert ui.is_visible(rt, window) and rt.M.world_map_blocked.toggles == 0
+    # Opened by the player, the map has the road on it, combat or not - and nothing is said.
     show(rt)
     assert road(rt)
+    rt.clear_printed()
+    rt.slash("/walka map")
+    assert rt.printed == [] and rt.M.world_map_blocked.toggles == 0
     rt.leave_combat()
     rt.run("WorldMapFrame:Hide()")
     rt.slash("/walka map")
@@ -593,12 +643,32 @@ def test_a_map_that_arrives_during_combat_is_left_alone_until_it_ends(make_rt):
     assert overlay(rt) is None, "no frames made on the map in combat"
     rt.clear_printed()
     rt.slash("/walka map")
-    assert "as soon as combat ends" in rt.printed[-1]
-    assert rt.global_("WalkaRoadMapFrame") is None
+    assert "in combat Walka cannot open the world map for you" in rt.printed[-1]
+    assert ui.is_visible(rt, rt.global_("WalkaRoadMapFrame")) and rt.M.world_map_blocked.toggles == 0
     rt.leave_combat()
     rt.fire_event("PLAYER_REGEN_ENABLED")
     show(rt)
     assert road(rt)
+
+
+def test_a_world_map_the_game_makes_only_when_it_is_first_opened(make_rt):
+    """Out of combat Walka opens the map, which makes it; in combat it does
+    not touch it."""
+    rt = make_rt(load=False)
+    rt.M.world_map_on_demand()
+    rt.load_addon()
+    travel(rt, [(600, 0)])
+    assert rt.global_("WorldMapFrame") is None
+    rt.enter_combat()
+    rt.slash("/walka map")
+    assert rt.global_("WorldMapFrame") is None and rt.M.world_map_blocked.toggles == 0
+    assert ui.is_visible(rt, rt.global_("WalkaRoadMapFrame"))
+    rt.slash("/walka map window")
+    rt.leave_combat()
+    rt.slash("/walka map")
+    rt.advance(0.3)
+    assert ui.is_visible(rt, world_map(rt)) and road(rt)
+    assert not ui.is_visible(rt, rt.global_("WalkaRoadMapFrame"))
 
 
 # ---- clients and maps that are not as expected --------------------------------------------------
@@ -807,10 +877,42 @@ def test_openmap_shows_the_country_around_and_the_road_goes_on_into_it(om_rt):
     view(rt, 1, 0.4, -0.6)      # the view moved north, off the zone's own map altogether
     lines = cores(road(rt))
     assert len(lines) == 1 and ends(lines[0])[1] == pytest.approx(far, abs=2.5)
-    # On Blizzard's map of Durotar a view up there is off the map: nothing to draw.
+
+
+def test_blizzards_map_ends_at_its_edges(om_rt):
+    """A stretch of road wholly north of the zone, near its top edge: on
+    OpenMap's map it is in the country around and is drawn; on Blizzard's
+    map of the zone there is nothing beyond the edge to draw it on."""
+    rt = om_rt
+    travel(rt, [(2400, 0)], start=(-600, -4200))                # in the zone, up to 200 yards from its top edge
+    rt.fire_event("PLAYER_ENTERING_WORLD", False, False)
+    travel(rt, [(300, 0)], start=(2150, -4200))                 # 150 to 450 yards north of its edge
+    stop_recording_here(rt)
+    rt.set(worldX=0, worldY=-4200)
+    show(rt, DUROTAR)
+    view(rt, 3, 0.4, 0.12)      # zoomed in at the top edge: the view ends at the edge, its margin goes past
+    beyond = on_stitched(rt, DUROTAR, KALIMDOR, 2450, -4200)
+    assert beyond[1] < 0
+    assert passes_through(cores(road(rt)), beyond, slack=2.5)
     rt.om.state.stitched = False
-    view(rt, 1, 0.4, -1.5)
-    assert cores(road(rt)) == []
+    rt.advance(0.5)
+    lines = cores(road(rt))
+    assert lines and all(end[1] >= -0.01 for line in lines for end in ends(line)), "only what is on the map"
+
+
+def test_on_openmap_the_road_reaches_the_character_from_the_first_step(om_rt):
+    """A new character: no point of the road is stored yet (that takes
+    twenty yards), but the line from where it started is there."""
+    rt = om_rt
+    show(rt, DUROTAR)
+    for step in range(1, 4):
+        rt.set(worldX=-600 + 5 * step, worldY=-4200, speed=7.0)
+        rt.advance(0.25)
+    rt.advance(0.6)
+    end = tail(road(rt))
+    assert len(end) == 1 and cores(road(rt)) == []
+    assert ends(end[0])[0] == pytest.approx(on_stitched(rt, DUROTAR, KALIMDOR, -600, -4200), abs=0.5)
+    assert ends(end[0])[1] == pytest.approx(on_stitched(rt, DUROTAR, KALIMDOR, -585, -4200), abs=2)
 
 
 def test_openmap_is_asked_about_a_few_places_not_about_every_point(make_rt):
@@ -980,3 +1082,28 @@ def test_a_stitched_world_that_is_not_one_straight_picture(om_rt):
     rt.slash("/walka mapcheck")
     assert any("1 not placed" in line for line in rt.printed)
     assert "1 stretches could not be placed on this map." in " ".join(ui.tooltip(rt, road_button(rt)))
+    # The count is of this drawing, however long the map stays open and the character walks on.
+    travel(rt, [(0, 300)], start=(200, -4500))
+    rt.advance(1.0)
+    rt.clear_printed()
+    rt.slash("/walka mapcheck")
+    assert any("1 not placed" in line for line in rt.printed)
+    # The road's end is drawn there too, placed by where OpenMap puts its start.
+    end = tail(road(rt))
+    assert len(end) == 1
+
+
+def test_a_view_that_hides_the_maps_own_picture_is_said_to(om_rt):
+    """OpenMap's view for controllers fades the map's canvas out and lays
+    its own over it: the road goes with the canvas, and Walka says so."""
+    rt = om_rt
+    rt.om.state.stitched = False
+    travel(rt, [(600, 0)])
+    show(rt, DUROTAR)
+    assert "hides the map's own picture" not in " ".join(ui.tooltip(rt, road_button(rt)))
+    rt.run("WorldMapFrame:GetCanvas():SetAlpha(0)")
+    rt.advance(0.3)
+    assert "This view of the map hides the map's own picture, and the road with it." in ui.tooltip(rt, road_button(rt))
+    rt.clear_printed()
+    rt.slash("/walka mapcheck")
+    assert any("the road cannot be seen on it" in line for line in rt.printed)

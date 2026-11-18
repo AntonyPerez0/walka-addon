@@ -4132,6 +4132,23 @@ local PIN_LEVELS = {
     PIN_FRAME_LEVEL_MAP_HIGHLIGHT = 2060,
 }
 
+-- What addon code did that it must not: ToggleWorldMap() in combat. (The
+-- call raises as well, but an addon may well call it under pcall.)
+M.world_map_blocked = { toggles = 0 }
+
+--- A client that makes its world map only when the map is first opened:
+-- ToggleWorldMap exists from the start, WorldMapFrame after its first call.
+function M.world_map_on_demand(options)
+    define("ToggleWorldMap", function()
+        if G.InCombatLockdown() then
+            M.world_map_blocked.toggles = M.world_map_blocked.toggles + 1
+            fail("ToggleWorldMap(): addon code must not open or close the world map in combat", 2)
+        end
+        M.world_map(options)
+        G.ToggleWorldMap()
+    end)
+end
+
 --- Give the client a world map. options.manager = false leaves out the
 -- frame level manager (a map of another kind).
 function M.world_map(options)
@@ -4178,6 +4195,7 @@ function M.world_map(options)
     -- addon's; in combat the game then blocks part of it. An addon must not.
     define("ToggleWorldMap", function()
         if G.InCombatLockdown() then
+            M.world_map_blocked.toggles = M.world_map_blocked.toggles + 1
             fail("ToggleWorldMap(): addon code must not open or close the world map in combat", 2)
         end
         if W[frame].shown then

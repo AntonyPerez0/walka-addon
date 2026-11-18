@@ -56,7 +56,8 @@ local floor, max, min, abs, huge = math.floor, math.max, math.min, math.abs, mat
 -- player's arrow) is above that.
 local EXPLORED_LEVEL = "PIN_FRAME_LEVEL_MAP_EXPLORATION"
 local EXPLORED_LEVEL_GUESS = 2000   -- where that layer is, should the map not say
-local BUTTON_LEVELS_UP = 9100       -- the button: above everything on the map
+local BUTTON_LEVELS_UP = 8700       -- the button: above the map and what it marks, under what is laid
+local BUTTON_HIGHEST_LEVEL = 9700   -- ... over the whole map (OpenMap's dungeon view, 8800 up from the same)
 local HIGHEST_LEVEL = 9900
 
 local MAX_PIECES = 3000         -- pieces of road at once ...
@@ -73,7 +74,8 @@ local PROBE_YARDS = 500
 
 local CASING = { 0, 0, 0 }
 local LEVEL_BANDS = { "1-9", "10-19", "20-29", "30-39", "40-49", "50-60" }
-local BUTTON_POINT = { 8, -8 }  -- from the top-left corner of the map view (OpenMap keeps nothing there)
+local BUTTON_POINT = { 8, -8 }  -- from the top-left corner of the map view (OpenMap's own controls are elsewhere)
+local WATCH_SECONDS = 0.2       -- how often the button asks whether this map can show a road at all
 
 local map, container, canvas    -- the world map, what it is seen through, and the map itself
 local overlay, chip
@@ -81,6 +83,7 @@ local lines, widths = {}, {}
 local lineCount = 0             -- lines of the road on show ...
 local tailCount = 0             -- ... and after them, those of its end (see placeTail)
 local tailTo = {}
+local tailOwn = {}              -- the tail's own place, on a map that is not one straight picture
 local readEnd = {}              -- where the stretch being recorded ended when the road was last read
 local pieces = {}
 
@@ -93,6 +96,7 @@ local roadClock, retryClock = 0, 0
 
 local chapters = nil            -- the road as read (Road.chapters)
 local roadYards = -1
+local roadOn = {}               -- the continents the road is on
 local roadContinents = ""
 local places, placesFor = nil, nil  -- continent -> { ux, uy, u0, vx, vy, v0 } for the map on show
 local scaled = {}               -- the same in the canvas's units
@@ -293,15 +297,25 @@ local function stitchedPlaces()
         list[#list + 1] = chapter
     end
     local set, any = {}, false
+    -- Where the character is now, the road is about to be: that continent
+    -- is placed although no road is stored on it yet (for the road's end).
+    local here, hereX, hereY = RoadRecorder.Tail()
+    if here ~= nil and not byContinent[here] then
+        local place = fit(here, hereX, hereY)
+        if place then
+            place.straight = true
+            set[here] = place
+            any = true
+        end
+    end
     for continent, list in pairs(byContinent) do
-        local place = fit(continent, list[1].xs[1], list[1].ys[1])
+        local place = fit(continent, list[1].startX, list[1].startY)
         if place then
             place.straight = true
             local step = max(1, floor(#list / 6))
             for index = 1, #list, step do
                 local chapter = list[index]
-                local last = chapter.count
-                if not agrees(place, continent, chapter.xs[last], chapter.ys[last]) then
+                if not agrees(place, continent, chapter.endX, chapter.endY) then
                     place.straight = false
                     break
                 end
@@ -322,18 +336,18 @@ local function placeOf(chapter)
     local own = fits[chapter]
     if own == nil then
         own = false
-        local fitted = fit(chapter.c, chapter.xs[1], chapter.ys[1])
-        local last = chapter.count
-        if fitted and agrees(fitted, chapter.c, chapter.xs[last], chapter.ys[last]) then
+        local fitted = fit(chapter.c, chapter.startX, chapter.startY)
+        if fitted and agrees(fitted, chapter.c, chapter.endX, chapter.endY) then
             local width, height = drawn.width, drawn.height
             own = {
                 fitted[1] * width, fitted[2] * width, fitted[3] * width,
                 fitted[4] * height, fitted[5] * height, fitted[6] * height,
             }
-        else
-            skipped = skipped + 1
         end
         fits[chapter] = own
+    end
+    if not own then
+        skipped = skipped + 1       -- (counted afresh at every drawing)
     end
     return own or nil
 end
@@ -348,27 +362,39 @@ local function noteEnd()
     _, readEnd.x, readEnd.y, _, _, _, _, _, readEnd.segment = RoadRecorder.Tail()
 end
 
+-- The continents the road is on, and the one the character is on. When
+-- that changes, the map is asked afresh where they lie on it.
+local function noteContinents()
+    local names = {}
+    for continent in pairs(roadOn) do
+        names[#names + 1] = tostring(continent)
+    end
+    local here = RoadRecorder.Tail()
+    if here ~= nil and not roadOn[here] then
+        names[#names + 1] = tostring(here)
+    end
+    table.sort(names)
+    local key = table.concat(names, ",")
+    if key ~= roadContinents then
+        roadContinents = key
+        placesFor = nil
+        redraw = true
+    end
+end
+
 local function readRoad()
     RoadRecorder.Flush()
     local db = RoadRecorder.GetDatabase()
     chapters = Road.chapters(db)
     roadYards = db and db.yards or 0
     noteEnd()
-    -- (Chapters are read anew at the road's end as it grows: places kept
-    -- for ones that are gone go with them.)
-    local onContinent, names = {}, {}
+    for continent in pairs(roadOn) do
+        roadOn[continent] = nil
+    end
     for _, chapter in ipairs(chapters) do
-        if not onContinent[chapter.c] then
-            onContinent[chapter.c] = true
-            names[#names + 1] = tostring(chapter.c)
-        end
+        roadOn[chapter.c] = true
     end
-    table.sort(names)
-    local key = table.concat(names, ",")
-    if key ~= roadContinents then
-        roadContinents = key
-        placesFor = nil     -- the road has reached another continent
-    end
+    noteContinents()
 end
 
 -- How a stretch travelled in `mode` is drawn: colour, opacity, width,
@@ -389,7 +415,10 @@ end
 ----------------------------------------------------------------------------
 
 -- The frame level for the road: just above the explored places' art and,
--- with OpenMap, above all of its map art; under everything the map marks.
+-- with OpenMap, above all of its map art; under what the map marks. (No
+-- level is free between OpenMap's art and the lowest icons it lifts above
+-- it - Questie's townsfolk, Zygor's waypoint: those share the road's level,
+-- and which of the two is drawn over the other there is the game's choice.)
 local function roadLevel()
     local level
     if type(map.GetPinFrameLevelsManager) == "function" then
@@ -428,6 +457,9 @@ local function measure()
     local okMap, mapId = pcall(map.GetMapID, map)
     view.mapId = okMap and plain(mapId) or nil
     view.stitched = isStitched()
+    -- (A view laid over the map with the map's own picture faded out - OpenMap's
+    -- view for controllers does that - takes the road with it.)
+    view.unseen = type(canvas.GetEffectiveAlpha) == "function" and plain(canvas:GetEffectiveAlpha()) == 0
     view.scale, view.width, view.height = scale, width, height
     view.x0, view.y0, view.x1, view.y1 = x0, y0, x1, y1
     return true
@@ -485,7 +517,21 @@ local function placeTail(force)
         fromX, fromY = readEnd.x, readEnd.y     -- (points stored since the last reading are not drawn yet)
     end
     local place = continent and places and scaled[continent]
-    if place and place.straight and (fromX ~= toX or fromY ~= toY) then
+    if place and not place.straight then
+        -- (OpenMap's map of a continent that is not one straight picture:
+        -- the end of the road is placed by where OpenMap puts its start.)
+        if tailOwn.c ~= continent or tailOwn.x ~= fromX or tailOwn.y ~= fromY or tailOwn.key ~= placesFor then
+            tailOwn.c, tailOwn.x, tailOwn.y, tailOwn.key = continent, fromX, fromY, placesFor
+            local fitted = fit(continent, fromX, fromY)
+            local width, height = drawn.width, drawn.height
+            tailOwn.place = fitted and {
+                fitted[1] * width, fitted[2] * width, fitted[3] * width,
+                fitted[4] * height, fitted[5] * height, fitted[6] * height,
+            } or nil
+        end
+        place = tailOwn.place
+    end
+    if place and (fromX ~= toX or fromY ~= toY) then
         local to = tailTo
         if not force and to.x == toX and to.y == toY and to.fromX == fromX and to.fromY == fromY
             and to.mode == mode and to.belt == belt and to.level == level then
@@ -570,6 +616,7 @@ local function draw()
         end
         box.tolerance = TOLERANCE * unit
         box.most = MAX_PIECES
+        skipped = 0
         Road.lines(chapters, placeOf, box, pieces)
         -- A map with the road of many levels on it at once is drawn in
         -- lines only: edged and glowing they would be one dark smear (and
@@ -645,6 +692,7 @@ local function step(elapsed)
             redraw = true
         else
             noteEnd()
+            noteContinents()
         end
     end
     if not redraw then
@@ -704,7 +752,9 @@ local function buttonText()
     body[#body + 1] = "Colour is your level: " .. table.concat(bands, "  ")
     body[#body + 1] = "Bright with a glow: walked on the treadmill. Dimmer: the belt was off. "
         .. "Thin and pale: flight paths."
-    if view.stitched and overlay and overlay:IsShown() then
+    if view.unseen and overlay and overlay:IsShown() then
+        body[#body + 1] = "This view of the map hides the map's own picture, and the road with it."
+    elseif view.stitched and overlay and overlay:IsShown() then
         body[#body + 1] = "Drawn on OpenMap's map."
     end
     if skipped > 0 then
@@ -713,6 +763,17 @@ local function buttonText()
     body[#body + 1] = ""
     body[#body + 1] = roadShown() and "Click to hide the road." or "Click to show the road."
     return body
+end
+
+-- Can the map on show have a road on it at all? (A dungeon's map cannot;
+-- there the corner is left to what the game puts in it.)
+local function mapTakesRoad()
+    if isStitched() then
+        return true
+    end
+    local ok, mapId = pcall(map.GetMapID, map)
+    mapId = ok and plain(mapId) or nil
+    return mapId ~= nil and blizzardPlaces(mapId) ~= nil
 end
 
 local function refreshButton()
@@ -725,14 +786,14 @@ local function refreshButton()
     for _, dash in ipairs(chip.dashes) do
         dash:SetAlpha(on and 1 or 0.35)
     end
-    chip:SetShown(Walka:Get("worldMap.button") ~= false)
+    chip:SetShown(Walka:Get("worldMap.button") ~= false and mapTakesRoad())
 end
 
 local function buildButton()
     chip = CreateFrame("Button", "WalkaWorldMapRoadButton", map)
     chip:SetSize(96, 20)
     chip:SetPoint("TOPLEFT", container, "TOPLEFT", BUTTON_POINT[1], BUTTON_POINT[2])
-    chip:SetFrameLevel(min(HIGHEST_LEVEL, container:GetFrameLevel() + BUTTON_LEVELS_UP))
+    chip:SetFrameLevel(min(BUTTON_HIGHEST_LEVEL, container:GetFrameLevel() + BUTTON_LEVELS_UP))
     local back = Widgets.Fill(chip, "BACKGROUND", 0.03, 0.04, 0.06, 0.78)
     back:SetAllPoints(chip)
     -- A little road: three dashes in the colours of the first levels.
@@ -754,6 +815,17 @@ local function buildButton()
         end
     end)
     Widgets.Tooltip(chip, "Walka: your road", buttonText, "ANCHOR_BOTTOMRIGHT")
+    -- The button follows the map on show (the road's own frame cannot do
+    -- this: it rests while the road is switched off).
+    local watch = CreateFrame("Frame", nil, map)
+    local waited = WATCH_SECONDS
+    watch:SetScript("OnUpdate", function(_, elapsed)
+        waited = waited + (elapsed or 0)
+        if waited >= WATCH_SECONDS then
+            waited = 0
+            pcall(refreshButton)
+        end
+    end)
     refreshButton()
 end
 
@@ -885,9 +957,10 @@ function WorldMapRoad.SetShown(on)
     Walka:Set("worldMap.road", on and true or false)
 end
 
---- Open the world map with the road on it. Returns true if the road is, or
--- will be, on the world map; false if this client has no world map Walka
--- can draw on (the caller then has Walka's own road window).
+--- Open the world map with the road on it. Returns true if the world map
+-- is open (or was opened); false if it is not - this client has no world
+-- map Walka can draw on, or it is closed during combat, when addon code
+-- must not open it. The caller then has Walka's own road window.
 function WorldMapRoad.Open()
     if not Walka.loaded then
         return false
@@ -898,28 +971,25 @@ function WorldMapRoad.Open()
         pcall(ToggleWorldMap)
         attach()
     end
-    if not overlay then
-        if fighting and WorldMapFrame ~= nil then
-            Walka:Print("your road will be on the world map as soon as combat ends.")
-            if not roadShown() then
-                WorldMapRoad.SetShown(true)
-            end
-            return true
-        end
-        return false
-    end
     if not roadShown() then
         WorldMapRoad.SetShown(true)
     end
+    if overlay and map:IsShown() then
+        return true
+    end
+    if fighting then
+        Walka:Print("in combat Walka cannot open the world map for you. Open it yourself and your road is on it; "
+            .. "this is Walka's own road window.")
+        return false
+    end
+    if not overlay then
+        return false
+    end
+    if ToggleWorldMap then
+        pcall(ToggleWorldMap)
+    end
     if not map:IsShown() then
-        if fighting then
-            Walka:Print("your road is on the world map: open it yourself (Walka does not open it during combat).")
-        elseif ToggleWorldMap then
-            pcall(ToggleWorldMap)
-        end
-        if not fighting and not map:IsShown() then
-            Walka:Print("your road is on the world map: open the map to see it.")
-        end
+        Walka:Print("your road is on the world map: open the map to see it.")
     end
     return true
 end
@@ -937,6 +1007,10 @@ function WorldMapRoad.Check(print)
         end
         print(string.format("  world map: road %s, %s; frame level %d.", roadShown() and "on" or "off", shownMap,
             overlay:GetFrameLevel()))
+        if map:IsShown() and view.unseen then
+            print("  this view of the map hides the map's own picture (OpenMap's view for controllers does): "
+                .. "the road cannot be seen on it.")
+        end
         if map:IsShown() and roadShown() then
             local onMap = {}
             for continent in pairs(places or {}) do

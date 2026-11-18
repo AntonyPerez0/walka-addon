@@ -403,6 +403,7 @@ end
 --             short to see is drawn as one.
 
 Road.CHAPTER_POINTS = 200   -- a chapter is closed once it has about this many points
+Road.POINTS_HELD = 8000     -- points of chapters kept in memory (the rest are read again when wanted)
 Road.LADDER_YARDS = 12      -- the first coarser copy of a chapter is true to this many yards ...
 Road.LADDER_STEP = 4        -- ... and each further one to this many times the one before
 Road.LADDER_RUNGS = 5       -- 12, 48, 192, 768 and 3072 yards
@@ -417,12 +418,21 @@ local gmatch = string.gmatch
 local reads = setmetatable({}, { __mode = "k" })
 local ladderKeep, linesKeep = {}, {}
 
+-- The points of chapters that are held in memory, oldest first. A chapter
+-- keeps its coarse copies for good; its points themselves - most of what a
+-- long road weighs - are only held for the chapters looked at closely of
+-- late, and read again from the saved segments when wanted (readPoints).
+local held = {}
+
 local function newChapter(continent, first, joined)
-    return {
+    local chapter = {
         c = continent, xs = {}, ys = {}, own = {}, count = 0,
         minX = huge, maxX = -huge, minY = huge, maxY = -huge,
-        looks = {}, joined = joined, first = first, rungs = {}, ready = false,
+        startX = 0, startY = 0, endX = 0, endY = 0,
+        looks = {}, segments = {}, joined = joined, first = first, rungs = {}, ready = false,
     }
+    held[#held + 1] = chapter
+    return chapter
 end
 
 -- Add a segment's points to a chapter. A segment that carries on from the
@@ -432,6 +442,7 @@ local function addSegment(chapter, segment)
     local looks = chapter.looks
     local look = #looks + 1
     looks[look] = { mode = segment.m, belt = segment.b == 1, level = segment.l }
+    chapter.segments[look] = segment
     local count = chapter.count
     local x, y = segment.x, segment.y
     local minX, maxX, minY, maxY = chapter.minX, chapter.maxX, chapter.minY, chapter.maxY
@@ -439,6 +450,7 @@ local function addSegment(chapter, segment)
         count = 1
         xs[1], ys[1], own[1] = x, y, look
         minX, maxX, minY, maxY = x, x, y, y
+        chapter.startX, chapter.startY = x, y
     end
     for dx, dy in gmatch(segment.d, "%-?%d+,(%-?%d+),(%-?%d+)") do
         x, y = x + tonumber(dx), y + tonumber(dy)
@@ -450,17 +462,74 @@ local function addSegment(chapter, segment)
         if y > maxY then maxY = y end
     end
     chapter.count = count
+    chapter.endX, chapter.endY = x, y
     chapter.minX, chapter.maxX, chapter.minY, chapter.maxY = minX, maxX, minY, maxY
 end
 
+-- The points of a chapter that are no longer held, read again from its
+-- segments: as many as it had when it was made (the segment being recorded
+-- may have grown since; a chapter is what it was when it was read).
+local function readPoints(chapter)
+    local xs, ys, own = {}, {}, {}
+    local wanted, count = chapter.count, 0
+    for look, segment in ipairs(chapter.segments) do
+        local x, y = segment.x, segment.y
+        if count == 0 then
+            count = 1
+            xs[1], ys[1], own[1] = x, y, look
+        end
+        if count < wanted and type(segment.d) == "string" then
+            for dx, dy in gmatch(segment.d, "%-?%d+,(%-?%d+),(%-?%d+)") do
+                x, y = x + tonumber(dx), y + tonumber(dy)
+                count = count + 1
+                xs[count], ys[count], own[count] = x, y, look
+                if count >= wanted then
+                    break
+                end
+            end
+        end
+    end
+    -- (A segment whose text has been damaged since: the chapter keeps its
+    -- number of points, on its last known place.)
+    for index = count + 1, wanted do
+        xs[index], ys[index], own[index] = chapter.endX, chapter.endY, own[count] or 1
+    end
+    chapter.xs, chapter.ys, chapter.own = xs, ys, own
+    held[#held + 1] = chapter
+end
+
+local rungOf
+
+-- Let go of the points of the chapters held longest, down to POINTS_HELD
+-- points in all (the newest stays whatever its size). A chapter's coarse
+-- copies are made before its points go.
+local function letGo()
+    local total = 0
+    for index = 1, #held do
+        total = total + held[index].count
+    end
+    while total > Road.POINTS_HELD and #held > 1 do
+        local chapter = table.remove(held, 1)
+        total = total - chapter.count
+        if chapter.xs then
+            if not chapter.gone then
+                rungOf(chapter, Road.LADDER_RUNGS)
+                chapter.ready = true
+            end
+            chapter.xs, chapter.ys, chapter.own = nil, nil, nil
+        end
+    end
+end
+
 --- The road of a database as chapters, for drawing:
---   { c = continent, xs = .., ys = .., count = number of points,
---     own = for each point, which of `looks` the piece of road ending at
---           it has,
+--   { c = continent, count = number of points,
+--     startX, startY, endX, endY (its first and last point, world yards),
+--     minX, maxX, minY, maxY (the box it lies in),
 --     looks = { { mode = "w"|"r"|"t"|"g", belt = true if the treadmill belt
 --               was moving, level = .. }, ... } (one for each segment in it),
---     minX, maxX, minY, maxY (the box it lies in, world yards),
 --     joined = true if it begins exactly where the chapter before it ends }
+-- Its points are had from Road.thinned: xs, ys and own - for each point,
+-- which of `looks` the piece of road ending at it has.
 -- Asked again as the road grows, only its end is read anew. `expired`, if
 -- given, is called after every segment: when it returns true the reading
 -- stops there and is taken up at the next call (for reading a long road a
@@ -493,6 +562,7 @@ function Road.chapters(db, expired)
             end
             local at = chapters[from] and chapters[from].first - 1 or index - 1
             for stale = #chapters, from, -1 do
+                chapters[stale].gone = true
                 chapters[stale] = nil
             end
             for stale = read.at, at + 1, -1 do
@@ -510,16 +580,20 @@ function Road.chapters(db, expired)
         plan[index] = entry
         if entry.n >= 1 and type(segment.d) == "string" then
             local carriesOn = chapter ~= nil and chapter.c == segment.c
-                and chapter.xs[chapter.count] == segment.x and chapter.ys[chapter.count] == segment.y
+                and chapter.endX == segment.x and chapter.endY == segment.y
             if not carriesOn or chapter.count + entry.n > Road.CHAPTER_POINTS then
                 chapter = newChapter(segment.c, index, carriesOn)
                 chapters[#chapters + 1] = chapter
+                letGo()
+            elseif not chapter.xs then
+                readPoints(chapter)     -- (a chapter of before, taken up again)
             end
             addSegment(chapter, segment)
             chapter.rungs, chapter.ready = {}, false
             entry.chapter = #chapters
             if chapter.count < 2 then
                 -- (Its text was damaged from the start: a point is no road.)
+                chapter.gone = true
                 chapters[#chapters] = nil
                 entry.chapter = nil
                 chapter = chapters[#chapters]
@@ -536,42 +610,50 @@ end
 -- The ladder: rung 1 is the chapter thinned to LADDER_YARDS, each further
 -- rung the one before thinned to LADDER_STEP times that. Made from the
 -- rung below the first time it is asked for. Returns the rung (a table
--- with xs, ys, own and count) - or the chapter itself for rung 0.
-local function rungOf(chapter, rung)
-    local from = chapter
-    local step = Road.LADDER_YARDS
-    for index = 1, rung do
-        local copy = chapter.rungs[index]
-        if not copy then
-            local xs, ys, own, count = from.xs, from.ys, from.own, from.count
-            if count <= 2 then
-                copy = from     -- nothing left to thin
-            else
-                local keep = Road.simplify(xs, ys, count, step, ladderKeep)
-                local cx, cy, co, kept = { xs[1] }, { ys[1] }, { own[1] }, 1
-                -- A piece of the copy stands for several of the finer one:
-                -- it takes the look of the longest of them.
-                local longest, look = -1, own[1]
-                for point = 2, count do
-                    local dx, dy = xs[point] - xs[point - 1], ys[point] - ys[point - 1]
-                    local length = dx * dx + dy * dy
-                    if length > longest then
-                        longest, look = length, own[point]
-                    end
-                    if keep[point] then
-                        kept = kept + 1
-                        cx[kept], cy[kept], co[kept] = xs[point], ys[point], look
-                        longest = -1
-                    end
-                end
-                copy = { xs = cx, ys = cy, own = co, count = kept }
-            end
-            chapter.rungs[index] = copy
+-- with xs, ys, own and count) - or, for rung 0, the chapter itself with
+-- its points in memory.
+rungOf = function(chapter, rung)
+    if rung == 0 then
+        if not chapter.xs then
+            readPoints(chapter)
+            letGo()
         end
-        from = copy
-        step = step * Road.LADDER_STEP
+        return chapter
     end
-    return from
+    local copy = chapter.rungs[rung]
+    if copy then
+        return copy
+    end
+    local from = rungOf(chapter, rung - 1)
+    local xs, ys, own, count = from.xs, from.ys, from.own, from.count
+    local cx, cy, co, kept = { xs[1] }, { ys[1] }, { own[1] }, 1
+    if count <= 2 then
+        -- Nothing to thin.
+        for point = 2, count do
+            cx[point], cy[point], co[point] = xs[point], ys[point], own[point]
+        end
+        kept = count
+    else
+        local keep = Road.simplify(xs, ys, count, Road.LADDER_YARDS * Road.LADDER_STEP ^ (rung - 1), ladderKeep)
+        -- A piece of the copy stands for several of the finer one: it
+        -- takes the look of the longest of them.
+        local longest, look = -1, own[1]
+        for point = 2, count do
+            local dx, dy = xs[point] - xs[point - 1], ys[point] - ys[point - 1]
+            local length = dx * dx + dy * dy
+            if length > longest then
+                longest, look = length, own[point]
+            end
+            if keep[point] then
+                kept = kept + 1
+                cx[kept], cy[kept], co[kept] = xs[point], ys[point], look
+                longest = -1
+            end
+        end
+    end
+    copy = { xs = cx, ys = cy, own = co, count = kept }
+    chapter.rungs[rung] = copy
+    return copy
 end
 
 --- The points of a chapter for a drawing that need be no truer than
@@ -631,7 +713,10 @@ function Road.lines(chapters, placeOf, view, out)
     local keep = linesKeep
     local rungs = Road.LADDER_RUNGS
 
-    -- The chapters in sight, and how many points each rung has of them.
+    -- The chapters in sight, and about how many points each rung has in
+    -- sight: a chapter's points count by the share of its box that the
+    -- view covers (a chapter is a long piece of road; zoomed in on one end
+    -- of it, the rest is not a reason to draw coarsely).
     local seen = 0
     for rung = 0, rungs do
         rungSums[rung] = 0
@@ -648,15 +733,25 @@ function Road.lines(chapters, placeOf, view, out)
             local x3, y3 = u0 + ux * minX + uy * maxY, v0 + vx * minX + vy * maxY
             local x4, y4 = u0 + ux * maxX + uy * maxY, v0 + vx * maxX + vy * maxY
             local perYard = sqrt(abs(ux * vy - uy * vx))
-            if perYard > 0
-                and max(x1, x2, x3, x4) >= left and min(x1, x2, x3, x4) <= right
-                and max(y1, y2, y3, y4) >= top and min(y1, y2, y3, y4) <= bottom then
+            local boxLeft, boxRight = min(x1, x2, x3, x4), max(x1, x2, x3, x4)
+            local boxTop, boxBottom = min(y1, y2, y3, y4), max(y1, y2, y3, y4)
+            if perYard > 0 and boxRight >= left and boxLeft <= right and boxBottom >= top and boxTop <= bottom then
                 seen = seen + 1
                 sight[seen], sightPlace[seen], sightScale[seen] = chapter, place, perYard
                 Road.prepare(chapter)
-                rungSums[0] = rungSums[0] + chapter.count
+                -- (Across and down, the smaller share: right for a road
+                -- that runs straight through, and for one that fills its box.)
+                local share = 1
+                if boxRight > boxLeft then
+                    share = (min(boxRight, right) - max(boxLeft, left)) / (boxRight - boxLeft)
+                end
+                if boxBottom > boxTop then
+                    share = min(share, (min(boxBottom, bottom) - max(boxTop, top)) / (boxBottom - boxTop))
+                end
+                share = max(0, min(1, share))
+                rungSums[0] = rungSums[0] + chapter.count * share
                 for rung = 1, rungs do
-                    rungSums[rung] = rungSums[rung] + chapter.rungs[rung].count
+                    rungSums[rung] = rungSums[rung] + chapter.rungs[rung].count * share
                 end
             end
         end

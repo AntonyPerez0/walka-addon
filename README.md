@@ -324,8 +324,8 @@ of Azeroth, a continent, or a zone in the game's full detail.
 * flight paths are thin and pale;
 * the road runs right up to your character and grows as you walk, with the
   map open;
-* it lies over the map's picture and under everything the map marks (quest
-  icons, your arrow), and it takes no clicks: the map works as it did.
+* it lies over the map's picture and under what the map marks (quest icons,
+  your arrow), and it takes no clicks: the map works as it did.
 
 **With [OpenMap](https://github.com/openmap-world/openmap)** installed the
 road is drawn on OpenMap's seamless map in the same way - Walka asks
@@ -339,15 +339,19 @@ shows the road, and its tooltip says what the colours mean. `/walka map
 off` and `/walka map on` do the same, and the options page (*Your road*)
 has both the road and the button as tick boxes.
 
-Walka does not open the map for you in combat (`/walka map` says so then):
-the game restricts what an addon may do to the map during a fight. Open it
-yourself and the road is there.
+Walka does not open the world map for you in combat: the game restricts
+what an addon may do to the map during a fight. `/walka map` then says so
+and opens Walka's own road window instead; open the world map yourself and
+the road is on it. (With OpenMap's view for controllers, which lays its own
+picture over the map's, the road cannot be seen; the button's tooltip says
+so.)
 
 Walka's own road window is still there as `/walka map window`: one
 continent at a time, the mouse wheel zooms, dragging moves the map, *Me*
 centres it on your character, *Fit* shows the whole continent, `<` and `>`
 change continent, and *Screenshot* saves a picture of the screen. It is
-also what `/walka map` opens should the game's world map not be found.
+also what `/walka map` opens in combat, and should the game's world map not
+be found.
 
 What is recorded: a point every twenty yards (fewer on flight paths, more
 where the road bends), nothing while you stand still, nothing inside

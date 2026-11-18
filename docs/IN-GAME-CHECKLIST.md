@@ -82,7 +82,8 @@ used.
       ("Paused (AFK)" fits beside the four buttons, in mph and in km/h).
 - [ ] Right-click the HUD: a menu with *Lock position*, *Keep walking when
       standing*, *History*, *Journey*, *Road map*, *Options* and *Hide*. All of them
-      work, also in combat.
+      work, also in combat (there *Road map* opens Walka's own road window,
+      not the world map: section 8).
 - [ ] Drag the HUD into a corner, then `/reload`: it is back in the same
       place.
 - [ ] *Keep walking*: tick it (menu, options or `/walka keepwalking on`),
@@ -197,17 +198,21 @@ minute to switch it off; then with it):
 - [ ] Is the line **over** the map's picture everywhere - also over the
       places you have explored - and **under** the icons and your arrow?
       If it is hidden in places or covers icons, tell me the "frame level"
-      number from `/walka mapcheck`.
+      number from `/walka mapcheck`. (With OpenMap, Questie's townsfolk
+      icons and Zygor's waypoint sit at the road's own level: either may
+      be on top there.)
 - [ ] Zoom the map with the wheel and drag it: the line stays the same
       width, follows without lagging behind, and nothing flickers.
 - [ ] Walk with the map open: the line grows up to your arrow.
 - [ ] The small *Walka road* button in the top-left corner of the map: is
       anything of the game's under it or over it? Click it: the road goes
-      and comes back. Its tooltip explains the colours.
-- [ ] `/walka map` opens the map. In a fight it prints "open it yourself"
-      instead - and with the map open during a fight, does the game print
-      "interface action failed because of an addon" or blame Walka for a
-      blocked action? (That would be the one serious problem here.)
+      and comes back. Its tooltip explains the colours. On a dungeon's map
+      the button is not there.
+- [ ] `/walka map` opens the map. In a fight it says that it cannot, and
+      opens Walka's own road window instead - and with the world map open
+      during a fight, does the game print "interface action failed because
+      of an addon" or blame Walka for a blocked action? (That would be the
+      one serious problem here.)
 - [ ] With OpenMap: all of the above on its map. Drag slowly across a zone
       border and stop: half a second later OpenMap swaps the map
       underneath - the road must stay where it is, with no jump (a blink
