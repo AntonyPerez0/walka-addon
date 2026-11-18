@@ -16,13 +16,13 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/AntonyPerez0/walka-addon/releases/latest"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fgithub.com%2FAntonyPerez0%2Fwalka-addon%2Freleases%2Flatest%2Fdownload%2Fvirus-scan.json&amp;query=%24.badge&amp;label=virus%20scan&amp;color=256abf" alt="The virus scan of the latest release: what Microsoft Defender found, and when"></a><br>
-  <sub>Scanned for viruses before every release · <a href="#is-the-download-safe">Is the download safe?</a></sub>
+  <a href="https://github.com/AntonyPerez0/walka-addon/releases/latest/download/Walka-addon.zip"><img src="docs/images/download-addon-button.svg" width="250" alt="Download the game addon"></a><br>
+  <sub>The Walka addon for World of Warcraft. Walka.exe can also put it in the game for you (step 3).</sub>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AntonyPerez0/walka-addon/releases/latest/download/Walka-addon.zip"><img src="docs/images/download-addon-button.svg" width="250" alt="Download the game addon"></a><br>
-  <sub>The Walka addon for World of Warcraft. Walka.exe can also put it in the game for you (step 3).</sub>
+  <a href="#is-the-download-safe"><img src="docs/images/virus-free.svg" width="360" alt="No viruses found. Every release is scanned with Microsoft Defender."></a><br>
+  <a href="https://github.com/AntonyPerez0/walka-addon/releases/latest"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fgithub.com%2FAntonyPerez0%2Fwalka-addon%2Freleases%2Flatest%2Fdownload%2Fvirus-scan.json&amp;query=%24.badge&amp;label=latest%20scan&amp;color=1a7f37" alt="The virus scan of the latest release: what Microsoft Defender found, and when"></a>
 </p>
 
 <p align="center">
@@ -587,7 +587,7 @@ recognise, so it is right to ask. This is what there is to go on:
   Microsoft Defender - the antivirus that is part of Windows - scans
   `Walka.exe` and the addon's files on the machine that builds them, with
   the virus definitions of that day. If it finds anything, nothing is
-  published. The badge under the download button is the result for the
+  published. The badge under the download buttons is the result for the
   latest release; `virus-scan.json` on the
   [release page](https://github.com/AntonyPerez0/walka-addon/releases/latest)
   has the details.
@@ -718,7 +718,9 @@ py -m pytest          # companion tests + addon tests (the addon runs under a mo
   release, after showing that it catches the standard test file. A
   release needs that step, and it writes `virus-scan.json`, which is
   published next to `Walka.exe` and is what the badge at the top of this
-  page shows. Nothing to set up.
+  page shows. Nothing to set up. The green *No viruses found* picture
+  above the badge is a fixed picture (`docs/images/virus-free.svg`): it
+  holds because a release that fails the scan is never published.
 
 More: [docs/PROTOCOL.md](docs/PROTOCOL.md) ·
 [docs/SAFETY.md](docs/SAFETY.md) · [docs/HARDWARE.md](docs/HARDWARE.md)
