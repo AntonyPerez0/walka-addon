@@ -84,7 +84,9 @@
   --pad: 24px;
   --rail-w: 232px;
   --bar-h: 64px;
-  --dock-w: 440px; /* room kept clear along the top for the belt's state and STOP */
+  --dock-w: 500px; /* room kept clear along the top for the belt's state and STOP */
+  --page-w: 1440px; /* the widest the content gets; beyond that it is centred */
+  --gutter: max(32px, calc((100% - var(--page-w)) / 2));
   --font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, Inter, Roboto,
     "Helvetica Neue", Arial, sans-serif;
   --font-display: "Segoe UI Variable Display", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, Inter, Roboto,
@@ -374,14 +376,14 @@ code {
   align-items: center;
   justify-content: center;
   gap: 10px;
-  min-width: 132px;
-  height: 44px;
-  padding: 0 22px;
+  min-width: 148px;
+  height: 48px;
+  padding: 0 24px;
   border: 0;
   border-radius: var(--r);
   background: var(--stop);
   color: #ffffff;
-  font-size: 17px;
+  font-size: 19px;
   font-weight: 700;
   letter-spacing: 0.08em;
   cursor: pointer;
@@ -410,60 +412,76 @@ code {
   white-space: nowrap;
 }
 
+/* What the belt is doing, on every view: a lamp, a word and the speed, on the state's own tint. */
 .belt {
-  --tone: var(--idle);
-  --tone-ink: var(--idle-ink);
+  --tone-tint: var(--surface);
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  height: 44px;
-  max-width: 190px;
-  padding: 0 14px 0 10px;
+  gap: 12px;
+  height: 48px;
+  max-width: 230px;
+  padding: 0 16px 0 10px;
   border: 1px solid var(--line-2);
   border-radius: var(--r);
-  background: var(--surface);
+  background: var(--tone-tint);
   color: var(--ink);
   text-decoration: none;
-  box-shadow: var(--shadow-1);
+}
+.belt[data-tone="ok"] {
+  --tone-tint: var(--ok-tint);
+}
+.belt[data-tone="warn"] {
+  --tone-tint: var(--warn-tint);
+}
+.belt[data-tone="bad"] {
+  --tone-tint: var(--bad-tint);
 }
 .belt:hover {
   border-color: var(--field);
 }
 .belt .lamp {
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
 }
 .belt .lamp svg {
-  width: 16px;
-  height: 16px;
+  width: 18px;
+  height: 18px;
 }
 .belt-text {
   display: grid;
   min-width: 0;
-  line-height: 1.2;
 }
 .belt-title {
   overflow: hidden;
-  font-size: 13px;
+  color: var(--ink-2);
+  font-size: 12px;
   font-weight: 600;
+  line-height: 15px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .belt-speed {
-  color: var(--ink-3);
-  font-size: 12px;
+  font-family: var(--font-display);
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 22px;
+  white-space: nowrap;
 }
 .belt-speed:empty {
   display: none;
 }
+/* No speed to show (no treadmill, offline): the word takes its place. */
+.belt-title:has(+ .belt-speed:empty) {
+  color: var(--ink);
+  font-size: 16px;
+  line-height: 22px;
+}
 
 /* ---------------------------------------------------------------- the rail: brand, views, connections */
 
+/* One fixed column; it scrolls by itself if the window is too short for it. */
 .chrome {
-  display: contents;
-}
-
-.top {
   position: fixed;
   z-index: 40;
   top: 0;
@@ -471,11 +489,19 @@ code {
   left: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
   width: var(--rail-w);
-  padding: 0 12px;
   border-right: 1px solid var(--line);
   background: var(--rail);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.top {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 12px 16px;
 }
 
 .brand {
@@ -556,11 +582,7 @@ code {
 }
 
 .rail-status {
-  position: fixed;
-  z-index: 41;
-  left: 0;
-  bottom: 44px;
-  width: var(--rail-w);
+  margin-top: auto;
   padding: 12px 12px 8px;
   border-top: 1px solid var(--line);
 }
@@ -606,19 +628,11 @@ code {
 }
 
 .rail-foot {
-  position: fixed;
-  z-index: 41;
-  left: 0;
-  bottom: 0;
-  width: var(--rail-w);
-  height: 44px;
-  padding: 10px 24px 0;
+  padding: 10px 24px 14px;
   border-top: 1px solid var(--line);
-  overflow: hidden;
   color: var(--ink-3);
   font-size: 12px;
-  white-space: nowrap;
-  text-overflow: ellipsis;
+  line-height: 1.4;
 }
 
 /* ---------------------------------------------------------------- the page */
@@ -636,7 +650,7 @@ main {
   align-items: baseline;
   gap: 14px;
   height: var(--bar-h);
-  padding: 19px calc(var(--dock-w) + 16px) 0 32px;
+  padding: 19px calc(var(--dock-w) + 16px) 0 var(--gutter);
   border-bottom: 1px solid var(--line);
   background: var(--canvas);
 }
@@ -656,8 +670,7 @@ main {
 }
 
 .view > :not(.view-head) {
-  max-width: 1440px;
-  margin: 24px 32px 0;
+  margin: 24px var(--gutter) 0;
 }
 
 /* The companion is gone: a strip across the very top, with STOP still on it. */
@@ -944,6 +957,7 @@ body[data-offline="1"] .health {
   gap: 0;
   padding: 0;
   overflow: hidden;
+  container: hero / inline-size; /* its insides follow its own width, not the window's */
 }
 .hero[data-tone="ok"] {
   --tone: var(--ok);
@@ -1209,25 +1223,52 @@ body[data-offline="1"] .health {
 .hero-actions:has(> .btn:not([hidden])) {
   margin-top: 16px;
 }
+
+/* A narrow hero: the four readings go under the number, two by two. */
+@container hero (max-width: 700px) {
+  .hero-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .readout {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0 24px;
+    margin-top: 20px;
+  }
+  .readout div:nth-last-child(2) {
+    border-bottom: 0;
+  }
+}
+/* A very narrow one: the maximum's label ends at its tick, clear of the end of the scale. */
+@container hero (max-width: 480px) {
+  .meter-scale #meter-cap {
+    transform: translateX(-100%);
+  }
+}
 .hero-action-note {
   color: var(--ink-3);
   font-size: 13px;
 }
 
 /* Today / this session: six figures. */
+#session {
+  padding-bottom: 0;
+}
 .tiles {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  border: 1px solid var(--line);
-  border-radius: var(--r);
+  margin: 2px calc(-1 * var(--pad)) 0;
+  border-top: 1px solid var(--line);
   overflow: hidden;
+}
+.tiles:has(+ .howto:not([hidden])) {
+  border-bottom: 1px solid var(--line);
 }
 .tile {
   display: grid;
   align-content: start;
   gap: 2px;
   min-height: 104px;
-  padding: 14px 16px 12px;
+  padding: 16px var(--pad) 14px;
   box-shadow: 1px 1px 0 var(--line);
 }
 .tile .k {
@@ -1259,6 +1300,7 @@ body[data-offline="1"] .health {
 .howto {
   display: grid;
   gap: 8px;
+  margin: 6px 0 22px;
   padding: 14px 16px;
   border-radius: var(--r);
   background: var(--surface-2);
@@ -1299,7 +1341,6 @@ body[data-offline="1"] .health {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
-  align-items: start;
 }
 .steps li {
   display: grid;
@@ -1354,15 +1395,11 @@ body[data-offline="1"] .health {
   color: var(--ok-ink);
   font-weight: 600;
 }
-.steps li[data-done="true"] .step-text span,
 .steps li[data-done="true"] > .btn {
   display: none;
 }
 .steps li[data-done="true"] .step-done {
   display: block;
-}
-.steps li[data-done="true"] {
-  border-color: transparent;
 }
 
 /* Manual control. */
@@ -1545,14 +1582,6 @@ body[data-offline="1"] .health {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: var(--gap);
-}
-@media (min-width: 1500px) {
-  .history-top {
-    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
-  }
-  .totals {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
 }
 .total {
   gap: 4px;
@@ -2068,7 +2097,10 @@ input[type="checkbox"] {
   height: 100%;
   margin: 0;
   opacity: 0;
-  cursor: pointer;
+  pointer-events: none; /* the label takes the click, so the face can show hover */
+}
+.segmented label:hover input:not(:checked):not(:disabled) + span {
+  color: var(--ink);
 }
 .segmented span {
   display: grid;
@@ -2285,6 +2317,10 @@ details[open] > summary::before {
 @media (max-width: 1179px) {
   :root {
     --rail-w: 72px;
+    --dock-w: 404px;
+  }
+  .stop-key {
+    display: none;
   }
   .brand {
     justify-content: center;
@@ -2312,8 +2348,10 @@ details[open] > summary::before {
     top: 16px;
     bottom: 16px;
   }
+  .top {
+    padding: 0 8px 12px;
+  }
   .rail-status {
-    bottom: 0;
     padding: 12px 8px;
   }
   .health {
@@ -2342,15 +2380,18 @@ details[open] > summary::before {
   }
 }
 
+@media (max-width: 1399px) {
+  .steps {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 1279px) {
   .pair {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .tiles {
     grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-  .steps {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -2418,7 +2459,7 @@ details[open] > summary::before {
     scroll-padding-top: 64px;
   }
   body {
-    padding-bottom: calc(126px + env(safe-area-inset-bottom, 0px));
+    padding-bottom: calc(138px + env(safe-area-inset-bottom, 0px));
   }
   .stopdock {
     top: auto;
@@ -2443,43 +2484,46 @@ details[open] > summary::before {
   .belt {
     justify-content: center;
     max-width: none;
-    height: 30px;
-    padding: 0 10px;
-    border: 0;
-    background: none;
-    box-shadow: none;
+    height: 40px;
+    padding: 0 12px;
   }
   .belt .lamp {
-    width: 20px;
-    height: 20px;
+    width: 24px;
+    height: 24px;
   }
   .belt .lamp svg {
-    width: 14px;
-    height: 14px;
+    width: 16px;
+    height: 16px;
   }
   .belt-text {
     display: flex;
     align-items: baseline;
-    gap: 8px;
+    gap: 10px;
   }
-  .belt-title {
-    font-size: 14px;
+  .belt-title,
+  .belt-title:has(+ .belt-speed:empty) {
+    color: var(--ink);
+    font-size: 15px;
+    line-height: 22px;
   }
   .belt-speed {
-    font-size: 13px;
+    font-size: 18px;
   }
 
+  .chrome {
+    display: contents;
+  }
   .top {
     position: sticky;
-    bottom: auto;
+    z-index: 40;
+    top: 0;
     flex-direction: row;
     align-items: center;
     gap: 8px;
-    width: auto;
     height: var(--bar-h);
     padding: 0 8px 0 12px;
-    border-right: 0;
     border-bottom: 1px solid var(--line);
+    background: var(--rail);
   }
   .brand {
     height: auto;
@@ -2506,8 +2550,7 @@ details[open] > summary::before {
     display: none;
   }
   .rail-status {
-    position: static;
-    width: auto;
+    margin-top: 0;
     padding: 10px 12px 0;
     border-top: 0;
   }
@@ -2533,6 +2576,12 @@ details[open] > summary::before {
   }
   .pill-name[data-short] {
     font-size: 0;
+  }
+  @media (max-width: 379px) {
+    .health {
+      grid-auto-flow: row;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
   }
 
   main {
@@ -2692,8 +2741,18 @@ details[open] > summary::before {
   .toasts {
     left: 12px;
     right: auto;
-    bottom: calc(132px + env(safe-area-inset-bottom, 0px));
+    bottom: calc(144px + env(safe-area-inset-bottom, 0px));
     width: calc(100vw - 24px);
+  }
+}
+
+/* The narrowest hero (a small phone): one reading per line, so none of them wraps. */
+@container hero (max-width: 400px) {
+  .readout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .readout div:nth-last-child(2) {
+    border-bottom: 1px solid var(--line);
   }
 }
 
@@ -2730,9 +2789,7 @@ details[open] > summary::before {
 
 @media print {
   .stopdock,
-  .top,
-  .rail-status,
-  .rail-foot,
+  .chrome,
   .toasts,
   .tooltip {
     display: none !important;
