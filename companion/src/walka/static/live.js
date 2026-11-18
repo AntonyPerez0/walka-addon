@@ -39,7 +39,7 @@ function remember(key, value) {
 
 // Shown instead of a number when the belt's speed is not known (no treadmill,
 // no companion). Never a zero: an unseen belt may well be moving.
-const NO_SPEED = "–"; // one dash: at this size two hyphens read as a glitch
+const NO_SPEED = "No reading"; // said in words: a dash at this size reads as a glitch
 
 const BELT_WORDS = {
   unknown: "state unknown",
@@ -77,8 +77,10 @@ function updateHero(s, view, online) {
     setTransform($("meter-fill"), "scaleX(0)");
     setShown($("meter-target"), false);
     setShown($("key-target"), false);
+    setShown($("key-fill"), false);
     return;
   }
+  setShown($("key-fill"), true);
 
   const t = s.treadmill;
   const g = s.governor;
@@ -87,7 +89,7 @@ function updateHero(s, view, online) {
   const speedText = t.connected ? fmt.speed(t.speed_kmh) : NO_SPEED;
   setText($("speed-num"), speedText);
   setAttr($("speed-num"), "data-void", t.connected ? null : "1");
-  setAttr($("speed-num"), "data-wide", speedText.length > 3 ? "1" : null); // "12.0": shrink to fit a phone
+  setAttr($("speed-num"), "data-wide", t.connected && speedText.length > 3 ? "1" : null); // "12.0": shrink to fit
   setText($("hero-meta"), sourceLabel(s));
 
   // Readout.
@@ -148,7 +150,22 @@ function updateHero(s, view, online) {
   setAttr($("meter-cap-at"), "data-edge", capAt < 0.2 ? "start" : capAt > 0.6 ? "end" : null);
   setText($("meter-cap"), `${fmt.speed(top)} max`);
   const padTop = `${fmt.speed(scale)} ${U.speedUnit}`;
-  setText($("meter-max"), capIsEnd ? `${padTop} max` : capNearEnd ? `${fmt.speed(top)} max \u00b7 ${padTop}` : padTop);
+  const both = `${fmt.speed(top)} max \u00b7 ${padTop}`;
+  setText($("meter-max"), capIsEnd ? `${padTop} max` : capNearEnd ? both : padTop);
+  // The thresholds above are for a usual bar. On a narrow one (a small phone, long km/h
+  // labels) measure: labels that would touch are merged or dropped instead.
+  const width = $("meter").clientWidth;
+  if (width > 0) {
+    if (!capIsEnd && !capNearEnd) {
+      const capBox = $("meter-cap").getBoundingClientRect();
+      const maxBox = $("meter-max").getBoundingClientRect();
+      if (capBox.right > maxBox.left - 12) {
+        setShown($("meter-cap-at"), false);
+        setText($("meter-max"), both);
+      }
+    }
+    if (minAt * width < 40) setShown($("meter-min-at"), false); // the "0" beside it marks the start
+  }
   setAttr(
     $("meter"),
     "aria-label",
@@ -169,13 +186,14 @@ function tile(n, label, value, unit, source) {
   setText($(`t${n}-s`), source || "");
 }
 
-function updateSession(s) {
+function updateSession(s, online) {
   const live = s.session;
   setShown($("howto"), !live);
   if (live) {
     setText($("session-title"), SESSION_TITLE[live.source] || "Session");
-    setText($("session-sub"), `since ${fmt.timeOfDay(live.started_at)}`);
-    tile(1, "Time", fmt.clock(live.seconds), "", "belt moving");
+    // Without the companion these are the last numbers heard, not a running clock.
+    setText($("session-sub"), online ? `since ${fmt.timeOfDay(live.started_at)}` : "last known");
+    tile(1, "Time", fmt.clock(live.seconds), "", online ? "belt moving" : "when the companion was last heard");
     tile(
       2,
       "Distance",
@@ -211,7 +229,7 @@ function updateSession(s) {
   }
   const today = s.totals.today;
   setText($("session-title"), "Today");
-  setText($("session-sub"), "no session running");
+  setText($("session-sub"), online ? "no session running" : "last known");
   tile(1, "Time", fmt.clock(today.seconds), "", "");
   tile(2, "Distance", fmt.dist(today.distance_m), U.distUnit, "");
   tile(3, "Steps", fmt.int(today.steps), "", "");
@@ -581,7 +599,7 @@ export function updateLive(s, view, links, online) {
   last = s;
   updateHero(s, view, online);
   if (!s) return;
-  updateSession(s);
+  updateSession(s, online);
   updateManual(s);
   updateTreadmill(s, links.treadmill);
   updateLinks(s, links, online);

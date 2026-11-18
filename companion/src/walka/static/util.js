@@ -134,6 +134,7 @@ export const U = {
 };
 
 const intFormat = new Intl.NumberFormat();
+const oneDecimal = new Intl.NumberFormat(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 
 export const fmt = {
   /** "2.4" - belt speeds live on a 0.1 grid in either unit. */
@@ -149,6 +150,7 @@ export const fmt = {
   dist(m) {
     if (m == null || !Number.isFinite(m)) return "-";
     const value = U.dist(m);
+    if (value >= 1000) return oneDecimal.format(value); // "4,756.2": grouped like the steps beside it
     return value >= 100 ? value.toFixed(1) : value.toFixed(2);
   },
   distU(m) {
@@ -172,7 +174,7 @@ export const fmt = {
     if (seconds == null || !Number.isFinite(seconds)) return "-";
     const minutes = Math.round(seconds / 60);
     if (minutes < 60) return `${minutes} min`;
-    return `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, "0")} min`;
+    return `${intFormat.format(Math.floor(minutes / 60))} h ${String(minutes % 60).padStart(2, "0")} min`;
   },
   /** How long ago, coarse on purpose so the text changes rarely. */
   ago(seconds) {
@@ -285,16 +287,21 @@ export function toast(message, kind = "info", { sticky = false } = {}) {
   const lamp = h("span", { class: "lamp" }, icon(TOAST_ICON[kind] || TOAST_ICON.info, 14));
   const item = h(
     "div",
-    { class: "toast", "data-kind": kind, role: kind === "error" ? "alert" : "status" },
+    { class: "toast", "data-kind": kind, "data-sticky": sticky ? "1" : null, role: kind === "error" ? "alert" : "status" },
     lamp,
     h("p", { text: message }),
     dismiss,
   );
   const remove = () => item.remove();
   dismiss.addEventListener("click", remove);
-  // Keep the stack short: the newest three are enough.
-  while (host.children.length >= 3) host.firstElementChild.remove();
+  // Keep the stack short: the newest three are enough. One that stays until dismissed
+  // (a failed STOP) is the last to make room.
+  while (host.children.length >= 3) {
+    const passing = [...host.children].find((child) => child.dataset.sticky !== "1");
+    (passing || host.firstElementChild).remove();
+  }
   host.append(item);
+  host.scrollTop = host.scrollHeight; // the newest stays in view if the stack is taller than its room
   if (!sticky) setTimeout(remove, kind === "error" ? 9000 : 4500);
   return item;
 }

@@ -35,7 +35,27 @@ const pills = ["treadmill", "game", "hr", "addon"].map((name) => {
 
 // ---- rendering ---------------------------------------------------------------------------
 
+// STOP's name for assistive tech. It starts with the word on the button, which changes while
+// a stop request is on its way - so it is built here, from the button's own state.
+let stopHotkey = "";
+function nameStop() {
+  const button = $("stop");
+  const lead = button.dataset.busy === "1" ? "STOPPING - stop request sent" : "STOP - stop the belt now";
+  setAttr(button, "aria-label", stopHotkey ? `${lead} (also ${stopHotkey}, from anywhere on this PC)` : lead);
+}
+
+// What cannot work without the companion is switched off while it is silent (and looks it),
+// instead of failing one press at a time. STOP is not among them: it is always tried.
+const NEEDS_COMPANION = "#manual, #treadmill, #links, #setup, #view-settings .card";
+let companionHeard = null;
+function gateControls(online) {
+  if (online === companionHeard) return;
+  companionHeard = online;
+  for (const el of document.querySelectorAll(NEEDS_COMPANION)) el.inert = !online;
+}
+
 function updateChrome(s, summary, links, online) {
+  gateControls(online);
   if (links) {
     for (const pill of pills) {
       const link = links[pill.name];
@@ -50,11 +70,8 @@ function updateChrome(s, summary, links, online) {
     }
   }
   const hotkey = online && s && s.hotkey && s.hotkey.active ? s.hotkey.combination : "";
-  setAttr(
-    $("stop"),
-    "aria-label",
-    hotkey ? `STOP - stop the belt now (also ${hotkey}, from anywhere on this PC)` : "STOP - stop the belt now",
-  );
+  stopHotkey = hotkey;
+  nameStop();
   setAttr($("stop"), "title", hotkey ? `${hotkey} also stops the belt - even from inside the game` : null);
   // The hotkey, written the way it is printed on keys: "ctrl+alt+x" -> "Ctrl+Alt+X".
   const keys = hotkey
@@ -192,9 +209,11 @@ function route() {
 async function stop(button) {
   // Say that the press was taken, in words: the request can take seconds when something is wrong.
   const word = $("stop-word");
+  button.style.minWidth = `${button.offsetWidth}px`; // hold its size: the word is about to get longer
   button.dataset.busy = "1";
   button.setAttribute("aria-busy", "true");
   setText(word, "STOPPING");
+  nameStop();
   try {
     await post("/api/stop", {}, { timeoutMs: 5000 });
     toast("Stop sent. The belt stays off until you resume.", "warn");
@@ -206,6 +225,8 @@ async function stop(button) {
     delete button.dataset.busy;
     button.removeAttribute("aria-busy");
     setText(word, "STOP");
+    button.style.minWidth = "";
+    nameStop();
   }
 }
 

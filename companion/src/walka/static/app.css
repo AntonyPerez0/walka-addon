@@ -383,7 +383,7 @@ code {
   align-items: center;
   justify-content: center;
   gap: 10px;
-  min-width: 204px; /* also holds "STOPPING" without growing */
+  min-width: 216px; /* also holds "STOPPING" without growing */
   height: 56px;
   padding: 0 26px;
   border: 0;
@@ -410,6 +410,9 @@ code {
   outline: 3px solid var(--ink);
   outline-offset: 3px;
   cursor: progress;
+}
+.stop[data-busy="1"] .stop-key {
+  display: none; /* the script holds the button's width meanwhile */
 }
 .stop:focus-visible {
   outline: 3px solid var(--ink);
@@ -727,10 +730,10 @@ main {
   font-size: 15px;
 }
 
-/* While the companion is silent, what the page last knew is dimmed. */
-body[data-offline="1"] .view .card:not(.hero),
-body[data-offline="1"] .hero-body > :is(.speed, .readout, .meter) {
-  opacity: 0.5; /* not the note: what to do now stays at full strength */
+/* While the companion is silent, the cards that need it are inert (set by the script):
+   their words stay readable, their controls are switched off and look it. */
+.card[inert] :is(.btn, .stepper-value, .segmented, .check, input[type="text"], select, summary) {
+  opacity: 0.5;
 }
 
 .noscript {
@@ -983,6 +986,12 @@ body[data-offline="1"] .hero-body > :is(.speed, .readout, .meter) {
     flex: 1;
     grid-auto-rows: 1fr;
   }
+  #session .tile {
+    padding-top: 20px;
+  }
+  #session .tile .v {
+    font-size: 34px;
+  }
 }
 
 /* The belt: its state in words, its speed, where that is between nothing and your maximum. */
@@ -1080,10 +1089,23 @@ body[data-offline="1"] .hero-body > :is(.speed, .readout, .meter) {
   font-size: clamp(72px, 6.4vw, 104px);
   font-size: clamp(72px, 13.5cqi, 104px);
 }
+/* No reading: said in words, at a size that suits words; the unit would be a unit of nothing. */
 .speed-num[data-void="1"] {
   color: var(--ink-3);
-  font-weight: 300;
-  letter-spacing: 0;
+  font-size: 44px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+.speed:has(.speed-num[data-void="1"]) {
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 6px;
+  min-height: 96px; /* about the number's height, so the card does not jump when a reading returns */
+}
+.speed:has(.speed-num[data-void="1"]) .speed-unit {
+  display: none;
 }
 .speed-side {
   display: grid;
@@ -1541,6 +1563,11 @@ body[data-offline="1"] .hero-body > :is(.speed, .readout, .meter) {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+#tm-name {
+  white-space: normal; /* a pad's name is shown whole */
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+}
 .scan-out {
   display: grid;
   gap: 8px;
@@ -1586,7 +1613,6 @@ body[data-offline="1"] .hero-body > :is(.speed, .readout, .meter) {
 }
 .sim .btn-row .btn {
   padding: 0 8px;
-  white-space: normal;
 }
 .sim legend {
   padding: 0 6px;
@@ -1628,12 +1654,21 @@ body[data-offline="1"] .hero-body > :is(.speed, .readout, .meter) {
   overflow-y: auto;
   font-size: 13px;
 }
+#activity {
+  container: activity / inline-size;
+}
 .log li {
   display: grid;
   grid-template-columns: 92px minmax(0, 1fr);
   gap: 12px;
   padding: 7px 0;
   border-bottom: 1px solid var(--line);
+}
+@container activity (max-width: 380px) {
+  .log li {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1px;
+  }
 }
 .log li:last-child {
   border-bottom: 0;
@@ -2356,12 +2391,16 @@ details[open] > summary::before {
 
 .toasts {
   position: fixed;
-  z-index: 80;
+  z-index: 54; /* under STOP and the belt's state (60): nothing covers those */
   right: 24px;
   bottom: 24px;
   display: grid;
   gap: 8px;
   width: min(400px, calc(100vw - 48px));
+  max-height: calc(100vh - var(--bar-h) - 40px); /* and never as tall as to reach them */
+  max-height: calc(100dvh - var(--bar-h) - 40px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   pointer-events: none;
 }
 .toast {
@@ -2472,6 +2511,16 @@ details[open] > summary::before {
 
 /* ---------------------------------------------------------------- narrower windows */
 
+/* The dock takes much of the bar here: the offline notice's words start under it, at full width. */
+@media (max-width: 1299px) {
+  .offline {
+    padding-top: calc(var(--bar-h) + 6px);
+  }
+  .offline > p::before {
+    display: none;
+  }
+}
+
 /* The rail shrinks to its icons; the connections are read from their lamps. */
 @media (max-width: 1179px) {
   :root {
@@ -2481,13 +2530,7 @@ details[open] > summary::before {
   .stop-key {
     display: none;
   }
-  /* The dock takes most of the bar here: the notice's words start under it, at full width. */
-  .offline {
-    padding-top: calc(var(--bar-h) + 6px);
-  }
-  .offline > p::before {
-    display: none;
-  }
+
   .brand {
     justify-content: center;
     padding: 0;
@@ -2581,8 +2624,12 @@ details[open] > summary::before {
 }
 
 @media (max-width: 960px) {
+  /* when, time, distance, steps, calories and the chevron: six cells, six tracks */
   .srow {
-    grid-template-columns: minmax(0, 1.3fr) repeat(3, minmax(0, 1fr)) 24px;
+    grid-template-columns: minmax(165px, 1.5fr) repeat(4, minmax(0, 1fr)) 24px;
+  }
+  .srow-btn .when {
+    white-space: nowrap;
   }
   .srow > :nth-child(2),
   .srow > :nth-child(7),
@@ -2743,7 +2790,7 @@ details[open] > summary::before {
   .pill-name[data-short] {
     font-size: 0;
   }
-  @media (max-width: 379px) {
+  @media (max-width: 359px) {
     .health {
       grid-auto-flow: row;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2918,6 +2965,39 @@ details[open] > summary::before {
     right: auto;
     bottom: calc(144px + env(safe-area-inset-bottom, 0px));
     width: calc(100vw - 24px);
+    max-height: calc(100vh - 156px - env(safe-area-inset-bottom, 0px));
+    max-height: calc(100dvh - 156px - env(safe-area-inset-bottom, 0px));
+  }
+}
+
+/* A short phone: a smaller number and no legend, and when there is something to press
+   (Resume, Try again) it and its explanation come straight after the number. */
+@media (max-width: 719px) and (max-height: 760px) {
+  .hero-body {
+    padding-top: 14px;
+  }
+  .speed-num {
+    font-size: clamp(72px, 12vh, 104px);
+    font-size: clamp(72px, 12svh, 104px);
+  }
+  .speed-num[data-wide="1"] {
+    font-size: clamp(64px, 10vh, 88px);
+    font-size: clamp(64px, 10svh, 88px);
+  }
+  .meter-key {
+    display: none;
+  }
+  .hero:has(#hero-action:not([hidden])) :is(.hero-note, .hero-actions) {
+    order: 1;
+  }
+}
+/* The shortest phones: the button first, its explanation after it. */
+@media (max-width: 719px) and (max-height: 600px) {
+  .hero:has(#hero-action:not([hidden])) .hero-note {
+    order: 2;
+  }
+  .hero:has(#hero-action:not([hidden])) .meter {
+    order: 3;
   }
 }
 
@@ -2951,6 +3031,8 @@ details[open] > summary::before {
   }
   .toasts {
     bottom: calc(76px + env(safe-area-inset-bottom, 0px));
+    max-height: calc(100vh - 88px - env(safe-area-inset-bottom, 0px));
+    max-height: calc(100dvh - 88px - env(safe-area-inset-bottom, 0px));
   }
 }
 
@@ -3027,10 +3109,6 @@ details[open] > summary::before {
   }
   .offline > p::before {
     display: none;
-  }
-  body[data-offline="1"] .view .card:not(.hero),
-  body[data-offline="1"] .hero-body > :is(.speed, .readout, .meter) {
-    opacity: 1;
   }
   .view-head {
     position: static;

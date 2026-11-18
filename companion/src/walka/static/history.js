@@ -26,7 +26,14 @@ function plural(n, word) {
 
 function bucketLine(bucket) {
   if (!bucket.sessions) return "no walks";
-  return `${fmt.distU(bucket.distance_m)} · ${fmt.span(bucket.seconds)} · ${fmt.int(bucket.kcal)} kcal · ${plural(bucket.sessions, "walk")}`;
+  const parts = [
+    fmt.distU(bucket.distance_m),
+    fmt.span(bucket.seconds),
+    `${fmt.int(bucket.kcal)} kcal`,
+    plural(bucket.sessions, "walk"),
+  ];
+  // No-break spaces inside each part: a line may end after a part, never between a number and its unit.
+  return parts.map((part) => part.replace(/ /g, "\u00a0")).join(" \u00b7 ");
 }
 
 function updateTotals(s) {

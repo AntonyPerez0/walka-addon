@@ -97,7 +97,7 @@
       </div>
       <div class="hero-body">
         <div class="speed" aria-live="off">
-          <span class="speed-num num" id="speed-num" data-void="1">–</span>
+          <span class="speed-num num" id="speed-num" data-void="1">No reading</span>
           <span class="speed-side"><span class="speed-unit" id="speed-unit">mph</span><span class="speed-cap">belt speed</span></span>
         </div>
         <dl class="readout">
@@ -120,7 +120,7 @@
             <span class="meter-end" id="meter-max"></span>
           </div>
           <ul class="meter-key" aria-hidden="true">
-            <li><i class="key-fill"></i>Belt speed</li>
+            <li id="key-fill"><i class="key-fill"></i>Belt speed</li>
             <li id="key-range"><i class="key-range"></i>Allowed range</li>
             <li id="key-target" hidden><i class="key-target"></i>Target</li>
           </ul>
@@ -243,10 +243,10 @@
           <legend>Simulator controls</legend>
           <p class="muted small">This is the simulated treadmill. These buttons stand in for the buttons on a real pad's remote.</p>
           <div class="btn-row">
-            <button class="btn small" id="sim-start" type="button">Press start on the pad</button>
-            <button class="btn small" id="sim-stop" type="button">Press stop on the pad</button>
-            <button class="btn small" id="sim-slower" type="button">Press - on the pad</button>
-            <button class="btn small" id="sim-faster" type="button">Press + on the pad</button>
+            <button class="btn small" id="sim-start" type="button" title="Press start on the pad">Start</button>
+            <button class="btn small" id="sim-stop" type="button" title="Press stop on the pad">Stop</button>
+            <button class="btn small" id="sim-slower" type="button" title="Press - on the pad">Slower -</button>
+            <button class="btn small" id="sim-faster" type="button" title="Press + on the pad">Faster +</button>
           </div>
         </fieldset>
       </section>
