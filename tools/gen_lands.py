@@ -23,9 +23,11 @@ land (or shallow water just off it), so:
    positions cannot tell a bay from a mountain range. So the bays that give
    the coasts their shape are named by hand (``BAYS``) and opened again;
 4. the outline of that is traced, pushed outwards a little and straightened
-   until it is a polygon of about a hundred corners that still holds all of
-   the land the dots showed. A road can therefore leave the drawn land only
-   where the character really was at sea (boats, swimming).
+   until it is a polygon of some eighty corners that still holds all of
+   the land the dots showed - all but islets smaller than MIN_ISLAND_YD2
+   (about three quarters of a mile across), which are left out. Elsewhere a
+   road leaves the drawn land only where the character really was at sea
+   (boats, swimming).
 
 The positions themselves are not kept: what comes out is the generalised
 outline, a few hundred numbers per continent.

@@ -178,22 +178,38 @@ def _milestones(stretches: Iterable[Stretch]) -> list[dict[str, int]]:
     return marks
 
 
-def _crossings(stretches: tuple[Stretch, ...], most: int = 3) -> list[dict[str, dict[str, int]]]:
+SAME_PASSAGE_YD = 440  # two passages that begin and end within a quarter mile of each other are one
+
+
+def _crossings(stretches: tuple[Stretch, ...], most: int = 12) -> list[dict[str, dict[str, int]]]:
     """Where the road goes from one continent to another (a boat, a
     zeppelin, a portal): from where to where. The same passage made ten
-    times is one crossing; the ones made most often come first, and only
-    ``most`` are given - the picture draws an arc for each."""
-    seen: dict[tuple[Any, ...], list[Any]] = {}
+    times - in either direction - is one crossing; the ones made most often
+    come first, and at most ``most`` are given (the picture draws an arc
+    for the first few between the continents it shows)."""
+    found: list[list[Any]] = []  # [times, from, to]
     for before, after in zip(stretches, stretches[1:], strict=False):
         if before.continent == after.continent:
             continue
         ends = (_place(before.continent, before.points[-1]), _place(after.continent, after.points[0]))
-        # (Either way round, and to the nearest quarter mile: the same boat.)
-        key = tuple(sorted((end["c"], round(end["x"] / 440), round(end["y"] / 440)) for end in ends))
-        entry = seen.setdefault(key, [0, ends])
-        entry[0] += 1
-    often = sorted(seen.values(), key=lambda entry: entry[0], reverse=True)[:most]
-    return [{"from": ends[0], "to": ends[1]} for _count, ends in often]
+        for entry in found:
+            for a, b in ((entry[1], entry[2]), (entry[2], entry[1])):
+                if (
+                    a["c"] == ends[0]["c"]
+                    and b["c"] == ends[1]["c"]
+                    and math.dist((a["x"], a["y"]), (ends[0]["x"], ends[0]["y"])) <= SAME_PASSAGE_YD
+                    and math.dist((b["x"], b["y"]), (ends[1]["x"], ends[1]["y"])) <= SAME_PASSAGE_YD
+                ):
+                    entry[0] += 1
+                    break
+            else:
+                continue
+            break
+        else:
+            if len(found) < 500:  # (far more than any character has; keeps a strange file from costing time)
+                found.append([1, ends[0], ends[1]])
+    found.sort(key=lambda entry: entry[0], reverse=True)
+    return [{"from": start, "to": end} for _times, start, end in found[:most]]
 
 
 def decode(table: Any) -> Road | None:
@@ -298,7 +314,23 @@ def simplify(points: list[tuple[int, int]], tolerance: float) -> list[tuple[int,
 def _thin(
     paths: list[tuple[int, str, list[tuple[int, int]]]], budget: int
 ) -> list[tuple[int, str, list[tuple[int, int]]]]:
-    """Thin all paths alike until together they fit the budget."""
+    """Thin all paths alike until together they fit the budget.
+
+    Every path keeps its two ends however coarse the tolerance. A road made
+    of very many short stretches (the belt started and stopped a thousand
+    times) could therefore never fit: when even two points a path are too
+    many, the smallest paths - specks on a picture of the whole road - are
+    left out first."""
+    if 2 * len(paths) > budget:
+
+        def size(index: int) -> int:
+            points = paths[index][2]
+            xs = [x for x, _y in points]
+            ys = [y for _x, y in points]
+            return max(max(xs) - min(xs), max(ys) - min(ys))
+
+        largest = sorted(range(len(paths)), key=size, reverse=True)[: max(1, budget // 2)]
+        paths = [paths[index] for index in sorted(largest)]
     xs = [x for _c, _s, points in paths for x, _y in points]
     ys = [y for _c, _s, points in paths for _x, y in points]
     if not xs:
@@ -497,12 +529,15 @@ def demo_road(key: str) -> Road:
     """A made-up road for ``--demo``: a night elf's first twenty-three
     levels, through places that exist - down Teldrassil and Darkshore into
     Ashenvale, a flight back, then (after the boat) from Menethil Harbor
-    over Loch Modan to Ironforge, and from Stormwind to Lakeshire. Most of
-    it walked on the treadmill, some of it not."""
+    over Loch Modan to Ironforge, and from Stormwind to Lakeshire. Around
+    every village the errands of a dozen quests; most of it walked on the
+    treadmill, some of it not. About as long as the demo character's time
+    on foot makes it (``journey.DemoJourney``)."""
     stretches: list[Stretch] = []
     at = (0.0, 0.0)
     continent = 1
     level = 1
+    laps = 0  # errands run so far: every fifth is done sitting down
 
     def add(points: list[tuple[float, float]], mode: str, belt: bool) -> None:
         whole = [(round(x), round(y)) for x, y in points]
@@ -534,15 +569,22 @@ def demo_road(key: str) -> Road:
         add(points, mode, belt)
         at = to
 
-    def quests(radius: float, loops: int = 3, turn: float = 0.0, belt: bool = True) -> None:
-        """Errands around a village: a few loops out and back again."""
-        steps = max(12, round(loops * 2.5 * radius / 20))
-        points = []
-        for step in range(steps + 1):
-            angle = math.pi * step / steps
-            reach = radius * math.sin(loops * angle)
-            points.append((at[0] + reach * math.cos(angle + turn), at[1] + reach * math.sin(angle + turn)))
-        add(points, "w", belt)
+    def quests(radius: float, rounds: int = 6, turn: float = 0.0) -> None:
+        """Errands around a village: out and back again, round after round,
+        each a few loops in another direction and not as far as the last."""
+        nonlocal laps
+        for index in range(rounds):
+            laps += 1
+            loops = 3 + (laps % 3)
+            reach = radius * (1.0 - 0.55 * index / max(1, rounds - 1))
+            twist = turn + 2.399963 * index  # (the golden angle: no two rounds alike)
+            steps = max(12, round(loops * 2.5 * reach / 20))
+            points = []
+            for step in range(steps + 1):
+                angle = math.pi * step / steps
+                out = reach * math.sin(loops * angle)
+                points.append((at[0] + out * math.cos(angle + twist), at[1] + out * math.sin(angle + twist)))
+            add(points, "w", laps % 5 != 0)
 
     def reach_level(value: int) -> None:
         nonlocal level
@@ -550,61 +592,71 @@ def demo_road(key: str) -> Road:
 
     # Kalimdor: Teldrassil ...
     start((10311, 832), on=1)  # Shadowglen
-    quests(210, turn=0.4)
+    quests(330, rounds=7, turn=0.4)
     reach_level(4)
     go((9850, 960))  # Dolanaar
     reach_level(6)
-    quests(300, turn=1.9)
+    quests(520, rounds=9, turn=1.9)
     go((9690, 1560))
     reach_level(8)
-    quests(190, loops=2, turn=0.8, belt=False)
+    quests(430, rounds=8, turn=0.8)
     go((9950, 2280), belt=False)  # Darnassus
+    quests(170, rounds=3, turn=2.0)
     # ... the portal down to Rut'theran, and the boat across.
     start((8640, 880))
     go((6460, 800), belt=False)
     # Darkshore.
     go((6440, 614))  # Auberdine
     reach_level(10)
-    quests(260, turn=2.6)
-    go((5700, 250))
+    go((6400, 250))
+    quests(330, rounds=8, turn=2.6)
+    go((5700, 200))
     reach_level(12)
-    quests(230, loops=2, turn=0.3)
-    go((4980, 130))
+    quests(420, rounds=9, turn=0.3)
+    go((4980, 80))
     reach_level(14)
-    go((4400, 430), belt=False)
+    quests(430, rounds=9, turn=1.1)
+    go((4400, 330), belt=False)
     reach_level(16)
-    quests(200, loops=2, turn=1.2)
+    quests(360, rounds=8, turn=1.2)
     # Ashenvale.
-    go((3350, 250))
+    go((3350, 150))
     reach_level(18)
+    quests(520, rounds=9, turn=2.9)
     go((2745, -372))  # Astranaar
     reach_level(19)
-    quests(280, turn=0.9)
+    quests(640, rounds=10, turn=0.9)
     go((6440, 614), mode="t")  # the hippogryph back to Auberdine
 
     # The Eastern Kingdoms, off the boat at Menethil Harbor.
     start((-3740, -830), on=0)
     reach_level(20)
-    quests(240, turn=2.2)
+    go((-3600, -1250))
+    quests(330, rounds=8, turn=2.2)
     go((-3330, -1650))
     go((-3150, -2450))
+    quests(480, rounds=9, turn=0.5)
     go((-4050, -2700), belt=False)  # Dun Algaz
     go((-4780, -2700))
     reach_level(21)
     go((-5349, -2975))  # Thelsamar
-    quests(260, turn=0.2)
+    quests(620, rounds=10, turn=0.2)
     go((-5800, -2580))
     go((-5650, -1900), mode="r")
     go((-5700, -1450), mode="r")
     reach_level(22)
+    quests(480, rounds=8, turn=1.4)
     go((-5582, -483))  # Kharanos
+    quests(380, rounds=7, turn=2.5)
     go((-5050, -800), belt=False)  # up to Ironforge
     # ... the tram, and out of Stormwind.
     start((-8913, 554))
     go((-9464, 62))  # Goldshire
+    quests(520, rounds=9, turn=0.7)
     go((-9450, -1300))
+    quests(480, rounds=9, turn=2.1)
     go((-9600, -1900), belt=False)
     reach_level(23)
     go((-9282, -2269))  # Lakeshire
-    quests(230, loops=2, turn=1.6)
+    quests(520, rounds=10, turn=1.6)
     return Road(key, tuple(stretches))

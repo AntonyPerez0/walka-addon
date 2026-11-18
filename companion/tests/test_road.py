@@ -222,30 +222,53 @@ def test_milestones_are_only_the_tens_reached_on_the_recorded_road():
     assert marks(30, 29, 30) == []
 
 
-def test_passages_between_continents():
-    def crossings(*legs: tuple[int, int, int]) -> list[tuple[tuple[int, int, int], tuple[int, int, int]]]:
-        got = read(database(*[segment(x, y, [(20, 0)], c=c) for c, x, y in legs])).to_api(NOW)["crossings"]
-        return [
-            ((a["c"], a["x"], a["y"]), (b["c"], b["x"], b["y"]))
-            for a, b in ((entry["from"], entry["to"]) for entry in got)
-        ]
+def crossings_of(*legs: tuple[int, int, int]) -> list[tuple[tuple[int, int, int], tuple[int, int, int]]]:
+    """The passages of a road that goes through ``legs`` (continent, x, y), each a short stretch."""
+    got = read(database(*[segment(x, y, [(20, 0)], c=c) for c, x, y in legs])).to_api(NOW)["crossings"]
+    return [
+        (
+            (entry["from"]["c"], entry["from"]["x"], entry["from"]["y"]),
+            (entry["to"]["c"], entry["to"]["x"], entry["to"]["y"]),
+        )
+        for entry in got
+    ]
 
+
+def test_passages_between_continents():
     # One continent: none. A jump within a continent (a hearthstone) is none either.
-    assert crossings((1, 0, 0), (1, 5000, 5000)) == []
+    assert crossings_of((1, 0, 0), (1, 5000, 5000)) == []
     # There: from the last place on the one to the first on the other.
-    assert crossings((1, 0, 0), (0, 900, 900)) == [((1, 20, 0), (0, 900, 900))]
+    assert crossings_of((1, 0, 0), (0, 900, 900)) == [((1, 20, 0), (0, 900, 900))]
     # There and back by the same boat, ten times over: still one passage.
-    boat = [(1, 0, 0), (0, 880, 900)] * 10
-    assert crossings(*boat) == [((1, 20, 0), (0, 880, 900))]
-    # Several: the ones travelled most come first, and three are enough for a picture.
+    assert crossings_of(*[(1, 0, 0), (0, 880, 900)] * 10) == [((1, 20, 0), (0, 880, 900))]
+    # Several: the ones travelled most come first.
     often = [(1, 0, 0), (0, 5000, 0)] * 3
     twice = [(1, 3000, 0), (0, -5000, 0)] * 2
     once = [(1, 6000, 0), (0, -9000, 0)]
     rare = [(1, -6000, 0), (0, 9000, 0)]
-    got = crossings(*(rare + once + twice + often))
-    assert len(got) == 3
+    got = crossings_of(*(rare + once + twice + often))
     assert got[0] == ((1, 20, 0), (0, 5000, 0))  # there three times and back twice
     assert got[1] == ((1, 3020, 0), (0, -5000, 0))
+    assert len(got) == 7  # (with the passages that lead from one of these boats to the next)
+
+
+def test_the_same_boat_is_one_passage_wherever_on_its_deck_one_stood():
+    # Landing a few yards apart each time - either side of any line one might draw - is the same dock.
+    legs = []
+    for wobble in (0, 4, -3, 38, -61, 120):
+        legs += [(1, 6440 + wobble, 656 + wobble), (0, -3740 - wobble, -830 + wobble // 2)]
+    got = crossings_of(*legs)
+    assert len(got) == 1 and got[0][0][0] == 1 and got[0][1][0] == 0
+    # A dock a mile away is another passage.
+    got = crossings_of(*legs, (1, 6440, 656), (0, -3740, -2700))
+    assert len(got) == 2
+
+
+def test_no_more_passages_than_a_picture_can_use():
+    legs = []
+    for index in range(40):  # forty different portals
+        legs += [(1, index * 1000, 0), (0, 0, index * 1000)]
+    assert len(crossings_of(*legs)) == 12
 
 
 def test_an_unknown_continent_has_no_name_and_the_longest_comes_first():
@@ -301,6 +324,25 @@ def test_a_long_road_reaches_the_page_within_its_budget():
     tight = long_road.to_api(NOW, budget=300)
     paths = [path for entry in tight["continents"] for path in entry["paths"]]
     assert len(paths) == 60 and all(len(path["p"]) >= 4 for path in paths)  # every stretch keeps its two ends
+    assert sum(len(path["p"]) // 2 for path in paths) <= 300
+
+
+def test_a_road_of_very_many_short_stretches_still_fits_the_budget():
+    """The belt started and stopped thousands of times: every stretch would
+    keep its two ends, which alone is more than the page should be sent."""
+    stretches = []
+    x = 0
+    for index in range(5000):
+        length = 400 if index % 50 == 0 else 20  # a few longer ones among the specks
+        stretches.append(Stretch(1, "w", index % 2 == 0, 1 + index // 100, ((x, 0), (x + length, index % 7))))
+        x += length
+    api = road.Road(KEY, tuple(stretches)).to_api(NOW)
+    paths = [path for entry in api["continents"] for path in entry["paths"]]
+    sent = sum(len(path["p"]) // 2 for path in paths)
+    assert sent <= road.POINT_BUDGET and len(paths) <= road.POINT_BUDGET // 2
+    # The length is the whole road's all the same, and the longer stretches are the ones kept.
+    assert api["yards"] == round(sum(stretch.yards for stretch in stretches))
+    assert sum(1 for path in paths if abs(path["p"][2] - path["p"][0]) >= 400) == 100
 
 
 def test_the_demo_road():

@@ -296,12 +296,13 @@ function routeTile(road, km, lands, character) {
   // Kalimdor (continent 1) lies west of the Eastern Kingdoms (0).
   if (shown.length === 2 && shown[1].id === 1) shown.reverse();
   const names = shown.map((continent) => continent.name).filter(Boolean);
+  const where = names.length ? ` on ${names.join(" and ")}` : "";
   const yards = known(road.yards) ? road.yards : 0;
   const distance = km ? (yards * M_PER_YARD) / 1000 : yards / YARDS_PER_MILE;
+  const unit = km ? "km" : "miles";
   // (Said to be the road's, so that it is not taken for the distance on
   // foot in the tile beside it. A road too short to measure has none.)
   const measured = distanceNumber(distance) !== "0.0";
-  const length = measured ? `${distanceNumber(distance)} in-game ${km ? "km" : "miles"} of road` : "My road starts here";
   const spot = (place) =>
     place && Number.isFinite(place.c) && Number.isFinite(place.x) && Number.isFinite(place.y)
       ? { c: place.c, x: place.x, y: place.y }
@@ -309,6 +310,35 @@ function routeTile(road, km, lands, character) {
   const level = character && known(character.level) && character.level > 0 ? character.level : road.level;
   // (No percentage of a road too short to show as more than "0.0".)
   const share = yards >= 100 && known(road.belt_yards) ? Math.min(100, Math.round((road.belt_yards / yards) * 100)) : 0;
+  // Passages from one continent to another, drawn as arcs: the ones
+  // between the continents that are on the picture.
+  const ids = new Set(shown.map((continent) => continent.id));
+  const crossings = (Array.isArray(road.crossings) ? road.crossings : [])
+    .filter((crossing) => crossing && spot(crossing.from) && spot(crossing.to))
+    .filter((crossing) => ids.has(crossing.from.c) && ids.has(crossing.to.c))
+    .slice(0, 3);
+  const drawn = (style) => shown.some((continent) => continent.paths.some((path) => path.style === style));
+  // A character that has only flown so far has a road too: the flight.
+  const flown = drawn("flight") && known(road.flight_yards) && road.flight_yards >= 100;
+  const length = measured
+    ? `${distanceNumber(distance)} in-game ${unit} of road`
+    : flown
+      ? "My road so far: a flight"
+      : "My road starts here";
+  // The key to the lines on the map: what each kind means, in full and in
+  // brief (the picture uses what fits).
+  const key = [];
+  if (share > 0 && drawn("walked")) key.push({ style: "walked", text: `${share}% walked for real`, brief: `${share}% walked` });
+  if (drawn("road") && share < 100) {
+    key.push(
+      share > 0
+        ? { style: "road", text: `${100 - share}% not walked`, brief: `${100 - share}% not` }
+        : { style: "road", text: "not walked for real", brief: "not walked" },
+    );
+  }
+  if (drawn("flight") || crossings.length) {
+    key.push(crossings.length ? { style: "flight", text: "flight / boat", brief: "flight, boat" } : { style: "flight", text: "flight", brief: "flight" });
+  }
   return {
     id: "route",
     wide: true,
@@ -328,18 +358,17 @@ function routeTile(road, km, lands, character) {
       milestones: (Array.isArray(road.milestones) ? road.milestones : []).filter(
         (mark) => spot(mark) && Number.isFinite(mark.level),
       ),
-      // Passages from one continent to another, drawn as arcs.
-      crossings: (Array.isArray(road.crossings) ? road.crossings : [])
-        .filter((crossing) => crossing && spot(crossing.from) && spot(crossing.to))
-        .slice(0, 3),
+      crossings,
     },
     sub: length,
-    note: share > 0 ? `${share}% of it walked for real` : "",
+    key,
     plain: measured
-      ? `My road${names.length ? ` on ${names.join(" and ")}` : ""}: ${distanceNumber(distance)} in-game ${
-          km ? "km" : "miles"
-        }${share > 0 ? `, ${share}% of it walked on the treadmill` : ""}`
-      : `My road${names.length ? ` on ${names.join(" and ")}` : ""} starts here`,
+      ? `My road${where}: ${distanceNumber(distance)} in-game ${unit}${
+          share > 0 ? `, ${share}% of it walked on the treadmill` : ""
+        }`
+      : flown
+        ? `My road${where} so far: a flight`
+        : `My road${where} starts here`,
   };
 }
 

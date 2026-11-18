@@ -249,28 +249,34 @@ low-poly drawing of Walka's own: the shape of the land in facets, in the
 picture's colours.
 
 * The stretches you walked **on the treadmill** are a bright line; what the
-  character travelled while the belt stood still is the same line, faded;
-  flight paths are fine dashes. A piece of the bright line stands in front
-  of *"... % of it walked for real"*, so nobody has to guess which is which.
-* *START* marks where the road begins, a gem with the character's level
-  where it is now, and a small numbered stud every tenth level reached on
-  the way.
+  character travelled while the belt stood still is the same line in a
+  quieter colour; flight paths are fine dashes. A key under the map shows a
+  piece of each kind of line with what it means - and how much of the road
+  you walked for real.
+* *START* marks where the road begins, a gem marked *NOW* with the
+  character's level where it is, and a small numbered stud every tenth
+  level reached on the way. The words are put where they cover neither a
+  mark nor the road.
 * Kalimdor and the Eastern Kingdoms are shown whole, side by side on one
   sea and to one scale, with a dashed arc where you crossed from one to
   the other (the boat, the zeppelin).
 * A character that has only been on one continent and has not gone far yet
-  gets a **close-up**: the part of the coast it has walked, with a small
-  map of the whole continent in a corner that shows where that is. Once the
-  road spans about a third of the continent, all of it is shown.
+  gets a **close-up**: the stretch of coast it has walked, with a small map
+  of the whole continent in a corner that frames where that is. The
+  close-up widens as the road grows; once it would show most of the
+  continent anyway, all of it is shown.
+* A long road - wound tight around every village, as roads are by level
+  20 - is drawn with a finer line, so that it stays a road and not a blot.
 * Under the map: the length of the road in in-game miles (flights not
-  counted) and how much of it you walked for real. This is the road the
-  addon *recorded* - mounted stretches included, dungeons not - so it
-  differs from the miles on foot in the *Character steps* tile.
+  counted). This is the road the addon *recorded* - mounted stretches
+  included, dungeons not - so it differs from the miles on foot in the
+  *Character steps* tile.
 
 The coasts are generalised - straight edges, small inlets filled in - but
-every town, harbour and quest area lies on the land, so a line across the
-water means you really were at sea. A continent the companion has no map
-of (should the game ever have one) still gets its road, on an empty chart.
+the towns, harbours and quest areas lie on the land (all but a few tiny
+islets, which are left off the map), so a line across the water means you
+really were at sea. A continent the companion has no map of (should the
+game ever have one) still gets its road, on an empty chart.
 
 The road is far too much for the strip on the screen, so it takes the slow
 way: **the game saves it when you log out or type `/reload`**, and the
