@@ -38,3 +38,19 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## The continents on the Share picture
+
+The low-poly maps behind the road on the Share picture
+(`companion/src/walka/static/lands.js`) are drawings made for Walka by
+`tools/gen_lands.py`. No map art of the game is used. To find where the
+coast runs, that script was given the world positions of creatures and
+objects as listed in the world database of the CMaNGOS project's
+`classic-db` - <https://github.com/cmangos/classic-db>, published under the
+GNU General Public License v3 - and drew a generalised outline around them:
+about a hundred straight edges per continent, with eight bays picked by
+hand. Nothing of that database is part of Walka: none of its positions,
+names or other contents are in this repository or in `lands.js`, and the
+relief of the facets is invented. World of Warcraft, Kalimdor and the
+Eastern Kingdoms are Blizzard Entertainment's; Walka is a fan-made tool and
+is not affiliated with or endorsed by Blizzard.

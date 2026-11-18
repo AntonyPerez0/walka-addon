@@ -244,18 +244,33 @@ A `~` in front of a number means "about":
 ### The road on the picture
 
 The road the addon records (see [The road map](#the-road-map)) is drawn on
-the picture as line art - the shape of your journey, without any of the
-game's map:
+the picture over a small map of the continent - not the game's map, but a
+low-poly drawing of Walka's own: the shape of the land in facets, in the
+picture's colours.
 
-* the stretches you walked **on the treadmill** are bright; what the
-  character travelled while the belt stood still is dim; flight paths are
-  hairlines;
-* a ring marks where the road begins, a gem where the character is now, and
-  a small stud every tenth level reached on the way;
-* the two continents with the most road are shown side by side, west to
-  the left, drawn to the same scale. Under them: the length of the road in
-  in-game miles (flights not counted), and how much of it you walked for
-  real.
+* The stretches you walked **on the treadmill** are a bright line; what the
+  character travelled while the belt stood still is the same line, faded;
+  flight paths are fine dashes. A piece of the bright line stands in front
+  of *"... % of it walked for real"*, so nobody has to guess which is which.
+* *START* marks where the road begins, a gem with the character's level
+  where it is now, and a small numbered stud every tenth level reached on
+  the way.
+* Kalimdor and the Eastern Kingdoms are shown whole, side by side on one
+  sea and to one scale, with a dashed arc where you crossed from one to
+  the other (the boat, the zeppelin).
+* A character that has only been on one continent and has not gone far yet
+  gets a **close-up**: the part of the coast it has walked, with a small
+  map of the whole continent in a corner that shows where that is. Once the
+  road spans about a third of the continent, all of it is shown.
+* Under the map: the length of the road in in-game miles (flights not
+  counted) and how much of it you walked for real. This is the road the
+  addon *recorded* - mounted stretches included, dungeons not - so it
+  differs from the miles on foot in the *Character steps* tile.
+
+The coasts are generalised - straight edges, small inlets filled in - but
+every town, harbour and quest area lies on the land, so a line across the
+water means you really were at sea. A continent the companion has no map
+of (should the game ever have one) still gets its road, on an empty chart.
 
 The road is far too much for the strip on the screen, so it takes the slow
 way: **the game saves it when you log out or type `/reload`**, and the
@@ -274,14 +289,16 @@ Private by default:
 * The picture is drawn in your browser from numbers that are already on
   your PC. Nothing is uploaded and nothing is posted for you.
 * The road is read from a file on your PC and goes no further than the
-  page that draws it. On the picture it is a line and the names of the
-  continents - no zones, no coordinates, no map.
+  page that draws it. On the picture it is a line on a simplified map and
+  the names of the continents - no zones, no place names, no coordinates.
 * Your character's name, and the small line with your weight and average
   pace, are **off** until you tick them. The realm never leaves the game:
   the companion is only sent a number that tells your characters apart.
 * The downloaded file is named after the date, never after the character.
 * The design is Walka's own and is drawn by the page itself: no game
-  artwork, logos or fonts are used.
+  artwork, logos or fonts are used. The continents on the map are Walka's
+  own drawing too (see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) for
+  how their outlines were made).
 
 `py -m walka --demo` has a made-up character to try the page with; it is
 never saved.
@@ -422,7 +439,8 @@ py -m pytest          # companion tests + addon tests (the addon runs under a mo
   (dashboard), `app.py` (wiring), `cli.py`; `journey.py` (each character's
   journey, put together from the strip), `savedvars.py` + `road.py` (the
   road, read from the game's saved file) and `static/share.js`, `card.js`,
-  `cardmodel.js` (the Share page and the picture it draws).
+  `cardmodel.js` (the Share page and the picture it draws), `lands.js` (the
+  low-poly continents behind the road; made by `tools/gen_lands.py`).
 * `tests/addon/` - loads the real addon files into a mock of the game's
   API that is checked against Blizzard's published API documentation for
   this client build (`tools/gen_api_snapshot.py` regenerates the snapshot).

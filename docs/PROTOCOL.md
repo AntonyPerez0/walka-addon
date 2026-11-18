@@ -399,4 +399,9 @@ How the companion reads it (`savedvars.py`, `road.py`):
   (Ramer-Douglas-Peucker, the same tolerance everywhere) and grouped by
   continent and by how it was travelled (`walked` with the belt moving,
   `road` without, `flight`), with its length measured before the thinning.
+  With it go the places where the road begins and ends, where every tenth
+  level was reached, and the passages from one continent to another (from
+  where to where; the three made most often). The page draws all this over
+  its own low-poly map of each continent (`static/lands.js`), which is in
+  the same coordinates: world yards, x to the north and y to the west.
 

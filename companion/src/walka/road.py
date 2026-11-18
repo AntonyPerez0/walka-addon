@@ -152,6 +152,7 @@ class Road:
             "start": _place(first.continent, first.points[0]),
             "end": _place(last.continent, last.points[-1]),
             "milestones": _milestones(self.stretches),
+            "crossings": _crossings(self.stretches),
             # Where most of the road is comes first.
             "continents": sorted(continents.values(), key=lambda entry: entry["yards"], reverse=True),
             "truncated": self.truncated,
@@ -175,6 +176,24 @@ def _milestones(stretches: Iterable[Stretch]) -> list[dict[str, int]]:
             reached += 1
             marks.append({"level": reached * 10, **_place(stretch.continent, stretch.points[0])})
     return marks
+
+
+def _crossings(stretches: tuple[Stretch, ...], most: int = 3) -> list[dict[str, dict[str, int]]]:
+    """Where the road goes from one continent to another (a boat, a
+    zeppelin, a portal): from where to where. The same passage made ten
+    times is one crossing; the ones made most often come first, and only
+    ``most`` are given - the picture draws an arc for each."""
+    seen: dict[tuple[Any, ...], list[Any]] = {}
+    for before, after in zip(stretches, stretches[1:], strict=False):
+        if before.continent == after.continent:
+            continue
+        ends = (_place(before.continent, before.points[-1]), _place(after.continent, after.points[0]))
+        # (Either way round, and to the nearest quarter mile: the same boat.)
+        key = tuple(sorted((end["c"], round(end["x"] / 440), round(end["y"] / 440)) for end in ends))
+        entry = seen.setdefault(key, [0, ends])
+        entry[0] += 1
+    often = sorted(seen.values(), key=lambda entry: entry[0], reverse=True)[:most]
+    return [{"from": ends[0], "to": ends[1]} for _count, ends in often]
 
 
 def decode(table: Any) -> Road | None:
@@ -475,38 +494,117 @@ class RoadBook:
 
 
 def demo_road(key: str) -> Road:
-    """A made-up road for ``--demo``: a few evenings of wandering on one
-    continent, a boat, and the start of the next - with the stretches that
-    were walked on the treadmill marked."""
+    """A made-up road for ``--demo``: a night elf's first twenty-three
+    levels, through places that exist - down Teldrassil and Darkshore into
+    Ashenvale, a flight back, then (after the boat) from Menethil Harbor
+    over Loch Modan to Ironforge, and from Stormwind to Lakeshire. Most of
+    it walked on the treadmill, some of it not."""
     stretches: list[Stretch] = []
+    at = (0.0, 0.0)
+    continent = 1
+    level = 1
 
-    def wander(
-        continent: int, start: tuple[int, int], legs: int, bearing: float, seed: float, level: int, gain: int
-    ) -> int:
-        """``bearing``: the way the journey leads on the whole (0 = north);
-        ``gain``: levels made on the way."""
-        x, y = float(start[0]), float(start[1])
-        done = 0
-        for leg in range(legs):
-            points = [(round(x), round(y))]
-            belt = leg % 3 != 2
-            mode = "t" if leg % 9 == 8 else ("r" if leg % 5 == 4 else "w")
-            steps = 40 if mode == "t" else 45
-            reach = 75 if mode == "t" else 20
-            for _ in range(steps):
-                done += 1
-                # Quest hubs: the road loops about for a while, then moves on.
-                loop = 2.6 * math.sin(0.021 * done + seed) * math.sin(0.0043 * done + 2 * seed)
-                heading = bearing + 0.9 * math.sin(0.0031 * done + seed) + loop + 0.25 * math.sin(0.19 * done)
-                x += reach * math.cos(heading)
-                y += reach * math.sin(heading)
-                points.append((round(x), round(y)))
-            stretches.append(Stretch(continent, mode, belt and mode != "t", level, tuple(points)))
-            if (leg + 1) * gain // legs > leg * gain // legs:
-                level += 1
-        return level
+    def add(points: list[tuple[float, float]], mode: str, belt: bool) -> None:
+        whole = [(round(x), round(y)) for x, y in points]
+        kept = [whole[0]] + [b for a, b in zip(whole, whole[1:], strict=False) if a != b]
+        if len(kept) >= 2:
+            stretches.append(Stretch(continent, mode, belt and mode != "t", level, tuple(kept)))
 
-    # (The demo character is level 23: see journey.DemoJourney.)
-    level = wander(1, (9600, -700), 52, math.pi, 0.6, 1, 13)  # southwards through Kalimdor
-    wander(0, (-9200, 300), 30, 0.1, 2.4, level, 10)  # then north in the Eastern Kingdoms
+    def start(where: tuple[float, float], on: int | None = None) -> None:
+        """Arrive somewhere without a road to it: a portal, a boat, the tram."""
+        nonlocal at, continent
+        at = where
+        continent = continent if on is None else on
+
+    def go(to: tuple[float, float], mode: str = "w", belt: bool = True) -> None:
+        """A stretch to ``to``: a road that sways a little, or a flight (straight)."""
+        nonlocal at
+        (ax, ay), (bx, by) = at, to
+        length = math.dist(at, to)
+        steps = max(1, round(length / (75 if mode == "t" else 20)))
+        sway = 0.0 if mode == "t" else min(110.0, 0.06 * length)
+        bends = max(1, round(length / 650))
+        points = []
+        for step in range(steps + 1):
+            t = step / steps
+            off = sway * math.sin(math.pi * t) * math.sin(math.pi * bends * t + 0.002 * ax)
+            points.append(
+                (ax + (bx - ax) * t - (by - ay) / length * off, ay + (by - ay) * t + (bx - ax) / length * off)
+            )
+        add(points, mode, belt)
+        at = to
+
+    def quests(radius: float, loops: int = 3, turn: float = 0.0, belt: bool = True) -> None:
+        """Errands around a village: a few loops out and back again."""
+        steps = max(12, round(loops * 2.5 * radius / 20))
+        points = []
+        for step in range(steps + 1):
+            angle = math.pi * step / steps
+            reach = radius * math.sin(loops * angle)
+            points.append((at[0] + reach * math.cos(angle + turn), at[1] + reach * math.sin(angle + turn)))
+        add(points, "w", belt)
+
+    def reach_level(value: int) -> None:
+        nonlocal level
+        level = value
+
+    # Kalimdor: Teldrassil ...
+    start((10311, 832), on=1)  # Shadowglen
+    quests(210, turn=0.4)
+    reach_level(4)
+    go((9850, 960))  # Dolanaar
+    reach_level(6)
+    quests(300, turn=1.9)
+    go((9690, 1560))
+    reach_level(8)
+    quests(190, loops=2, turn=0.8, belt=False)
+    go((9950, 2280), belt=False)  # Darnassus
+    # ... the portal down to Rut'theran, and the boat across.
+    start((8640, 880))
+    go((6460, 800), belt=False)
+    # Darkshore.
+    go((6440, 614))  # Auberdine
+    reach_level(10)
+    quests(260, turn=2.6)
+    go((5700, 250))
+    reach_level(12)
+    quests(230, loops=2, turn=0.3)
+    go((4980, 130))
+    reach_level(14)
+    go((4400, 430), belt=False)
+    reach_level(16)
+    quests(200, loops=2, turn=1.2)
+    # Ashenvale.
+    go((3350, 250))
+    reach_level(18)
+    go((2745, -372))  # Astranaar
+    reach_level(19)
+    quests(280, turn=0.9)
+    go((6440, 614), mode="t")  # the hippogryph back to Auberdine
+
+    # The Eastern Kingdoms, off the boat at Menethil Harbor.
+    start((-3740, -830), on=0)
+    reach_level(20)
+    quests(240, turn=2.2)
+    go((-3330, -1650))
+    go((-3150, -2450))
+    go((-4050, -2700), belt=False)  # Dun Algaz
+    go((-4780, -2700))
+    reach_level(21)
+    go((-5349, -2975))  # Thelsamar
+    quests(260, turn=0.2)
+    go((-5800, -2580))
+    go((-5650, -1900), mode="r")
+    go((-5700, -1450), mode="r")
+    reach_level(22)
+    go((-5582, -483))  # Kharanos
+    go((-5050, -800), belt=False)  # up to Ironforge
+    # ... the tram, and out of Stormwind.
+    start((-8913, 554))
+    go((-9464, 62))  # Goldshire
+    go((-9450, -1300))
+    go((-9600, -1900), belt=False)
+    reach_level(23)
+    go((-9282, -2269))  # Lakeshire
+    quests(230, loops=2, turn=1.6)
     return Road(key, tuple(stretches))

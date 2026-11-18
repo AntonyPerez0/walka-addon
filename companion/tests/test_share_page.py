@@ -28,7 +28,7 @@ from walka.road import Road, Stretch, demo_road
 
 STATIC = web.STATIC_DIR
 HARNESS = Path(__file__).with_name("share_harness.mjs")
-NEW_SCRIPTS = ("share.js", "card.js", "cardmodel.js")
+NEW_SCRIPTS = ("share.js", "card.js", "cardmodel.js", "lands.js")
 NODE = shutil.which("node")
 needs_node = pytest.mark.skipif(NODE is None, reason="Node.js is not installed")
 
@@ -76,6 +76,19 @@ def test_the_page_fits_the_content_policy():
         assert not re.search(r"""["'`](https?:)?//""", text), name
         for banned in ("eval(", "new Function", 'setAttribute("style"', "@import"):
             assert banned not in text, (name, banned)
+
+
+def test_the_continents_reach_the_picture_as_data():
+    """The page hands the maps to the two modules that draw: those stay free
+    of imports (the tests run them alone), and the maps are nothing but data."""
+    assert 'import { LANDS } from "./lands.js";' in read("share.js")
+    assert "lands: LANDS," in read("share.js")
+    text = read("lands.js")
+    code = "\n".join(line for line in text.splitlines() if not line.startswith("//")).strip()
+    assert code.startswith("export const LANDS = {") and code.endswith("};")
+    assert set(json.loads(code[len("export const LANDS = ") : -1])) == {"0", "1"}
+    for banned in ("function", "=>", "import", "fetch", "(", "`"):
+        assert banned not in code, banned
 
 
 def test_the_picture_needs_no_files_and_no_network():
@@ -128,7 +141,7 @@ def test_the_new_files_are_served(tmp_path: Path):
 def ask(*requests: dict[str, Any]) -> list[Any]:
     """Run requests through share_harness.mjs (see there for the operations)."""
     done = subprocess.run(
-        [NODE, str(HARNESS), str(STATIC / "cardmodel.js"), str(STATIC / "card.js")],
+        [NODE, str(HARNESS), str(STATIC / "cardmodel.js"), str(STATIC / "card.js"), str(STATIC / "lands.js")],
         input=json.dumps(requests),
         capture_output=True,
         text=True,
@@ -222,6 +235,12 @@ ELSEWHERE = road_of(
     stretch(1, 0, 0, (20, 0), mode="t", belt=False, level=60),
     stretch(0, 5, 5, (0, 90), level=60),
 )
+# One continent, and a road long enough to be seen on all of it.
+LONG_LAND = road_of(
+    stretch(0, -9000, 300, (3000, -800), (3200, -900), level=30), stretch(0, -2800, -1400, (900, 400), level=31)
+)
+# A continent with a map beside one without (another client's world).
+MIXED = road_of(stretch(1, 1600, -4300, (-2000, 1600), level=58), stretch(530, 0, 0, (900, 100), (-200, 800), level=59))
 # Narrow and tall, wide and flat: the road must fit whatever its shape.
 TALL = road_of(stretch(1, -9000, 0, (18000, 40), level=1), stretch(0, 0, 0, (30, 20), level=1))
 FLAT = road_of(stretch(1, 0, -9000, (40, 18000), level=30), stretch(0, 0, -9000, (-25, 18000), belt=False, level=60))
@@ -459,7 +478,9 @@ def test_the_road_of_the_character_is_a_tile_of_its_own():
     miles = ROAD["yards"] / 1760
     share = round(100 * ROAD["belt_yards"] / ROAD["yards"])
     assert tile["label"] == ["My road"] and tile["wide"] is True
-    assert tile["sub"] == f"{miles:.1f} in-game miles" and tile["note"] == f"{share}% walked for real"
+    # (Said to be the road's: the tile beside it has in-game miles of its own.)
+    assert tile["sub"] == f"{miles:.1f} in-game miles of road"
+    assert tile["note"] == f"{share}% of it walked for real"
     assert tile["plain"] == (
         f"My road on Kalimdor and Eastern Kingdoms: {miles:.1f} in-game miles, {share}% of it walked on the treadmill"
     )
@@ -469,10 +490,71 @@ def test_the_road_of_the_character_is_a_tile_of_its_own():
     assert route["start"] == ROAD["start"] and route["end"] == ROAD["end"]
     assert [mark["level"] for mark in route["milestones"]] == [10, 20]
     assert sum(len(path["p"]) for land in route["continents"] for path in land["paths"]) > 400
+    # The gem carries the character's level; the boat between the continents is an arc.
+    assert route["level"] == 17
+    assert route["crossings"] == ROAD["crossings"] and len(route["crossings"]) == 1
+    assert route["crossings"][0]["from"]["c"] == 1 and route["crossings"][0]["to"]["c"] == 0
 
     km = tiles_of(build(road=ROAD, options={"units": "km"}))["route"]
-    assert km["sub"] == f"{ROAD['yards'] * 0.9144 / 1000:.1f} in-game km"
+    assert km["sub"] == f"{ROAD['yards'] * 0.9144 / 1000:.1f} in-game km of road"
     assert tiles_of(build(road=ROAD, units="kmh"))["route"]["sub"] == km["sub"]
+
+
+@needs_node
+def test_the_road_lies_on_a_map_of_its_continent():
+    lands = json.loads(read("lands.js").split("export const LANDS = ", 1)[1].rstrip().rstrip(";"))
+    route = tiles_of(build(road=ROAD))["route"]["route"]
+    for land in route["continents"]:
+        own = lands[str(land["id"])]
+        assert land["land"] == {key: own[key] for key in ("bounds", "points", "coast", "faces")}
+    # A continent this client's maps know nothing of: its road is drawn all the same.
+    assert [land["land"] for land in tiles_of(build(road=ELSEWHERE))["route"]["route"]["continents"]] == [None, None]
+    mixed = tiles_of(build(road=MIXED))["route"]["route"]["continents"]
+    assert [(land["id"], land["land"] is not None) for land in mixed] == [(1, True), (530, False)]
+    # No maps handed over at all.
+    assert all(land["land"] is None for land in tiles_of(build(road=ROAD, lands=False))["route"]["route"]["continents"])
+
+
+@needs_node
+@pytest.mark.parametrize(
+    "damage",
+    [
+        {"points": [0, 0, 10]},
+        {"points": [0, 0, 10, 0, 0, "ten"]},
+        {"points": [0, 0, 10, 0]},
+        {"bounds": [0, 0, 10]},
+        {"bounds": [10, 0, 0, 10]},
+        {"bounds": [0, 0, None, 10]},
+        {"coast": []},
+        {"coast": [[0, 1]]},
+        {"coast": [[0, 1, 3]]},
+        {"coast": [[0, 1, -1]]},
+        {"coast": "0,1,2"},
+        {"faces": [0, 1, 2]},
+        {"faces": [0, 1, 7, 4]},
+        {"faces": [0, 1, 2.5, 4]},
+        {"faces": [0, 1, 2, None]},
+        {"faces": None},
+    ],
+)
+def test_a_damaged_map_is_left_out_and_the_road_still_drawn(about, damage: dict[str, Any]):
+    sound = {"bounds": [0, 0, 10, 10], "points": [0, 0, 10, 0, 0, 10], "coast": [[0, 1, 2]], "faces": [0, 1, 2, 4]}
+    road = road_of(stretch(1, 1, 1, (5, 5)))
+    assert tiles_of(build(road=road, lands={"1": sound}))["route"]["route"]["continents"][0]["land"] == sound
+    broken = {"1": {**sound, **damage}}
+    assert tiles_of(build(road=road, lands=broken))["route"]["route"]["continents"][0]["land"] is None
+    drawn = ask(
+        {
+            "op": "draw",
+            "size": "portrait",
+            "theme": about["themes"][0]["id"],
+            "character": character(),
+            "road": road,
+            "lands": broken,
+        }
+    )
+    (plate,) = drawn[0]["report"]["route"]["plates"]
+    assert plate["mapped"] is False and plate["road"]["points"] == 2
 
 
 @needs_node
@@ -519,18 +601,50 @@ def test_the_road_is_laid_out_west_to_east_and_never_more_than_two_lands():
 def test_a_road_nobody_walked_for_real_does_not_say_zero_percent():
     never = road_of(stretch(1, 0, 0, (1760, 0), belt=False))
     tile = tiles_of(build(road=never))["route"]
-    assert tile["sub"] == "1.0 in-game miles" and tile["note"] == ""
+    assert tile["sub"] == "1.0 in-game miles of road" and tile["note"] == ""
     assert tile["plain"] == "My road on Kalimdor: 1.0 in-game miles"
     all_of_it = tiles_of(build(road=road_of(stretch(1, 0, 0, (1760, 0)))))["route"]
-    assert all_of_it["note"] == "100% walked for real"
-    # Numbers that are missing or make no sense never reach the picture as such.
-    odd = tiles_of(build(road={**ROAD, "yards": None, "belt_yards": "many"}))["route"]
-    assert odd["sub"] == "0.0 in-game miles" and odd["note"] == ""
+    assert all_of_it["note"] == "100% of it walked for real"
     more = tiles_of(build(road={**ROAD, "yards": 100, "belt_yards": 900}))["route"]
-    assert more["note"] == "100% walked for real"
-    # The first few yards of a new character: no percentage of "0.0 miles".
-    first = tiles_of(build(road=FIRST_STEPS))["route"]
-    assert first["sub"] == "0.0 in-game miles" and first["note"] == "" and "%" not in first["plain"]
+    assert more["note"] == "100% of it walked for real"
+
+
+@needs_node
+def test_a_road_too_short_to_measure_says_where_it_starts():
+    # The first few yards of a new character: no "0.0 miles", no percentage of them.
+    for road in (FIRST_STEPS, STANDING, {**ROAD, "yards": None, "belt_yards": "many"}, {**ROAD, "yards": 80}):
+        tile = tiles_of(build(road=road))["route"]
+        assert tile["sub"] == "My road starts here" and tile["note"] == "", road["yards"]
+        assert "0.0" not in tile["plain"] and "%" not in tile["plain"] and tile["plain"].endswith("starts here")
+    assert tiles_of(build(road=FIRST_STEPS))["route"]["plain"] == "My road on Kalimdor starts here"
+
+
+@needs_node
+def test_what_the_road_tile_is_given_is_cleaned_up():
+    odd = {
+        **ROAD,
+        "start": {"c": 1, "x": "north"},
+        "end": None,
+        "level": "high",
+        "milestones": [
+            {"level": 10, "c": 1, "x": 5, "y": 5},
+            {"level": "x", "c": 1, "x": 1, "y": 1},
+            {"c": 1},
+            None,
+            7,
+        ],
+        "crossings": [None, {"from": ROAD["start"]}, {"from": ROAD["start"], "to": ROAD["end"]}]
+        + [ROAD["crossings"][0]] * 9,
+    }
+    route = tiles_of(build(road=odd, character=character(level=None)))["route"]["route"]
+    assert route["start"] is None and route["end"] is None and route["level"] is None
+    assert route["milestones"] == [{"level": 10, "c": 1, "x": 5, "y": 5}]
+    assert len(route["crossings"]) == 3 and route["crossings"][0] == {"from": ROAD["start"], "to": ROAD["end"]}
+    # Without a level from the game, the road's own.
+    assert tiles_of(build(road=ROAD, character=character(level=None)))["route"]["route"]["level"] == ROAD["level"]
+    for road in ({**ROAD, "milestones": "none", "crossings": 5}, {**ROAD, "milestones": None, "crossings": None}):
+        route = tiles_of(build(road=road))["route"]["route"]
+        assert route["milestones"] == [] and route["crossings"] == []
 
 
 # ---- the drawing: nothing ever leaves its box ---------------------------------------------------------
@@ -585,6 +699,10 @@ CASES = {
         "road": ROAD,
         "options": {"tiles": {"steps": 0, "played": 0}},
     },
+    "road, long, one land": {"character": character(), "road": LONG_LAND},
+    "road, mixed": {"character": character(), "road": MIXED},
+    "road, no map": {"character": character(level=23), "road": ROAD, "lands": False},
+    "road, one land, no map": {"character": character(), "road": ONE_LAND, "lands": False},
     "road, no words": {
         "character": character(),
         "road": TALL,
@@ -655,14 +773,29 @@ def test_text_never_leaves_its_panel(about, char_width: float):
         for tile, parts in by_tile.items():
             order = [parts[part] for part in ("label", "value", "sub", "note") if part in parts]
             for upper, lower in itertools.pairwise(order):
-                assert upper["bottom"] <= lower["top"] + 0.01, (where, tile)
+                # (Where the road's panel is wide, its two lines stand side by side.)
+                beside = tile == "route" and upper["right"] <= lower["left"] + 0.01
+                assert beside or upper["bottom"] <= lower["top"] + 0.01, (where, tile)
+
+
+def box_of(thing: dict[str, float]) -> dict[str, float]:
+    return {"left": thing["x"], "right": thing["x"] + thing["w"], "top": thing["y"], "bottom": thing["y"] + thing["h"]}
+
+
+def apart(a: dict[str, float], b: dict[str, float], slack: float = 0.01) -> bool:
+    return (
+        a["right"] <= b["left"] + slack
+        or b["right"] <= a["left"] + slack
+        or a["bottom"] <= b["top"] + slack
+        or b["bottom"] <= a["top"] + slack
+    )
 
 
 @needs_node
 @pytest.mark.parametrize("char_width", [0.45, 0.8])
 def test_the_road_is_drawn_inside_its_panel(about, char_width: float):
     """Whatever the road's shape - two continents, one, a few yards, none at
-    all - in every theme and size."""
+    all, with a map behind it or without - in every theme and size."""
     combos = list(itertools.product(ROAD_CASES, about["themes"], about["sizes"]))
     requests = [
         {
@@ -682,29 +815,203 @@ def test_the_road_is_drawn_inside_its_panel(about, char_width: float):
         (panel,) = [panel for panel in report["panels"] if panel["id"] == "route"]
         reach = report["route"]
         assert reach is not None and reach["points"] >= 2, where
-        box = reach["box"]
-        assert inside(
-            {"left": box["x"], "right": box["x"] + box["w"], "top": box["y"], "bottom": box["y"] + box["h"]}, panel
-        )
-        assert inside(reach, box), (where, reach)
-        # The road is given the room there is: a real road is no speck in a corner.
-        if name not in ("road, first steps", "road, standing"):
-            assert max(reach["right"] - reach["left"], reach["bottom"] - reach["top"]) >= 0.3 * min(
-                box["w"], box["h"]
-            ), where
-        # Its words: the label above, the length below, the lands' names in between.
+        box = box_of(reach["box"])
+        assert inside(box, panel), where
         texts = {text["id"]: text for text in report["texts"] if text["id"].startswith("route.")}
         assert texts["route.label"]["text"] == "MY ROAD" and "route.sub" in texts, where
-        assert texts["route.label"]["bottom"] <= reach["top"] + 0.01, where
-        assert texts["route.sub"]["top"] >= reach["bottom"] - 0.01, where
-        names = [text for key, text in texts.items() if key.startswith("route.land")]
-        for text in names:
-            assert reach["bottom"] <= text["top"] + 0.01 and text["bottom"] <= texts["route.sub"]["top"] + 0.01, where
-        for a, b in itertools.combinations(names, 2):
-            assert a["right"] <= b["left"] or b["right"] <= a["left"], (where, a["text"], b["text"])
+
+        # A plate for each continent: inside the panel, side by side, under
+        # the label and over the words below.
+        plates = reach["plates"]
+        assert 1 <= len(plates) <= 2, where
+        for plate in plates:
+            sea = box_of(plate)
+            assert inside(sea, reach["box"]), (where, plate["id"])
+            assert plate["w"] > 30 and plate["h"] > 30, (where, plate)
+            assert texts["route.label"]["bottom"] <= sea["top"] + 0.01, where
+            assert texts["route.sub"]["top"] >= sea["bottom"] - 0.01, where
+            # The road is on its plate, all of it.
+            assert plate["road"]["points"] >= 2 and inside(plate["road"], plate), (where, plate["road"])
+            name_text = texts.get(f"route.land{plate['id']}")
+            if name_text:
+                assert sea["bottom"] <= name_text["top"] + 0.01, where
+                assert name_text["bottom"] <= texts["route.sub"]["top"] + 0.01, where
+                # ... under its own continent.
+                assert sea["left"] - 0.01 <= name_text["left"] and name_text["right"] <= sea["right"] + 0.01, where
+        for a, b in itertools.combinations(plates, 2):
+            assert a["x"] + a["w"] <= b["x"] + 0.01, (where, "plates overlap")
+        # The words on the map - the start, the level at the gem, the tens -
+        # are on a plate and never on top of one another.
+        marks = [
+            text for key, text in texts.items() if key in ("route.start", "route.now") or key.startswith("route.level")
+        ]
+        for text in marks:
+            assert any(inside(text, plate) for plate in plates), (where, text["id"])
+        for a, b in itertools.combinations(marks, 2):
+            assert apart(a, b), (where, a["id"], b["id"])
         # Nothing was drawn at a place that is no place.
         for call in result.get("calls") or []:
             assert None not in call, (where, call)
+
+
+def draw_road(about, road: dict[str, Any], **request: Any) -> list[tuple[str, dict[str, Any], dict[str, Any]]]:
+    """The road's panel in every size: (size, what the map reports, its words)."""
+    requests = [
+        {
+            "op": "draw",
+            "size": size["id"],
+            "theme": about["themes"][0]["id"],
+            "character": character(),
+            "road": road,
+            **request,
+        }
+        for size in about["sizes"]
+    ]
+    out = []
+    for size, result in zip(about["sizes"], ask(*requests), strict=True):
+        report = result["report"]
+        texts = {text["id"]: text for text in report["texts"] if text["id"].startswith("route.")}
+        out.append((size["id"], report["route"], texts))
+    return out
+
+
+@needs_node
+def test_two_continents_share_one_sea_and_one_scale(about):
+    for size, reach, texts in draw_road(about, ROAD):
+        kalimdor, east = reach["plates"]
+        assert (kalimdor["id"], east["id"]) == (1, 0), size
+        assert kalimdor["shared"] and east["shared"] and not kalimdor["zoomed"] and not east["zoomed"], size
+        assert kalimdor["x"] + kalimdor["w"] == pytest.approx(east["x"]), size  # no gap: one sheet of sea
+        for plate in (kalimdor, east):
+            # All of the continent is there, inside its part of the sea.
+            assert plate["mapped"] and inside(plate["land"], plate), (size, plate["land"])
+            # ... and the road runs on it.
+            land = plate["land"]
+            on_land = {
+                "x": land["left"],
+                "y": land["top"],
+                "w": land["right"] - land["left"],
+                "h": land["bottom"] - land["top"],
+            }
+            assert inside(plate["road"], on_land, slack=1), size
+        # One scale: Kalimdor is the taller of the two by as much as it is in the world.
+        tall = lambda plate: plate["land"]["bottom"] - plate["land"]["top"]  # noqa: E731
+        assert tall(kalimdor) / tall(east) == pytest.approx((11240 + 10670) / (3680 + 15210), rel=0.02), size
+        # The map is given the room there is.
+        assert (
+            max(tall(kalimdor) / kalimdor["h"], (kalimdor["land"]["right"] - kalimdor["land"]["left"]) / kalimdor["w"])
+            > 0.8
+        ), size
+        assert texts["route.start"]["text"] == "START" and texts["route.now"]["text"] == "LV 17", size
+        assert {key for key in texts if key.startswith("route.level")} == {"route.level10", "route.level20"}, size
+        assert texts["route.land1"]["text"] == "KALIMDOR" and texts["route.land0"]["text"] == "EASTERN KINGDOMS", size
+        assert texts["route.land1"]["right"] <= texts["route.land0"]["left"], size
+
+
+@needs_node
+def test_a_short_road_on_one_continent_is_shown_close_up(about):
+    """A new character's first evenings: the plate closes in on the road,
+    and a small map in a corner says where on the continent that is."""
+    for size, reach, texts in draw_road(about, ONE_LAND):
+        (plate,) = reach["plates"]
+        assert plate["mapped"] and plate["zoomed"] and not plate["shared"], size
+        # The land runs past the plate's edge: this is a part of it ...
+        land = plate["land"]
+        assert land["bottom"] - land["top"] > 1.5 * plate["h"], size
+        # ... and the road is a good part of what is shown.
+        road = plate["road"]
+        assert max((road["right"] - road["left"]) / plate["w"], (road["bottom"] - road["top"]) / plate["h"]) > 0.22, (
+            size
+        )
+        inset = plate["inset"]
+        assert inset and inside(box_of(inset), plate), size
+        assert inset["w"] < 0.5 * plate["w"] and inset["h"] < 0.5 * plate["h"], size
+        # The small map keeps out of the road's way.
+        assert apart(box_of(inset), road), size
+        assert texts["route.land0"]["text"] == "EASTERN KINGDOMS", size
+    # The very first steps: still a map of somewhere, with the gem on it.
+    for size, reach, texts in draw_road(about, FIRST_STEPS, character=EMPTY):
+        (plate,) = reach["plates"]
+        assert plate["zoomed"] and plate["inset"], size
+        assert texts["route.sub"]["text"] == "MY ROAD STARTS HERE" and "route.note" not in texts, size
+        assert texts["route.now"]["text"] == "LV 1" and "route.start" not in texts, (
+            size
+        )  # (start and gem are one place)
+
+
+@needs_node
+def test_a_long_road_on_one_continent_is_shown_on_all_of_it(about):
+    for size, reach, _texts in draw_road(about, LONG_LAND):
+        (plate,) = reach["plates"]
+        assert plate["mapped"] and not plate["zoomed"] and plate["inset"] is None, size
+        assert inside(plate["land"], plate), size
+
+
+@needs_node
+def test_roads_without_a_map_are_drawn_on_an_empty_chart(about):
+    for size, reach, texts in draw_road(about, ROAD, lands=False):
+        assert [(plate["mapped"], plate["zoomed"], plate["shared"], plate["land"]) for plate in reach["plates"]] == [
+            (False, False, False, None)
+        ] * 2, size
+        left, right = reach["plates"]
+        assert left["x"] + left["w"] < right["x"], size  # two plates, a gap between
+        # Each road fills its plate.
+        for plate in reach["plates"]:
+            road = plate["road"]
+            assert (
+                max((road["right"] - road["left"]) / plate["w"], (road["bottom"] - road["top"]) / plate["h"]) > 0.6
+            ), size
+        assert "route.start" in texts and "route.now" in texts, size
+    # A map for one continent and none for the other: each plate as it can be.
+    for size, reach, _texts in draw_road(about, MIXED):
+        assert [(plate["id"], plate["mapped"], plate["shared"]) for plate in reach["plates"]] == [
+            (1, True, False),
+            (530, False, False),
+        ], size
+    # A few yards without a map are not blown up to fill the plate.
+    for size, reach, _texts in draw_road(about, FIRST_STEPS, lands=False):
+        road = reach["plates"][0]["road"]
+        assert road["right"] - road["left"] < 12 and road["bottom"] - road["top"] < 12, size
+
+
+@needs_node
+def test_the_three_kinds_of_road_are_drawn_differently(about):
+    request = {
+        "op": "draw",
+        "size": "portrait",
+        "theme": about["themes"][0]["id"],
+        "character": character(),
+        "calls": True,
+    }
+    walked = road_of(stretch(1, 0, -3000, (3000, 0)))
+    still = road_of(stretch(1, 0, -3000, (3000, 0), belt=False))
+    flown = road_of(stretch(1, 0, -3000, (3000, 0)), stretch(1, 3000, -3000, (2000, 500), mode="t", belt=False))
+    crossed = road_of(stretch(1, 0, -3000, (3000, 0)), stretch(0, -9000, 0, (3000, 0)))
+    results = ask(*[{**request, "road": road} for road in (walked, still, flown, crossed)])
+    dashes = [[call for call in result["calls"] if call[0] == "setLineDash" and len(call) > 1] for result in results]
+    strokes = [sum(1 for call in result["calls"] if call[0] == "stroke") for result in results]
+    # Only a flight - and the passage from one continent to the other - is dashed.
+    assert [len(found) for found in dashes] == [0, 0, 1, 1]
+    # A road walked for real has a glow that the same road with the belt
+    # still has not (one stroke more) - and a piece of that bright line, edge
+    # and glow and all, stands in front of "walked for real" (three more).
+    assert strokes[0] == strokes[1] + 4
+    # The line in front of "walked for real" is the walked road's own; without that line of words, no sample.
+    assert "route.note" in {text["id"] for text in results[0]["report"]["texts"]}
+    assert "route.note" not in {text["id"] for text in results[1]["report"]["texts"]}
+
+
+@needs_node
+def test_marks_on_a_short_road_do_not_pile_up(about):
+    # Start, a level reached and the gem within a few yards of one another.
+    crowded = road_of(stretch(0, -9000, 200, (40, 0), level=9), stretch(0, -8960, 200, (30, 10), level=10))
+    for size, _reach, texts in draw_road(about, crowded):
+        marks = [
+            text for key, text in texts.items() if key in ("route.start", "route.now") or key.startswith("route.level")
+        ]
+        assert "route.now" in texts, size  # the gem and its level always
+        for a, b in itertools.combinations(marks, 2):
+            assert apart(a, b), (size, a["id"], b["id"])
 
 
 @needs_node

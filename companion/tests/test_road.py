@@ -181,6 +181,8 @@ def test_the_road_as_the_page_gets_it():
         "start": {"c": 1, "x": 0, "y": 0},
         "end": {"c": 0, "x": -10, "y": -20},
         "milestones": [{"level": 10, "c": 1, "x": 200, "y": 100}],
+        # From the end of the flight to where the ride begins: another continent.
+        "crossings": [{"from": {"c": 1, "x": 1300, "y": 600}, "to": {"c": 0, "x": -50, "y": -50}}],
         "continents": [
             {
                 "id": 1,
@@ -218,6 +220,32 @@ def test_milestones_are_only_the_tens_reached_on_the_recorded_road():
     assert marks(28, 31, 58, 60) == [(30, 100), (40, 200), (50, 200), (60, 300)]
     assert marks(0, 12) == [(10, 100)]  # (a level the game would not say counts as none)
     assert marks(30, 29, 30) == []
+
+
+def test_passages_between_continents():
+    def crossings(*legs: tuple[int, int, int]) -> list[tuple[tuple[int, int, int], tuple[int, int, int]]]:
+        got = read(database(*[segment(x, y, [(20, 0)], c=c) for c, x, y in legs])).to_api(NOW)["crossings"]
+        return [
+            ((a["c"], a["x"], a["y"]), (b["c"], b["x"], b["y"]))
+            for a, b in ((entry["from"], entry["to"]) for entry in got)
+        ]
+
+    # One continent: none. A jump within a continent (a hearthstone) is none either.
+    assert crossings((1, 0, 0), (1, 5000, 5000)) == []
+    # There: from the last place on the one to the first on the other.
+    assert crossings((1, 0, 0), (0, 900, 900)) == [((1, 20, 0), (0, 900, 900))]
+    # There and back by the same boat, ten times over: still one passage.
+    boat = [(1, 0, 0), (0, 880, 900)] * 10
+    assert crossings(*boat) == [((1, 20, 0), (0, 880, 900))]
+    # Several: the ones travelled most come first, and three are enough for a picture.
+    often = [(1, 0, 0), (0, 5000, 0)] * 3
+    twice = [(1, 3000, 0), (0, -5000, 0)] * 2
+    once = [(1, 6000, 0), (0, -9000, 0)]
+    rare = [(1, -6000, 0), (0, 9000, 0)]
+    got = crossings(*(rare + once + twice + often))
+    assert len(got) == 3
+    assert got[0] == ((1, 20, 0), (0, 5000, 0))  # there three times and back twice
+    assert got[1] == ((1, 3020, 0), (0, -5000, 0))
 
 
 def test_an_unknown_continent_has_no_name_and_the_longest_comes_first():
@@ -279,6 +307,8 @@ def test_the_demo_road():
     api = demo_road(DEMO_KEY).to_api(NOW)
     assert [entry["name"] for entry in api["continents"]] == ["Kalimdor", "Eastern Kingdoms"]
     assert [mark["level"] for mark in api["milestones"]] == [10, 20] and api["level"] == 23
+    assert api["start"] == {"c": 1, "x": 10311, "y": 832}  # Shadowglen: a night elf's first steps
+    assert [(entry["from"]["c"], entry["to"]["c"]) for entry in api["crossings"]] == [(1, 0)]
     assert 0 < api["belt_yards"] < api["yards"] and api["flight_yards"] > 0
     styles = {path["style"] for entry in api["continents"] for path in entry["paths"]}
     assert styles == {"walked", "road", "flight"}

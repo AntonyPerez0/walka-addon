@@ -9,6 +9,7 @@ import logging
 import logging.handlers
 import math
 import queue
+import re
 import signal
 import sys
 import threading
@@ -537,6 +538,32 @@ WINDOWS_RUNTIME_MODULES: tuple[str, ...] = (
 )
 
 
+def missing_page_files(static: Path) -> list[str]:
+    """Files the dashboard page needs that are not there: what index.html
+    loads, and whatever those scripts import in turn (a script left out of
+    the build would only show as a view that stays empty)."""
+    page = static / "index.html"
+    if not page.is_file():
+        return ["index.html"]
+    wanted = re.findall(r"""(?:src|href)=["'](?!https?:|//|#|data:)/?(?:static/)?([^"'#?]+)""", page.read_text("utf-8"))
+    seen: set[str] = set()
+    missing: list[str] = []
+    while wanted:
+        name = wanted.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        file = static / name
+        if not file.is_file():
+            missing.append(name)
+        elif file.suffix == ".js":
+            imports = re.findall(
+                r"""^\s*(?:import|export)\b[^;]*?\bfrom\s*["']\./([^"']+)["']""", file.read_text("utf-8"), re.M
+            )
+            wanted += [str(Path(name).parent / target).replace("\\", "/").removeprefix("./") for target in imports]
+    return sorted(missing)
+
+
 def _selfcheck() -> int:
     """Hidden command: is everything this build needs at run time there?
     Prints one line; exits 0 if so."""
@@ -547,9 +574,10 @@ def _selfcheck() -> int:
             importlib.import_module(name)
         except Exception as exc:
             problems.append(f"cannot import {name} ({type(exc).__name__}: {exc})")
-    page = Path(__file__).parent / "static" / "index.html"
-    if not page.is_file():
-        problems.append(f"the dashboard page is missing ({page})")
+    static = Path(__file__).parent / "static"
+    absent = missing_page_files(static)
+    if absent:
+        problems.append(f"the dashboard page is missing files ({', '.join(absent)} in {static})")
     if addon_sync.bundled_addon_dir() is None:
         problems.append("the addon folder is missing")
     if problems:

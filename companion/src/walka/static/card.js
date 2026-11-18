@@ -53,6 +53,8 @@ export const THEMES = [
     gem: ["#eaffff", "#69d2ff", "#1e73e8", "#0b2f8f"],
     glow: "90,165,255",
     shade: "0,0,0",
+    // The road's map: the sea, the land, its coast, and a road not walked for real.
+    map: { sea: "rgba(2,5,26,0.5)", land: "#3b4a86", coast: "rgba(176,202,255,0.8)", dim: "rgba(126,212,255,0.66)" },
   },
   {
     id: "ember",
@@ -77,6 +79,8 @@ export const THEMES = [
     gem: ["#fff3da", "#ffb04f", "#e4571d", "#7c1d0a"],
     glow: "255,130,50",
     shade: "0,0,0",
+    // The road's map: the sea, the land, its coast, and a road not walked for real.
+    map: { sea: "rgba(10,3,3,0.5)", land: "#70402f", coast: "rgba(255,206,170,0.75)", dim: "rgba(255,183,131,0.66)" },
   },
   {
     id: "wildwood",
@@ -101,6 +105,8 @@ export const THEMES = [
     gem: ["#ecfff5", "#64e8a8", "#17a26b", "#064e3b"],
     glow: "80,230,170",
     shade: "0,0,0",
+    // The road's map: the sea, the land, its coast, and a road not walked for real.
+    map: { sea: "rgba(1,12,10,0.5)", land: "#2c6553", coast: "rgba(176,244,214,0.75)", dim: "rgba(138,242,200,0.64)" },
   },
   {
     id: "frost",
@@ -125,6 +131,8 @@ export const THEMES = [
     gem: ["#ffffff", "#c2ecff", "#5cabe8", "#2b509c"],
     glow: "150,205,255",
     shade: "0,0,0",
+    // The road's map: the sea, the land, its coast, and a road not walked for real.
+    map: { sea: "rgba(4,9,20,0.5)", land: "#465a7a", coast: "rgba(206,228,255,0.78)", dim: "rgba(170,223,255,0.64)" },
   },
   {
     id: "parchment",
@@ -150,6 +158,8 @@ export const THEMES = [
     gem: ["#ffeae2", "#e36d5e", "#a5262b", "#5b1019"],
     glow: "255,255,255",
     shade: "96,62,20",
+    // The road's map: the sea, the land, its coast, and a road not walked for real.
+    map: { sea: "rgba(140,104,52,0.13)", land: "#d0bc9b", coast: "rgba(96,66,30,0.75)", dim: "rgba(122,90,56,0.85)" },
   },
 ];
 
@@ -876,6 +886,223 @@ function tile(ctx, report, theme, box, item, unit, hero, slots) {
  * and west is left. Two continents stand side by side at one scale, each
  * given the width its road needs.
  */
+// ---- the road, on a map ------------------------------------------------------------------------
+
+/**
+ * A continent as a low-poly map: its outline filled, facets in ten shades
+ * over it (a made-up relief, lit from the north-west), and the coast as a
+ * fine line. `at` turns world yards into a place on the picture. Returns
+ * how far the land reaches there.
+ */
+function drawLand(ctx, theme, land, at, s) {
+  const corners = land.points.length / 2;
+  const px = new Array(corners);
+  const py = new Array(corners);
+  const reach = { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity, faces: land.faces.length / 4 };
+  for (let i = 0; i < corners; i += 1) {
+    [px[i], py[i]] = at(land.points[2 * i], land.points[2 * i + 1]);
+    reach.left = Math.min(reach.left, px[i]);
+    reach.right = Math.max(reach.right, px[i]);
+    reach.top = Math.min(reach.top, py[i]);
+    reach.bottom = Math.max(reach.bottom, py[i]);
+  }
+  coastPath(ctx, land, px, py);
+  ctx.save();
+  ctx.lineJoin = "round";
+  // The ground: one flat tone, so that no seam shows between the facets,
+  // lifted off the sea by a soft glow (a shadow, on paper).
+  ctx.save();
+  ctx.shadowColor = theme.light ? rgba(theme.shade, 0.4) : rgba(theme.glow, 0.32);
+  ctx.shadowBlur = 14 * s;
+  ctx.shadowOffsetY = theme.light ? 2 * s : 0;
+  ctx.fillStyle = theme.map.land;
+  ctx.fill();
+  ctx.restore();
+  // The facets: the lit ones a little lighter, the ones in shadow a little
+  // darker. All of a shade are filled at once.
+  const steps = 10;
+  for (let shade = 0; shade < steps; shade += 1) {
+    const lit = (shade - (steps - 1) / 2) / ((steps - 1) / 2); // -1 (in shadow) to 1 (lit)
+    if (Math.abs(lit) < 0.05) continue;
+    ctx.beginPath();
+    let any = false;
+    for (let i = 0; i < land.faces.length; i += 4) {
+      if (land.faces[i + 3] !== shade) continue;
+      const [a, b, c] = [land.faces[i], land.faces[i + 1], land.faces[i + 2]];
+      ctx.moveTo(px[a], py[a]);
+      ctx.lineTo(px[b], py[b]);
+      ctx.lineTo(px[c], py[c]);
+      ctx.closePath();
+      any = true;
+    }
+    if (!any) continue;
+    if (theme.light) ctx.fillStyle = lit > 0 ? rgba("255,252,242", 0.3 * lit) : rgba(theme.shade, -0.16 * lit);
+    else ctx.fillStyle = lit > 0 ? rgba("255,255,255", 0.11 * lit) : rgba("0,0,0", -0.16 * lit);
+    ctx.fill();
+  }
+  // The coast.
+  coastPath(ctx, land, px, py);
+  ctx.strokeStyle = theme.map.coast;
+  ctx.lineWidth = Math.max(1, 1.3 * s);
+  ctx.stroke();
+  ctx.restore();
+  return reach;
+}
+
+function coastPath(ctx, land, px, py) {
+  ctx.beginPath();
+  for (const ring of land.coast) {
+    ring.forEach((corner, i) => (i === 0 ? ctx.moveTo(px[corner], py[corner]) : ctx.lineTo(px[corner], py[corner])));
+    ctx.closePath();
+  }
+}
+
+/**
+ * What a plate shows of a continent, as {x, y, scale, zoomed}: the world
+ * place (yards: x north, y west) at the plate's middle and the pixels a
+ * yard.
+ *
+ * With a map of the continent all of it is shown - unless `alone` (it is
+ * the only continent on the picture) and the road is short: then the plate
+ * closes in on the road, never to less than a fifth of the continent, so
+ * that the coast still says where this is. Without a map the plate shows
+ * where the road goes.
+ */
+function mapView(land, w, h, s, alone) {
+  const road = land.bounds;
+  const shape = w / h;
+  // The window of the plate's shape around the bounds `b`, at least `least` yards tall.
+  const fit = (b, least = 1) => {
+    const tall = Math.max(b[2] - b[0], (b[3] - b[1]) / shape, least);
+    const x = (b[0] + b[2]) / 2;
+    const y = (b[1] + b[3]) / 2;
+    return [x - tall / 2, y - (tall * shape) / 2, x + tall / 2, y + (tall * shape) / 2];
+  };
+  const view = (window, zoomed) => ({
+    x: (window[0] + window[2]) / 2,
+    y: (window[1] + window[3]) / 2,
+    scale: h / (window[2] - window[0]),
+    zoomed,
+  });
+  const margin = Math.max(300, 0.2 * Math.max(road[2] - road[0], road[3] - road[1]));
+  const near = [road[0] - margin, road[1] - margin, road[2] + margin, road[3] + margin];
+  if (!land.land) {
+    // (The first few yards of a new character are not blown up into a
+    // journey: a road fills its plate from about a hundred yards on.)
+    const around = [road[0] - margin / 3, road[1] - margin / 3, road[2] + margin / 3, road[3] + margin / 3];
+    return view(fit(around, h / (2 * s)), false);
+  }
+  const map = land.land.bounds;
+  const whole = [Math.min(road[0], map[0]), Math.min(road[1], map[1]), Math.max(road[2], map[2]), Math.max(road[3], map[3])];
+  const all = fit(whole);
+  const tall = map[2] - map[0];
+  // (A road that spans a third of the continent is long enough to be seen on all of it.)
+  if (!alone || Math.max(road[2] - road[0], road[3] - road[1]) >= 0.3 * tall) return view(all, false);
+  const close = fit(near, 0.2 * tall);
+  if (close[2] - close[0] >= 0.7 * (all[2] - all[0])) return view(all, false);
+  // Closed in on the road - but not looking out over open sea where there
+  // is land to show instead.
+  const slide = (lo, hi, least, most) => (lo < least ? least - lo : hi > most ? most - hi : 0);
+  const dx = slide(close[0], close[2], all[0], all[2]);
+  const dy = slide(close[1], close[3], all[1], all[3]);
+  return view([close[0] + dx, close[1] + dy, close[2] + dx, close[3] + dy], true);
+}
+
+/** A stretch of road as a path. `p`: [x0, y0, x1, y1, ...] in world yards. */
+function tracePath(ctx, at, p) {
+  ctx.beginPath();
+  for (let i = 0; i + 1 < p.length; i += 2) {
+    const [px, py] = at(p[i], p[i + 1]);
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+}
+
+/** The three kinds of road, each with a look of its own. */
+function strokeRoad(ctx, theme, kind, s) {
+  const casing = theme.light ? "rgba(255,250,236,0.9)" : rgba(theme.shade, 0.55);
+  if (kind === "flight") {
+    // A flight: a fine dashed line.
+    ctx.setLineDash([4 * s, 3.5 * s]);
+    ctx.strokeStyle = theme.map.dim;
+    ctx.lineWidth = Math.max(1, 1.6 * s);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    return;
+  }
+  const bright = kind === "walked";
+  const width = (bright ? 4.2 : 3) * s;
+  // A dark edge (a light one on paper) keeps the road apart from the land.
+  ctx.strokeStyle = casing;
+  ctx.lineWidth = width + (bright ? 2.6 : 2) * s;
+  ctx.stroke();
+  if (bright && !theme.light) {
+    ctx.strokeStyle = rgba(theme.glow, 0.3);
+    ctx.lineWidth = width + 5 * s;
+    ctx.stroke();
+  }
+  // Walked for real: bright. Travelled with the belt still: the same road, faded.
+  ctx.strokeStyle = bright ? theme.value : theme.map.dim;
+  ctx.lineWidth = Math.max(bright ? 1.6 : 1.2, width);
+  ctx.stroke();
+}
+
+/** The whole continent in a corner of a plate that has closed in, with a frame around what the plate shows. */
+function drawInset(ctx, theme, land, view, plate, avoid, s) {
+  const map = land.bounds;
+  const tall = clamp(0.3 * plate.h, 34 * s, 92 * s);
+  const wide = Math.min(0.42 * plate.w, (tall * (map[3] - map[1])) / (map[2] - map[0]));
+  const high = (wide * (map[2] - map[0])) / (map[3] - map[1]);
+  const pad = 5 * s;
+  const box = { w: wide + 2 * pad, h: high + 2 * pad };
+  // The corner farthest from the road.
+  const corners = [
+    [plate.x + 4 * s, plate.y + 4 * s],
+    [plate.x + plate.w - box.w - 4 * s, plate.y + 4 * s],
+    [plate.x + 4 * s, plate.y + plate.h - box.h - 4 * s],
+    [plate.x + plate.w - box.w - 4 * s, plate.y + plate.h - box.h - 4 * s],
+  ];
+  const far = (corner) => Math.hypot(corner[0] + box.w / 2 - avoid[0], corner[1] + box.h / 2 - avoid[1]);
+  [box.x, box.y] = corners.reduce((best, corner) => (far(corner) > far(best) ? corner : best));
+  const scale = wide / (map[3] - map[1]);
+  const at = (x, y) => [box.x + pad + (map[3] - y) * scale, box.y + pad + (map[2] - x) * scale];
+  ctx.save();
+  outline(ctx, "round", box.x, box.y, box.w, box.h, 5 * s);
+  ctx.fillStyle = theme.light ? "rgba(255,251,238,0.82)" : rgba(theme.shade, 0.5);
+  ctx.fill();
+  ctx.strokeStyle = rgba(theme.ink, 0.3);
+  ctx.lineWidth = Math.max(1, s);
+  ctx.stroke();
+  const corner = land.points.length / 2;
+  const px = new Array(corner);
+  const py = new Array(corner);
+  for (let i = 0; i < corner; i += 1) [px[i], py[i]] = at(land.points[2 * i], land.points[2 * i + 1]);
+  coastPath(ctx, land, px, py);
+  ctx.fillStyle = theme.map.land;
+  ctx.fill();
+  ctx.strokeStyle = theme.map.coast;
+  ctx.lineWidth = Math.max(0.8, 0.8 * s);
+  ctx.stroke();
+  // What the plate shows.
+  const halfX = plate.h / 2 / view.scale;
+  const halfY = plate.w / 2 / view.scale;
+  const [l, t] = at(Math.min(map[2], view.x + halfX), Math.min(map[3], view.y + halfY));
+  const [r, b] = at(Math.max(map[0], view.x - halfX), Math.max(map[1], view.y - halfY));
+  ctx.beginPath();
+  ctx.moveTo(l, t);
+  ctx.lineTo(r, t);
+  ctx.lineTo(r, b);
+  ctx.lineTo(l, b);
+  ctx.closePath();
+  ctx.fillStyle = rgba(theme.light ? theme.shade : "255,255,255", 0.16);
+  ctx.fill();
+  ctx.strokeStyle = theme.sub;
+  ctx.lineWidth = Math.max(1.2, 1.6 * s);
+  ctx.stroke();
+  ctx.restore();
+  return box;
+}
+
 function routeTile(ctx, report, theme, box, item, unit) {
   const frame = bandOf(unit, false) + 10 * unit;
   // Type is sized like a small tile's: the panel is about as wide as one
@@ -890,219 +1117,337 @@ function routeTile(ctx, report, theme, box, item, unit) {
   const subSize = 18 * s;
   const noteSize = 14.5 * s;
 
-  const labelY = inner.y + 20 * s + labelSize * CAP;
+  const labelY = inner.y + 17 * s + labelSize * CAP;
   drawLabel(ctx, report, "route.label", item.label, { x: cx, y: labelY, size: labelSize, width, tracking: 0.17 }, theme, inner);
 
-  // Under the road: how long it is and how much of it was walked for real -
-  // on one line where the panel is wide enough, else on two.
-  const oneLine = !item.note || width >= 600 * s;
-  const lines = oneLine ? [[item.note ? `${item.sub} · ${item.note}` : item.sub, subSize, theme.sub, "sub"]] : [
-    [item.sub, subSize, theme.sub, "sub"],
-    [item.note, noteSize, theme.muted, "note"],
-  ];
-  let textTop = inner.y + inner.h - 18 * s;
-  for (const [text, size, colour, id] of lines.filter((entry) => entry[0]).reverse()) {
+  // Under the map: how long the road is and how much of it was walked for
+  // real - with a piece of the bright line in front, which is what "walked
+  // for real" looks like on the map. One line where the panel is wide
+  // enough, else two.
+  const sample = 20 * s;
+  const sampleGap = 8 * s;
+  const words = (text, size) => fitLine(ctx, text.toUpperCase(), LABEL, { size, min: size * 0.55, width, tracking: 0.14 });
+  const write = (id, fit, left, y, colour) =>
     line(
       ctx,
       report,
       `route.${id}`,
-      text.toUpperCase(),
+      fit.text,
       LABEL,
-      { x: cx, y: textTop, size, min: size * 0.55, width, tracking: 0.14 },
+      { x: left + fit.width / 2, y, size: fit.size, min: fit.size, width: fit.width + 1, tracking: 0.14 },
       (c) => (c.fillStyle = colour),
       inner,
     );
-    textTop -= size * CAP + 11 * s;
+  const key = (left, y, size) => {
+    ctx.save();
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(left + 2 * s, y - size * 0.36);
+    ctx.lineTo(left + sample - 2 * s, y - size * 0.36);
+    strokeRoad(ctx, theme, "walked", s * 0.9);
+    ctx.restore();
+  };
+  let textTop = inner.y + inner.h - 17 * s; // the baseline of the lowest line, then of the one above it, ...
+  const sub = words(item.sub, subSize);
+  if (item.note) {
+    const noteFit = fitLine(ctx, item.note.toUpperCase(), LABEL, {
+      size: noteSize,
+      min: noteSize * 0.55,
+      width: width - sample - sampleGap,
+      tracking: 0.14,
+    });
+    const stud = subSize * 1.5;
+    const together = sub.width + stud + sample + sampleGap + noteFit.width;
+    if (width >= 600 * s && together <= width) {
+      let pen = cx - together / 2;
+      write("sub", sub, pen, textTop, theme.sub);
+      pen += sub.width;
+      diamond(ctx, pen + stud / 2, textTop - subSize * 0.36, subSize * 0.17, subSize * 0.17);
+      ctx.fillStyle = theme.muted;
+      ctx.fill();
+      pen += stud;
+      key(pen, textTop, subSize);
+      write("note", noteFit, pen + sample + sampleGap, textTop, theme.muted);
+      textTop -= subSize * CAP + 11 * s;
+    } else {
+      const left = cx - (sample + sampleGap + noteFit.width) / 2;
+      key(left, textTop, noteFit.size);
+      write("note", noteFit, left + sample + sampleGap, textTop, theme.muted);
+      textTop -= noteSize * CAP + 10 * s;
+      write("sub", sub, cx - sub.width / 2, textTop, theme.sub);
+      textTop -= subSize * CAP + 11 * s;
+    }
+  } else {
+    write("sub", sub, cx - sub.width / 2, textTop, theme.sub);
+    textTop -= subSize * CAP + 11 * s;
   }
 
   const route = item.route;
   const lands = route.continents;
   if (!lands.length) return;
-  const named = lands.every((land) => land.name);
+  const named = lands.some((land) => land.name);
   const nameSize = 12.5 * s;
-  const namesY = textTop - 4 * s; // baseline of the continents' names
+  const namesY = textTop - 3 * s; // the baseline of the continents' names
+  // (The map may come closer to the panel's edge than the words do.)
+  const edge = 9 * s;
+  const top = labelY + 13 * s;
   const area = {
-    x: inner.x + padX,
-    y: labelY + 16 * s,
-    w: width,
-    h: (named ? namesY - nameSize * CAP - 8 * s : textTop) - (labelY + 16 * s),
+    x: inner.x + edge,
+    y: top,
+    w: inner.w - 2 * edge,
+    h: (named ? namesY - nameSize * CAP - 9 * s : textTop + 2 * s) - top,
   };
-  if (area.h < 20 * s || area.w < 40 * s) return;
+  if (area.h < 24 * s || area.w < 40 * s) return;
 
-  // How much room each continent's road needs. A road of a few yards is
-  // given a little room all the same, so that it shows as more than a dot.
-  const gapX = lands.length > 1 ? 26 * s : 0;
-  const spans = lands.map((land) => ({ w: land.bounds[3] - land.bounds[1], h: land.bounds[2] - land.bounds[0] }));
-  const largest = Math.max(1, ...spans.map((span) => Math.max(span.w, span.h)));
-  const floor = largest * 0.14;
-  const rooms = spans.map((span) => ({ w: Math.max(span.w, floor), h: Math.max(span.h, floor) }));
-  const markers = 9 * s; // room for the studs and the gem at the edges
-  const scale = Math.min(
-    (area.w - gapX * (lands.length - 1) - 2 * markers * lands.length) / rooms.reduce((sum, room) => sum + room.w, 0),
-    (area.h - 2 * markers) / Math.max(...rooms.map((room) => room.h)),
-    // The first few yards of a new character are not blown up into a
-    // journey: a road fills its panel from about a hundred yards on.
-    2 * s,
-  );
-  if (!(scale > 0)) return;
-  const total = rooms.reduce((sum, room) => sum + room.w * scale + 2 * markers, 0) + gapX * (lands.length - 1);
-  let left = area.x + (area.w - total) / 2;
-  const midY = area.y + area.h / 2;
-  const place = {};
-  lands.forEach((land, i) => {
-    const room = rooms[i];
-    const centreX = left + markers + (room.w * scale) / 2;
-    const worldY = (land.bounds[1] + land.bounds[3]) / 2; // west-east middle
-    const worldX = (land.bounds[0] + land.bounds[2]) / 2; // north-south middle
-    place[land.id] = {
-      // West is left, north is up.
-      at: (x, y) => [centreX - (y - worldY) * scale, midY - (x - worldX) * scale],
-      centreX,
-    };
-    left += room.w * scale + 2 * markers + gapX;
+  // A plate for each continent, side by side: Kalimdor to the west. Two
+  // continents that both have a map share one sea, as on a map of the
+  // world: each gets the width its land needs, and both are drawn to one
+  // scale.
+  const pad = 9 * s; // room inside a plate, so that no mark touches its edge
+  const world = lands.length > 1 && lands.every((land) => land.land);
+  const gapX = world ? 0 : 12 * s;
+  const wide = lands.map((land) => {
+    if (!world) return 1;
+    const road = land.bounds;
+    const map = land.land.bounds;
+    return Math.max(road[3], map[3]) - Math.min(road[1], map[1]);
   });
+  const shares = wide.reduce((sum, value) => sum + value, 0);
+  let left = area.x;
+  const plates = lands.map((land, i) => {
+    const plate = { x: left, y: area.y, w: ((area.w - gapX * (lands.length - 1)) * wide[i]) / shares, h: area.h };
+    left += plate.w + gapX;
+    return { land, plate, view: mapView(land, plate.w - 2 * pad, plate.h - 2 * pad, s, lands.length === 1) };
+  });
+  if (world) {
+    const scale = Math.min(...plates.map((entry) => entry.view.scale));
+    for (const entry of plates) entry.view.scale = scale;
+  }
+  // The sea: one sheet of it under a map of the world, else one under each plate.
+  const seas = world ? [area] : plates.map((entry) => entry.plate);
+  const place = {};
+  for (const entry of plates) {
+    const { plate, view } = entry;
+    const midX = plate.x + plate.w / 2;
+    const midY = plate.y + plate.h / 2;
+    // West is left, north is up.
+    entry.at = (x, y) => [midX - (y - view.y) * view.scale, midY - (x - view.x) * view.scale];
+    place[entry.land.id] = entry;
+  }
 
-  // How far the road reaches on the picture (the tests check that it stays
-  // in its panel).
-  const reach = { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity, points: 0, box: inner };
-  for (const land of lands) {
+  const reach = { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity, points: 0, box: inner, plates: [] };
+  report.route = reach;
+  const radius = 9 * s;
+  // The sea, with a chart's faint grid over it.
+  for (const sea of seas) {
+    ctx.save();
+    outline(ctx, "round", sea.x, sea.y, sea.w, sea.h, radius);
+    ctx.fillStyle = theme.map.sea;
+    ctx.fill();
+    ctx.clip();
+    const step = 46 * s;
+    ctx.strokeStyle = rgba(theme.ink, theme.light ? 0.09 : 0.06);
+    ctx.lineWidth = Math.max(1, s);
+    ctx.beginPath();
+    for (let x = sea.x + sea.w / 2 - Math.floor(sea.w / 2 / step) * step; x < sea.x + sea.w; x += step) {
+      ctx.moveTo(x, sea.y);
+      ctx.lineTo(x, sea.y + sea.h);
+    }
+    for (let y = sea.y + sea.h / 2 - Math.floor(sea.h / 2 / step) * step; y < sea.y + sea.h; y += step) {
+      ctx.moveTo(sea.x, y);
+      ctx.lineTo(sea.x + sea.w, y);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+  for (const entry of plates) {
+    const { land, plate, view, at } = entry;
+    const seen = { id: land.id, ...plate, zoomed: view.zoomed, mapped: !!land.land, shared: world, land: null, inset: null };
+    const road = { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity, points: 0 };
     for (const path of land.paths) {
       for (let i = 0; i + 1 < path.p.length; i += 2) {
-        const [px, py] = place[land.id].at(path.p[i], path.p[i + 1]);
-        reach.left = Math.min(reach.left, px);
-        reach.right = Math.max(reach.right, px);
-        reach.top = Math.min(reach.top, py);
-        reach.bottom = Math.max(reach.bottom, py);
-        reach.points += 1;
+        const [px, py] = at(path.p[i], path.p[i + 1]);
+        road.left = Math.min(road.left, px);
+        road.right = Math.max(road.right, px);
+        road.top = Math.min(road.top, py);
+        road.bottom = Math.max(road.bottom, py);
+        road.points += 1;
       }
     }
-  }
-  report.route = reach;
+    seen.road = road;
+    reach.left = Math.min(reach.left, road.left);
+    reach.right = Math.max(reach.right, road.right);
+    reach.top = Math.min(reach.top, road.top);
+    reach.bottom = Math.max(reach.bottom, road.bottom);
+    reach.points += road.points;
+    reach.plates.push(seen);
 
-  ctx.save();
-  ctx.lineJoin = "round";
-  ctx.lineCap = "round";
-  const trace = (land, path) => {
-    const at = place[land.id].at;
-    const p = path.p;
+    // Nothing of a continent is drawn outside its sea.
+    const sea = world ? area : plate;
+    ctx.save();
+    outline(ctx, "round", sea.x, sea.y, sea.w, sea.h, radius);
+    ctx.clip();
+    // The land.
+    if (land.land) seen.land = drawLand(ctx, theme, land.land, at, s);
+    // The road: flights first, then what was travelled with the belt
+    // still, and over everything what was walked for real.
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+    for (const kind of ["flight", "road", "walked"]) {
+      for (const path of land.paths) {
+        if (path.style !== kind || path.p.length < 4) continue;
+        tracePath(ctx, at, path.p);
+        strokeRoad(ctx, theme, kind, s);
+      }
+    }
+    if (view.zoomed) {
+      seen.inset = drawInset(ctx, theme, land.land, view, plate, [(road.left + road.right) / 2, (road.top + road.bottom) / 2], s);
+    }
+    ctx.restore();
+  }
+  // The edge of each sea, over whatever reaches it.
+  for (const sea of seas) {
+    outline(ctx, "round", sea.x, sea.y, sea.w, sea.h, radius);
+    ctx.strokeStyle = rgba(theme.ink, theme.light ? 0.3 : 0.2);
+    ctx.lineWidth = Math.max(1, s);
+    ctx.stroke();
+  }
+
+  // From one continent to the other (a boat, a zeppelin): a dashed arc.
+  const shown = (spot) => {
+    const entry = spot && place[spot.c];
+    if (!entry) return null;
+    const [px, py] = entry.at(spot.x, spot.y);
+    const { plate } = entry;
+    const inside = px >= plate.x && px <= plate.x + plate.w && py >= plate.y && py <= plate.y + plate.h;
+    return inside ? [px, py] : null;
+  };
+  for (const crossing of route.crossings) {
+    const a = shown(crossing.from);
+    const b = shown(crossing.to);
+    if (!a || !b) continue;
+    // (Bowed upwards, but never above the map.)
+    const lift = Math.min(0.24 * Math.hypot(b[0] - a[0], b[1] - a[1]) + 14 * s, Math.min(a[1], b[1]) - area.y - 6 * s);
+    const mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2 - 2 * Math.max(0, lift)];
+    ctx.save();
+    ctx.lineCap = "round";
     ctx.beginPath();
-    for (let i = 0; i + 1 < p.length; i += 2) {
-      const [px, py] = at(p[i], p[i + 1]);
+    for (let i = 0; i <= 24; i += 1) {
+      const t = i / 24;
+      const px = (1 - t) * (1 - t) * a[0] + 2 * t * (1 - t) * mid[0] + t * t * b[0];
+      const py = (1 - t) * (1 - t) * a[1] + 2 * t * (1 - t) * mid[1] + t * t * b[1];
       if (i === 0) ctx.moveTo(px, py);
       else ctx.lineTo(px, py);
     }
-  };
-  const each = (style, draw) => {
-    for (const land of lands) for (const path of land.paths) if (path.style === style && path.p.length >= 4) draw(land, path);
-  };
-  // Flight paths: hairlines.
-  ctx.strokeStyle = rgba(theme.ink, theme.light ? 0.38 : 0.3);
-  ctx.lineWidth = Math.max(1, 1.3 * s);
-  each("flight", (land, path) => {
-    trace(land, path);
-    ctx.stroke();
-  });
-  // The road the character travelled while the belt stood still.
-  ctx.strokeStyle = theme.muted;
-  ctx.globalAlpha = theme.light ? 0.75 : 0.8;
-  ctx.lineWidth = Math.max(1.2, 2.3 * s);
-  each("road", (land, path) => {
-    trace(land, path);
-    ctx.stroke();
-  });
-  ctx.globalAlpha = 1;
-  // The stretches walked for real: a soft glow, then the bright line.
-  if (!theme.light) {
-    ctx.strokeStyle = rgba(theme.glow, 0.34);
-    ctx.lineWidth = 9 * s;
-    each("walked", (land, path) => {
-      trace(land, path);
-      ctx.stroke();
-    });
+    strokeRoad(ctx, theme, "flight", s);
+    ctx.restore();
   }
-  ctx.strokeStyle = theme.value;
-  ctx.lineWidth = Math.max(1.6, 3.2 * s);
-  each("walked", (land, path) => {
-    trace(land, path);
-    ctx.stroke();
-  });
-  ctx.restore();
 
-  // Every tenth level: a stud with its number beside it.
-  const studs = [];
-  for (const mark of route.milestones) {
-    const spot = place[mark.c];
-    if (!spot) continue;
-    const [px, py] = spot.at(mark.x, mark.y);
-    studs.push({ px, py, text: String(mark.level) });
-  }
+  // The marks. What is already there is remembered, so that nothing is
+  // put on top of something else: where the road is short, the marks that
+  // matter less are left out.
+  const taken = [];
+  const free = (b) => taken.every((o) => b.r < o.l || b.l > o.r || b.b < o.t || b.t > o.b);
+  const around = (px, py, r) => ({ l: px - r, r: px + r, t: py - r, b: py + r });
+  const halo = (c) => {
+    c.shadowColor = theme.light ? "rgba(255,250,236,0.95)" : rgba(theme.shade, 0.85);
+    c.shadowBlur = 4 * s;
+  };
+  // A word beside a mark: to its right, else to its left, above or below -
+  // wherever it is inside the plate and in nothing's way.
+  const tag = (id, text, spec, size, colour, px, py, r, plate) => {
+    const fit = fitLine(ctx, text, spec, { size, min: size, width: 400 * s, tracking: 0.08 });
+    const half = fit.width / 2;
+    const up = size * CAP;
+    const spots = [
+      [px + r + 4 * s + half, py + up / 2],
+      [px - r - 4 * s - half, py + up / 2],
+      [px, py - r - 4 * s],
+      [px, py + r + 4 * s + up],
+    ];
+    for (const [x, y] of spots) {
+      const b = { l: x - half - 2 * s, r: x + half + 2 * s, t: y - up - 2 * s, b: y + 3 * s };
+      if (b.l < plate.x + 2 || b.r > plate.x + plate.w - 2 || b.t < plate.y + 2 || b.b > plate.y + plate.h - 2) continue;
+      if (!free(b)) continue;
+      line(
+        ctx,
+        report,
+        `route.${id}`,
+        fit.text,
+        spec,
+        { x, y, size, min: size, width: fit.width + 1, tracking: 0.08 },
+        (c) => {
+          c.fillStyle = colour;
+          halo(c);
+        },
+        inner,
+      );
+      taken.push(b);
+      return true;
+    }
+    return false;
+  };
+
+  // Where the character is now: a gem, with its level.
+  const end = shown(route.end);
+  const gemR = 10.5 * s;
+  if (end) taken.push(around(end[0], end[1], gemR * 1.1));
+  // Where the road begins: a ring.
+  let start = shown(route.start);
+  const ringR = 6.2 * s;
+  if (start && end && Math.hypot(start[0] - end[0], start[1] - end[1]) < gemR + ringR + 4 * s) start = null;
+  if (start) taken.push(around(start[0], start[1], ringR + 1.5 * s));
+  // Every tenth level reached on the way: a stud with its number.
   const numberSize = 13.5 * s;
-  for (const stud of studs) {
+  const studR = 5.6 * s;
+  for (const mark of route.milestones) {
+    const spot = shown(mark);
+    if (!spot) continue;
+    const b = around(spot[0], spot[1], studR + 1.5 * s);
+    if (!free(b)) continue;
     ctx.save();
-    diamond(ctx, stud.px, stud.py, 5.2 * s, 5.2 * s);
+    diamond(ctx, spot[0], spot[1], studR, studR);
     ctx.fillStyle = theme.sub;
     ctx.fill();
     ctx.strokeStyle = theme.metalEdge;
     ctx.lineWidth = Math.max(1, 1.2 * s);
     ctx.stroke();
     ctx.restore();
-    // The number sits above the stud - below it at the top edge - and
-    // stays inside the tile.
-    const above = stud.py - 9 * s - numberSize * 0.2 > area.y;
-    const y = above ? stud.py - 9 * s : stud.py + 9 * s + numberSize * CAP;
-    const half = numberSize * 0.9;
-    const x = clamp(stud.px, area.x + half, area.x + area.w - half);
-    line(
-      ctx,
-      report,
-      `route.level${stud.text}`,
-      stud.text,
-      NUMBER,
-      { x, y, size: numberSize, min: numberSize * 0.7, width: 60 * s },
-      (c) => {
-        c.fillStyle = theme.sub;
-        c.shadowColor = rgba(theme.shade, theme.light ? 0 : 0.8);
-        c.shadowBlur = 4 * s;
-      },
-      inner,
-    );
+    taken.push(b);
+    tag(`level${mark.level}`, String(mark.level), NUMBER, numberSize, theme.sub, spot[0], spot[1], studR, place[mark.c].plate);
   }
-  // Where the road begins: a ring. Where the character is now: a gem.
-  if (route.start && place[route.start.c]) {
-    const [px, py] = place[route.start.c].at(route.start.x, route.start.y);
+  if (start) {
     ctx.save();
     ctx.beginPath();
-    ctx.arc(px, py, 5.5 * s, 0, Math.PI * 2);
-    ctx.fillStyle = theme.panel[1];
+    ctx.arc(start[0], start[1], ringR, 0, Math.PI * 2);
+    ctx.fillStyle = theme.light ? "#fffaf0" : "#ffffff";
     ctx.fill();
     ctx.strokeStyle = theme.label;
-    ctx.lineWidth = Math.max(1.2, 2.2 * s);
+    ctx.lineWidth = Math.max(1.4, 2.6 * s);
     ctx.stroke();
     ctx.restore();
   }
-  if (route.end && place[route.end.c]) {
-    const [px, py] = place[route.end.c].at(route.end.x, route.end.y);
-    gem(ctx, theme, px, py, 9.5 * s);
+  if (end) gem(ctx, theme, end[0], end[1], gemR);
+  const tagSize = 11.5 * s;
+  if (end && route.level) {
+    tag("now", `LV ${route.level}`, NUMBER, tagSize * 1.08, theme.value, end[0], end[1], gemR, place[route.end.c].plate);
   }
+  if (start) tag("start", "START", LABEL, tagSize, theme.label, start[0], start[1], ringR, place[route.start.c].plate);
 
-  // Which continent is which: each name under its own road, clear of the
-  // other and of the panel's edge. Where two roads stand too close for
-  // that (one of them is a few yards long), the names share one line.
+  // Which continent is which: its name under each plate.
   if (named) {
-    const centres = lands.map((land) => place[land.id].centreX);
-    const between = lands.length > 1 ? centres[1] - centres[0] - 12 * s : area.w;
-    const widths = centres.map((centre) =>
-      Math.max(30 * s, Math.min(between, 2 * Math.min(centre - area.x, area.x + area.w - centre))),
-    );
-    const names = lands.map((land) => land.name.toUpperCase());
-    const paint = (c) => (c.fillStyle = theme.muted);
-    const fit = (width) => ({ y: namesY, size: nameSize, min: nameSize * 0.6, width, tracking: 0.14 });
-    if (names.every((name, i) => textWidth(ctx, name, LABEL, nameSize, 0.14) <= widths[i])) {
-      names.forEach((name, i) => {
-        line(ctx, report, `route.land${lands[i].id}`, name, LABEL, { x: centres[i], ...fit(widths[i]) }, paint, inner);
-      });
-    } else {
-      line(ctx, report, "route.lands", names.join(" \u00b7 "), LABEL, { x: cx, ...fit(area.w) }, paint, inner);
+    for (const { land, plate } of plates) {
+      if (!land.name) continue;
+      line(
+        ctx,
+        report,
+        `route.land${land.id}`,
+        land.name.toUpperCase(),
+        LABEL,
+        { x: plate.x + plate.w / 2, y: namesY, size: nameSize, min: nameSize * 0.7, width: plate.w - 8 * s, tracking: 0.14 },
+        (c) => (c.fillStyle = theme.muted),
+        inner,
+      );
     }
   }
 }
@@ -1337,21 +1682,25 @@ function layout(W, H, card) {
       place: (y, h) => placeRows([row], margin, y, width, h, gap, panels, [1]),
     });
   if (hero) rowBand([hero], (road && !tall ? 262 : 300) * unit);
-  if (road && small.length && !tall) {
-    const columns = small.length > 2 ? 2 : 1;
+  if (road && small.length) {
+    // The road beside the tiles. A story is tall enough for the tiles to
+    // stand one under the other, which leaves the road a wide, tall panel -
+    // the shape of a continent.
+    const columns = small.length > 2 && !tall ? 2 : 1;
     const tileRows = Math.ceil(small.length / columns);
     // Enough for the tiles beside it, and never a squat road.
-    const natural = Math.max(400, tileRows * 222 + (tileRows - 1) * 24);
+    const natural = tall
+      ? Math.max(660, tileRows * 196 + (tileRows - 1) * 24)
+      : Math.max(400, tileRows * 222 + (tileRows - 1) * 24);
     bands.push({
       natural: natural * unit,
       place: (y, h) => placeBlock(road, small, columns, margin, y, width, h, gap, panels),
     });
   } else {
-    // A story has the height for the road to lie right across it, with the
-    // tiles in their usual rows below; so has any picture with no tiles.
+    // No tiles to stand beside it: the road lies right across the picture.
     if (road)
       bands.push({
-        natural: (tall ? 540 : 470) * unit,
+        natural: (tall ? 620 : 470) * unit,
         place: (y, h) => panels.push({ item: road, slots: {}, hero: false, box: { x: margin, y, w: width, h } }),
       });
     for (const row of rowsOf(small, 2)) rowBand(row, (row.length === 1 ? 215 : 250) * unit);

@@ -14,6 +14,8 @@ import { readFileSync } from "node:fs";
 const load = (path) => import(`data:text/javascript;base64,${readFileSync(path).toString("base64")}`);
 const model = await load(process.argv[2]);
 const card = await load(process.argv[3]);
+// The continents' maps (lands.js), handed to the model as the page does.
+const lands = process.argv[4] ? (await load(process.argv[4])).LANDS : null;
 const themeIds = card.THEMES.map((theme) => theme.id);
 
 const DRAWING = new Set([
@@ -52,6 +54,9 @@ function fakeContext(charWidth) {
     },
     createLinearGradient: gradient,
     createRadialGradient: gradient,
+    setLineDash(segments) {
+      calls.push(["setLineDash", ...segments.map((value) => Math.round(value * 100) / 100)]);
+    },
   };
   const ctx = new Proxy(state, {
     get(target, name) {
@@ -77,6 +82,8 @@ function build(request) {
     units: request.units ?? "mph",
     weightKg: request.weightKg ?? null,
     road: request.road ?? null,
+    // (`lands: false` in a request: a road on an empty panel; an object: those maps.)
+    lands: request.lands === undefined ? lands : request.lands || null,
     now: request.now ?? 0,
   });
 }

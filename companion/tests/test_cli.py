@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 import signal
 import socket
 import subprocess
@@ -309,6 +310,27 @@ def test_selfcheck_says_what_is_missing(capsys, monkeypatch):
     out = capsys.readouterr().out.strip().splitlines()
     assert len(out) == 1 and out[0].startswith("selfcheck FAILED")
     assert "walka.no_such_module" in out[0] and "addon folder is missing" in out[0]
+
+
+def test_selfcheck_follows_what_the_page_loads(tmp_path: Path):
+    """A script missing from the build - one the page only reaches through
+    another script's import - is noticed."""
+    static = Path(cli.__file__).parent / "static"
+    assert cli.missing_page_files(static) == []
+    loaded = set()
+    copy = tmp_path / "static"
+    shutil.copytree(static, copy)
+    for name in ("lands.js", "card.js", "share.js", "app.js", "app.css"):
+        if (copy / name).is_file():
+            loaded.add(name)
+            kept = (copy / name).read_bytes()
+            (copy / name).unlink()
+            assert name in cli.missing_page_files(copy), name
+            (copy / name).write_bytes(kept)
+    assert {"lands.js", "card.js", "share.js"} <= loaded
+    assert cli.missing_page_files(copy) == []
+    (copy / "index.html").unlink()
+    assert cli.missing_page_files(copy) == ["index.html"]
 
 
 def test_selfcheck_is_not_advertised():

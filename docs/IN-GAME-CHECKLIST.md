@@ -209,6 +209,15 @@ writes at a `/reload` or logout):
       tick boxes it says "My road: as the game last saved it (...)" with
       the time of the `/reload`, and the picture has a *My road* panel
       whose line has the shape of the road on `/walka map` (north up).
+- [ ] **Does the road lie on the land?** The panel draws a low-poly map of
+      the continent behind the road, and a gem where your character is.
+      The gem should sit where you really are - in your starting zone, on
+      the right side of the right continent - and the road should run over
+      land, not water. This is the one thing about the map I could not
+      check without the game: if the road is out at sea, mirrored, or on
+      the wrong continent, send me a screenshot of the picture together
+      with what this prints:
+      `/run local m=C_Map.GetBestMapForUnit("player") local c,p=C_Map.GetWorldPosFromMapPos(m,C_Map.GetPlayerMapPosition(m,"player")) print(c,p.x,p.y)`
       If it says "none found for this character yet" or "the game's folder
       was not found", tell me which - and whether this file exists:
       `World of Warcraft\_forever_\WTF\Account\<your account>\<realm>\<character>\SavedVariables\Walka.lua`

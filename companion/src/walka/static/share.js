@@ -20,6 +20,7 @@ import {
   normalizeOptions,
 } from "./cardmodel.js";
 import { THEMES, drawCard } from "./card.js";
+import { LANDS } from "./lands.js";
 
 const STORE_KEY = "walka.share.v1";
 const THEME_IDS = THEMES.map((theme) => theme.id);
@@ -137,6 +138,7 @@ function currentCard() {
   return buildCard({
     character: chosen(),
     road: chosenRoad(),
+    lands: LANDS,
     totals: allTotals(),
     options,
     units: state.units,

@@ -265,17 +265,48 @@ export function hasRoad(road, character) {
 }
 
 /**
- * The road as a tile: up to two continents (the ones with the most road),
- * placed west to east as on the world map.
+ * A continent's map (an entry of lands.js) if it is whole enough to draw:
+ * corners, an outline of them and triangles between them.
  */
-function routeTile(road, km) {
+function usableLand(land) {
+  if (!land || !Array.isArray(land.points) || !Array.isArray(land.coast) || !Array.isArray(land.faces)) return null;
+  const corners = land.points.length / 2;
+  const corner = (index) => Number.isInteger(index) && index >= 0 && index < corners;
+  const bounds = land.bounds;
+  if (!Array.isArray(bounds) || bounds.length !== 4 || !bounds.every(Number.isFinite)) return null;
+  if (!(bounds[2] > bounds[0] && bounds[3] > bounds[1])) return null;
+  if (corners < 3 || !Number.isInteger(corners) || !land.points.every(Number.isFinite)) return null;
+  if (!land.coast.length || !land.coast.every((ring) => Array.isArray(ring) && ring.length >= 3 && ring.every(corner)))
+    return null;
+  if (land.faces.length % 4 !== 0) return null;
+  for (let i = 0; i < land.faces.length; i += 4) {
+    if (!corner(land.faces[i]) || !corner(land.faces[i + 1]) || !corner(land.faces[i + 2])) return null;
+    if (!Number.isFinite(land.faces[i + 3])) return null;
+  }
+  return { bounds, points: land.points, coast: land.coast, faces: land.faces };
+}
+
+/**
+ * The road as a tile: up to two continents (the ones with the most road),
+ * placed west to east as on the world map. `lands`: the continents' maps by
+ * id (lands.js), drawn behind the road where there is one.
+ */
+function routeTile(road, km, lands, character) {
   const shown = road.continents.filter((continent) => continent.paths.length > 0).slice(0, 2);
   // Kalimdor (continent 1) lies west of the Eastern Kingdoms (0).
   if (shown.length === 2 && shown[1].id === 1) shown.reverse();
   const names = shown.map((continent) => continent.name).filter(Boolean);
   const yards = known(road.yards) ? road.yards : 0;
   const distance = km ? (yards * M_PER_YARD) / 1000 : yards / YARDS_PER_MILE;
-  const length = `${distanceNumber(distance)} in-game ${km ? "km" : "miles"}`;
+  // (Said to be the road's, so that it is not taken for the distance on
+  // foot in the tile beside it. A road too short to measure has none.)
+  const measured = distanceNumber(distance) !== "0.0";
+  const length = measured ? `${distanceNumber(distance)} in-game ${km ? "km" : "miles"} of road` : "My road starts here";
+  const spot = (place) =>
+    place && Number.isFinite(place.c) && Number.isFinite(place.x) && Number.isFinite(place.y)
+      ? { c: place.c, x: place.x, y: place.y }
+      : null;
+  const level = character && known(character.level) && character.level > 0 ? character.level : road.level;
   // (No percentage of a road too short to show as more than "0.0".)
   const share = yards >= 100 && known(road.belt_yards) ? Math.min(100, Math.round((road.belt_yards / yards) * 100)) : 0;
   return {
@@ -288,16 +319,27 @@ function routeTile(road, km) {
         name: continent.name || "",
         bounds: continent.bounds,
         paths: continent.paths,
+        land: usableLand(lands ? lands[continent.id] : null),
       })),
-      start: road.start || null,
-      end: road.end || null,
-      milestones: Array.isArray(road.milestones) ? road.milestones : [],
+      start: spot(road.start),
+      end: spot(road.end),
+      // The character's level, written beside the gem.
+      level: known(level) && level > 0 ? Math.round(level) : null,
+      milestones: (Array.isArray(road.milestones) ? road.milestones : []).filter(
+        (mark) => spot(mark) && Number.isFinite(mark.level),
+      ),
+      // Passages from one continent to another, drawn as arcs.
+      crossings: (Array.isArray(road.crossings) ? road.crossings : [])
+        .filter((crossing) => crossing && spot(crossing.from) && spot(crossing.to))
+        .slice(0, 3),
     },
     sub: length,
-    note: share > 0 ? `${share}% walked for real` : "",
-    plain: `My road${names.length ? ` on ${names.join(" and ")}` : ""}: ${length}${
-      share > 0 ? `, ${share}% of it walked on the treadmill` : ""
-    }`,
+    note: share > 0 ? `${share}% of it walked for real` : "",
+    plain: measured
+      ? `My road${names.length ? ` on ${names.join(" and ")}` : ""}: ${distanceNumber(distance)} in-game ${
+          km ? "km" : "miles"
+        }${share > 0 ? `, ${share}% of it walked on the treadmill` : ""}`
+      : `My road${names.length ? ` on ${names.join(" and ")}` : ""} starts here`,
   };
 }
 
@@ -308,6 +350,8 @@ function routeTile(road, km) {
  * totals: the state snapshot's `totals.all`; units: the dashboard's "mph" | "kmh";
  * weightKg: from the body profile (only used for the opt-in footnote);
  * road: the `road` of /api/road for that character, or null;
+ * lands: lands.js' LANDS (the continents' maps), or null for a road on an
+ *   empty panel;
  * now: epoch seconds.
  */
 export function buildCard({
@@ -317,6 +361,7 @@ export function buildCard({
   units = "mph",
   weightKg = null,
   road = null,
+  lands = null,
   now = 0,
 }) {
   const source = character && options.source !== "all" ? "character" : "all";
@@ -327,7 +372,7 @@ export function buildCard({
   const roadKnown = hasRoad(road, character);
   const make = {
     steps: () => stepsTile(real, km),
-    route: () => routeTile(road, km),
+    route: () => routeTile(road, km, lands, character),
     level: () => levelTile(character, options.showName),
     played: () => playedTile(character),
     charSteps: () => charStepsTile(character, km),
