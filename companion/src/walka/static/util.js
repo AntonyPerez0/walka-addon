@@ -301,7 +301,10 @@ export function toast(message, kind = "info", { sticky = false } = {}) {
     (passing || host.firstElementChild).remove();
   }
   host.append(item);
-  host.scrollTop = host.scrollHeight; // the newest stays in view if the stack is taller than its room
+  // If the stack is taller than its room: keep in view the one that stays until dismissed
+  // (a failed STOP), else the newest.
+  const pinned = host.querySelector('[data-sticky="1"]');
+  host.scrollTop = pinned ? pinned.offsetTop - host.firstElementChild.offsetTop : host.scrollHeight;
   if (!sticky) setTimeout(remove, kind === "error" ? 9000 : 4500);
   return item;
 }

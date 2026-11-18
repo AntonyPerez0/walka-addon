@@ -732,8 +732,11 @@ main {
 
 /* While the companion is silent, the cards that need it are inert (set by the script):
    their words stay readable, their controls are switched off and look it. */
-.card[inert] :is(.btn, .stepper-value, .segmented, .check, input[type="text"], select, summary) {
+.card[inert] :is(.btn, .stepper-value, .segmented, .check input, input[type="text"], select, summary) {
   opacity: 0.5;
+}
+.card[inert] .check {
+  cursor: default;
 }
 
 .noscript {
@@ -1102,7 +1105,7 @@ main {
   align-items: flex-start;
   justify-content: flex-end;
   gap: 6px;
-  min-height: 96px; /* about the number's height, so the card does not jump when a reading returns */
+  min-height: 96px; /* near the number's height, so the card moves little when a reading returns */
 }
 .speed:has(.speed-num[data-void="1"]) .speed-unit {
   display: none;
@@ -1916,6 +1919,9 @@ table.data tbody tr:last-child td {
   color: var(--ink-3);
   font-size: 12px;
   font-weight: 600;
+}
+.shead > span {
+  white-space: nowrap;
 }
 .slist {
   margin: 0 calc(-1 * var(--pad));
@@ -2790,7 +2796,7 @@ details[open] > summary::before {
   .pill-name[data-short] {
     font-size: 0;
   }
-  @media (max-width: 359px) {
+  @media (max-width: 364px) {
     .health {
       grid-auto-flow: row;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2970,9 +2976,10 @@ details[open] > summary::before {
   }
 }
 
-/* A short phone: a smaller number and no legend, and when there is something to press
-   (Resume, Try again) it and its explanation come straight after the number. */
-@media (max-width: 719px) and (max-height: 760px) {
+/* A phone that is not tall: a smaller number and no legend, and when there is something to
+   press (Resume, Try again) the button comes straight after the number, its explanation
+   after it - so the way out is on the first screen. */
+@media (max-width: 719px) and (max-height: 800px) {
   .hero-body {
     padding-top: 14px;
   }
@@ -2984,20 +2991,31 @@ details[open] > summary::before {
     font-size: clamp(64px, 10vh, 88px);
     font-size: clamp(64px, 10svh, 88px);
   }
+  .speed-num[data-void="1"] {
+    font-size: 30px;
+  }
+  .speed:has(.speed-num[data-void="1"]) {
+    min-height: 0;
+  }
   .meter-key {
     display: none;
   }
-  .hero:has(#hero-action:not([hidden])) :is(.hero-note, .hero-actions) {
+  .hero:has(#hero-action:not([hidden])) .hero-actions {
     order: 1;
   }
-}
-/* The shortest phones: the button first, its explanation after it. */
-@media (max-width: 719px) and (max-height: 600px) {
   .hero:has(#hero-action:not([hidden])) .hero-note {
     order: 2;
   }
   .hero:has(#hero-action:not([hidden])) .meter {
     order: 3;
+  }
+}
+@media (max-width: 719px) and (max-height: 600px) {
+  .hero-body {
+    padding-top: 10px;
+  }
+  .speed-num[data-void="1"] {
+    font-size: 28px;
   }
 }
 
@@ -3036,8 +3054,8 @@ details[open] > summary::before {
   }
 }
 
-/* The narrowest hero (a small phone): one reading per line, so none of them wraps. */
-@container hero (max-width: 400px) {
+/* The narrowest hero (a 320 px phone): one reading per line, so none of them wraps. */
+@container hero (max-width: 330px) {
   .readout {
     grid-template-columns: minmax(0, 1fr);
   }

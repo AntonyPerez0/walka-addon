@@ -48,10 +48,22 @@ function nameStop() {
 // instead of failing one press at a time. STOP is not among them: it is always tried.
 const NEEDS_COMPANION = "#manual, #treadmill, #links, #setup, #view-settings .card";
 let companionHeard = null;
+let focusToReturn = null; // what had focus when its card was switched off
 function gateControls(online) {
   if (online === companionHeard) return;
   companionHeard = online;
+  if (!online) {
+    const active = document.activeElement;
+    focusToReturn = active && active.closest && active.closest(NEEDS_COMPANION) ? active : null;
+  }
   for (const el of document.querySelectorAll(NEEDS_COMPANION)) el.inert = !online;
+  if (online && focusToReturn) {
+    // Only if focus is still nowhere: never take it from where the user has moved since.
+    if (document.activeElement === document.body && focusToReturn.isConnected) {
+      focusToReturn.focus({ preventScroll: true });
+    }
+    focusToReturn = null;
+  }
 }
 
 function updateChrome(s, summary, links, online) {
