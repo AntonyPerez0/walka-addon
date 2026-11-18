@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  One file, <code>Walka.exe</code> · Free · No setup - you just open it
+  One file, <code>Walka.exe</code> · Free · Nothing to install - you just open it
 </p>
 
 <p align="center">
@@ -29,7 +29,6 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/AntonyPerez0/walka-addon/actions/workflows/ci.yml"><img src="https://github.com/AntonyPerez0/walka-addon/actions/workflows/ci.yml/badge.svg" alt="Tests and Windows build"></a>
   <img src="https://img.shields.io/badge/Windows-10%20%26%2011-0078d4" alt="Windows 10 and 11">
   <img src="https://img.shields.io/badge/World%20of%20Warcraft-Forever-c79c3e" alt="World of Warcraft: Forever">
   <img src="https://img.shields.io/badge/walking%20pad-UREVO%20Strol%202E-256abf" alt="Walking pad: UREVO Strol 2E">
@@ -38,7 +37,7 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/dashboard-dark.png">
-    <img src="docs/images/dashboard-light.png" width="880" alt="The Walka dashboard: the belt's speed, this session's time, distance, steps and calories, and a red STOP button">
+    <img src="docs/images/dashboard-light.png" width="880" alt="The Walka dashboard: the belt's speed, this session's time, distance, steps, calories and heart rate (with an optional Bluetooth heart-rate sensor), and a red STOP button">
   </picture>
 </p>
 
@@ -52,9 +51,15 @@ Warcraft: Forever.
 
 ## Get started
 
+> [!WARNING]
+> **Early version - not yet tried on a real walking pad.** Read
+> [Before your first walk](#before-your-first-walk) and keep the pad's
+> remote in your hand the first time.
+
 1. **Download `Walka.exe`** with the button above. It goes to your
    *Downloads* folder. If the browser says it "isn't commonly downloaded",
-   choose **Keep** (in Edge: **...** → **Keep** → **Keep anyway**).
+   choose **Keep** (in Edge: **...** → **Keep** → **Show more** → **Keep
+   anyway**).
 2. **Double-click it.** A black window opens: that is Walka. **Leave it
    open while you walk** - closing it stops Walka. The *dashboard* page
    opens in your browser (if not, go to `127.0.0.1:8787`).
@@ -75,12 +80,6 @@ Warcraft: Forever.
      *Windowed (Fullscreen)* mode and keep the top-left corner of the game
      uncovered.
    * **Enter your weight and height:** for the calorie count.
-
-> [!WARNING]
-> **Early version - not yet tried on a real walking pad.** Read
-> [Before your first walk](#before-your-first-walk) and keep the pad's
-> remote in your hand the first time.
-
 4. **Walk.** Step onto the pad and, in the game, click the ▶ button on the
    small Walka box (or type `/walka start`).
 
@@ -89,57 +88,25 @@ the keyboard, or the red **STOP** on the dashboard.
 
 ## What you get
 
-<table>
-  <tr>
-    <td width="33%" valign="top">
-      <b>🏃 Follows your character</b><br>
-      Run in the game and the belt speeds up. Stand still and it eases off. You choose every speed.
-    </td>
-    <td width="33%" valign="top">
-      <b>🛑 Built around stopping</b><br>
-      A hard speed cap, a STOP key that works from inside the game, and a belt that never speeds up when the signal is lost.
-    </td>
-    <td width="33%" valign="top">
-      <b>📊 Counts every walk</b><br>
-      Time, distance, steps and calories - live on the dashboard, and in the game while you play.
-    </td>
-  </tr>
-  <tr>
-    <td width="33%" valign="top">
-      <b>🗺️ Your road on the map</b><br>
-      The path your character has travelled, drawn on the game's world map - brightest where you really walked.
-    </td>
-    <td width="33%" valign="top">
-      <b>🖼️ A picture to share</b><br>
-      Your journey so far as a picture, made on your own computer. You choose what is on it and where it goes.
-    </td>
-    <td width="33%" valign="top">
-      <b>🔒 Stays on your PC</b><br>
-      Nothing is uploaded, and nothing is ever sent to the game: no key presses, no mouse input, no memory reading.
-    </td>
-  </tr>
-</table>
+- 🏃 **Follows your character.** Run in the game and the belt speeds up;
+  stand still and it eases off. You choose every speed.
+- 🛑 **Built around stopping.** A hard speed cap, a STOP key that works
+  from inside the game, and a belt that never speeds up when the signal is
+  lost.
+- 📊 **Counts every walk.** Time, distance, steps and calories - live on
+  the dashboard, and in the game while you play.
+- 🗺️ **Your road on the map.** The path your character has travelled,
+  drawn on the game's world map - brightest where you really walked.
+- 🖼️ **A picture to share.** Your journey so far as a picture, made on
+  your own computer. You choose what is on it and where it goes.
+- 🔒 **Stays on your PC.** Nothing is uploaded. Walka never presses keys,
+  moves the mouse or reads the game's memory - it only looks at one corner
+  of the screen.
 
-<table>
-  <tr>
-    <td width="50%" align="center">
-      <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="docs/images/history-dark.png">
-        <img src="docs/images/history-light.png" alt="The History page: steps today, this week and all time, a chart of steps per day and the list of walks">
-      </picture>
-      <br><sub><b>History</b> - every walk, with totals and a chart of your week</sub>
-    </td>
-    <td width="50%" align="center">
-      <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="docs/images/share-dark.png">
-        <img src="docs/images/share-light.png" alt="The Share page: a picture of your character's journey with steps, miles walked and the road travelled">
-      </picture>
-      <br><sub><b>Share</b> - your journey as a picture</sub>
-    </td>
-  </tr>
-</table>
-
----
+<p align="center">
+  <img src="docs/images/share-card.jpg" width="360" alt="A Share picture: real-world steps and miles walked, the character's level, time played, and the road it travelled on a map of the world">
+  <br><sub>A <b>Share</b> picture, made with the demo character</sub>
+</p>
 
 ## The details
 
@@ -154,18 +121,16 @@ Everything below is the long version, for when you want it.
 
 **Walking** ·
 [Stopping the belt](#stopping-the-belt) ·
-[Safety](#safety) ·
-[Before your first walk](#before-your-first-walk) ·
 [Heart rate](#heart-rate-optional) ·
-[Other games, or no game](#other-games-or-no-game)
-
-**Your numbers** ·
 [Garmin Connect, Strava and others](#garmin-connect-strava-and-others) ·
 [Your journey, and a picture to share](#your-journey-and-a-picture-to-share) ·
-[The road map](#the-road-map)
+[The road map](#the-road-map) ·
+[Other games, or no game](#other-games-or-no-game)
 
-**Help** ·
+**Safety and help** ·
+[Safety](#safety) ·
 [Is this allowed?](#is-this-allowed) ·
+[Before your first walk](#before-your-first-walk) ·
 [Troubleshooting](#troubleshooting) ·
 [Ideas for later](#ideas-for-later) ·
 [Development](#development)
@@ -194,27 +159,20 @@ do with just the remote.
 ## How it works
 
 ```mermaid
-flowchart LR
-  subgraph game["World of Warcraft: Forever"]
-    addon["Walka addon<br/>reads your character's speed<br/>draws it as a strip of squares<br/>shows the HUD and your history"]
-  end
-  subgraph pc["Your PC"]
-    exe["Walka.exe, the companion<br/>reads the strip off the screen<br/>applies the safety rules<br/>records the walk"]
-  end
-  subgraph pad["Walking pad"]
-    belt["UREVO pad<br/>belt speed"]
-  end
-  addon -- "looks at the screen" --> exe
-  exe -- "Bluetooth" --> belt
-  belt -- "speed, distance" --> exe
-  exe -. "a file the game loads" .-> addon
+flowchart TB
+  addon["Walka addon<br/>in the game"] -- "draws a strip of squares;<br/>Walka.exe reads it off the screen" --> exe["Walka.exe<br/>on your PC"]
+  exe -- "Bluetooth: belt speed" --> pad["Walking pad"]
+  pad -- "speed, distance" --> exe
+  exe -. "a file the game loads at login" .-> addon
+  classDef box fill:#256abf,stroke:#256abf,color:#ffffff
+  class addon,exe,pad box
 ```
 
 An addon cannot use Bluetooth, files or the network, so it *draws* its state
 as a thin strip of black and white squares in the top-left corner of the
 game window, ten times a second. The companion takes a tiny screenshot of
-that corner and decodes it. **Nothing is ever sent to the game** - no key
-presses, no mouse input, no memory reading.
+that corner and decodes it. **Walka never sends input to the game** - no
+key presses, no mouse input, no memory reading.
 
 An addon also cannot receive live data, so the in-game HUD shows the
 addon's own estimate of the belt (it knows the speed it asked for and how
@@ -242,7 +200,7 @@ Details: [docs/PROTOCOL.md](docs/PROTOCOL.md).
    [Releases page](https://github.com/AntonyPerez0/walka-addon/releases)),
    or run it from source (Python 3.10 or newer):
 
-   ```
+   ```powershell
    cd companion
    py -m pip install -e .
    py -m walka
@@ -294,7 +252,7 @@ used to it. Also there:
 **Pause** / **Stop** are on the HUD too. Going AFK pauses automatically;
 the session resumes when your character next moves.
 
-| Command | |
+| Command | What it does |
 |---|---|
 | `/walka` | show or hide the HUD |
 | `/walka start` · `pause` · `resume` · `stop` | control the session |
@@ -582,10 +540,12 @@ What Walka does and does not do:
 * The addon uses only the public addon API, is free and unobfuscated, and
   follows the addon policy.
 * The companion never sends input to the game, never automates anything
-  in the game, never reads the game's memory or files (other than its own
-  addon folder). It looks at one corner of your screen, the way a
-  screenshot tool does, and what it reads is your own character's movement
-  state.
+  in the game and never reads the game's memory. Of the game's files it
+  touches only Walka's own: the addon folder (it installs the addon and
+  writes `CompanionData.lua` there) and the addon's saved file
+  `WTF\Account\...\SavedVariables\Walka.lua`, which it only reads. It
+  looks at one corner of your screen, the way a screenshot tool does, and
+  what it reads is your own character's movement state.
 * When the game hides a value from addons (speed in combat), Walka does not
   relay it; it estimates instead.
 
@@ -639,7 +599,9 @@ order:
 
 ## Development
 
-```
+[![Tests and Windows build](https://github.com/AntonyPerez0/walka-addon/actions/workflows/ci.yml/badge.svg)](https://github.com/AntonyPerez0/walka-addon/actions/workflows/ci.yml)
+
+```powershell
 py -m pip install -e "companion[dev]"
 py -m pytest          # companion tests + addon tests (the addon runs under a mocked game client)
 ```
