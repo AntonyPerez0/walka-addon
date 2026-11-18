@@ -132,6 +132,8 @@ jobs:
           test -s release/Walka.exe
           notes="**To get Walka:** under **Assets** below, click **Walka.exe**, then open it. If Windows says *Windows protected your PC*, click **More info**, then **Run anyway**. The steps are at the top of the [README](https://github.com/$GH_REPO#readme).
 
+          **Early version:** not yet tried on a real walking pad. Read *Before your first walk* in the README, and keep the pad's remote in your hand the first time.
+
           You can ignore the other files: Walka-addon.zip is the game addon on its own (CurseForge or Walka.exe installs it for you), and the Source code files are for developers."
           # A tag like v0.2.0-rc1 is a trial: published, but never "the latest" that the README's button gives.
           pre=""
