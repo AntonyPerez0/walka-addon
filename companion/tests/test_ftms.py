@@ -555,3 +555,24 @@ def test_pace_width_with_vendor_steps_and_with_an_ambiguous_length():
     # A length that fits neither layout falls back to the one-byte layout.
     odd = struct.pack("<HHB", 0x0020, 250, 40) + b"\x00\x00\x00\x00\x00"
     assert ftms.parse_treadmill_data(odd).instantaneous_pace_km_per_min == 4.0
+
+
+# ---- what the advertisement says the machine is ---------------------------------------
+
+
+def test_machine_type_from_the_advertisement():
+    treadmill = ftms.advertised_machine_type(bytes.fromhex("010100"))
+    bike = ftms.advertised_machine_type(bytes.fromhex("012000"))
+    both = ftms.advertised_machine_type(bytes.fromhex("01210000"))  # longer than needed: the rest is ignored
+    assert (treadmill, bike, both) == (0x0001, 0x0020, 0x0021)
+    assert ftms.says_treadmill(treadmill) is True and ftms.says_treadmill(both) is True
+    assert ftms.says_treadmill(bike) is False
+    assert ftms.describe_machine_type(both) == "treadmill, indoor bike"
+    assert ftms.describe_machine_type(0x4000) == "unknown kind"
+
+
+@pytest.mark.parametrize("data", [None, b"", b"\x01", b"\x01\x01"])
+def test_an_advertisement_that_does_not_say_what_the_machine_is(data):
+    """Most treadmills: the service, and nothing (or too little) about the kind."""
+    assert ftms.advertised_machine_type(data) is None
+    assert ftms.says_treadmill(None) is None and ftms.describe_machine_type(None) == ""

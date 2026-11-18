@@ -42,6 +42,44 @@ RSC_MEASUREMENT = uuid16(0x2A53)
 DEVICE_INFORMATION_SERVICE = uuid16(0x180A)
 
 
+# ---- Advertisement ---------------------------------------------------------------
+
+MACHINE_TYPE_TREADMILL = 0x0001
+_MACHINE_TYPES = (
+    (0x0001, "treadmill"),
+    (0x0002, "cross trainer"),
+    (0x0004, "step climber"),
+    (0x0008, "stair climber"),
+    (0x0010, "rower"),
+    (0x0020, "indoor bike"),
+)
+
+
+def advertised_machine_type(service_data: bytes | None) -> int | None:
+    """The Fitness Machine Type bits from an advertisement's FTMS service data.
+
+    A fitness machine may say in its advertisement what kind of machine it
+    is: one flags byte, then a uint16 with one bit per kind. ``None`` when
+    it does not say (many treadmills advertise the service and nothing more).
+    """
+    if service_data is None or len(service_data) < 3:
+        return None
+    return int.from_bytes(service_data[1:3], "little")
+
+
+def says_treadmill(machine_type: int | None) -> bool | None:
+    """Does the advertised type say "treadmill"? ``None`` if it says nothing."""
+    if machine_type is None:
+        return None
+    return bool(machine_type & MACHINE_TYPE_TREADMILL)
+
+
+def describe_machine_type(machine_type: int | None) -> str:
+    if machine_type is None:
+        return ""
+    return ", ".join(name for bit, name in _MACHINE_TYPES if machine_type & bit) or "unknown kind"
+
+
 # ---- Treadmill Data (0x2ACD) ---------------------------------------------------
 
 VENDOR_STEPS_FLAG = 0x2000  # reserved in the spec; UREVO uses it for steps

@@ -196,3 +196,14 @@ against a physical treadmill** by its author. Before your first real
 session, run `walka probe` (it only reads; it cannot move the belt) and
 then try a manual session from the dashboard while standing beside the pad,
 not on it.
+
+**Treadmills of other makes** (a WELLFIT, or any other treadmill found by
+its Fitness Machine Service) are driven by the same commands and the same
+rules, but the simulated treadmill is modelled on UREVO firmware: how
+another make rounds a speed, announces a stop or behaves after one has not
+been seen at all. The rules that do not depend on the firmware still hold -
+Walka's own speed cap (never above 6.5 km/h, whatever the treadmill can
+do), slowing and then pausing when the game's signal is lost, and never
+restarting a belt that was stopped at the machine. A full-size treadmill is faster and heavier than a
+walking pad, so the first session beside the belt matters more, not less.
+See [HARDWARE.md](HARDWARE.md#other-treadmills).

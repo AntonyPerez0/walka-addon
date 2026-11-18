@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import pytest
 
 from walka import ftms
-from walka.treadmill import ftms_ble
+from walka.treadmill import ftms_ble, known
 from walka.treadmill.base import (
     KMH_PER_MPH,
     BeltState,
@@ -327,6 +327,7 @@ def test_discover_lists_treadmill_candidates_only():
 
     found = run(scenario())
     assert {d.name for d in found} == {"URTM030", "Treadmill X", "urtm054"}
+    assert all(d.treadmill is None for d in found)  # none of them says what kind of machine it is
     assert found[0].to_dict() == {"name": "URTM030", "address": urevo.address, "rssi": -60, "ftms": True}
 
 
@@ -1045,3 +1046,114 @@ def test_control_point_writes_are_paced(monkeypatch):
     run(scenario())
     assert list(pad.writes) == [REQUEST_CONTROL, START]
     assert stamps[1] - stamps[0] >= 0.045
+
+
+# ---- treadmills of other makes ----------------------------------------------------------
+
+
+def wellfit(**kwargs) -> FakePad:
+    """A WELLFIT as its app sees it: mph firmware up to 10 mph, and it says
+    in its advertisement that it is a treadmill."""
+    kwargs.setdefault("max_tenths", 100)
+    return FakePad(name="WELLFIT TM Linker", address="A4:C1:38:00:29:01", says_treadmill=True, **kwargs)
+
+
+def test_known_names():
+    assert known.DEFAULT_NAME_PREFIXES == ("URTM", "WELLFIT TM Linker")
+    assert known.known_treadmill("URTM030").brand == "UREVO"
+    assert known.known_treadmill("wellfit tm linker").brand == "WELLFIT"
+    for other in ("WELLFIT TM Audio", "WELLFIT", "Treadmill X", "", None):
+        assert known.known_treadmill(other) is None
+    # Only firmware that is known to need it gets the second request.
+    assert [k.brand for k in known.KNOWN_TREADMILLS if k.request_control_twice] == ["WELLFIT"]
+
+
+def test_discover_leaves_out_machines_that_say_they_are_not_treadmills():
+    bike = FakePad(name="KICKR BIKE", address="11:11:11:11:11:11", says_treadmill=False)
+    declared = FakePad(name="FS-A1B2C3", address="22:22:22:22:22:22", says_treadmill=True)
+    undeclared = FakePad(name="Treadmill X", address="33:33:33:33:33:33")
+    # A known name counts for more than the kind its firmware claims.
+    misdeclared = FakePad(name="URTM054", address="44:44:44:44:44:44", says_treadmill=False)
+    driver, *_ = rig(bike, declared, undeclared, misdeclared, wellfit())
+
+    found = run(driver.discover(1.0))
+    assert {d.name for d in found} == {"FS-A1B2C3", "Treadmill X", "URTM054", "WELLFIT TM Linker"}
+
+
+def test_a_bike_trainer_is_not_connected_to_for_want_of_a_treadmill():
+    driver, pad, backend, events = rig(FakePad(name="KICKR BIKE", says_treadmill=False))
+
+    async def scenario():
+        with pytest.raises(TreadmillError, match="treadmill not found"):
+            await driver.connect()
+
+    run(scenario())
+    assert pad.connects == 0 and events == []
+
+
+def test_a_wellfit_is_asked_for_control_twice_and_then_driven_like_any_pad(clock):
+    """What qdomyos-zwift found it took to make a WELLFIT obey speed
+    commands: Request Control twice at the start, and not again after."""
+    driver, pad, backend, events = rig(wellfit())
+
+    async def scenario():
+        await driver.connect()
+        assert driver.status.name == "WELLFIT TM Linker" and driver.status.mph_grid
+        assert driver.status.max_kmh == pytest.approx(10.0 * KMH_PER_MPH)  # the cap is the governor's business
+        assert pad.writes == []  # connecting sends nothing to the belt
+        await driver.start()
+        assert pad.writes == [REQUEST_CONTROL, REQUEST_CONTROL, START]
+        for _ in range(40):
+            pad.advance(0.1)
+        await driver.set_speed(2.0 * KMH_PER_MPH)
+        await driver.set_speed(2.5 * KMH_PER_MPH)
+        assert pad.target_tenths == 25
+        await driver.pause()
+        await driver.start()
+        await driver.stop()
+
+    run(scenario())
+    assert pad.writes.count(REQUEST_CONTROL) == 2
+    assert pad.writes[3:] == [bytes.fromhex("024a01"), bytes.fromhex("029a01"), PAUSE, START, STOP]
+
+
+def test_a_stop_is_not_held_up_by_the_second_request(clock):
+    """A belt found moving after a reconnect: the stop goes out after one
+    Request Control, as on any pad - not one write gap later."""
+    driver, pad, backend, events = rig(wellfit())
+
+    async def scenario():
+        await running(driver, pad, clock)
+        pad.drop_link()
+        pad.writes.clear()
+        await driver.connect()
+        pad.advance(0.1)
+        await driver.stop()
+        assert pad.writes == [REQUEST_CONTROL, STOP]
+        assert pad.state == "idle"
+
+    run(scenario())
+
+
+def test_other_pads_are_asked_for_control_once(clock):
+    for pad in (FakePad(), FakePad(name="Treadmill X", us_firmware=False), FakePad(name="WELLFIT TM Audio")):
+        driver, pad, *_ = rig(pad, address=pad.address)
+        run(running(driver, pad))
+        assert pad.writes == [REQUEST_CONTROL, START]
+
+
+def test_a_treadmill_that_says_it_takes_no_speed_target_is_still_tried():
+    """Said in the features, and noted for the dashboard - but firmware that
+    says so and obeys all the same exists, so the driver does not refuse."""
+    driver, pad, *_ = rig(FakePad(name="Treadmill X", speed_target=False))
+
+    async def scenario():
+        await driver.connect()
+        assert driver.features is not None and not driver.features.speed_target_supported
+        await driver.start()
+        for _ in range(40):
+            pad.advance(0.1)
+        await driver.set_speed(2.0 * KMH_PER_MPH)
+        assert pad.target_tenths == 20
+
+    run(scenario())

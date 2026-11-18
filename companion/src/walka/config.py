@@ -14,6 +14,7 @@ from typing import Any
 from .governor import Limits
 from .hotkey import parse_hotkey
 from .metrics import KMH_PER_MPH, STEP_CALIBRATION_RANGE, Profile
+from .treadmill.known import DEFAULT_NAME_PREFIXES, LEGACY_NAME_PREFIXES
 
 log = logging.getLogger(__name__)
 
@@ -43,7 +44,11 @@ class TreadmillConfig:
     # then stores that pad's address here, so that every later reconnect can
     # only reach the same pad.
     address: str = ""
-    name_prefixes: list[str] = field(default_factory=lambda: ["URTM"])
+    # Bluetooth names (their first letters) that are taken for a treadmill as
+    # soon as they are heard. Any other treadmill is found by the Fitness
+    # Machine Service it advertises, at the end of the scan - so an empty
+    # list means "whatever advertises that service".
+    name_prefixes: list[str] = field(default_factory=lambda: list(DEFAULT_NAME_PREFIXES))
     units: str = "auto"  # firmware speed grid: "auto" | "mph" | "kmh"
     auto_connect: bool = True
     stop_on_exit: bool = True
@@ -268,6 +273,10 @@ def load(data_dir: Path | None = None) -> Config:
         return config
     if isinstance(raw, dict):
         apply_update(config, raw)
+    if tuple(config.treadmill.name_prefixes) == LEGACY_NAME_PREFIXES:
+        # Written when UREVO was the only make known by name (the file holds
+        # every setting, changed or not): move on to today's list.
+        config.treadmill.name_prefixes = list(DEFAULT_NAME_PREFIXES)
     return config
 
 

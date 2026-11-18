@@ -136,15 +136,19 @@ async def probe(
     rows = []
     for device, adv in found.values():
         name = adv.local_name or device.name or ""
-        candidate = is_treadmill_candidate(name, adv.service_uuids, name_prefixes)
+        machine_type = ftms.advertised_machine_type(
+            next((bytes(v) for k, v in adv.service_data.items() if k.lower() == ftms.FTMS_SERVICE), None)
+        )
+        candidate = is_treadmill_candidate(name, adv.service_uuids, name_prefixes, ftms.says_treadmill(machine_type))
         # Known names first: the first candidate listed is the one probed.
         order = (not name_matches(name, name_prefixes), not candidate, -(adv.rssi or -999))
-        rows.append((order, name, device, adv, candidate))
+        rows.append((order, name, device, adv, candidate, machine_type))
     rows.sort(key=lambda r: r[0])
-    for _, name, device, adv, candidate in rows:
+    for _, name, device, adv, candidate, machine_type in rows:
         marker = "*" if candidate else " "
         services = ",".join(u[4:8] for u in adv.service_uuids) or "-"
-        out(f" {marker} {device.address}  rssi={adv.rssi:>4}  name={name or '(none)':<24} services={services}")
+        kind = f"  kind={ftms.describe_machine_type(machine_type)}" if machine_type is not None else ""
+        out(f" {marker} {device.address}  rssi={adv.rssi:>4}  name={name or '(none)':<24} services={services}{kind}")
         if address and device.address.upper() == address.upper():
             target = device
         elif not address and candidate and target is None:
@@ -152,8 +156,8 @@ async def probe(
     out("   (* = looks like a treadmill)")
     out("")
     if target is None:
-        out("No treadmill found. Is it switched on and in range? Is the UREVO phone app closed")
-        out("(the pad accepts one connection at a time)? Do not pair it in Windows Bluetooth settings.")
+        out("No treadmill found. Is it switched on and in range? Is its own phone app closed")
+        out("(most treadmills accept one connection at a time)? Do not pair it in Windows Bluetooth settings.")
         return report
 
     out(f"Connecting to {target.address} ({target.name or 'unnamed'}) ...")

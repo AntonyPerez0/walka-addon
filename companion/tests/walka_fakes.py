@@ -210,6 +210,8 @@ class FakePad:
         has_ftms: bool = True,
         has_speed_range: bool = True,
         has_features: bool = True,
+        speed_target: bool = True,  # what the features say; the pad obeys either way
+        says_treadmill: bool | None = None,  # the machine type in its advertisement, if any
         has_status: bool = True,
         require_control: bool = False,
         silent: bool = False,
@@ -227,6 +229,8 @@ class FakePad:
         self.has_ftms = has_ftms
         self.has_speed_range = has_speed_range
         self.has_features = has_features
+        self.speed_target = speed_target
+        self.says_treadmill = says_treadmill
         self.has_status = has_status
         self.require_control = require_control
         self.silent = silent
@@ -287,7 +291,7 @@ class FakePad:
             return struct.pack("<HHH", *self.kmh_range)
         if uuid == ftms.FITNESS_MACHINE_FEATURE:
             # features: total distance, step count, expended energy, elapsed time; targets: speed
-            return struct.pack("<II", 0x0004 | 0x0040 | 0x0200 | 0x1000, 0x0001)
+            return struct.pack("<II", 0x0004 | 0x0040 | 0x0200 | 0x1000, 0x0001 if self.speed_target else 0)
         raise OSError(f"characteristic {uuid} is not readable")
 
     # -- notifications -----------------------------------------------------------
@@ -534,7 +538,14 @@ class FakeBackend:
         return [p for p in self.pads if p.powered and not p.busy and p.client is None]
 
     def _found(self, pad: FakePad) -> FoundDevice:
-        return FoundDevice(name=pad.name, address=pad.address, rssi=-60, ftms=pad.advertises_ftms, handle=pad)
+        return FoundDevice(
+            name=pad.name,
+            address=pad.address,
+            rssi=-60,
+            ftms=pad.advertises_ftms,
+            handle=pad,
+            treadmill=pad.says_treadmill,
+        )
 
     async def discover(self, timeout: float) -> list[FoundDevice]:
         await asyncio.sleep(0)
@@ -555,7 +566,10 @@ class FakeBackend:
             return None
         # As the real backend: a known name first, and a device that only
         # advertises the Fitness Machine Service when no such name is around.
-        for wanted in (lambda pad: name_matches(pad.name, name_prefixes), lambda pad: pad.advertises_ftms):
+        for wanted in (
+            lambda pad: name_matches(pad.name, name_prefixes),
+            lambda pad: pad.advertises_ftms and pad.says_treadmill is not False,
+        ):
             for pad in visible:
                 if wanted(pad):
                     return self._found(pad)

@@ -59,10 +59,22 @@ class Radio:
         self.subscribed: list[str] = []
         self.written: list[str] = []
 
-    def add(self, address: str, name: str | None, *, fitness_machine: bool = False, rssi: int = -60) -> None:
+    def add(
+        self,
+        address: str,
+        name: str | None,
+        *,
+        fitness_machine: bool = False,
+        rssi: int = -60,
+        kind: bytes | None = None,  # FTMS service data: what kind of machine it says it is
+    ) -> None:
         device = SimpleNamespace(address=address, name=name)
         uuids = [ftms.FTMS_SERVICE] if fitness_machine else []
-        self.adverts[address] = (device, SimpleNamespace(local_name=name, service_uuids=uuids, rssi=rssi))
+        service_data = {ftms.FTMS_SERVICE: kind} if kind is not None else {}
+        self.adverts[address] = (
+            device,
+            SimpleNamespace(local_name=name, service_uuids=uuids, service_data=service_data, rssi=rssi),
+        )
 
 
 @pytest.fixture
@@ -185,3 +197,19 @@ def test_an_address_picks_the_device_and_nothing_found_is_explained(radio: Radio
     radio.add("22:22:22:22:22:22", "TV")
     report = "\n".join(run_probe())
     assert "No treadmill found" in report and radio.connected_to == ["11:11:11:11:11:11"]
+
+
+def test_a_treadmill_of_another_make_is_probed_and_a_bike_is_not(radio: Radio):
+    """The report is how a new treadmill gets to be supported: it must pick
+    the treadmill by itself, and say what each machine claims to be."""
+    radio.add("11:11:11:11:11:11", "KICKR BIKE", fitness_machine=True, rssi=-30, kind=bytes.fromhex("012000"))
+    radio.add("88:88:88:88:88:88", "FS-A1B2C3", fitness_machine=True, rssi=-80, kind=bytes.fromhex("010100"))
+    report = run_probe()
+    assert radio.connected_to == ["88:88:88:88:88:88"]
+    bike = next(line for line in report if "KICKR BIKE" in line)
+    treadmill = next(line for line in report if "FS-A1B2C3" in line and "rssi=" in line)
+    assert bike.startswith("   ") and bike.endswith("kind=indoor bike")
+    assert treadmill.startswith(" * ") and treadmill.endswith("kind=treadmill")
+
+    radio.adverts.pop("88:88:88:88:88:88")
+    assert "No treadmill found" in "\n".join(run_probe())

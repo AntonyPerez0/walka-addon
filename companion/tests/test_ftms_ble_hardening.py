@@ -471,7 +471,7 @@ def test_set_up_that_hangs_is_given_up_on(monkeypatch):
             return client
 
         backend.client = stuck_client
-        with pytest.raises(TreadmillError, match="timed out - is the pad switched on"):
+        with pytest.raises(TreadmillError, match="timed out - is the treadmill switched on"):
             await asyncio.wait_for(driver.connect(), SOON)
         assert pad.client is None  # let go of, so that the next attempt can connect
 
@@ -680,7 +680,7 @@ def test_bluetooth_switched_off_reads_as_a_sentence_not_a_tuple():
     )
     assert "POWERED_OFF" in str(off)  # what used to be shown
     assert describe_bluetooth_error(off) == "Bluetooth radio is not powered on. Turn on Bluetooth and try again."
-    assert describe_bluetooth_error(asyncio.TimeoutError()).startswith("timed out - is the pad switched on")
+    assert describe_bluetooth_error(asyncio.TimeoutError()).startswith("timed out - is the treadmill switched on")
     assert describe_bluetooth_error(TimeoutError(), timeout_hint="") == "timed out"
     assert describe_bluetooth_error(OSError("adapter unplugged")) == "adapter unplugged"
     assert describe_bluetooth_error(RuntimeError()) == "RuntimeError"  # never an empty reason
@@ -718,7 +718,7 @@ def test_a_connection_time_out_says_what_to_check():
         with pytest.raises(TreadmillError) as info:
             await driver.connect()
         assert str(info.value) == (
-            "connection failed: timed out - is the pad switched on and in range, and is the UREVO phone app closed?"
+            "connection failed: timed out - is the treadmill switched on and in range, and is its own phone app closed?"
         )
         assert driver.status.detail == str(info.value)
 

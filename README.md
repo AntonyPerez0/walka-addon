@@ -31,7 +31,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Windows-10%20%26%2011-0078d4" alt="Windows 10 and 11">
   <img src="https://img.shields.io/badge/World%20of%20Warcraft-Forever-c79c3e" alt="World of Warcraft: Forever">
-  <img src="https://img.shields.io/badge/walking%20pad-UREVO%20Strol%202E-256abf" alt="Walking pad: UREVO Strol 2E">
+  <img src="https://img.shields.io/badge/treadmill-UREVO%20%C2%B7%20WELLFIT%20%C2%B7%20other%20Bluetooth%20FTMS-256abf" alt="Treadmill: UREVO, WELLFIT and other Bluetooth FTMS treadmills">
 </p>
 
 <p align="center">
@@ -45,9 +45,10 @@ This is the Windows program that goes with the **Walka addon** in the
 game. You need both: the addon watches your character, and this program
 talks to your walking pad.
 
-**You need:** a Windows 10 or 11 PC with Bluetooth, a UREVO Strol 2E
-walking pad (other Bluetooth walking pads may work), and World of
-Warcraft: Forever.
+**You need:** a Windows 10 or 11 PC with Bluetooth, a walking pad or
+treadmill that apps can control over Bluetooth (a UREVO Strol 2E, a
+WELLFIT TM029 Pro - see [which treadmills work](#which-treadmills-work)),
+and World of Warcraft: Forever.
 
 ## Get started
 
@@ -69,9 +70,9 @@ Warcraft: Forever.
    so Windows does not recognise it yet.)
 3. **Follow "Getting started" on the dashboard.** It ticks each step off as
    you do it:
-   * **Connect the treadmill:** switch the pad on and close the UREVO
-     phone app. Don't pair it in Windows Bluetooth settings - Walka finds
-     it by itself.
+   * **Connect the treadmill:** switch it on and close its own phone app
+     (UREVO, WELLFIT Fitness, ...). Don't pair it in Windows Bluetooth
+     settings - Walka finds it by itself.
    * **Install the game addon:** click *Install* on the dashboard, then
      restart the game and tick *Walka* in the AddOns list. (By hand
      instead: unzip the [addon download](https://github.com/AntonyPerez0/walka-addon/releases/latest/download/Walka-addon.zip)
@@ -116,6 +117,7 @@ Everything below is the long version, for when you want it.
 [What Walka is](#what-walka-is) ·
 [How it works](#how-it-works) ·
 [What you need](#what-you-need) ·
+[Which treadmills work](#which-treadmills-work) ·
 [Install, step by step](#install-step-by-step) ·
 [Using it](#using-it)
 
@@ -151,10 +153,11 @@ It is two pieces:
   the treadmill over Bluetooth with a set of safety rules, records your
   walks, and shows a live dashboard in your browser.
 
-Built for the **UREVO Strol 2E (URTM030)**; it should work with any
-treadmill that speaks standard Bluetooth FTMS with speed control. The
-companion also works without any game (manual sessions), and logs walks you
-do with just the remote.
+Built around the **UREVO Strol 2E (URTM030)**, and made to drive any
+treadmill that speaks standard Bluetooth FTMS with speed control - see
+[which treadmills work](#which-treadmills-work). The companion also works
+without any game (manual sessions), and logs walks you do with just the
+remote.
 
 ## How it works
 
@@ -186,11 +189,48 @@ Details: [docs/PROTOCOL.md](docs/PROTOCOL.md).
 
 * Windows 11 (Windows 10 generally works) with Bluetooth 4.0 / "LE" or
   newer.
-* The walking pad, switched on, **not** paired in Windows Bluetooth
-  settings, and with the UREVO phone app **closed** (the pad accepts one
-  connection at a time).
+* The walking pad or treadmill, switched on, **not** paired in Windows
+  Bluetooth settings, and with its own phone app **closed** (most accept
+  one connection at a time).
 * WoW: Forever in *Windowed* or *Windowed (Fullscreen)* mode, with the
   top-left corner of the game visible.
+
+## Which treadmills work
+
+Walka speaks **Bluetooth FTMS**, the standard that fitness apps use to
+control a treadmill. If an app other than the maker's own can *set the
+speed* of your treadmill, Walka very likely can too.
+
+| Treadmill | How Walka finds it | What is known |
+|---|---|---|
+| **UREVO Strol 2E** and other UREVO pads | By name (`URTM...`), at once | Other open-source projects drive it with the same commands. |
+| **WELLFIT TM029 Pro** and other WELLFIT treadmills | By name (`WELLFIT TM Linker`), at once | Another open-source project drives a WELLFIT this way; Walka copies what it needed. |
+| **Any other FTMS treadmill** | By what it advertises, after a 15-second scan - or pick it yourself: dashboard → *Treadmill → Scan* | Depends on the treadmill. Try it as in [Before your first walk](#before-your-first-walk). |
+
+None of these has been tried by Walka's author on the real machine yet -
+the warning at the top of this page is for all of them. Details and
+sources: [docs/HARDWARE.md](docs/HARDWARE.md).
+
+Things to know with a treadmill that is not a walking pad:
+
+* **Walka stays at walking pace.** Whatever the treadmill can do, the speed
+  cap cannot be set above 6.5 km/h (4.0 mph), and starts at 3.0 mph.
+* **Incline is left alone.** Set it on the treadmill.
+* **The safety key and the treadmill's own buttons always win.** A stop at
+  the treadmill is final until you resume.
+* If the dashboard says the treadmill *does not take speed commands*, it
+  shows its numbers to apps but cannot be driven by them. Walka then still
+  counts your walk, with you setting the speed on the treadmill.
+
+**What will not work:** treadmills that only talk to their maker's app in
+a private language (many NordicTrack / iFIT machines, the older KingSmith
+WalkingPads), and bikes or rowers - Walka only connects to treadmills.
+
+**Is yours not listed, or not behaving?** Run `Walka.exe probe` with the
+treadmill on. It only listens - it cannot move the belt - and saves a
+small text report.
+[Open an issue](https://github.com/AntonyPerez0/walka-addon/issues) with
+that report and the treadmill's make and model, and it can be added.
 
 ## Install, step by step
 
@@ -216,7 +256,8 @@ Details: [docs/PROTOCOL.md](docs/PROTOCOL.md).
    the AddOns list.
 4. **Connect the treadmill.** Switch it on: Walka looks for it by itself.
    To pick one yourself: dashboard → *Treadmill → Scan*, then *Connect*
-   next to `URTM030`.
+   next to yours (a UREVO Strol 2E shows as `URTM030`, a WELLFIT as
+   `WELLFIT TM Linker`).
 5. **Tell it about you.** *Settings → Body profile*: weight and height
    (used for calories and steps).
 
@@ -580,7 +621,9 @@ order:
 
 | Symptom | Try |
 |---|---|
-| Treadmill not found | Is it on? Close the UREVO phone app (force-quit it). Remove the pad from Windows *Bluetooth & devices* if you paired it there. A USB Bluetooth 5 adapter helps with weak built-in radios. |
+| Treadmill not found | Is it on? Close the treadmill's own phone app (force-quit it). Remove the treadmill from Windows *Bluetooth & devices* if you paired it there. A USB Bluetooth 5 adapter helps with weak built-in radios. |
+| Treadmill not found, and it is not a UREVO or WELLFIT | Give it the whole scan (15 seconds), or press *Scan* on the dashboard and pick it. If it is not in the list either, it does not speak Bluetooth FTMS - see [which treadmills work](#which-treadmills-work). |
+| It connects, but the belt does not start or change speed | The treadmill may only *show* its numbers to apps. Look for "does not take speed commands" under *Activity* on the dashboard, and send a `Walka.exe probe` report. |
 | Dashboard says *no game signal* | Run the game windowed or borderless; keep the top-left corner uncovered; `/walka beacon on`; try `/walka beacon size 6`; run `Walka.exe beacon`. |
 | Belt does not follow | Is a session started (`/walka status`)? Does the dashboard say *waiting for you to move your character* or *stopped at the treadmill*? Press Resume. |
 | "Waiting for the treadmill to finish its previous workout" | Normal for about ten seconds after a stop: the pad ignores a start until then. |

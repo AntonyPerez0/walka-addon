@@ -395,7 +395,7 @@ function scanTreadmills() {
     empty: () =>
       last && last.treadmill.kind === "simulated"
         ? "Nothing to scan for: this is the simulated treadmill. Start the companion without --simulate or --demo to look for a real pad."
-        : "No treadmill found. Is the pad switched on and in range, and is the UREVO phone app closed? A pad that is already connected - here or to a phone - does not show up.",
+        : "No treadmill found. Is it switched on and in range, and is its own phone app closed? A treadmill that is already connected - here or to a phone - does not show up.",
     onPick: (device, button) =>
       run(button, () => post("/api/treadmill/connect", { address: device.address }), {
         success: `Connecting to ${device.name || device.address}.`,

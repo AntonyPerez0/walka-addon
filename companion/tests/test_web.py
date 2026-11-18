@@ -592,7 +592,7 @@ def test_config_update_with_bad_input_never_breaks_the_limits(rig: Rig, raw: str
         assert 0.8 <= limits.max_speed_kmh <= MAX_SPEED_CAP_KMH
         assert isinstance(rig.config.web.port, int) and 1 <= rig.config.web.port <= 65535
         assert rig.config.profile.age is None
-        assert rig.config.wow.origin is None and rig.config.treadmill.name_prefixes == ["URTM"]
+        assert rig.config.wow.origin is None and rig.config.treadmill.name_prefixes == ["URTM", "WELLFIT TM Linker"]
         json.dumps(rig.app.snapshot())
 
     serve(rig, scenario)

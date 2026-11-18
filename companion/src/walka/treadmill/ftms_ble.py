@@ -1,15 +1,17 @@
 """Bluetooth FTMS treadmill driver (bleak).
 
-Written for UREVO walking pads (Strol 2E "URTM030" and siblings), which
-speak plain FTMS, but it should drive any treadmill that implements the
-Fitness Machine Service with a speed target.
+Drives any treadmill that implements the Fitness Machine Service with a
+speed target. It was written around UREVO walking pads (Strol 2E "URTM030"
+and siblings), and the careful habits below come from them; a treadmill of
+another make is found by the service it advertises (see ``known.py`` for
+the names that are recognised at once, and docs/HARDWARE.md).
 
 How UREVO pads behave (from hardware captures by other open-source
 projects - see docs/HARDWARE.md):
 
 * They advertise their model code as the name ("URTM030") and need no
-  pairing. Only one central can be connected, so the UREVO phone app must be
-  closed and the pad must not be paired in Windows Settings.
+  pairing. Only one central can be connected, so the maker's phone app must
+  be closed and the pad must not be paired in Windows Settings.
 * Sequence: enable Control Point indications, write Request Control (00),
   Start (07), wait for the belt to move (3-2-1 countdown, then minimum
   speed), then Set Target Speed (02 + uint16 0.01 km/h).
@@ -45,10 +47,9 @@ from .base import (
     kmh_to_mph_tenths,
     mph_tenths_to_command_kmh,
 )
+from .known import DEFAULT_NAME_PREFIXES, KnownTreadmill, known_treadmill
 
 log = logging.getLogger(__name__)
-
-DEFAULT_NAME_PREFIXES: tuple[str, ...] = ("URTM",)
 
 # After one of our own start commands, "started" events for this long are
 # attributed to us rather than to someone pressing a button on the machine.
@@ -73,7 +74,7 @@ WRITE_TIMEOUT_S = 2.0
 # The same for the reads and subscriptions made while connecting.
 SETUP_TIMEOUT_S = 20.0
 
-PAD_TIMEOUT_HINT = "is the pad switched on and in range, and is the UREVO phone app closed?"
+PAD_TIMEOUT_HINT = "is the treadmill switched on and in range, and is its own phone app closed?"
 
 # Training Status values (second byte of 0x2AD3).
 TRAINING_IDLE = 0x01
@@ -90,6 +91,10 @@ class FoundDevice:
     rssi: int | None
     ftms: bool  # advertises the Fitness Machine Service
     handle: Any = None  # backend-specific device object
+    # What kind of fitness machine the advertisement says it is: True for a
+    # treadmill, False for something else (a bike, a rower), None if it does
+    # not say.
+    treadmill: bool | None = None
 
     def to_dict(self) -> dict:
         return {"name": self.name, "address": self.address, "rssi": self.rssi, "ftms": self.ftms}
@@ -123,7 +128,8 @@ class BleBackend(Protocol):
         """The treadmill to connect to: the device with ``address`` if one is
         given, otherwise one whose name starts with a prefix - and only if no
         such name is heard during the whole ``timeout``, a device that merely
-        advertises the Fitness Machine Service."""
+        advertises the Fitness Machine Service (and does not say that it is
+        some other kind of machine than a treadmill)."""
         ...
 
     def client(self, device: FoundDevice, on_disconnect: Callable[[], None]) -> BleClient: ...
@@ -135,11 +141,20 @@ def name_matches(name: str | None, prefixes: Sequence[str]) -> bool:
     return any(upper.startswith(p.upper()) for p in prefixes if p)
 
 
-def is_treadmill_candidate(name: str | None, service_uuids: Sequence[str], prefixes: Sequence[str]) -> bool:
-    """True for devices worth offering: FTMS advertisers and known names."""
-    if any(u.lower() == ftms.FTMS_SERVICE for u in service_uuids):
+def is_treadmill_candidate(
+    name: str | None,
+    service_uuids: Sequence[str],
+    prefixes: Sequence[str],
+    treadmill: bool | None = None,
+) -> bool:
+    """True for devices worth offering: known names, and FTMS advertisers
+    that do not say they are another kind of machine (``treadmill`` is what
+    the advertisement says - see ``FoundDevice``)."""
+    if name_matches(name, prefixes):
         return True
-    return name_matches(name, prefixes)
+    if treadmill is False:
+        return False  # a bike trainer, a rower: there is no belt to drive
+    return any(u.lower() == ftms.FTMS_SERVICE for u in service_uuids)
 
 
 def describe_bluetooth_error(exc: BaseException, timeout_hint: str = PAD_TIMEOUT_HINT) -> str:
@@ -197,6 +212,7 @@ class FtmsTreadmill(Treadmill):
         self._coast_until = 0.0  # after any stop/pause: speed reports are the belt running down
         self._next_write_at = 0.0  # pacing of control-point writes
         self._top_step_refused = False  # the pad rejected the rounded-up value for its top speed
+        self._known: KnownTreadmill | None = None  # the connected pad, if its name is a known one
         self._data = ftms.TreadmillData()
         self.features: ftms.MachineFeatures | None = None
         self.raw_speed_range: ftms.SpeedRange | None = None
@@ -215,7 +231,12 @@ class FtmsTreadmill(Treadmill):
             found = await self._get_backend().discover(timeout)
         except Exception as exc:  # no adapter, Bluetooth switched off, ...
             raise TreadmillError(describe_bluetooth_error(exc)) from exc
-        return [d for d in found if d.ftms or is_treadmill_candidate(d.name, (), self.name_prefixes)]
+        services = (ftms.FTMS_SERVICE,)
+        return [
+            d
+            for d in found
+            if is_treadmill_candidate(d.name, services if d.ftms else (), self.name_prefixes, d.treadmill)
+        ]
 
     # ---- connection ------------------------------------------------------------
     async def connect(self) -> None:
@@ -231,8 +252,8 @@ class FtmsTreadmill(Treadmill):
             raise TreadmillError(status.detail) from exc
         if device is None:
             status.detail = (
-                "treadmill not found - is it switched on, in range, and is the "
-                "UREVO phone app closed? (only one device can connect at a time)"
+                "treadmill not found - is it switched on, in range, and is its own "
+                "phone app closed? (most treadmills accept one connection at a time)"
             )
             raise TreadmillError(status.detail)
 
@@ -250,6 +271,7 @@ class FtmsTreadmill(Treadmill):
             if not client.has_characteristic(ftms.CONTROL_POINT) or not client.has_characteristic(ftms.TREADMILL_DATA):
                 raise TreadmillError(f"{device.name or device.address} does not expose the FTMS treadmill service")
             self._client = client
+            self._known = known_treadmill(device.name)
             await asyncio.wait_for(self._setup(client), SETUP_TIMEOUT_S)
             # The link can drop during set-up without any step failing (the
             # optional subscriptions are allowed to). Saying "connected" then
@@ -556,6 +578,10 @@ class FtmsTreadmill(Treadmill):
         # A stop does not wait for the answer to Request Control: the pad
         # gets the request and, one write gap later, the stop itself.
         response = await self._write(ftms.cmd_request_control(), halt=halt, wait=not halt)
+        if self._known is not None and self._known.request_control_twice and not halt:
+            # Some firmware only takes the request the second time. (Not
+            # before a stop: that goes out one write gap sooner instead.)
+            response = await self._write(ftms.cmd_request_control()) or response
         # Some pads never acknowledge Request Control, and some answer it with
         # a failure yet obey every command that follows. Either way the next
         # command tells us: "control not permitted" makes us ask again.

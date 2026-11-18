@@ -372,10 +372,12 @@ async def _scan(args: argparse.Namespace) -> int:
         print(f"Bluetooth is not available: {describe_bluetooth_error(exc)}")
         return 2
     if not found:
-        print("None found. Is the pad on, in range, and the UREVO phone app closed?")
+        print("None found. Is the treadmill on and in range, and is its own phone app closed?")
         return 1
     for device in found:
         tag = "FTMS" if device.ftms else "name match"
+        if device.treadmill:
+            tag += ", says it is a treadmill"
         print(f"  {device.address}  rssi={device.rssi}  {device.name or '(no name)'}  [{tag}]")
     return 0
 
