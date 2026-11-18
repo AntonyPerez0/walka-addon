@@ -76,6 +76,7 @@ function build(request) {
     options,
     units: request.units ?? "mph",
     weightKg: request.weightKg ?? null,
+    road: request.road ?? null,
     now: request.now ?? 0,
   });
 }

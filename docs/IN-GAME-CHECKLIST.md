@@ -202,6 +202,20 @@ game. This section matters most.
 - [ ] `/reload`: the road is still there and carries on.
 - [ ] The window opens, moves and closes in combat; Escape closes it.
 
+And the road on the picture (the companion reads it from the file the game
+writes at a `/reload` or logout):
+
+- [ ] After that `/reload`, open the dashboard's *Share* page: under the
+      tick boxes it says "My road: as the game last saved it (...)" with
+      the time of the `/reload`, and the picture has a *My road* panel
+      whose line has the shape of the road on `/walka map` (north up).
+      If it says "none found for this character yet" or "the game's folder
+      was not found", tell me which - and whether this file exists:
+      `World of Warcraft\_forever_\WTF\Account\<your account>\<realm>\<character>\SavedVariables\Walka.lua`
+      (the folder names are the thing I could not check).
+- [ ] Walk on, `/reload` again: within about a quarter of a minute the
+      line on the Share page has grown.
+
 ## 9. With the treadmill (after the checks in the README)
 
 - [ ] Stand on the pad, `/walka start`: countdown, belt starts at minimum

@@ -19,8 +19,9 @@ from pathlib import Path
 
 from . import __version__, addon_sync, capture
 from . import config as config_module
-from .journey import DemoJourney
+from .journey import DEMO_KEY, DemoJourney
 from .protocol import Flags, Frame, kmh_to_raw, yps_to_raw
+from .road import demo_road
 
 log = logging.getLogger("walka")
 
@@ -300,6 +301,7 @@ async def _run(args: argparse.Namespace) -> int:
     if args.demo:
         # The demo's made-up character must not turn up among the real ones later.
         app.journeys.use_memory_only(demo=True)
+        app.roads.use_demo(demo_road(DEMO_KEY))
 
     stop = asyncio.Event()
     stopped = threading.Event()  # set once app.stop() has run: belt stopped, walk saved

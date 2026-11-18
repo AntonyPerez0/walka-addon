@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from test_app import Rig
 from walka import web
 from walka.config import MAX_SPEED_CAP_KMH
 from walka.governor import Phase
+from walka.protocol import djb2
 from walka.session import SessionRecord
 from walka.treadmill import BeltState, TreadmillError
 
@@ -688,6 +690,103 @@ def test_addon_install(rig: Rig, tmp_path: Path):
         response = await post(client, "/api/addon/install", {"addons_dir": str(tmp_path / "missing")})
         assert response.status == 409
         assert (await response.json())["ok"] is False
+
+    serve(rig, scenario)
+
+
+# ---- the road for the picture ----------------------------------------------------------------------
+
+
+def install_game(rig: Rig, tmp_path: Path, monkeypatch) -> Path:
+    """A game folder with the addon in it, which the companion knows of -
+    and no other (the computer the tests run on may have the game)."""
+    monkeypatch.setattr("walka.addon_sync.find_addons_dirs", lambda *_args, **_kwargs: [])
+    game = tmp_path / "Game" / "_forever_"
+    addon = game / "Interface" / "AddOns" / "Walka"
+    addon.mkdir(parents=True)
+    (addon / "Walka.toc").write_text("## Interface: 16001\n")
+    rig.config.wow.addon_dir = str(addon)
+    return game
+
+
+def save_road(rig: Rig, game: Path, key: str, yards: int) -> None:
+    path = game / "WTF" / "Account" / "ACCOUNT" / "Realm" / "Name" / "SavedVariables" / "Walka.lua"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        f'\r\nWalkaCharDB = {{\r\n\t["version"] = 1,\r\n\t["key"] = "{key}",\r\n\t["segments"] = {{\r\n\t\t{{\r\n'
+        f'\t\t\t["c"] = 1,\r\n\t\t\t["m"] = "w",\r\n\t\t\t["b"] = 1,\r\n\t\t\t["l"] = 12,\r\n\t\t\t["x"] = 100,\r\n'
+        f'\t\t\t["y"] = -200,\r\n\t\t\t["d"] = "3,{yards},0",\r\n\t\t}}, -- [1]\r\n\t}},\r\n}}\r\n',
+        encoding="utf-8",
+        newline="",
+    )
+    os.utime(path, (rig.clock.wall - 60, rig.clock.wall - 60))
+
+
+def test_the_games_folder_is_where_the_addon_is_installed(rig: Rig, tmp_path: Path, monkeypatch):
+    assert tmp_path not in rig.app.game_dirs()  # (<tmp>/AddOns/Walka is no game's folder)
+    game = install_game(rig, tmp_path, monkeypatch)
+    assert rig.app.game_dirs() == [game]
+
+
+def test_the_road_of_a_character(rig: Rig, tmp_path: Path, monkeypatch):
+    game = install_game(rig, tmp_path, monkeypatch)
+    save_road(rig, game, "Tester-Azeroth", 250)
+    mine = f"{djb2('Tester-Azeroth'):08x}"
+
+    async def scenario(client: TestClient):
+        response = await client.get(f"/api/road?character={mine}")
+        assert response.status == 200
+        body = await response.json()
+        assert body["game_found"] is True and body["files"] == 1 and body["demo"] is False
+        road = body["road"]
+        assert road["id"] == mine and road["yards"] == 250 and road["belt_yards"] == 250 and road["level"] == 12
+        assert road["as_of"] == pytest.approx(rig.clock.wall - 60, abs=1)
+        assert road["continents"] == [
+            {
+                "id": 1,
+                "name": "Kalimdor",
+                "yards": 250,
+                "bounds": [100, -200, 350, -200],
+                "paths": [{"style": "walked", "p": [100, -200, 350, -200]}],
+            }
+        ]
+        # Nothing of where the file was found goes to the page.
+        assert "ACCOUNT" not in json.dumps(body) and "Realm" not in json.dumps(body)
+
+        # A character without a saved road: an answer, and no road.
+        response = await client.get("/api/road?character=0badf00d")
+        assert response.status == 200
+        assert await response.json() == {"road": None, "game_found": True, "files": 1, "demo": False}
+
+        # The game rewrites the file (a /reload): the next look has the new road.
+        rig.clock.advance(10)
+        save_road(rig, game, "Tester-Azeroth", 900)
+        body = await (await client.get(f"/api/road?character={mine}")).json()
+        assert body["road"]["yards"] == 900
+
+    serve(rig, scenario)
+
+
+@pytest.mark.parametrize(
+    "query",
+    ["", "?character=", "?character=Tester-Azeroth", "?character=0BADF00D", "?character=../../x", "?character=" + "a" * 17,
+     "?character=12%0034", "?character=12 34", "?id=0badf00d"],
+)  # fmt: skip
+def test_the_road_is_asked_for_by_a_characters_id_only(rig: Rig, query: str):
+    async def scenario(client: TestClient):
+        response = await client.get("/api/road" + query)
+        assert response.status == 400
+
+    serve(rig, scenario)
+
+
+def test_the_road_without_a_game(rig: Rig, monkeypatch):
+    monkeypatch.setattr(rig.app, "game_dirs", lambda: [])
+    rig.app.roads.game_dirs = rig.app.game_dirs
+
+    async def scenario(client: TestClient):
+        response = await client.get("/api/road?character=0badf00d")
+        assert await response.json() == {"road": None, "game_found": False, "files": 0, "demo": False}
 
     serve(rig, scenario)
 

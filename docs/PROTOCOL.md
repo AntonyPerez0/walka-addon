@@ -215,6 +215,11 @@ by other addon companion apps. Until then the in-game HUD shows the addon's
 own estimates, which replay the companion's rate limits and so stay close to
 the real numbers.
 
+There is one more way out of the game, a slow one: what an addon keeps in
+its saved variables, the game writes to a file at logout and on `/reload`.
+The road a character has travelled reaches the companion that way: see
+[5. The saved file](#5-the-saved-file-the-road).
+
 ## 4. Stat frames
 
 Besides driving the belt, the addon keeps a record of each character's
@@ -330,3 +335,68 @@ Implementations: `Protocol.packStatBits` in the addon; `protocol.decode`,
 `beacon.Decoded` (which keeps the two kinds in separate fields),
 `stat_route.py` and `journey.py` (the rounds, and the cache of every
 character's latest numbers) in the companion.
+
+## 5. The saved file (the road)
+
+The road a character travels (`Walka/Core/Road.lua`) is a megabyte by level
+60 - nothing for a strip that carries 40 bits five times a second. It is
+only wanted for the picture on the Share page, which can wait, so it goes
+the way every addon's data goes: the per-character saved variable
+`WalkaCharDB`, which the game writes to
+
+```
+<game>\WTF\Account\<account>\<realm>\<character>\SavedVariables\Walka.lua
+```
+
+when the player logs out, reloads the interface or quits. Nothing can make
+the game write it sooner.
+
+The table:
+
+```lua
+WalkaCharDB = {
+    version = 1,
+    guid = "Player-...",        -- a new character with an old one's name starts afresh
+    key = "Name-Realm",         -- what CHAR_KEY is the djb2 hash of
+    yards = 12345, beltYards = 6789,
+    segments = {                -- unbroken stretches travelled the same way
+        { c = 1,                -- continent (world map id)
+          m = "w",              -- on foot; "r" mounted, "t" flight path, "g" ghost
+          b = 1,                -- the treadmill belt was moving (absent otherwise)
+          l = 17,               -- character level
+          t = 1795000000,       -- when it began (epoch seconds)
+          x = -600, y = 4200,   -- first point, world yards (x north, y west)
+          n = 2,                -- points after the first
+          d = "3,20,0;3,19,-4", -- those points: seconds, dx, dy from the one before
+        },
+        ...
+    },
+}
+```
+
+How the companion reads it (`savedvars.py`, `road.py`):
+
+* **Whose road.** The companion knows a character by the hash the beacon
+  sends as `CHAR_KEY`. It hashes each file's `key` the same way and takes
+  the file whose hash matches (the newest, if the character exists in two
+  account folders). The folder names are not relied on, and neither they
+  nor the realm are passed on or logged.
+* **Data, not a program.** The file is Lua source, but it is not run: the
+  reader accepts assignments of tables, strings, numbers, booleans and nil,
+  and refuses anything else - a call, an operator, a name used as a value.
+  A file cut short (the game was writing it, or crashed while it did) can
+  therefore never be mistaken for a whole one: its tables do not close.
+* **Out of the game's way.** The file is read in one go and never held
+  open, with every kind of sharing allowed on Windows, so the game can
+  replace it at any moment. A file changed within the last two seconds is
+  left for the next look; one that cannot be read is tried again only once
+  it has changed, and the road read before it stands meanwhile.
+* **Only when asked.** The files are looked at when the Share page asks for
+  a road (`GET /api/road?character=<id>`), at most every three seconds, and
+  each is read again only when its size or date has changed. None of this
+  runs on the loop that drives the belt, and nothing here can reach it.
+* **For the page** the road is thinned to at most 6,000 points
+  (Ramer-Douglas-Peucker, the same tolerance everywhere) and grouped by
+  continent and by how it was travelled (`walked` with the belt moving,
+  `road` without, `flight`), with its length measured before the thinning.
+

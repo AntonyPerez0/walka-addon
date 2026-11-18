@@ -16,6 +16,7 @@ import {
   buildCard,
   defaultSubtitle,
   fileName,
+  hasRoad,
   normalizeOptions,
 } from "./cardmodel.js";
 import { THEMES, drawCard } from "./card.js";
@@ -50,6 +51,15 @@ let snapshot = null; // the last state snapshot seen while this view was open
 let journey = null; // the last answer of /api/journey
 let fetchedRev = null; // the journey revision that answer was fetched for
 let fetching = false;
+// The road of the chosen character (GET /api/road): the companion reads it
+// from the file the game writes at logout or /reload, so it is asked for
+// again now and then while this view is open.
+let road = null; // the last answer
+let roadFor = ""; // the character id it is the answer for
+let roadAsked = ""; // the character id last asked about (answered or not)
+let roadAt = 0; // when it was asked (ms)
+let roadFetching = false;
+const ROAD_EVERY_MS = 15000;
 let paintedKey = "";
 let paintQueued = false;
 const inputs = {}; // text inputs by key
@@ -76,6 +86,7 @@ function change(patch) {
   options = normalizeOptions({ ...options, ...patch }, THEME_IDS);
   saveOptions();
   announce(""); // "Saved" and "Copied" were about the picture as it was
+  refreshRoad(); // (another character may have been picked)
   refresh();
 }
 
@@ -116,9 +127,16 @@ const allTotals = () => (snapshot && snapshot.totals ? snapshot.totals.all : nul
 const pictureSize = () => SIZES.find((size) => size.id === options.size) || SIZES[0];
 const usesKm = () => (options.units || (state.units === "kmh" ? "km" : "mi")) === "km";
 
+/** The chosen character's road, if the companion has found one. */
+function chosenRoad() {
+  const character = chosen();
+  return character && road && roadFor === character.id && hasRoad(road.road, character) ? road.road : null;
+}
+
 function currentCard() {
   return buildCard({
     character: chosen(),
+    road: chosenRoad(),
     totals: allTotals(),
     options,
     units: state.units,
@@ -212,11 +230,15 @@ function refresh() {
     setAttr(input, "placeholder", fallback);
   }
 
+  const myRoad = chosenRoad();
   for (const tile of TILES) {
     const box = $(`share-tile-${tile.id}`);
-    box.checked = options.tiles[tile.id] && (!!character || !tile.character);
-    setDisabled(box, !character && !!tile.character);
+    const possible = (!!character || !tile.character) && (!!myRoad || !tile.road);
+    box.checked = options.tiles[tile.id] && possible;
+    setDisabled(box, !possible);
   }
+  setText($("share-road-help"), roadHelp(character, myRoad));
+  setShown($("share-road-help"), !!character);
   $("share-name").checked = options.showName;
   setDisabled($("share-name"), !character);
   $("share-footnote").checked = options.showFootnote;
@@ -228,6 +250,49 @@ function refresh() {
   const size = pictureSize();
   setText($("share-dim"), canDraw ? `${size.width} × ${size.height} px` : "");
   if (canDraw) queuePaint();
+}
+
+/** What the page says about the road: how fresh it is, or why there is none. */
+function roadHelp(character, myRoad) {
+  if (!character) return "";
+  if (myRoad) {
+    if (road.demo) return "My road: a made-up road for the demo character.";
+    const when = new Date(myRoad.as_of * 1000).toLocaleString([], {
+      day: "numeric",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    return `My road: as the game last saved it (${when}). The game writes it when you log out or type /reload - do that to bring the road on the picture up to date.`;
+  }
+  if (!road || roadFor !== character.id) return "My road: looking for it...";
+  if (!road.game_found)
+    return "My road: the game's folder was not found, so the road cannot be read. Install the addon, or say where it is, under Settings - Game addon.";
+  return "My road: none found for this character yet. The addon records it as you play, and the game saves it when you log out or type /reload.";
+}
+
+async function fetchRoad(id) {
+  if (roadFetching) return;
+  roadFetching = true;
+  roadAsked = id;
+  try {
+    road = await api(`/api/road?character=${encodeURIComponent(id)}`, { timeoutMs: 30000 });
+    roadFor = id;
+  } catch {
+    // The picture is simply drawn without the road; it is asked for again soon.
+    road = null;
+    roadFor = "";
+  } finally {
+    roadAt = Date.now();
+    roadFetching = false;
+  }
+  refresh();
+}
+
+function refreshRoad() {
+  const character = chosen();
+  // (A question that failed is not asked again at once, only when it is due.)
+  if (character && (character.id !== roadAsked || Date.now() - roadAt > ROAD_EVERY_MS)) fetchRoad(character.id);
 }
 
 // ---- saving and copying ------------------------------------------------------------------------
@@ -335,7 +400,8 @@ export function initShare() {
       const box = h("input", { id: `share-tile-${tile.id}`, type: "checkbox" });
       box.addEventListener("change", () => {
         const tiles = { ...options.tiles, [tile.id]: box.checked };
-        if (!TILES.some((entry) => tiles[entry.id] && (chosen() || !entry.character))) {
+        // (The road is no number, and may not be there to show.)
+        if (!TILES.some((entry) => !entry.road && tiles[entry.id] && (chosen() || !entry.character))) {
           toast("Keep at least one number on the picture.", "info");
           refresh();
           return;
@@ -399,6 +465,7 @@ export function updateShare(s) {
   snapshot = s;
   const rev = s.journey ? s.journey.rev : 0;
   if (rev !== fetchedRev) fetchJourney(rev);
+  refreshRoad();
   refresh();
 }
 

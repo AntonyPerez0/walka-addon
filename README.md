@@ -220,6 +220,7 @@ What is on it:
 | On the picture | What it is |
 |---|---|
 | **My steps** | Your real-world steps, and under them the distance you walked. With *This character's walks* these are the walks you did while playing that character, as the addon counts them; with *All my walks* they are everything the companion has recorded, with any game or none. |
+| **My road** | The road your character has travelled, as a line: see [The road on the picture](#the-road-on-the-picture). |
 | **Character level** | The level, and the level cap of the game. |
 | **Time played** | The game's own `/played` for this character. |
 | **Character steps** | How far the character has gone on foot since Walka began tracking it, as steps, with the in-game distance under it. |
@@ -240,10 +241,41 @@ A `~` in front of a number means "about":
   addon's estimate, until the game has loaded what the treadmill measured
   (*Sync*, or the next login).
 
+### The road on the picture
+
+The road the addon records (see [The road map](#the-road-map)) is drawn on
+the picture as line art - the shape of your journey, without any of the
+game's map:
+
+* the stretches you walked **on the treadmill** are bright; what the
+  character travelled while the belt stood still is dim; flight paths are
+  hairlines;
+* a ring marks where the road begins, a gem where the character is now, and
+  a small stud every tenth level reached on the way;
+* the two continents with the most road are shown side by side, west to
+  the left, drawn to the same scale. Under them: the length of the road in
+  in-game miles (flights not counted), and how much of it you walked for
+  real.
+
+The road is far too much for the strip on the screen, so it takes the slow
+way: **the game saves it when you log out or type `/reload`**, and the
+companion reads it from the game's own file
+(`WTF\Account\...\SavedVariables\Walka.lua` in the game's folder). So the
+road on the picture is as of your last logout or `/reload` - the Share page
+says when that was - while the numbers next to it are live. Type `/reload`
+before you make the picture and both are current.
+
+The companion has to know where the game is for this; it does when the
+addon is installed (*Settings → Game addon*). The file is only ever read, never
+changed. Untick *My road* and the picture is as it was without it.
+
 Private by default:
 
 * The picture is drawn in your browser from numbers that are already on
   your PC. Nothing is uploaded and nothing is posted for you.
+* The road is read from a file on your PC and goes no further than the
+  page that draws it. On the picture it is a line and the names of the
+  continents - no zones, no coordinates, no map.
 * Your character's name, and the small line with your weight and average
   pace, are **off** until you tick them. The realm never leaves the game:
   the companion is only sent a number that tells your characters apart.
@@ -274,9 +306,10 @@ What is recorded: a point every twenty yards (fewer on flight paths, more
 where the road bends), nothing while you stand still, nothing inside
 dungeons, raids and battlegrounds (the game does not say where you are
 there). It is saved per character with your other addon settings and never
-leaves your PC. `/walka road off` stops the recording (`on` starts it
-again); what is recorded so far is kept. A road from level 1 to 60 comes to
-about a megabyte.
+leaves your PC (the companion reads it there, to draw it on the
+[Share picture](#the-road-on-the-picture)). `/walka road off` stops the
+recording (`on` starts it again); what is recorded so far is kept. A road
+from level 1 to 60 comes to about a megabyte.
 
 If the map does not show, `/walka mapcheck` prints what the game answered
 when Walka asked for its maps.
@@ -368,8 +401,6 @@ order:
 
 ## Ideas for later
 
-* The road as line art on the Share picture (the companion would read it
-  from the game's saved files after a `/reload` or logout).
 * A foot pod or other Bluetooth cadence sensor for true step counts.
 * Goals and streak rewards in game; milestones announced in chat.
 * Per-game plugins for other games (the companion's manual mode already
@@ -389,7 +420,8 @@ py -m pytest          # companion tests + addon tests (the addon runs under a mo
   (Bluetooth FTMS driver and a simulator), `capture.py` + `beacon.py`
   (reading the strip), `session.py`, `addon_sync.py`, `web.py` + `static/`
   (dashboard), `app.py` (wiring), `cli.py`; `journey.py` (each character's
-  journey, put together from the strip) and `static/share.js`, `card.js`,
+  journey, put together from the strip), `savedvars.py` + `road.py` (the
+  road, read from the game's saved file) and `static/share.js`, `card.js`,
   `cardmodel.js` (the Share page and the picture it draws).
 * `tests/addon/` - loads the real addon files into a mock of the game's
   API that is checked against Blizzard's published API documentation for

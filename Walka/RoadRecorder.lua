@@ -18,6 +18,7 @@ local ADDON_NAME, ns = ...
 
 local Road = ns.Road
 local Game = ns.Game
+local Journey = ns.Journey
 
 local RoadRecorder = {}
 ns.RoadRecorder = RoadRecorder
@@ -34,6 +35,7 @@ local ticker
 local lastLook = 0      -- GetTime() of the last look that ran to its end
 local lastFlush = 0
 local enabled = true
+local named = false     -- the saved road carries this character's "Name-Realm"
 
 local function isSecret(value)
     return issecretvalue ~= nil and issecretvalue(value)
@@ -72,6 +74,17 @@ local function whereAmI()
     return continent, floor(x + 0.5), floor(y + 0.5)
 end
 
+-- "Name-Realm" of the character, or nil while the game will not say. The
+-- companion finds the road of a character by this name (it is what the
+-- journey's CHAR_KEY is a hash of), so a "?" must never replace a real one.
+local function characterKey()
+    local key = Game.CharacterName()
+    if Journey.isCharacter(key) then
+        return key
+    end
+    return nil
+end
+
 -- How the character is travelling, from the state the core samples.
 local function travelMode(state)
     if state.taxi then
@@ -97,6 +110,13 @@ end
 local function look()
     if not recorder or not enabled then
         return
+    end
+    if not named then
+        local key = characterKey()      -- (the game may not have said at login)
+        if key then
+            db.key = key
+            named = true
+        end
     end
     local now = Game.Now()
     local continent, x, y = whereAmI()
@@ -130,9 +150,10 @@ end
 function RoadRecorder.Load(walka)
     core = walka
     local guid = Game.CharacterGUID()
-    local key = Game.CharacterName()
-    WalkaCharDB = Road.database(WalkaCharDB, guid, type(key) == "string" and key or nil)
+    local key = characterKey()
+    WalkaCharDB = Road.database(WalkaCharDB, guid, key)
     db = WalkaCharDB
+    named = key ~= nil
     recorder = Road.Recorder.new(db)
     enabled = walka.db.settings.recordRoad ~= false
     lastFlush = GetTime()

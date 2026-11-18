@@ -863,6 +863,250 @@ function tile(ctx, report, theme, box, item, unit, hero, slots) {
   }
 }
 
+// ---- the road -----------------------------------------------------------------------------------
+
+/**
+ * The road tile: the character's path as line art. No map is drawn - only
+ * the shape of the road itself, which is the traveller's own. Stretches
+ * walked on the treadmill are bright (and glow), the rest is quiet, flight
+ * paths are hairlines. Every tenth level reached is a small numbered stud,
+ * the start a ring, and where the character is now a gem.
+ *
+ * The world's yards run north (x) and west (y); on the picture north is up
+ * and west is left. Two continents stand side by side at one scale, each
+ * given the width its road needs.
+ */
+function routeTile(ctx, report, theme, box, item, unit) {
+  const frame = bandOf(unit, false) + 10 * unit;
+  // Type is sized like a small tile's: the panel is about as wide as one
+  // when it stands beside the tiles, and wider when it has a row to itself.
+  const s = Math.min(1.25, box.h / 300, box.w / 430);
+  const CAP = 0.72;
+  const inner = { x: box.x + frame, y: box.y + frame, w: box.w - 2 * frame, h: box.h - 2 * frame };
+  const cx = box.x + box.w / 2;
+  const padX = 26 * s;
+  const width = inner.w - 2 * padX;
+  const labelSize = 21 * s;
+  const subSize = 18 * s;
+  const noteSize = 14.5 * s;
+
+  const labelY = inner.y + 20 * s + labelSize * CAP;
+  drawLabel(ctx, report, "route.label", item.label, { x: cx, y: labelY, size: labelSize, width, tracking: 0.17 }, theme, inner);
+
+  // Under the road: how long it is and how much of it was walked for real -
+  // on one line where the panel is wide enough, else on two.
+  const oneLine = !item.note || width >= 600 * s;
+  const lines = oneLine ? [[item.note ? `${item.sub} · ${item.note}` : item.sub, subSize, theme.sub, "sub"]] : [
+    [item.sub, subSize, theme.sub, "sub"],
+    [item.note, noteSize, theme.muted, "note"],
+  ];
+  let textTop = inner.y + inner.h - 18 * s;
+  for (const [text, size, colour, id] of lines.filter((entry) => entry[0]).reverse()) {
+    line(
+      ctx,
+      report,
+      `route.${id}`,
+      text.toUpperCase(),
+      LABEL,
+      { x: cx, y: textTop, size, min: size * 0.55, width, tracking: 0.14 },
+      (c) => (c.fillStyle = colour),
+      inner,
+    );
+    textTop -= size * CAP + 11 * s;
+  }
+
+  const route = item.route;
+  const lands = route.continents;
+  if (!lands.length) return;
+  const named = lands.every((land) => land.name);
+  const nameSize = 12.5 * s;
+  const namesY = textTop - 4 * s; // baseline of the continents' names
+  const area = {
+    x: inner.x + padX,
+    y: labelY + 16 * s,
+    w: width,
+    h: (named ? namesY - nameSize * CAP - 8 * s : textTop) - (labelY + 16 * s),
+  };
+  if (area.h < 20 * s || area.w < 40 * s) return;
+
+  // How much room each continent's road needs. A road of a few yards is
+  // given a little room all the same, so that it shows as more than a dot.
+  const gapX = lands.length > 1 ? 26 * s : 0;
+  const spans = lands.map((land) => ({ w: land.bounds[3] - land.bounds[1], h: land.bounds[2] - land.bounds[0] }));
+  const largest = Math.max(1, ...spans.map((span) => Math.max(span.w, span.h)));
+  const floor = largest * 0.14;
+  const rooms = spans.map((span) => ({ w: Math.max(span.w, floor), h: Math.max(span.h, floor) }));
+  const markers = 9 * s; // room for the studs and the gem at the edges
+  const scale = Math.min(
+    (area.w - gapX * (lands.length - 1) - 2 * markers * lands.length) / rooms.reduce((sum, room) => sum + room.w, 0),
+    (area.h - 2 * markers) / Math.max(...rooms.map((room) => room.h)),
+    // The first few yards of a new character are not blown up into a
+    // journey: a road fills its panel from about a hundred yards on.
+    2 * s,
+  );
+  if (!(scale > 0)) return;
+  const total = rooms.reduce((sum, room) => sum + room.w * scale + 2 * markers, 0) + gapX * (lands.length - 1);
+  let left = area.x + (area.w - total) / 2;
+  const midY = area.y + area.h / 2;
+  const place = {};
+  lands.forEach((land, i) => {
+    const room = rooms[i];
+    const centreX = left + markers + (room.w * scale) / 2;
+    const worldY = (land.bounds[1] + land.bounds[3]) / 2; // west-east middle
+    const worldX = (land.bounds[0] + land.bounds[2]) / 2; // north-south middle
+    place[land.id] = {
+      // West is left, north is up.
+      at: (x, y) => [centreX - (y - worldY) * scale, midY - (x - worldX) * scale],
+      centreX,
+    };
+    left += room.w * scale + 2 * markers + gapX;
+  });
+
+  // How far the road reaches on the picture (the tests check that it stays
+  // in its panel).
+  const reach = { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity, points: 0, box: inner };
+  for (const land of lands) {
+    for (const path of land.paths) {
+      for (let i = 0; i + 1 < path.p.length; i += 2) {
+        const [px, py] = place[land.id].at(path.p[i], path.p[i + 1]);
+        reach.left = Math.min(reach.left, px);
+        reach.right = Math.max(reach.right, px);
+        reach.top = Math.min(reach.top, py);
+        reach.bottom = Math.max(reach.bottom, py);
+        reach.points += 1;
+      }
+    }
+  }
+  report.route = reach;
+
+  ctx.save();
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  const trace = (land, path) => {
+    const at = place[land.id].at;
+    const p = path.p;
+    ctx.beginPath();
+    for (let i = 0; i + 1 < p.length; i += 2) {
+      const [px, py] = at(p[i], p[i + 1]);
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+  };
+  const each = (style, draw) => {
+    for (const land of lands) for (const path of land.paths) if (path.style === style && path.p.length >= 4) draw(land, path);
+  };
+  // Flight paths: hairlines.
+  ctx.strokeStyle = rgba(theme.ink, theme.light ? 0.38 : 0.3);
+  ctx.lineWidth = Math.max(1, 1.3 * s);
+  each("flight", (land, path) => {
+    trace(land, path);
+    ctx.stroke();
+  });
+  // The road the character travelled while the belt stood still.
+  ctx.strokeStyle = theme.muted;
+  ctx.globalAlpha = theme.light ? 0.75 : 0.8;
+  ctx.lineWidth = Math.max(1.2, 2.3 * s);
+  each("road", (land, path) => {
+    trace(land, path);
+    ctx.stroke();
+  });
+  ctx.globalAlpha = 1;
+  // The stretches walked for real: a soft glow, then the bright line.
+  if (!theme.light) {
+    ctx.strokeStyle = rgba(theme.glow, 0.34);
+    ctx.lineWidth = 9 * s;
+    each("walked", (land, path) => {
+      trace(land, path);
+      ctx.stroke();
+    });
+  }
+  ctx.strokeStyle = theme.value;
+  ctx.lineWidth = Math.max(1.6, 3.2 * s);
+  each("walked", (land, path) => {
+    trace(land, path);
+    ctx.stroke();
+  });
+  ctx.restore();
+
+  // Every tenth level: a stud with its number beside it.
+  const studs = [];
+  for (const mark of route.milestones) {
+    const spot = place[mark.c];
+    if (!spot) continue;
+    const [px, py] = spot.at(mark.x, mark.y);
+    studs.push({ px, py, text: String(mark.level) });
+  }
+  const numberSize = 13.5 * s;
+  for (const stud of studs) {
+    ctx.save();
+    diamond(ctx, stud.px, stud.py, 5.2 * s, 5.2 * s);
+    ctx.fillStyle = theme.sub;
+    ctx.fill();
+    ctx.strokeStyle = theme.metalEdge;
+    ctx.lineWidth = Math.max(1, 1.2 * s);
+    ctx.stroke();
+    ctx.restore();
+    // The number sits above the stud - below it at the top edge - and
+    // stays inside the tile.
+    const above = stud.py - 9 * s - numberSize * 0.2 > area.y;
+    const y = above ? stud.py - 9 * s : stud.py + 9 * s + numberSize * CAP;
+    const half = numberSize * 0.9;
+    const x = clamp(stud.px, area.x + half, area.x + area.w - half);
+    line(
+      ctx,
+      report,
+      `route.level${stud.text}`,
+      stud.text,
+      NUMBER,
+      { x, y, size: numberSize, min: numberSize * 0.7, width: 60 * s },
+      (c) => {
+        c.fillStyle = theme.sub;
+        c.shadowColor = rgba(theme.shade, theme.light ? 0 : 0.8);
+        c.shadowBlur = 4 * s;
+      },
+      inner,
+    );
+  }
+  // Where the road begins: a ring. Where the character is now: a gem.
+  if (route.start && place[route.start.c]) {
+    const [px, py] = place[route.start.c].at(route.start.x, route.start.y);
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(px, py, 5.5 * s, 0, Math.PI * 2);
+    ctx.fillStyle = theme.panel[1];
+    ctx.fill();
+    ctx.strokeStyle = theme.label;
+    ctx.lineWidth = Math.max(1.2, 2.2 * s);
+    ctx.stroke();
+    ctx.restore();
+  }
+  if (route.end && place[route.end.c]) {
+    const [px, py] = place[route.end.c].at(route.end.x, route.end.y);
+    gem(ctx, theme, px, py, 9.5 * s);
+  }
+
+  // Which continent is which: each name under its own road, clear of the
+  // other and of the panel's edge. Where two roads stand too close for
+  // that (one of them is a few yards long), the names share one line.
+  if (named) {
+    const centres = lands.map((land) => place[land.id].centreX);
+    const between = lands.length > 1 ? centres[1] - centres[0] - 12 * s : area.w;
+    const widths = centres.map((centre) =>
+      Math.max(30 * s, Math.min(between, 2 * Math.min(centre - area.x, area.x + area.w - centre))),
+    );
+    const names = lands.map((land) => land.name.toUpperCase());
+    const paint = (c) => (c.fillStyle = theme.muted);
+    const fit = (width) => ({ y: namesY, size: nameSize, min: nameSize * 0.6, width, tracking: 0.14 });
+    if (names.every((name, i) => textWidth(ctx, name, LABEL, nameSize, 0.14) <= widths[i])) {
+      names.forEach((name, i) => {
+        line(ctx, report, `route.land${lands[i].id}`, name, LABEL, { x: centres[i], ...fit(widths[i]) }, paint, inner);
+      });
+    } else {
+      line(ctx, report, "route.lands", names.join(" \u00b7 "), LABEL, { x: cx, ...fit(area.w) }, paint, inner);
+    }
+  }
+}
+
 // ---- header and footer ------------------------------------------------------------------------
 
 function headerHeight(card, unit) {
@@ -992,22 +1236,45 @@ function placeRows(rows, x, y, w, h, gap, out, weights) {
   });
 }
 
+/**
+ * The road beside the small tiles: a road runs north to south far more than
+ * east to west, so it gets a tall panel on the left and the tiles stand in
+ * a grid on its right - two abreast where there are more than two.
+ */
+function placeBlock(road, small, columns, x, y, w, h, gap, out) {
+  const share = columns === 2 ? 0.43 : 0.54;
+  const roadW = (w - gap) * share;
+  out.push({ item: road, slots: {}, hero: false, box: { x, y, w: roadW, h } });
+  const rows = rowsOf(small, columns);
+  placeRows(
+    rows,
+    x + roadW + gap,
+    y,
+    w - roadW - gap,
+    h,
+    gap,
+    out,
+    rows.map(() => 1),
+  );
+}
+
 /** Where everything goes, for a picture of W x H. */
 function layout(W, H, card) {
   const hero = card.tiles.find((item) => item.hero) || null;
-  const small = card.tiles.filter((item) => !item.hero);
+  const road = card.tiles.find((item) => item.wide) || null;
+  const small = card.tiles.filter((item) => !item.hero && !item.wide);
   const landscape = W / H >= 1.3;
   const panels = [];
 
-  if (landscape && small.length) {
-    // Two columns: words and the hero on the left, the small tiles on the right.
+  if (landscape && (small.length || road)) {
+    // Two columns: words and the hero on the left, the rest on the right.
     const unit = (H / 1080) * 1.12;
     const margin = 62 * unit;
     const gap = 22 * unit;
     const top = 58 * unit;
     const foot = footerHeight(card, unit);
     const bottom = H - 50 * unit - foot - 14 * unit;
-    const leftW = (W - 2 * margin - gap) * 0.45;
+    const leftW = (W - 2 * margin - gap) * (road && small.length ? 0.4 : 0.45);
     const rightX = margin + leftW + gap;
     const head = { x: margin, y: top, w: leftW, h: headerHeight(card, unit) };
     if (hero) {
@@ -1016,17 +1283,25 @@ function layout(W, H, card) {
     } else {
       head.y = top + (bottom - top - head.h) / 2;
     }
-    const rows = small.length <= 2 ? rowsOf(small, 1) : rowsOf(small, 2);
-    placeRows(
-      rows,
-      rightX,
-      top + 6 * unit,
-      W - margin - rightX,
-      bottom - top - 6 * unit,
-      gap,
-      panels,
-      rows.map(() => 1),
-    );
+    const right = { x: rightX, y: top + 6 * unit, w: W - margin - rightX, h: bottom - top - 6 * unit };
+    if (road && small.length) {
+      // (Here the tiles go one under the other: two abreast would be slivers.)
+      placeBlock(road, small, 1, right.x, right.y, right.w, right.h, gap, panels);
+    } else if (road) {
+      panels.push({ item: road, slots: {}, hero: false, box: right });
+    } else {
+      const rows = small.length <= 2 ? rowsOf(small, 1) : rowsOf(small, 2);
+      placeRows(
+        rows,
+        right.x,
+        right.y,
+        right.w,
+        right.h,
+        gap,
+        panels,
+        rows.map(() => 1),
+      );
+    }
     return {
       unit,
       panels,
@@ -1048,21 +1323,57 @@ function layout(W, H, card) {
   const foot = footerHeight(card, unit);
   const bottom = H - 52 * unit - safe - foot;
 
-  const rows = [...(hero ? [[hero]] : []), ...rowsOf(small, 2)];
-  // A hero is a little taller than a row of two; a lone small tile a little lower.
-  const natural = rows.map((row) => (row[0].hero ? 300 : row.length === 1 ? 215 : 250) * unit);
+  // Bands, top to bottom: the hero, then either rows of small tiles or -
+  // with a road - the road beside them (or alone, across the picture).
+  // A hero is a little taller than a row of two; a lone small tile a little
+  // lower. Each band says how tall it would like to be and how to fill
+  // the room it gets.
+  const width = W - 2 * margin;
+  const tall = H / W > 1.6;
+  const bands = [];
+  const rowBand = (row, natural) =>
+    bands.push({
+      natural,
+      place: (y, h) => placeRows([row], margin, y, width, h, gap, panels, [1]),
+    });
+  if (hero) rowBand([hero], (road && !tall ? 262 : 300) * unit);
+  if (road && small.length && !tall) {
+    const columns = small.length > 2 ? 2 : 1;
+    const tileRows = Math.ceil(small.length / columns);
+    // Enough for the tiles beside it, and never a squat road.
+    const natural = Math.max(400, tileRows * 222 + (tileRows - 1) * 24);
+    bands.push({
+      natural: natural * unit,
+      place: (y, h) => placeBlock(road, small, columns, margin, y, width, h, gap, panels),
+    });
+  } else {
+    // A story has the height for the road to lie right across it, with the
+    // tiles in their usual rows below; so has any picture with no tiles.
+    if (road)
+      bands.push({
+        natural: (tall ? 540 : 470) * unit,
+        place: (y, h) => panels.push({ item: road, slots: {}, hero: false, box: { x: margin, y, w: width, h } }),
+      });
+    for (const row of rowsOf(small, 2)) rowBand(row, (row.length === 1 ? 215 : 250) * unit);
+  }
+
   const y0 = head.y + head.h + 24 * unit;
   const room = bottom - 16 * unit - y0;
-  const wanted = natural.reduce((a, b) => a + b, 0);
-  const spare = room - gap * (rows.length - 1);
+  const wanted = bands.reduce((sum, band) => sum + band.natural, 0);
+  const spare = room - gap * (bands.length - 1);
   const scale = Math.min(1.45, spare / wanted);
-  const used = wanted * scale + gap * (rows.length - 1);
+  const used = wanted * scale + gap * (bands.length - 1);
   // Space left over (a story, or few tiles) is shared out: some above the
   // words, some either side of the panels, the rest below the closing line.
   const slack = Math.max(0, room - used);
   head.y += slack * 0.3;
   const panelsTop = y0 + slack * 0.5;
-  placeRows(rows, margin, panelsTop, W - 2 * margin, used, gap, panels, natural);
+  let y = panelsTop;
+  for (const band of bands) {
+    const h = band.natural * scale;
+    band.place(y, h);
+    y += h + gap;
+  }
   return {
     unit,
     headUnit,
@@ -1087,7 +1398,8 @@ export function drawCard(ctx, W, H, card, themeId) {
   header(ctx, report, theme, card, plan.head, plan.headUnit || plan.unit);
   for (const { item, hero, box, slots } of plan.panels) {
     panel(ctx, theme, box, plan.unit, hero);
-    tile(ctx, report, theme, box, item, plan.unit, hero, slots);
+    if (item.route) routeTile(ctx, report, theme, box, item, plan.unit);
+    else tile(ctx, report, theme, box, item, plan.unit, hero, slots);
     report.panels.push({ id: item.id, ...box });
   }
   footer(ctx, report, theme, card, plan.foot, plan.unit);

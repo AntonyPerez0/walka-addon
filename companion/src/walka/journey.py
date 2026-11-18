@@ -475,6 +475,7 @@ def attach(data_dir: Path, beacon: Any, **clocks: Callable[[], float]) -> Journe
 # ---- the demo ----------------------------------------------------------------------------------
 
 DEMO_NAME = "Maerwyn"
+DEMO_KEY = f"{DEMO_NAME}-Walka Demo"  # its "Name-Realm"
 
 
 class DemoJourney:
@@ -490,7 +491,7 @@ class DemoJourney:
         self._started = wall()
         self._redraws = 0
         self._sent = 0
-        self._key = djb2(f"{DEMO_NAME}-Walka Demo")
+        self._key = djb2(DEMO_KEY)
         self._name = name_to_chunks(DEMO_NAME)
 
     def frame(self, seq: int, elapsed_s: float) -> StatFrame | None:

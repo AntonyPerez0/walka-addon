@@ -26,6 +26,7 @@ from .hotkey import GlobalHotkey
 from .journey import attach as attach_journeys
 from .metrics import Profile
 from .protocol import Flags
+from .road import RoadBook
 from .session import SessionRecord, SessionRecorder, SessionStore
 from .sources import BeaconSource, ManualSource
 from .treadmill import KMH_PER_MPH, BeltState, Treadmill, TreadmillError, TreadmillEvent
@@ -93,6 +94,9 @@ class App:
         # The numbers behind the Share page's picture. They arrive in stat frames,
         # which never reach the governor (stat_route.py, journey.py).
         self.journeys = attach_journeys(self.data_dir, beacon, wall=wall_clock, mono=mono_clock)
+        # The roads characters have travelled, read from the game's saved
+        # files when the Share page asks (on a worker thread: see web.py).
+        self.roads = RoadBook(self.game_dirs, wall=wall_clock, mono=mono_clock)
 
         self.recorder: SessionRecorder | None = None
         self.last_record: SessionRecord | None = None
@@ -413,6 +417,19 @@ class App:
             exe = self.beacon.window.exe_path
         self.addon_dir = addon_sync.find_addon_dir(self.config.wow.addon_dir or None, exe)
         return self.addon_dir
+
+    def game_dirs(self) -> list[Path]:
+        """Folders of installed games (the ones that hold ``WTF``): where the
+        addon is installed first, then every other install found."""
+        folders: list[Path] = []
+        installed = self.find_addon_dir()
+        candidates = [installed.parent] if installed is not None else []
+        candidates += addon_sync.find_addons_dirs()
+        for addons in candidates:
+            # <game>/Interface/AddOns
+            if addons.parent.name.lower() == "interface" and addons.parent.parent not in folders:
+                folders.append(addons.parent.parent)
+        return folders
 
     def belt_limits_for_addon(self) -> dict[str, Any] | None:
         known = self._state.get("treadmill")

@@ -18,9 +18,21 @@ export const SIZES = [
   { id: "wide", name: "Wide", width: 1200, height: 675, hint: "16:9 - posts and chats" },
 ];
 
-/** What can be shown. `character` tiles need numbers from the game. */
+export const YARDS_PER_MILE = 1760;
+
+/**
+ * What can be shown. `character` tiles need numbers from the game; the
+ * `road` tile also needs the road the game has saved (GET /api/road).
+ */
 export const TILES = [
   { id: "steps", name: "My steps", hint: "Your real-world steps and the distance you walked." },
+  {
+    id: "route",
+    name: "My road",
+    character: true,
+    road: true,
+    hint: "Your character's path as a line, the stretches you walked on the treadmill bright.",
+  },
   { id: "level", name: "Character level", character: true },
   { id: "played", name: "Time played", character: true },
   { id: "charSteps", name: "Character steps", character: true, hint: "How far your character went on foot." },
@@ -48,7 +60,7 @@ export const DEFAULT_OPTIONS = {
   title: null,
   subtitle: null,
   tagline: null,
-  tiles: { steps: true, level: true, played: true, charSteps: true, calories: true },
+  tiles: { steps: true, route: true, level: true, played: true, charSteps: true, calories: true },
   units: null, // "mi" | "km"; null = follow the dashboard's settings
   theme: "",
   size: "portrait",
@@ -76,7 +88,8 @@ export function normalizeOptions(raw, themeIds = []) {
   if (input.tiles && typeof input.tiles === "object")
     for (const tile of TILES)
       if (typeof input.tiles[tile.id] === "boolean") options.tiles[tile.id] = input.tiles[tile.id];
-  if (!TILES.some((tile) => options.tiles[tile.id])) options.tiles.steps = true; // an empty picture helps nobody
+  // An empty picture helps nobody (and the road alone may not be there to show).
+  if (!TILES.some((tile) => !tile.road && options.tiles[tile.id])) options.tiles.steps = true;
   if (input.units === "mi" || input.units === "km") options.units = input.units;
   options.theme = themeIds.includes(input.theme) ? input.theme : themeIds[0] || "";
   if (SIZES.some((size) => size.id === input.size)) options.size = input.size;
@@ -240,30 +253,89 @@ function caloriesTile(real, km, weightKg, showFootnote) {
   return tile;
 }
 
+/** Does `road` (an answer of /api/road) hold a road of this character? */
+export function hasRoad(road, character) {
+  return !!(
+    road &&
+    character &&
+    road.id === character.id &&
+    Array.isArray(road.continents) &&
+    road.continents.some((continent) => Array.isArray(continent.paths) && continent.paths.length > 0)
+  );
+}
+
+/**
+ * The road as a tile: up to two continents (the ones with the most road),
+ * placed west to east as on the world map.
+ */
+function routeTile(road, km) {
+  const shown = road.continents.filter((continent) => continent.paths.length > 0).slice(0, 2);
+  // Kalimdor (continent 1) lies west of the Eastern Kingdoms (0).
+  if (shown.length === 2 && shown[1].id === 1) shown.reverse();
+  const names = shown.map((continent) => continent.name).filter(Boolean);
+  const yards = known(road.yards) ? road.yards : 0;
+  const distance = km ? (yards * M_PER_YARD) / 1000 : yards / YARDS_PER_MILE;
+  const length = `${distanceNumber(distance)} in-game ${km ? "km" : "miles"}`;
+  // (No percentage of a road too short to show as more than "0.0".)
+  const share = yards >= 100 && known(road.belt_yards) ? Math.min(100, Math.round((road.belt_yards / yards) * 100)) : 0;
+  return {
+    id: "route",
+    wide: true,
+    label: ["My road"],
+    route: {
+      continents: shown.map((continent) => ({
+        id: continent.id,
+        name: continent.name || "",
+        bounds: continent.bounds,
+        paths: continent.paths,
+      })),
+      start: road.start || null,
+      end: road.end || null,
+      milestones: Array.isArray(road.milestones) ? road.milestones : [],
+    },
+    sub: length,
+    note: share > 0 ? `${share}% walked for real` : "",
+    plain: `My road${names.length ? ` on ${names.join(" and ")}` : ""}: ${length}${
+      share > 0 ? `, ${share}% of it walked on the treadmill` : ""
+    }`,
+  };
+}
+
 /**
  * Everything card.js needs to draw one picture.
  *
  * character: an entry of /api/journey's `characters`, or null (no game numbers);
  * totals: the state snapshot's `totals.all`; units: the dashboard's "mph" | "kmh";
  * weightKg: from the body profile (only used for the opt-in footnote);
+ * road: the `road` of /api/road for that character, or null;
  * now: epoch seconds.
  */
-export function buildCard({ character = null, totals = null, options, units = "mph", weightKg = null, now = 0 }) {
+export function buildCard({
+  character = null,
+  totals = null,
+  options,
+  units = "mph",
+  weightKg = null,
+  road = null,
+  now = 0,
+}) {
   const source = character && options.source !== "all" ? "character" : "all";
   const km = (options.units || (units === "kmh" ? "km" : "mi")) === "km";
   const real = realNumbers(character, totals, source);
   const text = (key, fallback) => (options[key] === null ? fallback : options[key]).trim();
 
+  const roadKnown = hasRoad(road, character);
   const make = {
     steps: () => stepsTile(real, km),
+    route: () => routeTile(road, km),
     level: () => levelTile(character, options.showName),
     played: () => playedTile(character),
     charSteps: () => charStepsTile(character, km),
     calories: () => caloriesTile(real, km, weightKg, options.showFootnote),
   };
-  const tiles = TILES.filter((tile) => options.tiles[tile.id] && (character || !tile.character)).map((tile) =>
-    make[tile.id](),
-  );
+  const tiles = TILES.filter(
+    (tile) => options.tiles[tile.id] && (character || !tile.character) && (roadKnown || !tile.road),
+  ).map((tile) => make[tile.id]());
 
   const through = source === "character" ? character.seen_at : now;
   const title = text("title", DEFAULT_TEXTS.title);

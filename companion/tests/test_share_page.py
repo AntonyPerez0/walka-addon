@@ -24,6 +24,7 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from test_app import Rig
 from walka import web
+from walka.road import Road, Stretch, demo_road
 
 STATIC = web.STATIC_DIR
 HARNESS = Path(__file__).with_name("share_harness.mjs")
@@ -191,6 +192,41 @@ LONG_WORDS = {
 }
 
 
+def road_of(*stretches: Stretch, owner: str = "0badcafe") -> dict[str, Any]:
+    """What /api/road gives as `road` (made by the companion's own code),
+    for the character with the id ``owner``."""
+    road = Road("Somebody-Somewhere", tuple(stretches)) if stretches else demo_road("Somebody-Somewhere")
+    return {**road.to_api(float(SEEN)), "id": owner}
+
+
+def stretch(
+    continent: int, x: int, y: int, *steps: tuple[int, int], mode: str = "w", belt: bool = True, level: int = 1
+):
+    points = [(x, y)]
+    for dx, dy in steps:
+        points.append((points[-1][0] + dx, points[-1][1] + dy))
+    return Stretch(continent, mode, belt, level, tuple(points))
+
+
+ROAD = road_of()  # two continents, levels 1 to 23
+ONE_LAND = road_of(
+    stretch(0, -9000, 200, (400, 30), (350, -80), (10, 900), level=9), stretch(0, -8240, 1050, (700, 0), level=10)
+)
+# A character that has only just set out: a few yards, all on one line.
+FIRST_STEPS = road_of(stretch(1, 100, 100, (3, 0)))
+STANDING = road_of(stretch(1, 100, 100, (0, 0)))
+# Continents this client's maps have no names for here, and a third one.
+ELSEWHERE = road_of(
+    stretch(530, 0, 0, (900, 100), (-200, 800), level=58),
+    stretch(571, 0, 0, (300, -2000), (4000, 0), belt=False, level=59),
+    stretch(1, 0, 0, (20, 0), mode="t", belt=False, level=60),
+    stretch(0, 5, 5, (0, 90), level=60),
+)
+# Narrow and tall, wide and flat: the road must fit whatever its shape.
+TALL = road_of(stretch(1, -9000, 0, (18000, 40), level=1), stretch(0, 0, 0, (30, 20), level=1))
+FLAT = road_of(stretch(1, 0, -9000, (40, 18000), level=30), stretch(0, 0, -9000, (-25, 18000), belt=False, level=60))
+
+
 def build(**request: Any) -> dict[str, Any]:
     request.setdefault("character", character())
     request.setdefault("totals", TOTALS)
@@ -217,7 +253,14 @@ def test_the_defaults(about):
     # Privacy: the name and the body weight are not on the picture unless asked for.
     assert options["showName"] is False and options["showFootnote"] is False
     assert options["source"] == "character" and options["units"] is None
-    assert options["tiles"] == {"steps": True, "level": True, "played": True, "charSteps": True, "calories": True}
+    assert options["tiles"] == {
+        "steps": True,
+        "route": True,
+        "level": True,
+        "played": True,
+        "charSteps": True,
+        "calories": True,
+    }
     assert options["size"] == "portrait" and options["theme"] == about["themes"][0]["id"]
     assert all(options[key] is None for key in ("overline", "title", "subtitle", "tagline"))
 
@@ -261,7 +304,14 @@ def test_stored_choices_are_cleaned_up(about):
     assert options["character"] == "0badcafe" and options["source"] == "all"
     assert options["title"].startswith("  My title here x") and len(options["title"]) == about["limits"]["title"]
     assert options["overline"] == "" and options["subtitle"] is None
-    assert options["tiles"] == {"steps": False, "level": False, "played": True, "charSteps": True, "calories": True}
+    assert options["tiles"] == {
+        "steps": False,
+        "route": True,
+        "level": False,
+        "played": True,
+        "charSteps": True,
+        "calories": True,
+    }
     assert (options["units"], options["theme"], options["size"]) == ("km", theme_ids[-1], "story")
     assert options["showName"] is True and options["showFootnote"] is False  # only a real yes turns it on
     assert "extra" not in options
@@ -398,6 +448,91 @@ def test_words_and_tiles_can_be_changed():
     assert "Calories" not in card["alt"]
 
 
+# ---- the road --------------------------------------------------------------------------------------
+
+
+@needs_node
+def test_the_road_of_the_character_is_a_tile_of_its_own():
+    card = build(road=ROAD)
+    assert list(tiles_of(card)) == ["steps", "route", "level", "played", "charSteps", "calories"]
+    tile = tiles_of(card)["route"]
+    miles = ROAD["yards"] / 1760
+    share = round(100 * ROAD["belt_yards"] / ROAD["yards"])
+    assert tile["label"] == ["My road"] and tile["wide"] is True
+    assert tile["sub"] == f"{miles:.1f} in-game miles" and tile["note"] == f"{share}% walked for real"
+    assert tile["plain"] == (
+        f"My road on Kalimdor and Eastern Kingdoms: {miles:.1f} in-game miles, {share}% of it walked on the treadmill"
+    )
+    assert tile["plain"] in card["alt"]
+    route = tile["route"]
+    assert [land["name"] for land in route["continents"]] == ["Kalimdor", "Eastern Kingdoms"]
+    assert route["start"] == ROAD["start"] and route["end"] == ROAD["end"]
+    assert [mark["level"] for mark in route["milestones"]] == [10, 20]
+    assert sum(len(path["p"]) for land in route["continents"] for path in land["paths"]) > 400
+
+    km = tiles_of(build(road=ROAD, options={"units": "km"}))["route"]
+    assert km["sub"] == f"{ROAD['yards'] * 0.9144 / 1000:.1f} in-game km"
+    assert tiles_of(build(road=ROAD, units="kmh"))["route"]["sub"] == km["sub"]
+
+
+@needs_node
+def test_no_road_no_tile():
+    without = ["steps", "level", "played", "charSteps", "calories"]
+    assert list(tiles_of(build())) == without
+    assert list(tiles_of(build(road=None))) == without
+    # Somebody else's road is not this character's.
+    assert list(tiles_of(build(road={**ROAD, "id": "0badf00d"}))) == without
+    # No character chosen: nobody's road.
+    assert "route" not in tiles_of(build(character=None, road=ROAD))
+    # A road with nothing to draw, or an answer that is no road at all.
+    for empty in (
+        {**ROAD, "continents": []},
+        {**ROAD, "continents": [{"id": 1, "name": "Kalimdor", "paths": []}]},
+        {},
+        [],
+    ):
+        assert list(tiles_of(build(road=empty))) == without
+    # Switched off.
+    assert list(tiles_of(build(road=ROAD, options={"tiles": {"route": False}}))) == without
+    # It is the character's road whichever walks the numbers are of.
+    assert "route" in tiles_of(build(road=ROAD, options={"source": "all"}))
+
+
+@needs_node
+def test_the_road_is_laid_out_west_to_east_and_never_more_than_two_lands():
+    def lands(road: dict[str, Any]) -> list[int]:
+        return [land["id"] for land in tiles_of(build(road=road))["route"]["route"]["continents"]]
+
+    east_first = road_of(stretch(0, 0, 0, (5000, 0)), stretch(1, 0, 0, (100, 0)))
+    assert [land["id"] for land in east_first["continents"]] == [0, 1]  # the longer road first, as it comes
+    assert lands(east_first) == [1, 0]  # Kalimdor lies to the west
+    assert lands(ROAD) == [1, 0]
+    assert lands(ONE_LAND) == [0]
+    assert lands(ELSEWHERE) == [571, 530]  # the two with the most road; the flight and the short walk are left out
+
+    tile = tiles_of(build(road=ELSEWHERE))["route"]
+    assert tile["plain"].startswith("My road: ")  # no names to give
+    assert tiles_of(build(road=ONE_LAND))["route"]["plain"].startswith("My road on Eastern Kingdoms: ")
+
+
+@needs_node
+def test_a_road_nobody_walked_for_real_does_not_say_zero_percent():
+    never = road_of(stretch(1, 0, 0, (1760, 0), belt=False))
+    tile = tiles_of(build(road=never))["route"]
+    assert tile["sub"] == "1.0 in-game miles" and tile["note"] == ""
+    assert tile["plain"] == "My road on Kalimdor: 1.0 in-game miles"
+    all_of_it = tiles_of(build(road=road_of(stretch(1, 0, 0, (1760, 0)))))["route"]
+    assert all_of_it["note"] == "100% walked for real"
+    # Numbers that are missing or make no sense never reach the picture as such.
+    odd = tiles_of(build(road={**ROAD, "yards": None, "belt_yards": "many"}))["route"]
+    assert odd["sub"] == "0.0 in-game miles" and odd["note"] == ""
+    more = tiles_of(build(road={**ROAD, "yards": 100, "belt_yards": 900}))["route"]
+    assert more["note"] == "100% walked for real"
+    # The first few yards of a new character: no percentage of "0.0 miles".
+    first = tiles_of(build(road=FIRST_STEPS))["route"]
+    assert first["sub"] == "0.0 in-game miles" and first["note"] == "" and "%" not in first["plain"]
+
+
 # ---- the drawing: nothing ever leaves its box ---------------------------------------------------------
 
 CASES = {
@@ -418,7 +553,45 @@ CASES = {
         "character": character(),
         "options": {"tiles": {"steps": False, "played": False, "level": False, "charSteps": False}},
     },
+    "road": {"character": character(), "road": ROAD},
+    "road, huge": {
+        "character": HUGE,
+        "road": {**FLAT, "yards": 99_999_999, "belt_yards": 99_999_999},
+        "options": {"showName": True, "showFootnote": True, **LONG_WORDS},
+        "weightKg": 250,
+    },
+    "road, one land": {"character": character(), "road": ONE_LAND},
+    "road, first steps": {"character": EMPTY, "road": FIRST_STEPS},
+    "road, standing": {"character": character(), "road": STANDING},
+    "road, elsewhere": {"character": character(), "road": ELSEWHERE},
+    "road, tall": {"character": character(), "road": TALL},
+    "road and hero": {
+        "character": character(),
+        "road": ROAD,
+        "options": {"tiles": {"level": 0, "played": 0, "charSteps": 0, "calories": 0}},
+    },
+    "road alone": {
+        "character": character(),
+        "road": ROAD,
+        "options": {"tiles": {"steps": 0, "level": 0, "played": 0, "charSteps": 0, "calories": 0}},
+    },
+    "road and one tile": {
+        "character": character(),
+        "road": ONE_LAND,
+        "options": {"tiles": {"steps": 0, "played": 0, "charSteps": 0, "calories": 0}},
+    },
+    "road and three tiles": {
+        "character": character(),
+        "road": ROAD,
+        "options": {"tiles": {"steps": 0, "played": 0}},
+    },
+    "road, no words": {
+        "character": character(),
+        "road": TALL,
+        "options": {"overline": "", "title": "", "subtitle": "", "tagline": ""},
+    },
 }
+ROAD_CASES = [name for name, case in CASES.items() if case.get("road")]
 for _case in CASES.values():
     _tiles = _case.get("options", {}).get("tiles")
     if _tiles:
@@ -483,6 +656,86 @@ def test_text_never_leaves_its_panel(about, char_width: float):
             order = [parts[part] for part in ("label", "value", "sub", "note") if part in parts]
             for upper, lower in itertools.pairwise(order):
                 assert upper["bottom"] <= lower["top"] + 0.01, (where, tile)
+
+
+@needs_node
+@pytest.mark.parametrize("char_width", [0.45, 0.8])
+def test_the_road_is_drawn_inside_its_panel(about, char_width: float):
+    """Whatever the road's shape - two continents, one, a few yards, none at
+    all - in every theme and size."""
+    combos = list(itertools.product(ROAD_CASES, about["themes"], about["sizes"]))
+    requests = [
+        {
+            "op": "draw",
+            "size": size["id"],
+            "theme": theme["id"],
+            "charWidth": char_width,
+            "totals": TOTALS,
+            "calls": theme is about["themes"][0],  # (where things are drawn does not depend on the colours)
+            **CASES[name],
+        }
+        for name, theme, size in combos
+    ]
+    for (name, theme, size), result in zip(combos, ask(*requests), strict=True):
+        where = f"{name} / {theme['id']} / {size['id']}"
+        report = result["report"]
+        (panel,) = [panel for panel in report["panels"] if panel["id"] == "route"]
+        reach = report["route"]
+        assert reach is not None and reach["points"] >= 2, where
+        box = reach["box"]
+        assert inside(
+            {"left": box["x"], "right": box["x"] + box["w"], "top": box["y"], "bottom": box["y"] + box["h"]}, panel
+        )
+        assert inside(reach, box), (where, reach)
+        # The road is given the room there is: a real road is no speck in a corner.
+        if name not in ("road, first steps", "road, standing"):
+            assert max(reach["right"] - reach["left"], reach["bottom"] - reach["top"]) >= 0.3 * min(
+                box["w"], box["h"]
+            ), where
+        # Its words: the label above, the length below, the lands' names in between.
+        texts = {text["id"]: text for text in report["texts"] if text["id"].startswith("route.")}
+        assert texts["route.label"]["text"] == "MY ROAD" and "route.sub" in texts, where
+        assert texts["route.label"]["bottom"] <= reach["top"] + 0.01, where
+        assert texts["route.sub"]["top"] >= reach["bottom"] - 0.01, where
+        names = [text for key, text in texts.items() if key.startswith("route.land")]
+        for text in names:
+            assert reach["bottom"] <= text["top"] + 0.01 and text["bottom"] <= texts["route.sub"]["top"] + 0.01, where
+        for a, b in itertools.combinations(names, 2):
+            assert a["right"] <= b["left"] or b["right"] <= a["left"], (where, a["text"], b["text"])
+        # Nothing was drawn at a place that is no place.
+        for call in result.get("calls") or []:
+            assert None not in call, (where, call)
+
+
+@needs_node
+def test_the_road_gets_more_room_than_a_small_tile(about):
+    requests = [
+        {"op": "draw", "size": size["id"], "theme": about["themes"][0]["id"], **CASES["road"]}
+        for size in about["sizes"]
+    ]
+    for size, result in zip(about["sizes"], ask(*requests), strict=True):
+        panels = {panel["id"]: panel for panel in result["report"]["panels"]}
+        assert set(panels) == {"steps", "route", "level", "played", "charSteps", "calories"}
+        area = lambda panel: panel["w"] * panel["h"]  # noqa: E731
+        assert area(panels["route"]) >= 1.5 * area(panels["level"]), size["id"]
+        # The four small tiles stay as large as one another.
+        small = [panels[key] for key in ("level", "played", "charSteps", "calories")]
+        assert max(map(area, small)) <= 1.05 * min(map(area, small)), size["id"]
+
+
+@needs_node
+def test_a_picture_without_the_road_is_laid_out_as_before(about):
+    """Switching the road off - or having none - gives the picture there was
+    before roads: the same panels in the same places."""
+    for size in about["sizes"]:
+        base = {"op": "draw", "size": size["id"], "theme": about["themes"][0]["id"], "character": character()}
+        none, off, other = ask(
+            base,
+            {**base, "road": ROAD, "options": {"tiles": {"route": False}}},
+            {**base, "road": {**ROAD, "id": "0badf00d"}},
+        )
+        assert none["report"]["panels"] == off["report"]["panels"] == other["report"]["panels"]
+        assert none["report"].get("route") is None and off["report"].get("route") is None
 
 
 @needs_node

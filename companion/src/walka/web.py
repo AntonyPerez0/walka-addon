@@ -20,6 +20,7 @@ import ipaddress
 import json
 import logging
 import mimetypes
+import re
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -305,6 +306,16 @@ def create_app(app: App) -> web.Application:
         return web.json_response(app.journeys.to_api())
 
     # ---- addon -----------------------------------------------------------------
+    @routes.get("/api/road")
+    async def road(request: web.Request) -> web.Response:
+        """The road of one character, for the picture (see road.py)."""
+        wanted = request.query.get("character", "")
+        if not re.fullmatch(r"[0-9a-f]{1,16}", wanted):
+            raise web.HTTPBadRequest(text="character: the id of a character from /api/journey")
+        # Finding and reading the game's files can take a moment: never on
+        # the loop that drives the belt.
+        return web.json_response(await asyncio.to_thread(app.roads.for_character, wanted))
+
     @routes.get("/api/addon/locations")
     async def addon_locations(_request: web.Request) -> web.Response:
         found = [str(path) for path in addon_sync.find_addons_dirs()]

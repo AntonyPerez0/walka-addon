@@ -8,6 +8,9 @@ import re
 
 import pytest
 
+from walka import road as companion_road
+from walka import savedvars
+
 from .harness import lua_list, lua_plain
 
 T0 = 1_800_000_000
@@ -332,6 +335,26 @@ def test_the_recorder_follows_the_character(rt):
     assert rt.ns.RoadRecorder.problem is None
 
 
+def test_a_hidden_name_never_replaces_the_one_the_road_is_saved_under(rt, make_rt):
+    # (The companion finds a character's road by this name: it is what the
+    # journey's CHAR_KEY is a hash of.)
+    run_north(rt, 100, 15)
+    rt.set(nameSecret=True)
+    fresh = rt.reload()                         # the game hides the name at this login
+    run_north(fresh, 100, 15, start=rt.north)
+    assert char_db(fresh)["key"] == "Tester-Azeroth"
+    assert fresh.ns.RoadRecorder.problem is None and fresh.find_secrets() == []
+
+    # A first login with the name hidden: no name until the game says.
+    hidden = make_rt(state={"nameSecret": True})
+    run_north(hidden, 100, 15)
+    assert "key" not in char_db(hidden)
+    hidden.set(nameSecret=False)
+    hidden.advance(1)
+    assert char_db(hidden)["key"] == "Tester-Azeroth"
+    assert hidden.ns.RoadRecorder.problem is None and hidden.find_secrets() == []
+
+
 def test_nothing_is_recorded_inside_an_instance_and_the_road_resumes_outside(rt):
     run_north(rt, 100, 15)
     rt.set(instance=True)
@@ -393,3 +416,33 @@ def test_an_error_in_the_recorder_does_not_stop_the_beacon(rt):
     rt.advance(5)
     assert rt.live_frame().seq != before, "the beacon ticks on"
     assert "boom" in rt.ns.RoadRecorder.problem
+
+
+# ---- to the companion ------------------------------------------------------------------------------
+
+
+def test_the_companion_reads_the_road_out_of_the_saved_file(rt):
+    """The road has one way out of the game: the file the game writes at a
+    logout or /reload, which the companion reads for the picture."""
+    run_north(rt, 300, 43)
+    rt.set(taxi=True)
+    run_north(rt, 600, 20)
+    rt.set(taxi=False)
+    rt.slash("/walka start")
+    run_north(rt, 300, 43)
+    db = char_db(rt)
+    # (What the game would write, by the mock client's own writer.)
+    file = b"\r\nWalkaCharDB = " + rt.M.serialize("WalkaCharDB").encode("utf-8") + b"\r\n"
+    road = companion_road.decode(savedvars.parse(file)["WalkaCharDB"])
+    assert road is not None and not road.truncated
+    # The companion knows the character by the hash the beacon sends as CHAR_KEY.
+    assert road.id == f"{int(rt.ns.Protocol.djb2('Tester-Azeroth')):08x}"
+    assert [stretch.mode for stretch in road.stretches] == [segment["m"] for segment in db["segments"]]
+    assert [len(stretch.points) for stretch in road.stretches] == [segment["n"] + 1 for segment in db["segments"]]
+    api = road.to_api(1_800_000_000.0)
+    # The same yards the addon counts (it measures as it goes, the companion from the points).
+    assert api["yards"] + api["flight_yards"] == pytest.approx(db["yards"], abs=6)
+    assert api["belt_yards"] == pytest.approx(db["beltYards"], abs=6)
+    assert api["start"]["c"] == 1 and api["end"]["c"] == 1
+    assert api["end"]["x"] == pytest.approx(rt.north, abs=20)
+    assert {path["style"] for entry in api["continents"] for path in entry["paths"]} == {"road", "flight", "walked"}
