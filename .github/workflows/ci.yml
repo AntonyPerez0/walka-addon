@@ -153,5 +153,8 @@ jobs:
           else
             # From a pushed tag: the tag must be there. Run by hand: the tag is made now, on this commit.
             if [ "$GITHUB_REF_TYPE" = "tag" ]; then at="--verify-tag"; else at="--target $GITHUB_SHA"; fi
-            gh release create "$TAG" release/Walka.exe Walka-addon.zip $at --title "Walka ${TAG#v}" --notes "$notes" $pre
+            gh release create "$TAG" release/Walka.exe Walka-addon.zip $at --title "Walka ${TAG#v}" --notes "$notes" $pre || {
+              echo "::error::The release was refused. If the message above is 'Resource not accessible by integration': GitHub does not let a workflow put a tag on a commit that itself changes a file under .github/workflows. Make any other commit on top of it and run this again."
+              exit 1
+            }
           fi
