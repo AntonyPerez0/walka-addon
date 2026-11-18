@@ -179,6 +179,7 @@ _PARAM_DIRECT_OBJECT = 0x2D2D2D2D  # '----'
 _TYPE_HOTKEY_ID = 0x686B6964  # 'hkid'
 _HOTKEY_SIGNATURE = 0x57616C6B  # 'Walk'
 _HOTKEY_EXISTS = -9878  # eventHotKeyExistsErr
+_NOT_HANDLED = -9874  # eventNotHandledErr
 _PUMP_AT_MOST = 32  # events handed on per call of pump()
 
 
@@ -271,16 +272,18 @@ class _CarbonHotkey:
         self._installed = ctypes.c_void_p()
 
         def on_event(_next_handler: int, event: int, _user_data: int) -> int:
-            # Every handler hears every hotkey of this program: is it this one?
+            # Every handler is offered every hotkey of this program, the one
+            # installed last first: is it this one's?
             pressed = _EventHotKeyID()
             status = carbon.GetEventParameter(
                 event, _PARAM_DIRECT_OBJECT, _TYPE_HOTKEY_ID, None, ctypes.sizeof(pressed), None, ctypes.byref(pressed)
             )
-            if status == 0 and pressed.signature == _HOTKEY_SIGNATURE and pressed.id == self._id:
-                try:
-                    callback()
-                except Exception:
-                    log.exception("stop hotkey handler failed")
+            if status != 0 or pressed.signature != _HOTKEY_SIGNATURE or pressed.id != self._id:
+                return _NOT_HANDLED  # ... no: Carbon then offers it to the next handler
+            try:
+                callback()
+            except Exception:
+                log.exception("stop hotkey handler failed")
             return 0
 
         self._handler = _EventHandler(on_event)  # (kept: Carbon holds a pointer to it)
