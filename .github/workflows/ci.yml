@@ -22,7 +22,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -34,7 +34,8 @@ jobs:
         working-directory: companion
         run: ruff check src tests
       - name: Test
-        run: python -m pytest -q
+        # (-rs: a test that could not be run on this machine says why.)
+        run: python -m pytest -q -rs
 
   windows-exe:
     name: Windows executable
@@ -95,14 +96,114 @@ jobs:
           Copy-Item companion/dist/Walka.exe release/
           Copy-Item -Recurse Walka release/Walka
           Copy-Item README.md release/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Walka-windows
+          path: release/
+          if-no-files-found: error
+
+  # The same program for a Mac: one file, "Walka", in a zip (a zip keeps the
+  # mark that says it is a program; a bare download loses it). PyInstaller
+  # builds for the processor it runs on, so there are two: Apple silicon
+  # and Intel.
+  mac-app:
+    name: Mac program (${{ matrix.chip }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-latest, chip: Apple silicon, machine: arm64, file: Walka-mac-apple-silicon }
+          - { os: macos-15-intel, chip: Intel, machine: x86_64, file: Walka-mac-intel }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: python -m pip install -e "companion[build]"
+      - name: Build
+        working-directory: companion
+        run: python build_exe.py
+      - name: Smoke test
+        run: |
+          exe=companion/dist/Walka
+          fail() { echo "::error::$1"; exit 1; }
+          # Built for the processor it is named after?
+          file "$exe"
+          file "$exe" | grep -q "${{ matrix.machine }}" || fail "Walka was not built for ${{ matrix.machine }}"
+          "$exe" --version || fail "version check failed"
+          # Everything the frozen app imports only at run time (the
+          # CoreBluetooth modules behind Bluetooth, the screen capture
+          # backend, what it asks macOS), the dashboard page and the
+          # bundled addon.
+          "$exe" selfcheck || fail "selfcheck failed: something the app needs at run time is missing from Walka"
+          # The Bluetooth stack must load inside the frozen app. Whether
+          # this machine lets it scan is another matter - what must not
+          # happen is an import error.
+          scan=$("$exe" scan --seconds 2 2>&1 || true)
+          echo "$scan"
+          if echo "$scan" | grep -Eq "ModuleNotFoundError|ImportError|AttributeError|Traceback"; then
+            fail "Bluetooth stack did not load in the frozen app"
+          fi
+          export WALKA_DATA_DIR="$RUNNER_TEMP/walka-data"
+          "$exe" --demo --no-browser --port 8791 &
+          pid=$!
+          state=""
+          for i in $(seq 1 60); do
+            sleep 0.5
+            state=$(curl -fsS http://127.0.0.1:8791/api/state 2>/dev/null || true)
+            speed=$(echo "$state" | python3 -c 'import json, sys; print(json.load(sys.stdin)["treadmill"]["speed_kmh"])' 2>/dev/null || echo 0)
+            if python3 -c "import sys; sys.exit(0 if float('$speed') > 0 else 1)"; then break; fi
+          done
+          [ -n "$state" ] || { kill -9 $pid; fail "the dashboard API did not come up"; }
+          python3 -c "import sys; sys.exit(0 if float('$speed') > 0 else 1)" || { kill -9 $pid; fail "the simulated belt never moved"; }
+          curl -fsS -o /dev/null http://127.0.0.1:8791/ || { kill -9 $pid; fail "dashboard page missing from the bundle"; }
+          echo "$state" | python3 -c 'import json, sys; s = json.load(sys.stdin); print("belt speed", s["treadmill"]["speed_kmh"], "km/h, phase", s["governor"]["phase"], "- STOP hotkey:", s["hotkey"])'
+          # Closing the Terminal window it runs in is how Walka is closed on
+          # a Mac, and that arrives as this signal: the belt must be stopped
+          # and the program must end by itself, not be killed.
+          kill -HUP $pid
+          code=0
+          wait $pid || code=$?
+          [ "$code" -eq 0 ] || fail "Walka did not stop in an orderly way when its window was closed (exit code $code)"
+          [ -f "$WALKA_DATA_DIR/config.json" ] || fail "Walka did not get to the end of its shutdown"
+      - name: Package
+        run: |
+          mkdir -p release
+          chmod +x companion/dist/Walka
+          zip -j "release/${{ matrix.file }}.zip" companion/dist/Walka
+          unzip -Z "release/${{ matrix.file }}.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.file }}
+          path: release/
+          if-no-files-found: error
+
+  # Everything that is about to be published - Walka.exe, the Mac programs
+  # and the addon's files - is scanned for viruses before it is.
+  virus-scan:
+    name: Virus scan
+    needs: [windows-exe, mac-app]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: Walka-windows
+          path: release
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: Walka-mac-*
+          path: release
+          merge-multiple: true
       # Microsoft Defender - the antivirus that is part of Windows, the one
-      # most people who download Walka have - is on this machine too. It
-      # scans what is about to be published: Walka.exe and the addon's
-      # files. If it finds anything this job fails, and a release needs
-      # this job, so nothing is published. What it found (nothing), when,
-      # and with which virus definitions goes into virus-scan.json, which
-      # is published with the release: the badge at the top of the README
-      # reads it.
+      # most people who download Walka have - is on this machine. It scans
+      # what is about to be published: Walka.exe, the Mac programs (as the
+      # zips they are published as, and unpacked) and the addon's files. If
+      # it finds anything this job fails, and a release needs this job, so
+      # nothing is published. What it found (nothing), when, and with which
+      # virus definitions goes into virus-scan.json, which is published
+      # with the release: the badge at the top of the README reads it.
       - name: Virus scan (Microsoft Defender)
         shell: pwsh
         run: |
@@ -129,8 +230,19 @@ jobs:
           if ($r.Code -ne 2 -or $r.Text -notmatch "EICAR") { throw "Microsoft Defender did not catch the test file, so a scan by it would say nothing" }
           Remove-Item -Recurse -Force $test
           # Then the files of the release.
+          $macs = @(Get-ChildItem release -Filter "Walka-mac-*.zip")
+          if (-not (Test-Path release/Walka.exe) -or $macs.Count -ne 2) { throw "the files of the release are not all here" }
           $r = Scan (Resolve-Path release).Path
           if ($r.Code -ne 0 -or $r.Text -notmatch "found no threats") { throw "Microsoft Defender flags a file of the release (see above). Nothing is published." }
+          # ... and the Mac programs once more, out of their zips.
+          $unpacked = Join-Path $env:RUNNER_TEMP "mac-programs"
+          foreach ($zip in $macs) { Expand-Archive $zip.FullName -DestinationPath (Join-Path $unpacked $zip.BaseName) }
+          $r = Scan $unpacked
+          if ($r.Code -ne 0 -or $r.Text -notmatch "found no threats") { throw "Microsoft Defender flags a Mac program of the release (see above). Nothing is published." }
+          $sha256 = [ordered]@{}
+          foreach ($name in @("Walka.exe") + @($macs | ForEach-Object { $_.Name })) {
+            $sha256[$name] = (Get-FileHash (Join-Path release $name) -Algorithm SHA256).Hash.ToLower()
+          }
           $status = Get-MpComputerStatus
           $today = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd")
           [ordered]@{
@@ -138,30 +250,31 @@ jobs:
             scanner = "Microsoft Defender"
             result = "no threats found"
             scanned = $today
-            files = @("Walka.exe", "the files of the addon (Walka-addon.zip)")
+            files = @("Walka.exe") + @($macs | ForEach-Object { $_.Name }) + @("the files of the addon (Walka-addon.zip)")
             virus_definitions = "$($status.AntivirusSignatureVersion)"
             virus_definitions_from = $status.AntivirusSignatureLastUpdated.ToUniversalTime().ToString("yyyy-MM-dd")
             engine = "$($status.AMEngineVersion)"
-            walka_exe_sha256 = (Get-FileHash release/Walka.exe -Algorithm SHA256).Hash.ToLower()
+            walka_exe_sha256 = $sha256["Walka.exe"]
+            sha256 = $sha256
           } | ConvertTo-Json | Set-Content -Encoding utf8 release/virus-scan.json
           Get-Content release/virus-scan.json
           $global:LASTEXITCODE = 0
       - uses: actions/upload-artifact@v4
         with:
-          name: Walka-windows
+          name: Walka-release
           path: release/
           if-no-files-found: error
 
-  # Publishes a release: the program people download from the button at the
-  # top of the README, and the addon as a zip that is ready to upload to
-  # CurseForge. Two ways to ask for one: push a version tag (v0.1.0), or
+  # Publishes a release: the programs people download from the buttons at
+  # the top of the README (Walka.exe for Windows, a zip for each kind of
+  # Mac), and the addon as a zip that is ready to upload to CurseForge. Two ways to ask for one: push a version tag (v0.1.0), or
   # run this workflow by hand (Actions > CI > Run workflow) and type the
   # version - the tag is then made here. Either way only after the tests
   # and the build above have passed for that same commit.
   release:
     name: Publish release
     if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release_version != '')
-    needs: [test, windows-exe]
+    needs: [test, virus-scan]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -181,20 +294,22 @@ jobs:
           grep -qx "## Version: $version" Walka/Walka.toc || fail "## Version in Walka/Walka.toc"
       - uses: actions/download-artifact@v4
         with:
-          name: Walka-windows
+          name: Walka-release
           path: release
       - name: Pack the addon
         working-directory: release
         run: zip -r -q ../Walka-addon.zip Walka
       - name: Publish
         run: |
-          test -s release/Walka.exe
-          test -s release/virus-scan.json
-          notes="**To get Walka:** under **Assets** below, click **Walka.exe**, then open it. If Windows says *Windows protected your PC*, click **More info**, then **Run anyway**. The steps are at the top of the [README](https://github.com/$GH_REPO#readme).
+          files="release/Walka.exe release/Walka-mac-apple-silicon.zip release/Walka-mac-intel.zip Walka-addon.zip release/virus-scan.json"
+          for file in $files; do test -s "$file" || { echo "::error::$file is missing"; exit 1; }; done
+          notes="**To get Walka on Windows:** under **Assets** below, click **Walka.exe**, then open it. If Windows says *Windows protected your PC*, click **More info**, then **Run anyway**. The steps are at the top of the [README](https://github.com/$GH_REPO#readme).
+
+          **On a Mac:** click **Walka-mac-apple-silicon.zip** (Macs from late 2020 on) or **Walka-mac-intel.zip** (older ones), open the zip, then open **Walka**. The first time, macOS will not open it until you allow it under *System Settings > Privacy & Security > Open Anyway*: see [On a Mac](https://github.com/$GH_REPO#on-a-mac) in the README. The Mac version is new and has not been tried with the game on a real Mac yet.
 
           **Early version:** not yet tried on a real walking pad. Read *Before your first walk* in the README, and keep the pad's remote in your hand the first time.
 
-          **Virus scan:** before this was published, Microsoft Defender scanned Walka.exe and the addon's files on the machine that built them, and found nothing. *virus-scan.json* under Assets says when, and with which virus definitions.
+          **Virus scan:** before this was published, Microsoft Defender scanned Walka.exe, the Mac programs and the addon's files, and found nothing. *virus-scan.json* under Assets says when, and with which virus definitions.
 
           **Walka-addon.zip** is the game addon on its own. Walka.exe can put it in the game for you; to do it by hand, unzip it into the game's Interface\\AddOns folder. The Source code files are for developers."
           # A tag like v0.2.0-rc1 is a trial: published, but never "the latest" that the README's button gives.
@@ -202,12 +317,12 @@ jobs:
           case "$TAG" in *-*) pre="--prerelease" ;; esac
           if gh release view "$TAG" >/dev/null 2>&1; then
             # A second run for the same tag: replace the files, and publish it if a first try left a draft.
-            gh release upload "$TAG" release/Walka.exe Walka-addon.zip release/virus-scan.json --clobber
+            gh release upload "$TAG" $files --clobber
             gh release edit "$TAG" --draft=false
           else
             # From a pushed tag: the tag must be there. Run by hand: the tag is made now, on this commit.
             if [ "$GITHUB_REF_TYPE" = "tag" ]; then at="--verify-tag"; else at="--target $GITHUB_SHA"; fi
-            gh release create "$TAG" release/Walka.exe Walka-addon.zip release/virus-scan.json $at --title "Walka ${TAG#v}" --notes "$notes" $pre || {
+            gh release create "$TAG" $files $at --title "Walka ${TAG#v}" --notes "$notes" $pre || {
               echo "::error::The release was refused. If the message above is 'Resource not accessible by integration': GitHub does not let a workflow put a tag on a commit that itself changes a file under .github/workflows. Make any other commit on top of it and run this again."
               exit 1
             }

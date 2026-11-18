@@ -12,7 +12,9 @@ dependencies = [
     "aiohttp>=3.9",
     # 3.1 fixes WinRT errors on disconnect and on fast reconnects.
     "bleak>=3.1,<4",
-    "mss>=10.2,<11",  # 11 changes the capture API
+    # 10.2: the capture class, and on macOS every pixel of a Retina display
+    # when asked (walka.capture). 11 changes the capture API.
+    "mss>=10.2,<11",
     # bleak 3.1 is developed against the 3.x Windows Runtime bindings; the
     # 4.x series (October 2026) renamed APIs and cannot be mixed with 3.x.
     "winrt-runtime>=3.2,<4; sys_platform == 'win32'",

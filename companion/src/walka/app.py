@@ -20,6 +20,7 @@ from typing import Any
 
 from . import __version__, addon_sync
 from . import config as config_module
+from . import hotkey as hotkey_module
 from .config import Config
 from .governor import ABANDONED_AFTER_S, Action, Belt, Command, Governor, Reading
 from .hotkey import GlobalHotkey
@@ -657,8 +658,8 @@ class App:
         """(Re)register the global STOP hotkey from the config.
 
         ``previous`` is the combination that worked until now. If the new
-        one cannot be registered (another program has it, Windows keeps it
-        for itself) the old one is put back: the hotkey is the second
+        one cannot be registered (another program has it, the system keeps
+        it for itself) the old one is put back: the hotkey is the second
         fastest way to stop the belt, and finding out that it is dead by
         pressing it is too late."""
         if self.hotkey is not None:
@@ -668,7 +669,7 @@ class App:
             self.log_event(f"STOP hotkey: {self.hotkey.to_dict()['combination']} (works from inside the game).")
             return
         error = self.hotkey.error or ""
-        if not self.config.stop_hotkey or "only available on Windows" in error:
+        if not self.config.stop_hotkey or error == hotkey_module.UNSUPPORTED:
             return
         wanted = self.config.stop_hotkey
         if previous and previous != wanted:
@@ -683,6 +684,15 @@ class App:
                 )
                 return
         self.log_event(f"There is no STOP hotkey: {wanted} could not be registered ({error}).", "error")
+
+    async def _hotkey_pump(self) -> None:
+        """macOS hands a press of the STOP hotkey to the program's main
+        thread, and only when asked. So it is asked, twenty times a second,
+        from here: the event loop runs on that thread."""
+        while True:
+            await asyncio.sleep(hotkey_module.PUMP_INTERVAL_S)
+            if self.hotkey is not None:
+                self.hotkey.pump()
 
     def save_config(self) -> None:
         try:
@@ -859,6 +869,8 @@ class App:
         """Start the background loops."""
         self._loop = asyncio.get_running_loop()
         self.register_hotkey()
+        if hotkey_module.NEEDS_PUMP:
+            self._tasks.append(asyncio.create_task(self._hotkey_pump(), name="walka-hotkey"))
         if self.beacon is not None:
             self.beacon.start()
         if self.heart_rate is not None:
@@ -872,8 +884,8 @@ class App:
         """Leave everything safe: stop a belt we drive, save the walk, sync."""
         self._stopping.set()
         self._connect_now.set()
-        # The belt first. When the console window is closed Windows gives the
-        # process only a few seconds: they go to the stop, not to tidying up.
+        # The belt first. When the console window is closed the system gives
+        # the process only a few seconds: they go to the stop, not to tidying up.
         if self.config.treadmill.stop_on_exit and self.treadmill.status.connected:
             mono = self.mono()
             for command in self.governor.shutdown(mono, self._belt(mono)):

@@ -596,6 +596,28 @@ def test_addons_dir_from_exe(tmp_path: Path):
     assert addon_sync.addons_dir_from_exe("") is None
 
 
+def test_addons_dir_from_a_macs_executable(tmp_path: Path):
+    """On a Mac the executable is inside an application bundle, and the
+    bundle is what sits in the game folder."""
+    root = make_install(tmp_path / "World of Warcraft", "_retail_")
+    exe = root / "_retail_" / "World of Warcraft.app" / "Contents" / "MacOS" / "World of Warcraft"
+    assert addon_sync.game_dir_from_exe(exe) == root / "_retail_"
+    assert addon_sync.game_dir_from_exe(str(exe)) == root / "_retail_"
+    assert addon_sync.addons_dir_from_exe(exe) == root / "_retail_" / "Interface" / "AddOns"
+    classic = root / "_classic_" / "World of Warcraft Classic.app" / "Contents" / "MacOS" / "World of Warcraft Classic"
+    assert addon_sync.addons_dir_from_exe(classic) is None  # no such install
+    # ... and on Windows it is in the game folder itself.
+    assert addon_sync.game_dir_from_exe(root / "_forever_" / "WowForever.exe") == root / "_forever_"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="where the game is looked for off Windows")
+def test_the_game_is_looked_for_where_a_mac_has_it():
+    roots = addon_sync._common_roots()
+    assert Path("/Applications/World of Warcraft") in roots
+    assert Path.home() / "Applications" / "World of Warcraft" in roots
+    assert addon_sync._registry_roots() == []
+
+
 def test_find_addon_dir_precedence(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(addon_sync, "_common_roots", lambda: [])
     monkeypatch.setattr(addon_sync, "_registry_roots", lambda: [])

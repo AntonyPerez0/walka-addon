@@ -4,6 +4,7 @@ walk -> data file for the addon. Time is fully simulated."""
 from __future__ import annotations
 
 import asyncio
+import sys
 from pathlib import Path
 
 import pytest
@@ -1580,8 +1581,9 @@ def test_snapshot_reports_the_hotkey(rig: Rig):
         rig.app._loop = asyncio.get_running_loop()
         rig.app.register_hotkey()
         info = rig.app.snapshot()["hotkey"]
-        assert info["combination"] == "Ctrl+Alt+X"
-        assert info["active"] or info["error"]  # registered (Windows) or says why not
+        # (Named the way the keys are labelled on this computer's keyboard.)
+        assert info["combination"] == ("Control+Option+X" if sys.platform == "darwin" else "Ctrl+Alt+X")
+        assert info["active"] or info["error"]  # registered (Windows, macOS) or says why not
         rig.app.update_config({"stop_hotkey": "x"})  # unusable: a bare letter
         assert rig.config.stop_hotkey == "ctrl+alt+x"
         rig.app.update_config({"stop_hotkey": ""})  # off
@@ -1605,6 +1607,52 @@ def test_a_sync_that_blows_up_is_reported_not_raised(rig: Rig, monkeypatch):
     monkeypatch.setattr("walka.app.addon_sync.sync", explode)
     assert rig.app.sync_addon() is False
     assert "NaN" in rig.app.addon_error
+
+
+def test_on_a_mac_the_hotkey_is_asked_for_key_presses_while_the_companion_runs(rig: Rig, monkeypatch):
+    """macOS only hands a press of the STOP hotkey over when asked, on the
+    main thread: the companion has to keep asking for as long as it runs."""
+
+    class Asked(_PickyHotkey):
+        pumps = 0
+
+        def pump(self) -> None:
+            Asked.pumps += 1
+
+    monkeypatch.setattr("walka.app.GlobalHotkey", Asked)
+    monkeypatch.setattr("walka.app.hotkey_module.NEEDS_PUMP", True)
+    monkeypatch.setattr("walka.app.hotkey_module.PUMP_INTERVAL_S", 0.005)
+
+    async def scenario():
+        await rig.app.start()
+        try:
+            assert any(task.get_name() == "walka-hotkey" for task in rig.app._tasks)
+            for _ in range(200):
+                if Asked.pumps >= 3:
+                    break
+                await asyncio.sleep(0.005)
+            assert Asked.pumps >= 3
+        finally:
+            await rig.app.stop()
+        asked = Asked.pumps
+        await asyncio.sleep(0.05)
+        assert Asked.pumps == asked  # ... and no longer
+
+    run(scenario())
+
+
+def test_where_the_hotkey_has_a_thread_of_its_own_nobody_asks(rig: Rig, monkeypatch):
+    monkeypatch.setattr("walka.app.GlobalHotkey", _PickyHotkey)
+    monkeypatch.setattr("walka.app.hotkey_module.NEEDS_PUMP", False)
+
+    async def scenario():
+        await rig.app.start()
+        try:
+            assert not any(task.get_name() == "walka-hotkey" for task in rig.app._tasks)
+        finally:
+            await rig.app.stop()
+
+    run(scenario())
 
 
 class _PickyHotkey:

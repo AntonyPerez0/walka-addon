@@ -1,19 +1,26 @@
-"""A global STOP hotkey (Windows).
+"""A global STOP hotkey (Windows and macOS).
 
 While you are in a game the dashboard's STOP button is an alt-tab away, so
 the companion registers a system-wide key combination that stops the belt
-from anywhere. Windows delivers a registered hotkey to this program only -
+from anywhere. The system delivers a registered hotkey to this program only -
 the key press is not sent to the game.
 
 The treadmill's own remote is still the primary way to stop the belt.
 
-The same kind of background thread, with a hidden window instead of a
-hotkey, is how the companion learns that Windows is logging off or shutting
-down (``SessionEndWatcher``), so that it can stop the belt first.
+On Windows the hotkey lives on a background thread with a message loop of
+its own. The same kind of thread, with a hidden window instead of a hotkey,
+is how the companion learns that Windows is logging off or shutting down
+(``SessionEndWatcher``), so that it can stop the belt first.
+
+On macOS a hotkey is registered with the system's Carbon library, which
+needs no permission from the user. It hands key presses to the program's
+main thread and nowhere else, and only when asked: ``GlobalHotkey.pump``
+has to be called there a good many times a second (``App`` does).
 """
 
 from __future__ import annotations
 
+import ctypes
 import itertools
 import logging
 import sys
@@ -34,12 +41,18 @@ WM_CLOSE = 0x0010
 WM_QUERYENDSESSION = 0x0011
 WM_ENDSESSION = 0x0016
 
+# (A Mac keyboard has Option where a PC has Alt, and Command where it has
+# the Windows key: both spellings mean the same key on either.)
 _MODIFIERS = {
     "ctrl": MOD_CONTROL,
     "control": MOD_CONTROL,
     "alt": MOD_ALT,
+    "option": MOD_ALT,
+    "opt": MOD_ALT,
     "shift": MOD_SHIFT,
     "win": MOD_WIN,
+    "cmd": MOD_WIN,
+    "command": MOD_WIN,
 }
 
 _KEYS = {
@@ -97,14 +110,224 @@ def parse_hotkey(text: str) -> tuple[int, int] | None:
     return modifiers, key
 
 
-def describe(text: str) -> str:
-    """``"ctrl+alt+x"`` -> ``"Ctrl+Alt+X"`` for display."""
-    names = {"ctrl": "Ctrl", "control": "Ctrl", "alt": "Alt", "shift": "Shift", "win": "Win"}
-    return "+".join(names.get(p.strip().lower(), p.strip().capitalize()) for p in (text or "").split("+"))
+_KEY_NAMES = {MOD_CONTROL: "Ctrl", MOD_ALT: "Alt", MOD_SHIFT: "Shift", MOD_WIN: "Win"}
+# ... and as the keys are called on a Mac keyboard.
+_MAC_KEY_NAMES = {MOD_CONTROL: "Control", MOD_ALT: "Option", MOD_SHIFT: "Shift", MOD_WIN: "Command"}
+
+
+def describe(text: str, platform: str | None = None) -> str:
+    """``"ctrl+alt+x"`` -> ``"Ctrl+Alt+X"`` for display (``"Control+Option+X"``
+    on a Mac, where that is what the keys are called)."""
+    names = _MAC_KEY_NAMES if (platform or sys.platform) == "darwin" else _KEY_NAMES
+    parts = [part.strip() for part in (text or "").split("+")]
+    return "+".join(names[_MODIFIERS[p.lower()]] if p.lower() in _MODIFIERS else p.capitalize() for p in parts)
+
+
+# ---- macOS: the same combinations in Carbon's terms ----------------------------------
+
+_MAC_MODIFIERS = {MOD_WIN: 0x0100, MOD_SHIFT: 0x0200, MOD_ALT: 0x0800, MOD_CONTROL: 0x1000}  # cmdKey, shiftKey, ...
+
+# Windows virtual-key code -> macOS virtual key code (kVK_... in the system's
+# Events.h). macOS numbers keys by their position on a US keyboard.
+_MAC_KEY_CODES: dict[int, int] = {
+    **dict(
+        zip(
+            b"ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+            bytes.fromhex("00 0b 08 02 0e 03 05 04 22 26 28 25 2e 2d 1f 23 0c 0f 01 11 20 09 0d 07 10 06"),
+            strict=True,
+        )
+    ),
+    **dict(zip(b"0123456789", bytes.fromhex("1d 12 13 14 15 17 16 1a 1c 19"), strict=True)),
+    0x20: 0x31,  # space
+    0x08: 0x33,  # backspace ("delete" on a Mac keyboard)
+    0x09: 0x30,  # tab
+    0x0D: 0x24,  # enter
+    0x1B: 0x35,  # escape
+    0x21: 0x74,  # page up
+    0x22: 0x79,  # page down
+    0x23: 0x77,  # end
+    0x24: 0x73,  # home
+    0x2D: 0x72,  # insert (the Help key of old Mac keyboards)
+    0x2E: 0x75,  # delete ("forward delete")
+    # A PC keyboard's Pause and Scroll Lock arrive as F15 and F14.
+    0x13: 0x71,
+    0x91: 0x6B,
+    # F1 ... F20 (a Mac has no F21-F24).
+    **dict(
+        zip(
+            range(0x70, 0x84), bytes.fromhex("7a 78 63 76 60 61 62 64 65 6d 67 6f 69 6b 71 6a 40 4f 50 5a"), strict=True
+        )
+    ),
+    # The number pad's 0 ... 9.
+    **dict(zip(range(0x60, 0x6A), bytes.fromhex("52 53 54 55 56 57 58 59 5b 5c"), strict=True)),
+}
+
+
+def mac_hotkey(modifiers: int, key: int) -> tuple[int, int] | None:
+    """What ``parse_hotkey`` returns, as Carbon wants it: ``(modifiers,
+    key code)``. None for a key a Mac does not have."""
+    code = _MAC_KEY_CODES.get(key)
+    if code is None:
+        return None
+    return sum(mac for windows, mac in _MAC_MODIFIERS.items() if modifiers & windows), code
+
+
+_CARBON = "/System/Library/Frameworks/Carbon.framework/Carbon"
+_EVENT_CLASS_KEYBOARD = 0x6B657962  # 'keyb'
+_EVENT_HOTKEY_PRESSED = 5
+_PARAM_DIRECT_OBJECT = 0x2D2D2D2D  # '----'
+_TYPE_HOTKEY_ID = 0x686B6964  # 'hkid'
+_HOTKEY_SIGNATURE = 0x57616C6B  # 'Walk'
+_HOTKEY_EXISTS = -9878  # eventHotKeyExistsErr
+_PUMP_AT_MOST = 32  # events handed on per call of pump()
+
+
+class _EventTypeSpec(ctypes.Structure):
+    _fields_ = [("event_class", ctypes.c_uint32), ("event_kind", ctypes.c_uint32)]
+
+
+class _EventHotKeyID(ctypes.Structure):
+    _fields_ = [("signature", ctypes.c_uint32), ("id", ctypes.c_uint32)]
+
+
+_EventHandler = ctypes.CFUNCTYPE(ctypes.c_int32, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p)
+_carbon: ctypes.CDLL | None = None
+
+
+def _load_carbon() -> ctypes.CDLL:
+    """The Carbon library, with the signatures of what is used (without
+    them ctypes would pass pointers as 32-bit ints)."""
+    global _carbon
+    if _carbon is not None:
+        return _carbon
+    carbon = ctypes.CDLL(_CARBON)
+    pointer, status, count = ctypes.c_void_p, ctypes.c_int32, ctypes.c_ulong
+    carbon.GetApplicationEventTarget.argtypes = []
+    carbon.GetApplicationEventTarget.restype = pointer
+    carbon.GetEventDispatcherTarget.argtypes = []
+    carbon.GetEventDispatcherTarget.restype = pointer
+    carbon.InstallEventHandler.argtypes = [
+        pointer,
+        _EventHandler,
+        count,
+        ctypes.POINTER(_EventTypeSpec),
+        pointer,
+        ctypes.POINTER(pointer),
+    ]
+    carbon.InstallEventHandler.restype = status
+    carbon.RemoveEventHandler.argtypes = [pointer]
+    carbon.RemoveEventHandler.restype = status
+    carbon.RegisterEventHotKey.argtypes = [
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        _EventHotKeyID,
+        pointer,
+        ctypes.c_uint32,
+        ctypes.POINTER(pointer),
+    ]
+    carbon.RegisterEventHotKey.restype = status
+    carbon.UnregisterEventHotKey.argtypes = [pointer]
+    carbon.UnregisterEventHotKey.restype = status
+    carbon.GetEventParameter.argtypes = [
+        pointer,
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.POINTER(ctypes.c_uint32),
+        count,
+        ctypes.POINTER(count),
+        pointer,
+    ]
+    carbon.GetEventParameter.restype = status
+    carbon.ReceiveNextEvent.argtypes = [
+        count,
+        ctypes.POINTER(_EventTypeSpec),
+        ctypes.c_double,
+        ctypes.c_ubyte,
+        ctypes.POINTER(pointer),
+    ]
+    carbon.ReceiveNextEvent.restype = status
+    carbon.SendEventToEventTarget.argtypes = [pointer, pointer]
+    carbon.SendEventToEventTarget.restype = status
+    carbon.ReleaseEvent.argtypes = [pointer]
+    carbon.ReleaseEvent.restype = None
+    _carbon = carbon
+    return carbon
+
+
+class _CarbonHotkey:
+    """One key combination registered with macOS.
+
+    Carbon puts a press of it in the event queue of the program's main
+    thread; ``pump`` takes what is waiting there and hands it on, and that
+    is when ``callback`` runs.
+    """
+
+    _serial = itertools.count(1)
+
+    def __init__(self, modifiers: int, key_code: int, callback: Callable[[], None]) -> None:
+        carbon = self._carbon = _load_carbon()
+        self._id = next(self._serial)
+        self._hotkey = ctypes.c_void_p()
+        self._installed = ctypes.c_void_p()
+
+        def on_event(_next_handler: int, event: int, _user_data: int) -> int:
+            # Every handler hears every hotkey of this program: is it this one?
+            pressed = _EventHotKeyID()
+            status = carbon.GetEventParameter(
+                event, _PARAM_DIRECT_OBJECT, _TYPE_HOTKEY_ID, None, ctypes.sizeof(pressed), None, ctypes.byref(pressed)
+            )
+            if status == 0 and pressed.signature == _HOTKEY_SIGNATURE and pressed.id == self._id:
+                try:
+                    callback()
+                except Exception:
+                    log.exception("stop hotkey handler failed")
+            return 0
+
+        self._handler = _EventHandler(on_event)  # (kept: Carbon holds a pointer to it)
+        target = carbon.GetApplicationEventTarget()
+        kind = _EventTypeSpec(_EVENT_CLASS_KEYBOARD, _EVENT_HOTKEY_PRESSED)
+        status = carbon.InstallEventHandler(
+            target, self._handler, 1, ctypes.byref(kind), None, ctypes.byref(self._installed)
+        )
+        if status != 0:
+            raise OSError(status, "macOS did not take the hotkey handler")
+        status = carbon.RegisterEventHotKey(
+            key_code, modifiers, _EventHotKeyID(_HOTKEY_SIGNATURE, self._id), target, 0, ctypes.byref(self._hotkey)
+        )
+        if status != 0:
+            carbon.RemoveEventHandler(self._installed)
+            raise OSError(status, "macOS did not register the hotkey")
+
+    def pump(self) -> None:
+        carbon = self._carbon
+        dispatcher = carbon.GetEventDispatcherTarget()
+        event = ctypes.c_void_p()
+        for _ in range(_PUMP_AT_MOST):
+            # (No waiting: whatever is there now, or nothing.)
+            if carbon.ReceiveNextEvent(0, None, 0.0, 1, ctypes.byref(event)) != 0 or not event:
+                return
+            carbon.SendEventToEventTarget(event, dispatcher)
+            carbon.ReleaseEvent(event)
+
+    def close(self) -> None:
+        if self._hotkey:
+            self._carbon.UnregisterEventHotKey(self._hotkey)
+            self._hotkey = ctypes.c_void_p()
+        if self._installed:
+            self._carbon.RemoveEventHandler(self._installed)
+            self._installed = ctypes.c_void_p()
+
+
+# What ``GlobalHotkey.error`` says where there is no way to register one.
+UNSUPPORTED = "global hotkeys are only available on Windows and macOS"
+# Does ``GlobalHotkey.pump`` have to be called for the hotkey to work?
+NEEDS_PUMP = sys.platform == "darwin"
+PUMP_INTERVAL_S = 0.05
 
 
 class GlobalHotkey:
-    """Calls ``callback`` (on a background thread) when the combination is pressed."""
+    """Calls ``callback`` when the combination is pressed: on a background
+    thread on Windows, from within ``pump`` on macOS."""
 
     def __init__(self, combination: str, callback: Callable[[], None]) -> None:
         self.combination = combination
@@ -114,6 +337,7 @@ class GlobalHotkey:
         self._thread: threading.Thread | None = None
         self._thread_id: int | None = None
         self._ready = threading.Event()
+        self._mac: _CarbonHotkey | None = None
 
     def start(self) -> bool:
         """Register the hotkey. Returns ``False`` (see ``error``) if it could
@@ -125,8 +349,10 @@ class GlobalHotkey:
         if parsed is None:
             self.error = f"'{self.combination}' is not a usable key combination"
             return False
+        if sys.platform == "darwin":
+            return self._start_mac(*parsed)
         if sys.platform != "win32":
-            self.error = "global hotkeys are only available on Windows"
+            self.error = UNSUPPORTED
             return False
         self._ready.clear()
         self._thread = threading.Thread(target=self._run, args=parsed, name="walka-hotkey", daemon=True)
@@ -135,7 +361,6 @@ class GlobalHotkey:
         return self.active
 
     def _run(self, modifiers: int, key: int) -> None:
-        import ctypes
         from ctypes import wintypes
 
         user32 = ctypes.WinDLL("user32", use_last_error=True)
@@ -171,11 +396,54 @@ class GlobalHotkey:
             user32.UnregisterHotKey(None, hotkey_id)
             self.active = False
 
+    def _start_mac(self, modifiers: int, key: int) -> bool:
+        translated = mac_hotkey(modifiers, key)
+        if translated is None:
+            self.error = f"{describe(self.combination)} has a key that Mac keyboards do not have"
+            return False
+        if threading.current_thread() is not threading.main_thread():
+            # (Carbon delivers key presses to the main thread only.)
+            self.error = "on macOS a hotkey can only be registered from the program's main thread"
+            return False
+        try:
+            self._mac = _CarbonHotkey(*translated, self.callback)
+        except Exception as exc:  # whatever macOS objects to: carry on without
+            taken = isinstance(exc, OSError) and exc.errno == _HOTKEY_EXISTS
+            self.error = (
+                f"{describe(self.combination)} is already used by another program"
+                if taken
+                else f"macOS did not accept {describe(self.combination)} ({exc})"
+            )
+            return False
+        self.active = True
+        self.error = ""
+        return True
+
+    def pump(self) -> None:
+        """macOS: let key presses that have arrived reach ``callback``. To
+        be called on the main thread, a good many times a second, for as
+        long as the hotkey is to work. Does nothing on Windows, where the
+        hotkey has a thread of its own."""
+        mac = self._mac
+        if mac is None:
+            return
+        try:
+            mac.pump()
+        except Exception as exc:
+            log.debug("could not ask macOS for key presses: %s", exc)
+
     def stop(self) -> None:
+        mac, self._mac = self._mac, None
+        if mac is not None:
+            self.active = False
+            try:
+                mac.close()
+            except Exception as exc:
+                log.debug("could not give the hotkey back to macOS: %s", exc)
+            return
         thread, self._thread = self._thread, None
         if thread is None or self._thread_id is None or sys.platform != "win32":
             return
-        import ctypes
 
         ctypes.windll.user32.PostThreadMessageW(self._thread_id, WM_QUIT, 0, 0)
         thread.join(timeout=2.0)
@@ -273,7 +541,6 @@ class SessionEndWatcher:
             self._ready.set()
 
     def _serve(self) -> None:
-        import ctypes
         from ctypes import wintypes
 
         user32 = ctypes.WinDLL("user32", use_last_error=True)
@@ -372,7 +639,6 @@ class SessionEndWatcher:
         thread, self._thread = self._thread, None
         if thread is None or self._thread_id is None or sys.platform != "win32":
             return
-        import ctypes
         from ctypes import wintypes
 
         user32 = ctypes.WinDLL("user32", use_last_error=True)

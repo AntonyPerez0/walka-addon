@@ -24,8 +24,9 @@ CONFIG_FILE = "config.json"
 def default_data_dir() -> Path:
     """Where config and recorded walks live.
 
-    ``%APPDATA%\\Walka`` on Windows, ``~/.config/walka`` elsewhere;
-    ``WALKA_DATA_DIR`` overrides both.
+    ``%APPDATA%\\Walka`` on Windows, ``~/Library/Application Support/Walka``
+    on macOS, ``~/.config/walka`` elsewhere; ``WALKA_DATA_DIR`` overrides
+    them all.
     """
     override = os.environ.get("WALKA_DATA_DIR")
     if override:
@@ -33,6 +34,8 @@ def default_data_dir() -> Path:
     if sys.platform == "win32":
         base = os.environ.get("APPDATA") or str(Path.home() / "AppData" / "Roaming")
         return Path(base) / "Walka"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "Walka"
     base = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
     return Path(base) / "walka"
 
@@ -96,7 +99,7 @@ class Config:
     web: WebConfig = field(default_factory=WebConfig)
     manual: ManualConfig = field(default_factory=ManualConfig)
     # System-wide key combination that stops the belt from inside a game
-    # (Windows only). Empty = off.
+    # (Windows and macOS, where "alt" is the Option key). Empty = off.
     stop_hotkey: str = "ctrl+alt+x"
 
     def to_dict(self) -> dict[str, Any]:
@@ -249,7 +252,7 @@ def apply_update(config: Config, data: dict[str, Any]) -> Config:
         config.units = "mph"
     if not is_loopback_host(config.web.host):
         # The dashboard can start and stop the belt and has no password. On
-        # this PC that is fine; reachable from the network it would hand the
+        # this computer that is fine; reachable from the network it would hand the
         # belt to every device on the Wi-Fi.
         log.warning("web.host %r is not this computer itself - using 127.0.0.1", config.web.host)
         config.web.host = "127.0.0.1"

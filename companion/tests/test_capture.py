@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -456,10 +457,20 @@ def test_is_wow_window(title: str, exe: str, expected: bool):
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="non-Windows behaviour")
-def test_window_finder_is_absent_off_windows():
+def test_the_windows_window_finder_is_absent_off_windows():
     assert capture.find_wow_window() is None
-    assert capture.default_window_finder() is None
     capture.enable_dpi_awareness()  # a no-op, must not raise
+
+
+def test_each_system_is_asked_for_the_game_window_in_its_own_way(monkeypatch):
+    from walka import macos
+
+    monkeypatch.setattr(capture.sys, "platform", "win32")
+    assert capture.default_window_finder() is capture.find_wow_window
+    monkeypatch.setattr(capture.sys, "platform", "darwin")
+    assert capture.default_window_finder() is macos.find_wow_window
+    monkeypatch.setattr(capture.sys, "platform", "linux")
+    assert capture.default_window_finder() is None  # nobody to ask: the reader searches the screen
 
 
 def test_strip_grab_is_wide_enough_for_the_largest_cell():
@@ -578,6 +589,212 @@ def test_the_window_finder_runs_on_a_real_desktop(exe_cache):
     assert (again is None) == (window is None)
 
 
+# ---- a Mac: a title bar nobody tells us about, and two pixels to the point ----------------
+
+TITLE_BAR = 28
+
+
+def mac_window(left: int, top: int, width: int = 800, height: int = 300, **extra) -> GameWindow:
+    exe = "/Applications/World of Warcraft/_retail_/World of Warcraft.app/Contents/MacOS/World of Warcraft"
+    return GameWindow("World of Warcraft", left, top, width, height, exe, top_slack=48, **extra)
+
+
+class RetinaScreen(FakeScreen):
+    """A Mac's Retina display. Positions (monitors, grabs) are in points;
+    the picture has two pixels to the point, and painting is in pixels."""
+
+    def __init__(self, monitors=((0, 0, 1000, 120),), **kwargs) -> None:
+        super().__init__([tuple(2 * v for v in monitor) for monitor in monitors], **kwargs)
+        self.points = [tuple(monitor) for monitor in monitors]
+
+    def grab(self, left: int, top: int, width: int, height: int) -> Shot | None:
+        shot = super().grab(2 * left, 2 * top, 2 * width, 2 * height)
+        self.grabs[-1] = (left, top, width, height)
+        return None if shot is None else Shot(shot.width, shot.height, shot.bgra, 2.0)
+
+    def monitors(self) -> list[tuple[int, int, int, int]]:
+        super().monitors()
+        return list(self.points)
+
+    def full_grabs(self) -> int:
+        sizes = {(m[2], m[3]) for m in self.points}
+        return sum(1 for g in self.grabs if (g[2], g[3]) in sizes)
+
+
+@pytest.mark.parametrize("cell", [2, 4, 8])
+def test_the_strip_is_found_under_a_title_bar(cell: int):
+    """macOS gives the window's frame, title bar and all: the client area -
+    and the strip - begins a title bar's height further down."""
+    screen = FakeScreen([(0, 0, 1000, 400)])
+    screen.fill(100, 50, 800, TITLE_BAR, 200)  # the title bar: light grey
+    screen.paint_strip(FRAME, 100, 50 + TITLE_BAR, cell)
+    finder = Finder(mac_window(100, 50))
+    reader = BeaconReader(screen, finder, clock=Clock())
+    result = reader.read()
+    assert result.decoded is not None and result.decoded.frame == FRAME and result.where == "window"
+    # From then on: the usual small grab, one row above the strip.
+    assert result.origin == reader.locked == (100, 50 + TITLE_BAR - 1)
+    assert screen.full_grabs() == 0
+    screen.grabs.clear()
+    screen.paint_strip(frame(11), 100, 50 + TITLE_BAR, cell)
+    again = reader.read()
+    assert again.decoded is not None and again.decoded.frame == frame(11) and again.origin == result.origin
+    assert screen.grabs == [(100, 50 + TITLE_BAR - 1, STRIP_WIDTH, STRIP_HEIGHT)]
+    assert finder.calls == 1  # the window was not asked for again
+
+
+def test_a_full_screen_game_on_a_mac_has_its_strip_at_the_very_corner():
+    screen = FakeScreen([(0, 0, 1000, 400)])
+    screen.paint_strip(FRAME, 0, 0, 4)
+    reader = BeaconReader(screen, Finder(mac_window(0, 0, 1000, 400)), clock=Clock())
+    result = reader.read()
+    assert result.decoded is not None and result.where == "window" and result.origin == (0, 0)
+
+
+def test_no_further_below_the_windows_top_than_a_title_bar_can_reach():
+    """The window is known, so only its corner counts: a strip further down
+    (a video of the game, playing inside the game's window) is not it."""
+    screen = FakeScreen([(0, 0, 1000, 400)])
+    screen.paint_strip(FRAME, 100, 50 + 48 + STRIP_HEIGHT + 2, 4)
+    reader = BeaconReader(screen, Finder(mac_window(100, 50)), clock=Clock())
+    for _ in range(3):
+        result = reader.read()
+        assert result.decoded is None and result.where == "" and reader.locked is None
+    assert screen.full_grabs() == 0
+    assert all(grab == (100, 50, STRIP_WIDTH, STRIP_HEIGHT + 48) for grab in screen.grabs)
+
+
+def test_going_full_screen_and_back_is_followed():
+    """Same corner, but the title bar comes and goes: the strip moves by
+    its height, and the reader finds it again without a search of the screen."""
+    clock = Clock()
+    screen = FakeScreen([(0, 0, 1000, 400)])
+    screen.fill(0, 0, 1000, TITLE_BAR, 200)
+    screen.paint_strip(frame(1), 0, TITLE_BAR, 4)
+    reader = BeaconReader(screen, Finder(mac_window(0, 0, 1000, 400)), clock=clock)
+    assert reader.read().origin == (0, TITLE_BAR - 1)
+
+    screen.clear()  # full screen: no title bar any more
+    screen.paint_strip(frame(2), 0, 0, 4)
+    clock.now += 0.1
+    result = reader.read()
+    assert result.decoded is not None and result.decoded.frame == frame(2) and result.origin == (0, 0)
+
+    screen.clear()  # ... and back
+    screen.fill(0, 0, 1000, TITLE_BAR, 200)
+    screen.paint_strip(frame(3), 0, TITLE_BAR, 4)
+    clock.now += 0.1
+    result = reader.read()
+    assert result.decoded is not None and result.decoded.frame == frame(3) and result.origin == (0, TITLE_BAR - 1)
+    assert screen.full_grabs() == 0
+
+
+def test_a_strip_that_is_gone_for_a_moment_is_looked_for_at_the_same_window():
+    clock = Clock()
+    screen = FakeScreen([(0, 0, 1000, 400)])
+    screen.paint_strip(frame(1), 100, 50 + TITLE_BAR, 4)
+    reader = BeaconReader(screen, Finder(mac_window(100, 50)), clock=clock)
+    assert reader.read().decoded is not None
+    screen.clear()  # a loading screen
+    for _ in range(3):
+        clock.now += 0.1
+        assert reader.read().decoded is None
+    screen.paint_strip(frame(9), 100, 50 + TITLE_BAR, 4)
+    clock.now += 0.1
+    result = reader.read()
+    assert result.decoded is not None and result.decoded.frame == frame(9)
+    assert result.where == "window" and result.origin == (100, 50 + TITLE_BAR - 1)
+    assert screen.full_grabs() == 0
+
+
+@pytest.mark.parametrize("cell", [2, 3, 4, 8, 16])
+def test_every_pixel_of_a_retina_display_is_read(cell: int):
+    """Positions are points, the picture is pixels - twice as many. A strip
+    with cells two pixels wide (one point!) must still be read."""
+    screen = RetinaScreen([(0, 0, 1000, 300)])
+    screen.fill(120, 80, 1600, 2 * TITLE_BAR, 200)
+    screen.paint_strip(FRAME, 120, 80 + 2 * TITLE_BAR, cell)  # in pixels: the window is at 60, 40 points
+    reader = BeaconReader(screen, Finder(mac_window(60, 40)), clock=Clock())
+    result = reader.read()
+    assert result.decoded is not None and result.decoded.frame == FRAME and result.where == "window"
+    assert result.decoded.cell_px == pytest.approx(cell, abs=0.4)  # in pixels of the display
+    assert result.origin == (60, 40 + TITLE_BAR - 1)  # in points
+    screen.grabs.clear()
+    again = reader.read()
+    assert again.decoded is not None and again.origin == result.origin
+    assert screen.grabs == [(60, 40 + TITLE_BAR - 1, STRIP_WIDTH, STRIP_HEIGHT)]
+
+
+@pytest.mark.parametrize("x,y", [(301, 85), (300, 84), (1, 0), (0, 1)])
+def test_a_strip_found_by_searching_a_retina_display_is_locked_in_points(x: int, y: int):
+    screen = RetinaScreen([(0, 0, 1000, 200)])
+    screen.paint_strip(FRAME, x, y, 4)  # pixels
+    reader = BeaconReader(screen, None, clock=Clock())
+    result = reader.read()
+    assert result.decoded is not None and result.decoded.frame == FRAME and result.where in ("scan", "monitor")
+    assert result.origin is not None
+    # The lock is a position in points from which the strip is in the grab's first rows.
+    left, top = result.origin
+    assert 0 <= x - 2 * left <= 8 and 0 <= y - 2 * top <= 3
+    screen.grabs.clear()
+    again = reader.read()
+    assert again.decoded is not None and again.decoded.frame == FRAME and again.origin == result.origin
+    assert screen.grabs == [(left, top, STRIP_WIDTH, STRIP_HEIGHT)]
+
+
+def test_a_retina_monitor_to_the_left_of_the_main_one():
+    """Its positions are negative, and still points."""
+    screen = RetinaScreen([(-900, 0, 900, 200), (0, 0, 800, 200)])
+    screen.paint_strip(FRAME, -1001, 121, 4)
+    reader = BeaconReader(screen, None, clock=Clock())
+    result = reader.read()
+    assert result.decoded is not None and result.where == "scan" and result.origin == (-501, 60)
+    assert reader.read().decoded is not None
+
+
+# ---- may the screen be read at all? ----------------------------------------------------------
+
+
+def test_screen_access_is_only_a_question_on_a_mac(monkeypatch):
+    from walka import macos
+
+    asked: list[str] = []
+    monkeypatch.setattr(macos, "screen_recording_allowed", lambda: asked.append("allowed?") or False)
+    monkeypatch.setattr(macos, "request_screen_recording", lambda: asked.append("request"))
+    monkeypatch.setattr(capture.sys, "platform", "win32")
+    capture.require_screen_access()
+    monkeypatch.setattr(capture.sys, "platform", "linux")
+    capture.require_screen_access()
+    assert asked == []
+
+
+@pytest.mark.parametrize("allowed", [True, None])
+def test_a_mac_that_allows_screen_recording_or_cannot_say(monkeypatch, allowed):
+    from walka import macos
+
+    asked: list[str] = []
+    monkeypatch.setattr(capture.sys, "platform", "darwin")
+    monkeypatch.setattr(macos, "screen_recording_allowed", lambda: allowed)
+    monkeypatch.setattr(macos, "request_screen_recording", lambda: asked.append("request"))
+    capture.require_screen_access()  # (None: a macOS from before there was such a permission)
+    assert asked == []
+
+
+def test_a_mac_that_has_not_allowed_screen_recording_is_asked_and_the_user_told(monkeypatch):
+    """Without the permission macOS hands over a picture with no game in
+    it, and no error: 'no signal' for ever, and no hint why."""
+    from walka import macos
+
+    asked: list[str] = []
+    monkeypatch.setattr(capture.sys, "platform", "darwin")
+    monkeypatch.setattr(macos, "screen_recording_allowed", lambda: False)
+    monkeypatch.setattr(macos, "request_screen_recording", lambda: asked.append("request"))
+    with pytest.raises(capture.ScreenAccessError) as refused:
+        capture.require_screen_access()
+    assert asked == ["request"]  # which is what puts the program on the list in System Settings
+    assert "System Settings" in str(refused.value) and "Screen" in str(refused.value)
+
+
 # ---- the mss backend ----------------------------------------------------------------------
 
 
@@ -613,11 +830,94 @@ def test_mss_grabber_uses_the_class_and_falls_back_to_the_old_factory(monkeypatc
     assert grabber.monitors() == [(0, 0, 30, 20)]
     shot = grabber.grab(1, 2, 3, 4)
     assert (shot.width, shot.height, len(shot.bgra)) == (3, 4, 48)
+    assert shot.scale == 1.0
     grabber.close()
 
     monkeypatch.setitem(sys.modules, "mss", types.SimpleNamespace(mss=old_style))
     capture.MssGrabber().close()
     assert made == ["MSS", "closed", "mss", "closed"]
+
+
+def test_mss_grabber_notes_a_picture_with_more_pixels_than_points(monkeypatch):
+    """What python-mss returns on a Retina display, once asked for every pixel."""
+    import types
+
+    class Retina:
+        monitors = [{}, {"left": 0, "top": 0, "width": 30, "height": 20}]
+
+        def grab(self, box):
+            width, height = 2 * box["width"], 2 * box["height"]
+            return types.SimpleNamespace(width=width, height=height, bgra=bytes(4 * width * height))
+
+        def close(self):
+            pass
+
+    monkeypatch.setitem(sys.modules, "mss", types.SimpleNamespace(MSS=Retina))
+    shot = capture.MssGrabber().grab(5, 6, 7, 3)
+    assert (shot.width, shot.height, shot.scale) == (14, 6, 2.0)
+    assert len(shot.green_row(5)) == 14
+
+
+def test_on_a_mac_mss_is_asked_for_every_pixel(monkeypatch):
+    """python-mss asks macOS for one pixel per point unless told otherwise:
+    on a Retina display that is half the strip's pixels, averaged."""
+    import types
+
+    darwin = types.ModuleType("mss.darwin")
+    darwin.IMAGE_OPTIONS = (1 << 0) | (1 << 1) | (1 << 4)  # as python-mss sets it: the last bit is "nominal resolution"
+    package = types.ModuleType("mss")
+    package.__path__ = []  # a package, so that mss.darwin can be imported from it
+    package.MSS = lambda: types.SimpleNamespace(close=lambda: None)
+    package.darwin = darwin
+    monkeypatch.setitem(sys.modules, "mss", package)
+    monkeypatch.setitem(sys.modules, "mss.darwin", darwin)
+
+    monkeypatch.setattr(capture.sys, "platform", "win32")
+    capture.MssGrabber().close()
+    assert darwin.IMAGE_OPTIONS == 0b10011  # not touched anywhere else
+    monkeypatch.setattr(capture.sys, "platform", "darwin")
+    capture.MssGrabber().close()
+    assert darwin.IMAGE_OPTIONS == 0b00011
+    capture.MssGrabber().close()
+    assert darwin.IMAGE_OPTIONS == 0b00011
+
+    # An mss that is built differently is used as it is.
+    monkeypatch.setitem(
+        sys.modules, "mss", types.SimpleNamespace(MSS=lambda: types.SimpleNamespace(close=lambda: None))
+    )
+    monkeypatch.delitem(sys.modules, "mss.darwin")
+    capture.MssGrabber().close()
+
+
+def test_the_installed_mss_takes_its_macos_options_from_where_they_are_changed():
+    """``mss.darwin.IMAGE_OPTIONS`` is read by python-mss at every grab - as
+    long as it is a name in that module and the grab looks it up there."""
+    import importlib.util
+
+    spec = importlib.util.find_spec("mss.darwin")
+    assert spec is not None and spec.origin is not None
+    source = Path(spec.origin).read_text("utf-8")
+    assert "IMAGE_OPTIONS: int = " in source or "IMAGE_OPTIONS = " in source
+    assert "kCGWindowImageNominalResolution = 1 << 4" in source
+    assert "CGWindowListCreateImage(rect, 1, 0, IMAGE_OPTIONS)" in source
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="takes a picture of a real Mac's screen")
+def test_a_real_macs_screen_can_be_grabbed():
+    """Whatever is on the screen of the machine this runs on: the picture
+    has the size that was asked for, times a whole number of pixels per point."""
+    grabber = capture.MssGrabber()
+    try:
+        monitors = grabber.monitors()
+        assert monitors and all(width > 0 and height > 0 for _l, _t, width, height in monitors)
+        left, top, _width, _height = monitors[0]
+        shot = grabber.grab(left, top, 200, 20)
+    finally:
+        grabber.close()
+    assert shot is not None and shot.scale in (1.0, 2.0, 3.0)
+    assert (shot.width, shot.height) == (int(200 * shot.scale), int(20 * shot.scale))
+    assert len(shot.bgra) == 4 * shot.width * shot.height
+    assert len(shot.green_row(shot.height - 1)) == shot.width
 
 
 def test_the_installed_mss_has_the_class():

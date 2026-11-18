@@ -6,10 +6,12 @@ does) and decodes the strip the addon paints there.
 
 Where to look:
 
-* When Windows can tell us where the game window is, the strip is at the
-  top-left corner of that window's client area or it is nowhere. Nothing
-  else on the screen is looked at - so nothing else on the screen can be
-  mistaken for the strip.
+* When the system can tell us where the game window is (Windows and macOS),
+  the strip is at the top-left corner of that window's client area or it is
+  nowhere. Nothing else on the screen is looked at - so nothing else on the
+  screen can be mistaken for the strip. (macOS says where the window is but
+  not how tall its title bar is, so there the corner is looked for within
+  the few rows a title bar can take: ``GameWindow.top_slack``.)
 * Only where there is no way to ask (other platforms, or a window search
   that has never found the game on this computer) the reader falls back to
   the top-left corner of every monitor (a borderless full-screen game) and,
@@ -18,6 +20,11 @@ Where to look:
   whose picture does not move is given up again.
 
 Normal operation is one ~700x12 pixel grab per frame.
+
+Positions on the screen are in the units the system measures the screen in.
+On Windows those are pixels. On a Mac they are points, and a Retina display
+has two pixels to the point: a grab then comes back twice as wide and as
+tall as was asked for (``Shot.scale``), with every pixel of the strip in it.
 """
 
 from __future__ import annotations
@@ -61,6 +68,9 @@ class Shot:
     width: int
     height: int
     bgra: bytes
+    # Pixels of this picture per unit of screen position: 1, or 2 on a Mac
+    # with a Retina display (where the screen is measured in points).
+    scale: float = 1.0
 
     def green_row(self, y: int) -> bytes:
         """Green channel of row ``y`` (the strip is grey, any channel will do)."""
@@ -107,6 +117,9 @@ class GameWindow:
     height: int
     exe_path: str = ""
     minimized: bool = False
+    # How far below ``top`` the client area may begin, where the system
+    # cannot say (macOS: the window's title bar, if it has one).
+    top_slack: int = 0
 
 
 WindowFinder = Callable[[], GameWindow | None]
@@ -141,6 +154,7 @@ class BeaconReader:
         self.window: GameWindow | None = None
         self.locked: tuple[int, int] | None = None  # where the strip was last decoded
         self.locked_where = ""
+        self._locked_corner: tuple[int, int] | None = None  # the window corner a "window" lock belongs to
         self._lock_seq: int | None = None  # the counter last seen at the lock ...
         self._lock_ticked_at = -1e9  # ... and when it last changed
         # Places that showed a strip whose counter would not move (a paused
@@ -164,7 +178,7 @@ class BeaconReader:
         self._window_checked_at = now
         try:
             self.window = self.window_finder()
-        except Exception as exc:  # never let a Win32 hiccup kill the reader
+        except Exception as exc:  # never let a hiccup of the window system kill the reader
             log.debug("window lookup failed: %s", exc)
             self.window = None
         if self.window is not None:
@@ -194,12 +208,42 @@ class BeaconReader:
                 return decoded
         return None
 
-    def _lock(self, origin: tuple[int, int], where: str, decoded: Decoded, now: float) -> None:
-        self.locked, self.locked_where = origin, where
+    def _find_below(self, left: int, top: int, slack: int) -> tuple[Decoded, tuple[int, int]] | None:
+        """The strip at the game window's corner, when the client area may
+        begin up to ``slack`` below it: the decoded strip and where to grab
+        from then on (one row above the strip, as after a scan)."""
+        if slack <= 0:
+            decoded = self._decode_at(left, top)
+            return None if decoded is None else (decoded, (left, top))
+        try:
+            shot = self.grabber.grab(left, top, STRIP_WIDTH, STRIP_HEIGHT + slack)
+        except Exception as exc:
+            log.debug("screen grab failed at %s,%s: %s", left, top, exc)
+            return None
+        if shot is None or shot.width <= 0:
+            return None
+        rows = _GreenRows(shot)
+        for y in range(shot.height):
+            if not beacon.row_may_contain_beacon(rows[y]):
+                continue
+            decoded = beacon.strip_in(rows, y, max_start=8)
+            if decoded is not None:
+                return decoded, (left, top + int(max(0, y - 1) / shot.scale))
+        return None
+
+    def _lock(
+        self,
+        origin: tuple[int, int],
+        where: str,
+        decoded: Decoded,
+        now: float,
+        corner: tuple[int, int] | None = None,
+    ) -> None:
+        self.locked, self.locked_where, self._locked_corner = origin, where, corner
         self._lock_seq, self._lock_ticked_at = decoded.seq, now
 
     def _unlock(self) -> None:
-        self.locked, self.locked_where, self._lock_seq = None, "", None
+        self.locked, self.locked_where, self._locked_corner, self._lock_seq = None, "", None, None
 
     def _ticking(self, decoded: Decoded, now: float) -> bool:
         """Is the strip at the lock being redrawn? (True for the first
@@ -236,6 +280,9 @@ class BeaconReader:
         the hit (but not above its monitor, whose top may well be negative),
         so that row 1 of the grab is on the strip. Pictures that were given
         up on are passed over.
+
+        The hit is a pixel of the picture; the place to grab is a position
+        on the screen, which on a Retina display is half as many points.
         """
         try:
             monitors = self.grabber.monitors()
@@ -257,7 +304,7 @@ class BeaconReader:
                 decoded = beacon.strip_in(rows, y)
                 if decoded is None:
                     continue
-                origin = (left + decoded.x0, top + max(0, y - 1))
+                origin = (left + int(decoded.x0 / shot.scale), top + int(max(0, y - 1) / shot.scale))
                 if not self._is_frozen(origin, decoded):
                     return decoded, origin
         return None
@@ -272,35 +319,40 @@ class BeaconReader:
 
         # Fast path: the strip was at the game window a moment ago and is
         # still being redrawn there, so the window has not gone anywhere.
-        tried: tuple[int, int] | None = None
+        tried: tuple[int, int] | None = None  # the window corner that has been looked at
+        origin: tuple[int, int] | None = None  # where the strip is at that corner
         decoded: Decoded | None = None
         if self.locked is not None and self.locked_where == "window":
-            tried = self.locked
-            decoded = self._decode_at(*tried)
+            tried, origin = self._locked_corner, self.locked
+            decoded = self._decode_at(*origin)
             if decoded is not None and self._ticking(decoded, now):
-                return ReadResult(decoded, tried, "window")
+                return ReadResult(decoded, origin, "window")
 
         # Not there, or a picture that does not move: where is the game now?
         self._refresh_window()
-        origin = self._window_origin()
-        if origin is not None:
+        corner = self._window_origin()
+        if corner is not None:
             # The game window is on screen: its corner, and nowhere else.
-            if origin != tried:
+            slack = self.window.top_slack if self.window is not None else 0
+            if corner != tried or (decoded is None and slack > 0):
                 # (The window moved - or the lock was a place found by
-                # searching, which counts for nothing now.)
+                # searching, which counts for nothing now. Or, where a title
+                # bar may be in the way, the window has gained or lost one:
+                # it went to full screen or came back from it.)
                 self._unlock()
-                decoded = self._decode_at(*origin)
-                if decoded is not None:
-                    self._lock(origin, "window", decoded, now)
+                found = self._find_below(corner[0], corner[1], slack)
+                decoded, origin = found if found is not None else (None, None)
+                if decoded is not None and origin is not None:
+                    self._lock(origin, "window", decoded, now, corner)
             if decoded is None:
                 return ReadResult(None, None, "")
             # (If its counter stands still this is a frozen game: reported
             # as it is, the source knows what to make of it.)
             return ReadResult(decoded, origin, "window")
         if self.window_finder_works:
-            # Windows knows the game and says it is not on screen (closed or
-            # minimised): there is no strip to find, only things to mistake
-            # for one.
+            # The system knows the game and says it is not on screen (closed
+            # or minimised): there is no strip to find, only things to
+            # mistake for one.
             self._unlock()
             return ReadResult(None, None, "")
         return self._read_anywhere(now)
@@ -354,12 +406,55 @@ class BeaconReader:
 # ---- mss backend ---------------------------------------------------------------
 
 
+# python-mss asks macOS for a picture at "nominal resolution": one pixel per
+# point. This is the bit of its options that says so.
+_MAC_NOMINAL_RESOLUTION = 1 << 4
+
+
+def _every_pixel_on_macos() -> None:
+    """Have python-mss return every pixel of a Retina display.
+
+    Left alone it returns one pixel per point - on a Retina display every
+    second pixel of every second row, averaged - and a strip whose cells are
+    two or three pixels wide cannot be read from that.
+    """
+    try:
+        import mss.darwin as backend
+
+        backend.IMAGE_OPTIONS &= ~_MAC_NOMINAL_RESOLUTION
+    except Exception as exc:  # an mss that is built differently: its picture is still worth trying
+        log.debug("could not ask for a full-resolution capture: %s", exc)
+
+
+class ScreenAccessError(RuntimeError):
+    """The system does not let this program see the screen."""
+
+
+def require_screen_access() -> None:
+    """Raise ``ScreenAccessError`` if the screen cannot be read at all.
+
+    macOS hands a program that has not been given the *Screen Recording*
+    permission a picture of the desktop with every other program's windows
+    left out - no error, just no game. So it is asked first; asking is also
+    what puts the program on the list in System Settings.
+    """
+    if sys.platform != "darwin":
+        return
+    from . import macos
+
+    if macos.screen_recording_allowed() is False:
+        macos.request_screen_recording()
+        raise ScreenAccessError(macos.SCREEN_RECORDING_ADVICE)
+
+
 class MssGrabber:
-    """python-mss: GDI BitBlt on Windows, also works on Linux/macOS."""
+    """python-mss: GDI BitBlt on Windows, CoreGraphics on macOS, X11 on Linux."""
 
     def __init__(self) -> None:
         import mss
 
+        if sys.platform == "darwin":
+            _every_pixel_on_macos()
         # mss 10.2 deprecates the ``mss.mss()`` factory in favour of the
         # ``mss.MSS`` class; older releases only have the factory.
         factory = getattr(mss, "MSS", None) or mss.mss
@@ -367,7 +462,9 @@ class MssGrabber:
 
     def grab(self, left: int, top: int, width: int, height: int) -> Shot | None:
         shot = self._sct.grab({"left": int(left), "top": int(top), "width": int(width), "height": int(height)})
-        return Shot(shot.width, shot.height, bytes(shot.bgra))
+        # (More pixels than were asked for: a Retina display.)
+        scale = shot.width / width if width > 0 and shot.width > 0 else 1.0
+        return Shot(shot.width, shot.height, bytes(shot.bgra), scale)
 
     def monitors(self) -> list[tuple[int, int, int, int]]:
         # monitors[0] is the union of all monitors; the rest are individual.
@@ -486,7 +583,8 @@ def _window_rank(window: GameWindow) -> tuple[bool, bool, int]:
 
 
 def find_wow_window() -> GameWindow | None:
-    """Locate the World of Warcraft window (Windows only)."""
+    """Locate the World of Warcraft window (on Windows; for macOS see
+    ``macos.find_wow_window``)."""
     if sys.platform != "win32":
         return None
     import ctypes
@@ -599,4 +697,11 @@ def find_wow_window() -> GameWindow | None:
 
 
 def default_window_finder() -> WindowFinder | None:
-    return find_wow_window if sys.platform == "win32" else None
+    """How this system is asked where the game window is (None: it cannot be)."""
+    if sys.platform == "win32":
+        return find_wow_window
+    if sys.platform == "darwin":
+        from . import macos
+
+        return macos.find_wow_window
+    return None
