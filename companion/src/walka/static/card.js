@@ -11,8 +11,8 @@
 // free text, cut it with an ellipsis as the last resort. `drawCard` returns
 // where each text ended up, so that this can be checked.
 
-// Fonts that ship with Windows first (the companion is a Windows app), then
-// the usual ones elsewhere. Sizes are measured, never assumed, so a fallback
+// Fonts that ship with Windows first (where most people run the companion),
+// then the Mac's and the usual ones elsewhere. Sizes are measured, never assumed, so a fallback
 // only changes the look.
 const SANS =
   'Bahnschrift, "DIN Alternate", "Segoe UI Variable Display", "Segoe UI", Inter, "Helvetica Neue", Roboto, "Liberation Sans", Arial, sans-serif';

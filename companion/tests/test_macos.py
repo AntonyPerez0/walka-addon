@@ -192,8 +192,10 @@ def test_a_real_mac_answers():
         assert entry.pid > 0 and entry.width >= 0 and entry.height >= 0
     assert all(entry.on_screen for entry in shown)
 
+    # (Not necessarily sys.executable: a framework build of Python starts
+    # the program inside its Python.app.)
     mine = macos.executable_path(os.getpid())
-    assert mine and os.path.exists(mine) and os.path.samefile(mine, os.path.realpath(sys.executable))
+    assert mine.startswith("/") and os.path.exists(mine) and "python" in os.path.basename(mine).lower()
     assert macos.executable_path(2**22 + 12345) == ""  # (process ids stop well below this)
     # Every process that has a window can be asked what it runs.
     paths = {entry.pid: macos.executable_path(entry.pid) for entry in everything}

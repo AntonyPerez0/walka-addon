@@ -18,7 +18,7 @@ the only thing it writes is the switch that turns notifications on.
 |---|---|
 | Bluetooth name | `URTM030` (UREVO pads advertise their model code) |
 | Protocol | Standard Bluetooth FTMS (Fitness Machine Service `0x1826`). No vendor handshake needed. |
-| Pairing | None. **Do not pair it in Windows Bluetooth settings.** |
+| Pairing | None. **Do not pair it in Windows (or macOS) Bluetooth settings.** |
 | Connections | One at a time. The UREVO phone app must be closed or the pad is invisible. |
 | Which device Walka picks | The address you chose in the dashboard, if any. Otherwise a device whose Bluetooth name is a known one (`URTM...`, `WELLFIT TM Linker`); some other Fitness Machine is only used if no such name is heard during the whole 15-second scan, and then the one with the strongest signal. A machine that says in its advertisement that it is not a treadmill (a bike trainer, a rower) is never used. |
 | Speed range (US) | 0.6-4.0 mph with the handle folded (desk mode), 0.6-6.2 mph with it raised |
@@ -296,6 +296,44 @@ To add a treadmill to the names Walka knows:
   window to be told, and stops the belt as it does when its own window is
   closed. This has not been tried on a real PC yet - stop the belt yourself
   before you shut down.
+
+## Mac notes
+
+The Mac version is new. GitHub's Macs build it and run the tests, and the
+finished program is started there: it drives the simulated belt, registers
+the STOP hotkey and stops in an orderly way when its window is closed. It
+has not been tried with the game, a real screen or a walking pad yet.
+
+* Bluetooth goes through macOS' CoreBluetooth (by way of bleak). macOS
+  does not show a device's Bluetooth address: the "address" the companion
+  stores for the pad is an identifier macOS makes up for it, different on
+  every Mac. A settings file copied from a Windows PC will not find the
+  pad by its address: clear *Treadmill -> address* (or press *Scan*).
+* macOS asks before a program may use Bluetooth or record the screen.
+  Walka runs inside Terminal, so both are asked for, and granted to,
+  Terminal (*System Settings -> Privacy & Security*). Without the
+  Bluetooth permission the scan fails; without Screen Recording macOS hands
+  over a picture with no game in it, which is why the companion asks
+  macOS first and says so on the dashboard instead of *no game signal*.
+* The screen is measured in points, and a Retina display has two pixels
+  to the point. The companion asks for every pixel, so `Walka beacon`
+  reports cell sizes in real pixels (`cell=4.00px` by default) and
+  positions in points.
+* macOS says where the game's window is, but not how tall its title bar
+  is. The strip is looked for from the window's top edge down to 48
+  points below it - a title bar is 28, and in full screen under a
+  MacBook's camera notch the picture can begin 38 down - and nowhere
+  else. If `Walka beacon` finds the window but no strip, please report
+  the two positions it prints.
+* The STOP hotkey is registered through Carbon (`RegisterEventHotKey`),
+  which needs no permission. Its key presses arrive on the program's main
+  thread, where the companion asks for them twenty times a second.
+* Closing the Terminal window, logging out and shutting down all reach the
+  companion as a signal (SIGHUP, SIGTERM): it stops the belt and saves the
+  walk before it exits, as with Ctrl+C. A forced quit cannot do that.
+* macOS does not recognise the program (it is not signed with an Apple
+  developer account or notarised), so the first start has to be allowed
+  under *System Settings -> Privacy & Security -> Open Anyway*.
 
 ## Sources
 

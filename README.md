@@ -16,8 +16,14 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/AntonyPerez0/walka-addon/releases/latest/download/Walka-mac-apple-silicon.zip"><img src="docs/images/download-mac-button.svg" width="360" alt="Download Walka for Mac"></a><br>
+  <sub>For a Mac with an Apple chip (M1 or later). An older Mac with an Intel processor? <a href="https://github.com/AntonyPerez0/walka-addon/releases/latest/download/Walka-mac-intel.zip">Download this one</a>.<br>
+  The Mac version is new and has not been tried with the game on a real Mac yet: see <a href="#on-a-mac">On a Mac</a>.</sub>
+</p>
+
+<p align="center">
   <a href="https://github.com/AntonyPerez0/walka-addon/releases/latest/download/Walka-addon.zip"><img src="docs/images/download-addon-button.svg" width="250" alt="Download the game addon"></a><br>
-  <sub>The Walka addon for World of Warcraft. Walka.exe can also put it in the game for you (step 3).</sub>
+  <sub>The Walka addon for World of Warcraft. Walka can also put it in the game for you (step 3).</sub>
 </p>
 
 <p align="center">
@@ -35,6 +41,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Windows-10%20%26%2011-0078d4" alt="Windows 10 and 11">
+  <img src="https://img.shields.io/badge/Mac-Apple%20silicon%20%26%20Intel-6e6e73" alt="Mac: Apple silicon and Intel">
   <img src="https://img.shields.io/badge/World%20of%20Warcraft-Forever-c79c3e" alt="World of Warcraft: Forever">
   <img src="https://img.shields.io/badge/treadmill-UREVO%20%C2%B7%20WELLFIT%20%C2%B7%20other%20Bluetooth%20FTMS-256abf" alt="Treadmill: UREVO, WELLFIT and other Bluetooth FTMS treadmills">
 </p>
@@ -46,11 +53,11 @@
   </picture>
 </p>
 
-This is the Windows program that goes with the **Walka addon** in the
-game. You need both: the addon watches your character, and this program
-talks to your walking pad.
+This is the program - for Windows and for Mac - that goes with the
+**Walka addon** in the game. You need both: the addon watches your
+character, and this program talks to your walking pad.
 
-**You need:** a Windows 10 or 11 PC with Bluetooth, a walking pad or
+**You need:** a Windows 10 or 11 PC or a Mac, with Bluetooth, a walking pad or
 treadmill that apps can control over Bluetooth (a UREVO Strol 2E, a
 WELLFIT TM029 Pro - see [which treadmills work](#which-treadmills-work)),
 and World of Warcraft: Forever.
@@ -61,6 +68,9 @@ and World of Warcraft: Forever.
 > **Early version - not yet tried on a real walking pad.** Read
 > [Before your first walk](#before-your-first-walk) and keep the pad's
 > remote in your hand the first time.
+
+*These steps are for Windows. On a Mac, steps 1 and 2 are different - they
+are under [On a Mac](#on-a-mac) - and the rest is the same.*
 
 1. **Download `Walka.exe`** with the button above. It goes to your
    *Downloads* folder. If the browser says it "isn't commonly downloaded",
@@ -91,7 +101,8 @@ and World of Warcraft: Forever.
    small Walka box (or type `/walka start`).
 
 **To stop the belt at any time:** the pad's own remote, **Ctrl+Alt+X** on
-the keyboard, or the red **STOP** on the dashboard.
+the keyboard (**Control+Option+X** on a Mac), or the red **STOP** on the
+dashboard.
 
 ## What you get
 
@@ -106,7 +117,7 @@ the keyboard, or the red **STOP** on the dashboard.
   drawn on the game's world map - brightest where you really walked.
 - 🖼️ **A picture to share.** Your journey so far as a picture, made on
   your own computer. You choose what is on it and where it goes.
-- 🔒 **Stays on your PC.** Nothing is uploaded. Walka never presses keys,
+- 🔒 **Stays on your computer.** Nothing is uploaded. Walka never presses keys,
   moves the mouse or reads the game's memory - it only looks at one corner
   of the screen.
 
@@ -125,6 +136,7 @@ Everything below is the long version, for when you want it.
 [What you need](#what-you-need) ·
 [Which treadmills work](#which-treadmills-work) ·
 [Install, step by step](#install-step-by-step) ·
+[On a Mac](#on-a-mac) ·
 [Using it](#using-it)
 
 **Walking** ·
@@ -155,8 +167,9 @@ It is two pieces:
 
 * **the addon** (`Walka/`) - reads your character's movement, decides how
   fast the belt should go, and shows the HUD, history and settings in game;
-* **the companion** (`companion/`, the `Walka.exe` you download above) - a
-  small Windows app that reads the addon's signal off the screen, drives
+* **the companion** (`companion/`, the `Walka.exe` you download above, or
+  `Walka` on a Mac) - a small app that reads the addon's signal off the
+  screen, drives
   the treadmill over Bluetooth with a set of safety rules, records your
   walks, and shows a live dashboard in your browser.
 
@@ -170,7 +183,7 @@ remote.
 
 ```mermaid
 flowchart TB
-  addon["Walka addon<br/>in the game"] -- "draws a strip of squares;<br/>Walka.exe reads it off the screen" --> exe["Walka.exe<br/>on your PC"]
+  addon["Walka addon<br/>in the game"] -- "draws a strip of squares;<br/>Walka reads it off the screen" --> exe["Walka.exe (Walka on a Mac)<br/>on your computer"]
   exe -- "Bluetooth: belt speed" --> pad["Walking pad"]
   pad -- "speed, distance" --> exe
   exe -. "a file the game loads at login" .-> addon
@@ -195,10 +208,11 @@ Details: [docs/PROTOCOL.md](docs/PROTOCOL.md).
 ## What you need
 
 * Windows 11 (Windows 10 generally works) with Bluetooth 4.0 / "LE" or
-  newer.
-* The walking pad or treadmill, switched on, **not** paired in Windows
-  Bluetooth settings, and with its own phone app **closed** (most accept
-  one connection at a time).
+  newer - or a Mac, with an Apple chip or an Intel processor and a recent
+  macOS (see [On a Mac](#on-a-mac)).
+* The walking pad or treadmill, switched on, **not** paired in the
+  computer's Bluetooth settings, and with its own phone app **closed**
+  (most accept one connection at a time).
 * WoW: Forever in *Windowed* or *Windowed (Fullscreen)* mode, with the
   top-left corner of the game visible.
 
@@ -233,8 +247,8 @@ Things to know with a treadmill that is not a walking pad:
 a private language (many NordicTrack / iFIT machines, the older KingSmith
 WalkingPads), and bikes or rowers - Walka only connects to treadmills.
 
-**Is yours not listed, or not behaving?** Run `Walka.exe probe` with the
-treadmill on. It only listens - it cannot move the belt - and saves a
+**Is yours not listed, or not behaving?** Run `Walka.exe probe` (on a Mac:
+[`Walka probe`](#on-a-mac)) with the treadmill on. It only listens - it cannot move the belt - and saves a
 small text report.
 [Open an issue](https://github.com/AntonyPerez0/walka-addon/issues) with
 that report and the treadmill's make and model, and it can be added.
@@ -253,12 +267,16 @@ that report and the treadmill's make and model, and it can be added.
    py -m walka
    ```
 
+   On a Mac: [the zip for your Mac](#on-a-mac), or from source with
+   `python3` in place of `py`.
+
 2. **Run it.** A console window opens and your browser shows the dashboard
    at <http://127.0.0.1:8787>.
 3. **Install the addon.** With the game closed, on the dashboard:
    *Settings → Game addon → Install automatically*. Or by hand: download
    [`Walka-addon.zip`](https://github.com/AntonyPerez0/walka-addon/releases/latest/download/Walka-addon.zip)
-   and unzip it into `World of Warcraft\_forever_\Interface\AddOns\`, so
+   and unzip it into `World of Warcraft\_forever_\Interface\AddOns\` (on a
+   Mac: `/Applications/World of Warcraft/_forever_/Interface/AddOns/`), so
    that there is a `Walka` folder in it. Start the game and tick *Walka* in
    the AddOns list.
 4. **Connect the treadmill.** Switch it on: Walka looks for it by itself.
@@ -267,6 +285,65 @@ that report and the treadmill's make and model, and it can be added.
    `WELLFIT TM Linker`).
 5. **Tell it about you.** *Settings → Body profile*: weight and height
    (used for calories and steps).
+
+## On a Mac
+
+> [!WARNING]
+> **The Mac version is new.** GitHub's Macs build it, run its tests and
+> check that the finished program starts, drives the simulated belt and
+> stops it when it is closed. Nobody has yet tried it with the game and a
+> walking pad on a real Mac. Do everything under
+> [Before your first walk](#before-your-first-walk) - and if you do,
+> [say how it went](https://github.com/AntonyPerez0/walka-addon/issues).
+
+1. **Download the zip for your Mac.** *Apple menu → About This Mac* says
+   which: *Chip: Apple M...* →
+   [`Walka-mac-apple-silicon.zip`](https://github.com/AntonyPerez0/walka-addon/releases/latest/download/Walka-mac-apple-silicon.zip);
+   *Processor: ... Intel ...* →
+   [`Walka-mac-intel.zip`](https://github.com/AntonyPerez0/walka-addon/releases/latest/download/Walka-mac-intel.zip).
+2. **Open the zip** (double-click it in *Downloads*). Inside is one file,
+   `Walka`.
+3. **Double-click `Walka`.** The first time, macOS refuses: *"Apple could
+   not verify Walka is free of malware"*. Click **Done**, open **System
+   Settings → Privacy & Security**, scroll down to *Security* and click
+   **Open Anyway** next to Walka. (On macOS 14 and older: hold Control,
+   click `Walka`, choose **Open**, then **Open**.) Walka is not signed with
+   an Apple developer account, so macOS does not recognise it. It does not
+   mean that anything was found: see
+   [Is the download safe?](#is-the-download-safe)
+4. **A Terminal window opens: that is Walka.** Leave it open while you
+   walk. Closing it stops the belt and Walka. The dashboard opens in your
+   browser, and from there it is step 3 of [Get started](#get-started).
+
+macOS asks before a program may use Bluetooth or look at the screen. Walka
+runs inside Terminal, so it asks about **Terminal**:
+
+* **Bluetooth** - to talk to the walking pad. Click **Allow**.
+* **Screen Recording** - to see the strip the addon draws. The dashboard
+  says when this is what is missing. Open **System Settings → Privacy &
+  Security → Screen & System Audio Recording**, switch on **Terminal**, then
+  close Walka and open it again. Recent versions of macOS ask again every
+  few weeks whether Terminal may still do this: choose **Allow**.
+
+Both can be changed later in the same place in System Settings. Walka only
+reads the top-left corner of the game window, and nothing leaves your
+computer.
+
+What is different from Windows:
+
+* **The STOP key is Control+Option+X** - the same setting as Ctrl+Alt+X,
+  under the names a Mac keyboard has for those keys (in the setting,
+  `cmd` is the Command key). Walka needs no permission for it.
+* **The game** is looked for in `/Applications/World of Warcraft`. If
+  yours is somewhere else, choose the addon folder yourself under
+  *Settings → Game addon*.
+* **Your settings and walks** are in
+  `~/Library/Application Support/Walka`.
+* **Commands** like `probe` and `beacon` are typed in Terminal: drag the
+  `Walka` file into a Terminal window, type a space and `probe`, press
+  Return.
+* **From source:** `cd companion`, `python3 -m pip install -e .`,
+  `python3 -m walka` (Python 3.10 or newer).
 
 ## Using it
 
@@ -349,8 +426,9 @@ Fastest first:
 
 1. the treadmill's **remote**, stop button or safety key - Walka then
    leaves the belt stopped;
-2. **Ctrl+Alt+X** anywhere on the PC, even inside the game (Windows; change
-   it under *Settings → Safety limits*);
+2. **Ctrl+Alt+X** anywhere on the computer, even inside the game
+   (**Control+Option+X** on a Mac; change it under *Settings → Safety
+   limits*);
 3. the red **STOP** on the dashboard;
 4. *Stop* on the HUD, or `/walka stop`.
 
@@ -580,13 +658,14 @@ Bluetooth is not an emergency stop: keep the remote within reach.
 
 ## Is the download safe?
 
-`Walka.exe` is a program from the internet that Windows does not
-recognise, so it is right to ask. This is what there is to go on:
+`Walka.exe` - like `Walka` for the Mac - is a program from the internet
+that your computer does not recognise, so it is right to ask. This is what
+there is to go on:
 
 * **Every release is scanned for viruses before it is published.**
   Microsoft Defender - the antivirus that is part of Windows - scans
-  `Walka.exe` and the addon's files on the machine that builds them, with
-  the virus definitions of that day. If it finds anything, nothing is
+  `Walka.exe`, the Mac programs and the addon's files on one of GitHub's
+  Windows machines, with the virus definitions of that day. If it finds anything, nothing is
   published. The badge under the download buttons is the result for the
   latest release; `virus-scan.json` on the
   [release page](https://github.com/AntonyPerez0/walka-addon/releases/latest)
@@ -595,7 +674,8 @@ recognise, so it is right to ask. This is what there is to go on:
   [virustotal.com](https://www.virustotal.com/gui/home/upload) - no
   account needed. It runs the file past the scanners of about 70
   antivirus makers.
-* **It is built in the open.** Nobody makes `Walka.exe` on their own PC:
+* **It is built in the open.** Nobody makes `Walka.exe` or the Mac
+  programs on their own computer:
   GitHub [builds it](https://github.com/AntonyPerez0/walka-addon/actions/workflows/ci.yml)
   from the code on this page, and all of that code is here to read.
 
@@ -609,7 +689,10 @@ many of them flag it, do not open it, and
 
 **The *Windows protected your PC* message** is about something else:
 Windows shows it for every program that is new and not signed by a
-company. It does not mean that anything was found.
+company. It does not mean that anything was found. The same goes for
+*"Apple could not verify Walka is free of malware"* on a Mac: macOS says
+that about every program that was not signed with an Apple developer
+account and sent to Apple to be checked.
 
 ## Is this allowed?
 
@@ -644,13 +727,15 @@ permission.
 The pad and the game have not been tested against this code. Do these, in
 order:
 
-1. **`Walka.exe probe`** (or `py -m walka probe`). Read-only: it lists what
+1. **`Walka.exe probe`** (or `py -m walka probe`; on a Mac see
+   [On a Mac](#on-a-mac) for how to type a command). Read-only: it lists what
    the pad exposes and listens while you operate it with the remote. It
    cannot move the belt. Keep the report - it settles the open questions in
    [docs/HARDWARE.md](docs/HARDWARE.md).
 2. **A manual session from the dashboard while standing next to the pad**,
    not on it. Start, change speed, pause, stop, press STOP, press
-   Ctrl+Alt+X. Stop it with the remote and check Walka leaves it stopped.
+   Ctrl+Alt+X (Control+Option+X on a Mac). Stop it with the remote and
+   check Walka leaves it stopped.
 3. **`Walka.exe beacon`** with the game running: checks that the strip can
    be read from your screen.
 4. **In game**, the checks in
@@ -662,9 +747,12 @@ order:
 | Symptom | Try |
 |---|---|
 | Treadmill not found | Is it on? Close the treadmill's own phone app (force-quit it). Remove the treadmill from Windows *Bluetooth & devices* if you paired it there. A USB Bluetooth 5 adapter helps with weak built-in radios. |
+| Treadmill not found, on a Mac | *System Settings → Privacy & Security → Bluetooth*: is **Terminal** switched on? Then close Walka and open it again. |
 | Treadmill not found, and it is not a UREVO or WELLFIT | Give it the whole scan (15 seconds), or press *Scan* on the dashboard and pick it. If it is not in the list either, it does not speak Bluetooth FTMS - see [which treadmills work](#which-treadmills-work). |
 | It connects, but the belt does not start or change speed | The treadmill may only *show* its numbers to apps. Look for "does not take speed commands" under *Activity* on the dashboard, and send a `Walka.exe probe` report. |
 | Dashboard says *no game signal* | Run the game windowed or borderless; keep the top-left corner uncovered; `/walka beacon on`; try `/walka beacon size 6`; run `Walka.exe beacon`. |
+| On a Mac: the dashboard says macOS has not allowed recording the screen, or *no game signal* although the game is there | *System Settings → Privacy & Security → Screen & System Audio Recording*: switch on **Terminal**, then close Walka and open it again. See [On a Mac](#on-a-mac). |
+| On a Mac: Control+Option+X does nothing | Does the dashboard show the key next to STOP? If not, *Activity* says why it could not be set up. Use the remote or the STOP button, and [open an issue](https://github.com/AntonyPerez0/walka-addon/issues). |
 | Belt does not follow | Is a session started (`/walka status`)? Does the dashboard say *waiting for you to move your character* or *stopped at the treadmill*? Press Resume. |
 | "Waiting for the treadmill to finish its previous workout" | Normal for about ten seconds after a stop: the pad ignores a start until then. |
 | Speed is one step off | Set *Settings → Treadmill → Firmware speed grid* to mph (or km/h) instead of auto. |
@@ -682,19 +770,23 @@ order:
 
 ## Development
 
-[![Tests and Windows build](https://github.com/AntonyPerez0/walka-addon/actions/workflows/ci.yml/badge.svg)](https://github.com/AntonyPerez0/walka-addon/actions/workflows/ci.yml)
+[![Tests and builds](https://github.com/AntonyPerez0/walka-addon/actions/workflows/ci.yml/badge.svg)](https://github.com/AntonyPerez0/walka-addon/actions/workflows/ci.yml)
 
 ```powershell
 py -m pip install -e "companion[dev]"
 py -m pytest          # companion tests + addon tests (the addon runs under a mocked game client)
 ```
 
+(`python3` in place of `py` on a Mac or Linux.)
+
 * `Walka/` - the addon. `Core/` is pure Lua (no game API) and is unit
   tested; `Game.lua` is the only file that touches values the game may hide.
 * `companion/src/walka/` - `governor.py` (the safety rules), `treadmill/`
   (Bluetooth FTMS driver and a simulator), `capture.py` + `beacon.py`
   (reading the strip), `session.py`, `addon_sync.py`, `web.py` + `static/`
-  (dashboard), `app.py` (wiring), `cli.py`; `journey.py` (each character's
+  (dashboard), `app.py` (wiring), `cli.py`, `macos.py` (what the companion
+  asks macOS: where the game window is, whether it may see the screen),
+  `hotkey.py` (the STOP key, on Windows and on a Mac); `journey.py` (each character's
   journey, put together from the strip), `savedvars.py` + `road.py` (the
   road, read from the game's saved file) and `static/share.js`, `card.js`,
   `cardmodel.js` (the Share page and the picture it draws), `lands.js` (the
@@ -709,14 +801,16 @@ py -m pytest          # companion tests + addon tests (the addon runs under a mo
   `Walka/Walka.toc`, commit and push. Then, on GitHub, open **Actions** →
   **CI** → **Run workflow**, type the number (`0.1.0`) and run it. (Pushing
   a tag does the same: `git tag v0.1.0`, `git push origin v0.1.0`.) When
-  the run finishes, the **Releases** page has `Walka.exe` (the download
-  button at the top of this page always gives the latest one) and
-  `Walka-addon.zip`, which you upload to CurseForge yourself. If the run
+  the run finishes, the **Releases** page has `Walka.exe`, the two Mac
+  zips (the download buttons at the top of this page always give the
+  latest ones) and `Walka-addon.zip`, which you upload to CurseForge
+  yourself. If the run
   fails nothing is published: fix it and run it again.
-* **The virus scan** is a step of the Windows build
-  (`.github/workflows/ci.yml`): Microsoft Defender scans the files of the
-  release, after showing that it catches the standard test file. A
-  release needs that step, and it writes `virus-scan.json`, which is
+* **The virus scan** is a job of the build
+  (`.github/workflows/ci.yml`), on a Windows machine: Microsoft Defender
+  scans the files of the release - `Walka.exe`, the Mac programs, the
+  addon - after showing that it catches the standard test file. A
+  release needs that job, and it writes `virus-scan.json`, which is
   published next to `Walka.exe` and is what the badge at the top of this
   page shows. Nothing to set up. The green *No viruses found* picture
   above the badge is a fixed picture (`docs/images/virus-free.svg`): it

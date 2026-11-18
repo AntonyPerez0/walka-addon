@@ -578,7 +578,7 @@ const FORMS = {
         optional: true,
         label: "STOP hotkey",
         placeholder: "Off",
-        help: "A key combination that stops the belt from anywhere on this PC, even while the game has focus (Windows only). Use ctrl, alt, shift or win plus a key, for example ctrl+alt+x. The key press is not passed on to the game. Empty turns it off.",
+        help: "A key combination that stops the belt from anywhere on this computer, even while the game has focus. Use ctrl, alt, shift or win plus a key, for example ctrl+alt+x. On a Mac, alt is the Option key and win (or cmd) the Command key. The key press is not passed on to the game. Empty turns it off.",
       },
     ],
     advanced: [

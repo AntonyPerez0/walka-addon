@@ -253,6 +253,89 @@ def _press_keys_on_this_mac(key_code: int, flags: int) -> None:
         foundation.CFRelease(event)
 
 
+def _queue_a_hotkey_event_on_this_mac(hotkey_id: int) -> None:
+    """Put an event in the main thread's queue that is made like the one
+    macOS puts there when a registered combination is pressed."""
+    import ctypes
+
+    carbon = hotkey._load_carbon()
+    carbon.CreateEvent.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.c_double,
+        ctypes.c_uint32,
+        ctypes.POINTER(ctypes.c_void_p),
+    ]
+    carbon.CreateEvent.restype = ctypes.c_int32
+    carbon.SetEventParameter.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.c_ulong,
+        ctypes.c_void_p,
+    ]
+    carbon.SetEventParameter.restype = ctypes.c_int32
+    carbon.GetMainEventQueue.argtypes = []
+    carbon.GetMainEventQueue.restype = ctypes.c_void_p
+    carbon.PostEventToQueue.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int16]
+    carbon.PostEventToQueue.restype = ctypes.c_int32
+
+    event = ctypes.c_void_p()
+    made = carbon.CreateEvent(
+        None, hotkey._EVENT_CLASS_KEYBOARD, hotkey._EVENT_HOTKEY_PRESSED, 0.0, 0, ctypes.byref(event)
+    )
+    assert made == 0 and event, f"macOS would not make an event ({made})"
+    which = hotkey._EventHotKeyID(hotkey._HOTKEY_SIGNATURE, hotkey_id)
+    assert (
+        carbon.SetEventParameter(
+            event, hotkey._PARAM_DIRECT_OBJECT, hotkey._TYPE_HOTKEY_ID, ctypes.sizeof(which), ctypes.byref(which)
+        )
+        == 0
+    )
+    assert carbon.PostEventToQueue(carbon.GetMainEventQueue(), event, 1) == 0  # kEventPriorityStandard
+    carbon.ReleaseEvent(event)  # (the queue keeps its own hold on it)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="registers a real hotkey with macOS")
+def test_a_hotkey_event_in_a_macs_queue_reaches_the_callback_through_pump():
+    """Everything of the hotkey that is this program's: taking an event out
+    of the main thread's queue, handing it on, and telling whose it is. What
+    is not shown here is macOS putting the event there when the keys are
+    pressed (see the next test)."""
+    pressed: list[str] = []
+    mine = GlobalHotkey("ctrl+alt+shift+f18", lambda: pressed.append("mine"))
+    other = GlobalHotkey("ctrl+alt+shift+f17", lambda: pressed.append("other"))
+    assert mine.start() is True, mine.error
+    assert other.start() is True, other.error
+    mine_id, other_id = mine._mac._id, other._mac._id
+    try:
+        mine.pump()
+        assert pressed == []
+        _queue_a_hotkey_event_on_this_mac(mine_id)
+        assert pressed == []  # not before it is asked for
+        mine.pump()
+        assert pressed == ["mine"]  # ... and only the one it was for
+        _queue_a_hotkey_event_on_this_mac(other_id)
+        mine.pump()  # (whichever is asked: the queue is the program's)
+        assert pressed == ["mine", "other"]
+        _queue_a_hotkey_event_on_this_mac(10**6)  # somebody else's
+        mine.pump()
+        assert pressed == ["mine", "other"]
+    finally:
+        mine.stop()
+        other.stop()
+    # A hotkey that has been given back hears nothing more.
+    survivor = GlobalHotkey("ctrl+alt+shift+f17", lambda: pressed.append("survivor"))
+    assert survivor.start() is True, survivor.error
+    try:
+        _queue_a_hotkey_event_on_this_mac(mine_id)
+        survivor.pump()
+        assert pressed == ["mine", "other"]
+    finally:
+        survivor.stop()
+
+
 @pytest.mark.skipif(sys.platform != "darwin", reason="registers a real hotkey with macOS")
 def test_a_real_hotkey_on_a_mac():
     """The real thing: macOS takes the combination, and a press of it - made
