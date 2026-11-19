@@ -1,34 +1,26 @@
 """A simulated walking pad.
 
-It behaves like the UREVO pads the real driver targets, so the whole
+It behaves like the UREVO pads the real reader listens to, so the whole
 companion can be exercised (and demoed) without hardware:
 
 * Start runs a 3-second countdown, then the belt starts at minimum speed.
-* Speed commands are ignored while the belt is stopped.
 * The belt ramps towards its target instead of jumping.
-* With ``us_firmware=True`` speeds live on a 0.1 mph grid and commands are
-  truncated the way the real US firmware does it.
+* With ``us_firmware=True`` speeds live on a 0.1 mph grid.
 * Stop ends the workout and zeroes the machine's counters; pause keeps them.
-* The remote's start, stop and speed buttons can be "pressed" (tests, and
-  the dashboard's simulator controls).
+
+Like a real pad it is worked with its remote and with nothing else: the
+``press_*`` methods are that remote (tests, the demo's made-up walker and
+the dashboard's simulator buttons press them). The companion itself has no
+way to move this belt either - the reader interface has none.
 """
 
 from __future__ import annotations
 
 import asyncio
-import math
 import time
 from collections.abc import Callable
 
-from .base import (
-    KMH_PER_MPH,
-    BeltState,
-    Treadmill,
-    TreadmillError,
-    TreadmillEvent,
-    kmh_to_mph_tenths,
-    mph_tenths_to_command_kmh,
-)
+from .base import KMH_PER_MPH, BeltState, Treadmill, TreadmillEvent, kmh_to_mph_tenths
 
 
 class SimulatedTreadmill(Treadmill):
@@ -55,7 +47,6 @@ class SimulatedTreadmill(Treadmill):
         self.tick_s = tick_s
         self.steps_per_km = steps_per_km
         self.kcal_per_km = kcal_per_km
-        self.fail_commands = False  # tests: make every command raise
 
         self._task: asyncio.Task | None = None
         self._count_left = 0.0
@@ -107,49 +98,21 @@ class SimulatedTreadmill(Treadmill):
             self.advance(now - last)
             last = now
 
-    # ---- commands --------------------------------------------------------------
-    def _check(self) -> None:
-        if not self.status.connected:
-            raise TreadmillError("treadmill is not connected")
-        if self.fail_commands:
-            raise TreadmillError("simulated command failure")
-
-    async def start(self) -> None:
-        self._check()
-        self._start()
-
-    async def pause(self) -> None:
-        self._check()
-        self._halt(BeltState.PAUSED)
-
-    async def stop(self) -> None:
-        self._check()
-        self._halt(BeltState.STOPPED)
-
-    async def set_speed(self, kmh: float) -> None:
-        self._check()
-        if self.status.state not in (BeltState.RUNNING, BeltState.STARTING):
-            return  # real pads ignore speed writes while the belt is stopped
-        if self.us_firmware:
-            # What the real driver sends: rounded so the firmware's double
-            # truncation lands on the intended 0.1 mph step.
-            kmh = mph_tenths_to_command_kmh(kmh_to_mph_tenths(kmh))
-        self.status.target_kmh = self._firmware_speed(kmh)
-
-    # ---- the machine's own buttons (for tests and the dashboard) ----------------
+    # ---- the remote (tests, the demo and the dashboard's simulator buttons) -----
     def press_start(self) -> None:
         """Simulate the user pressing start on the remote."""
+        if self.status.connected:
+            self._start()
+
+    def press_pause(self) -> None:
+        """Simulate the user pressing pause on the remote."""
         if self.status.state in (BeltState.RUNNING, BeltState.STARTING):
-            return
-        self._start()
-        self._emit(TreadmillEvent.EXTERNAL_START)
+            self._halt(BeltState.PAUSED)
 
     def press_stop(self) -> None:
         """Simulate the user pressing stop on the remote."""
-        if self.status.state in (BeltState.STOPPED,):
-            return
-        self._halt(BeltState.STOPPED)
-        self._emit(TreadmillEvent.EXTERNAL_STOP)
+        if self.status.state is not BeltState.STOPPED:
+            self._halt(BeltState.STOPPED)
 
     def press_speed(self, kmh: float) -> None:
         """Simulate the user changing the speed with the remote's + and -
@@ -177,17 +140,6 @@ class SimulatedTreadmill(Treadmill):
             self.press_speed(status.target_kmh + steps * status.step_kmh)
 
     # ---- behaviour -------------------------------------------------------------
-    def _firmware_speed(self, kmh: float) -> float:
-        status = self.status
-        if self.us_firmware:
-            # Truncate to 0.1 km/h, convert to mph, truncate to 0.1 mph.
-            tenth_kmh = math.floor(kmh * 10 + 1e-9) / 10.0
-            mph_tenths = math.floor(tenth_kmh / KMH_PER_MPH * 10 + 1e-9)
-            kmh = mph_tenths / 10.0 * KMH_PER_MPH
-        else:
-            kmh = math.floor(kmh * 10 + 1e-9) / 10.0
-        return max(status.min_kmh, min(status.max_kmh, kmh))
-
     def _start(self) -> None:
         status = self.status
         if status.state in (BeltState.RUNNING, BeltState.STARTING):

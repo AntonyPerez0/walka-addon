@@ -17,8 +17,7 @@ the game's folder, which holds one table, ``WalkaCharDB``.
 
 The files belong to the game: they are only ever read, in one go, and never
 held open. Nothing read here leaves the computer, and neither the account's
-folder name nor the character's realm is passed on or logged. Nothing here
-can reach the belt.
+folder name nor the character's realm is passed on or logged.
 """
 
 from __future__ import annotations
@@ -361,7 +360,7 @@ def _thin(
     """Thin all paths alike until together they fit the budget.
 
     Every path keeps its two ends however coarse the tolerance. A road made
-    of very many short stretches (the belt started and stopped a thousand
+    of very many short stretches (a walk paused and resumed a thousand
     times) could therefore never fit: when even two points a path are too
     many, the smallest paths - specks on a picture of the whole road - are
     left out first."""
@@ -461,7 +460,7 @@ class RoadBook:
     """The roads found in the game's saved files, each read again only when
     its file has changed. ``game_dirs`` says where games are installed
     (folders that hold ``WTF``); it is asked now and then, on the thread
-    that asks for a road - never on the one that drives the belt."""
+    that asks for a road - never on the one that records the walk."""
 
     game_dirs: Callable[[], Iterable[Path]]
     wall: Callable[[], float] = time.time

@@ -15,9 +15,9 @@ puts them back together:
   is closed.
 * ``DemoJourney`` - the stat frames of a made-up character for ``--demo``.
 
-Nothing here can reach the belt: the collector only ever receives
-``(stat id, value)`` pairs (see ``stat_route``), and it knows nothing about
-the governor, the treadmill or the live reading.
+The collector only ever receives ``(stat id, value)`` pairs (see
+``stat_route``), and it knows nothing about the treadmill or the live
+reading.
 """
 
 from __future__ import annotations
@@ -456,8 +456,8 @@ class JourneyBook:
         """Save now and then, for as long as the companion runs.
 
         New numbers arrive every eight seconds on the screen-reader thread.
-        Writing the file is kept off that thread, and off the event loop the
-        belt is driven from: a slow disk must not hold up either.
+        Writing the file is kept off that thread, and off the event loop
+        that records the walk: a slow disk must not hold up either.
         """
         while True:
             await asyncio.sleep(every_s)

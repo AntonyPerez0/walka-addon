@@ -1,11 +1,10 @@
-"""Speed sources: where the belt-speed target comes from.
+"""The game, as the companion sees it: ``BeaconSource`` reads the WoW
+addon's strip off the screen in a background thread.
 
-* ``BeaconSource`` - the WoW addon, read off the screen in a background
-  thread.
-* ``ManualSource`` - the dashboard's own start/pause/stop and speed buttons,
-  for walking with any other game (or none).
-
-Both produce a ``governor.Reading``; the governor decides what the belt does.
+What it hands on is a ``Reading``: is a walking session marked in the game,
+and which one. The companion uses that for one thing - to say which game
+session a walk it records belongs to. Nothing read from the game reaches
+the treadmill: the companion only listens to that.
 """
 
 from __future__ import annotations
@@ -20,7 +19,6 @@ from typing import Any
 
 from . import stat_route, trust
 from .capture import BeaconReader, GameWindow
-from .governor import Reading
 from .protocol import Flags, Frame
 
 log = logging.getLogger(__name__)
@@ -28,6 +26,18 @@ log = logging.getLogger(__name__)
 # A beacon whose heartbeat counter stops advancing is a frozen picture (the
 # game hung or is showing a loading screen over a stale frame), not a signal.
 WINDOW_GONE_S = 10.0  # game window missing this long = the session is over
+
+
+@dataclass(frozen=True)
+class Reading:
+    """What the game last said about its walking session."""
+
+    age_s: float = math.inf  # seconds since the strip was last seen ticking
+    active: bool = False  # a session is marked in the game
+    paused: bool = False  # ... but paused there
+    moving: bool = False  # the character is moving
+    session: int = 0  # session counter (changes when a new session starts)
+    afk: bool = False  # the player is away
 
 
 @dataclass
@@ -148,7 +158,7 @@ class BeaconSource:
 
     def _ingest(self, now: float, reader: BeaconReader, result: Any) -> None:
         result = self._trust.admit(now, result)  # one decoded frame proves nothing: see trust.py
-        result = stat_route.live_only(result, self.on_stat)  # a stat frame is no news for the belt
+        result = stat_route.live_only(result, self.on_stat)  # a stat frame says nothing about the session
         with self._lock:
             self._window = reader.window
             if reader.window is not None:
@@ -176,7 +186,7 @@ class BeaconSource:
 
     def inject(self, frame: Frame, now: float | None = None) -> None:
         """Feed a frame directly (tests and the simulator)."""
-        if stat_route.take(frame, self.on_stat):  # a stat frame is no news for the belt
+        if stat_route.take(frame, self.on_stat):  # a stat frame says nothing about the session
             return
         now = self.clock() if now is None else now
         with self._lock:
@@ -201,7 +211,7 @@ class BeaconSource:
             return self._window
 
     def reading(self, now: float | None = None) -> Reading:
-        """The governor's view of the beacon right now."""
+        """What the game says about its session right now."""
         now = self.clock() if now is None else now
         with self._lock:
             frame = self._frame
@@ -212,11 +222,7 @@ class BeaconSource:
 
             if self._closed:
                 # "The game was closed" is a state, not a moment: it is said
-                # on every reading until a frame is seen again. Said only
-                # once, it is lost if the governor cannot act on that very
-                # tick (the treadmill out of reach) - and the belt would
-                # later run on through the lost-signal stages instead of
-                # stopping.
+                # on every reading until a frame is seen again.
                 return Reading(age_s=0.0, active=False)
 
             if frame is None:
@@ -259,56 +265,6 @@ class BeaconSource:
                 active=frame.active,
                 paused=frame.paused,
                 moving=frame.has(Flags.MOVING),
-                target_kmh=frame.target_kmh,
                 session=frame.session,
                 afk=frame.has(Flags.AFK),
             )
-
-
-class ManualSource:
-    """Sessions driven from the dashboard."""
-
-    kind = "manual"
-
-    def __init__(self, speed_kmh: float) -> None:
-        self.active = False
-        self.paused = False
-        self.speed_kmh = speed_kmh
-        self._session = 1000  # outside the beacon's 1..255 range
-
-    def start(self, speed_kmh: float | None = None) -> None:
-        if speed_kmh is not None:
-            self.speed_kmh = speed_kmh
-        if not self.active:
-            self._session += 1
-        self.active = True
-        self.paused = False
-
-    def pause(self) -> None:
-        if self.active:
-            self.paused = True
-
-    def resume(self) -> None:
-        if self.active:
-            self.paused = False
-
-    def stop(self) -> None:
-        self.active = False
-        self.paused = False
-
-    def set_speed(self, speed_kmh: float) -> None:
-        self.speed_kmh = max(0.0, speed_kmh)
-
-    @property
-    def session(self) -> int:
-        return self._session
-
-    def reading(self) -> Reading:
-        return Reading(
-            age_s=0.0,
-            active=self.active,
-            paused=self.paused,
-            moving=True,
-            target_kmh=self.speed_kmh,
-            session=self._session,
-        )

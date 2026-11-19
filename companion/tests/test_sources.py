@@ -1,5 +1,4 @@
-"""Speed sources: the beacon (staleness, game-closed rule, threading) and the
-dashboard's manual control."""
+"""The beacon source: staleness, the game-closed rule, threading."""
 
 from __future__ import annotations
 
@@ -13,9 +12,8 @@ import pytest
 from walka import trust
 from walka.beacon import Decoded
 from walka.capture import GameWindow, ReadResult
-from walka.governor import Reading
 from walka.protocol import Flags, Frame
-from walka.sources import WINDOW_GONE_S, BeaconSource, BeaconStatus, ManualSource
+from walka.sources import WINDOW_GONE_S, BeaconSource, BeaconStatus, Reading
 
 WINDOW = GameWindow("World of Warcraft", 10, 20, 1280, 720, r"C:\WoW\_forever_\WowForever.exe")
 
@@ -97,7 +95,7 @@ def test_no_frame_yet_is_a_stale_inactive_reading():
         (Flags.ACTIVE | Flags.PAUSED | Flags.MOVING, dict(active=True, paused=True, moving=True)),
         (Flags.MOVING | Flags.MOUNTED | Flags.COMBAT, dict(active=False, paused=False, moving=True)),
         (Flags.PAUSED, dict(active=False, paused=True, moving=False)),
-        # The display-only flags do not leak into the three that steer the belt.
+        # The display-only flags do not leak into the three that say what the session is doing.
         (
             Flags.MOUNTED | Flags.TAXI | Flags.SWIMMING | Flags.FLYING | Flags.DEAD | Flags.COMBAT | Flags.FALLING,
             dict(active=False, paused=False, moving=False),
@@ -111,7 +109,7 @@ def test_reading_fields_come_from_the_frame(flags: Flags, expected: dict):
     source.inject(Frame(seq=1, session=9, flags=flags, target_raw=483, char_speed_raw=700))
     reading = source.reading()
     assert reading.age_s == 0.0
-    assert reading.target_kmh == pytest.approx(4.83)
+    assert not hasattr(reading, "target_kmh")  # what the frame asks of a belt is not passed on
     assert reading.session == 9
     for name, value in expected.items():
         assert getattr(reading, name) is value, name
@@ -119,9 +117,9 @@ def test_reading_fields_come_from_the_frame(flags: Flags, expected: dict):
     assert source.frame is not None and source.frame.flags == flags
 
 
-def test_afk_flag_reaches_the_governor():
+def test_afk_flag_reaches_the_reading():
     """The addon pauses a session by itself when the player goes AFK; the
-    governor must be able to tell that from a pause the player asked for."""
+    reading says which kind of pause it is."""
     source = BeaconSource(None, clock=Clock())
     source.inject(frame(1, flags=Flags.ACTIVE | Flags.PAUSED | Flags.AFK))
     assert source.reading().afk is True
@@ -187,7 +185,7 @@ def test_frames_stopping_is_no_signal():
     assert source.status.state == "ok"  # (not re-evaluated until asked)
     reading = source.reading()
     assert reading.age_s == pytest.approx(2.4) and source.status.state == "no_signal"
-    assert reading.active  # the governor decides what a stale "active" means
+    assert reading.active  # the app decides what a stale "active" means
     clock.now += 3600
     assert source.reading().age_s == pytest.approx(3602.4)
 
@@ -245,11 +243,9 @@ def test_game_window_closing_ends_the_session():
     t = closed_at + WINDOW_GONE_S
     ingest(source, reader, t, None)
     reading = source.reading(t)
-    assert reading == Reading(age_s=0.0, active=False)  # a *fresh* "no session": the governor stops the belt
+    assert reading == Reading(age_s=0.0, active=False)  # a *fresh* "no session": the walk is filed
     assert source.status.state == "game_closed"
-    # It is a state, not a moment: said again on every reading, so that a
-    # governor that could not act on the first one (the treadmill out of
-    # reach) still gets to hear it.
+    # It is a state, not a moment: said again on every reading.
     for _ in range(50):
         t += 60.0
         ingest(source, reader, t, None)
@@ -445,49 +441,3 @@ def test_read_errors_do_not_kill_the_thread():
     finally:
         source.stop()
     assert reader.closed
-
-
-# ---- manual ---------------------------------------------------------------------------------
-
-
-def test_manual_source_semantics():
-    manual = ManualSource(3.2)
-    assert manual.kind == "manual"
-    idle = manual.reading()
-    assert idle.age_s == 0.0 and not idle.active and not idle.paused
-
-    manual.pause()  # nothing to pause
-    manual.resume()
-    assert not manual.active and not manual.paused
-
-    first = manual.session
-    manual.start()
-    reading = manual.reading()
-    assert reading.active and not reading.paused and reading.moving
-    assert reading.target_kmh == 3.2 and reading.age_s == 0.0
-    assert reading.session == manual.session == first + 1
-    assert reading.session > 255  # can never collide with a beacon session
-
-    manual.start(4.0)  # already running: new speed, same session
-    assert manual.session == first + 1 and manual.reading().target_kmh == 4.0
-
-    manual.pause()
-    assert manual.reading().paused and manual.reading().active
-    manual.start()  # start while paused resumes, same session
-    assert not manual.paused and manual.session == first + 1
-    manual.pause()
-    manual.resume()
-    assert not manual.reading().paused
-
-    manual.set_speed(2.5)
-    assert manual.reading().target_kmh == 2.5
-    manual.set_speed(-3)
-    assert manual.reading().target_kmh == 0.0
-
-    manual.pause()
-    manual.stop()
-    assert not manual.active and not manual.paused
-    assert not manual.reading().active
-
-    manual.start(1.0)
-    assert manual.session == first + 2  # every start after a stop is a new session

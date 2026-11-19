@@ -9,31 +9,29 @@ from pathlib import Path
 import pytest
 
 from walka import config as config_module
-from walka.config import _BOUNDS, CONFIG_FILE, MAX_SPEED_CAP_KMH, Config, apply_update, load, save
-from walka.governor import Limits
-from walka.metrics import KMH_PER_MPH
+from walka.config import _BOUNDS, CONFIG_FILE, Config, apply_update, load, save
 
 
-def test_defaults_are_conservative():
+def test_defaults():
     config = Config()
     assert config.units == "mph"
-    # 3.0 mph cap out of the box.
-    assert config.limits.max_speed_kmh == pytest.approx(3.0 * KMH_PER_MPH, abs=0.005)
-    assert config.limits.max_speed_kmh < Limits().max_speed_kmh
-    assert config.limits.accel_kmh_per_s == 0.2 and config.limits.decel_kmh_per_s == 0.4
-    assert config.limits.resume_requires_movement is True
-    assert config.limits.safe_speed_kmh == pytest.approx(1.3)
-    assert config.limits.loss_pause_s == 120.0
     assert config.profile.weight_kg == 75.0 and config.profile.height_cm == 172.0
     assert config.profile.age is None and config.profile.sex is None
     assert config.treadmill.kind == "ftms" and config.treadmill.units == "auto"
     assert config.treadmill.name_prefixes == ["URTM", "WELLFIT TM Linker"]
-    assert config.treadmill.auto_connect is True and config.treadmill.stop_on_exit is True
+    assert config.treadmill.auto_connect is True
     assert config.heart_rate.enabled is False
     assert config.wow.origin is None and config.wow.addon_dir == "" and config.wow.capture_fps == 15.0
     assert config.web.host == "127.0.0.1" and config.web.port == 8787  # local only
-    assert config.manual.speed_kmh == pytest.approx(2.0 * KMH_PER_MPH)
     json.dumps(config.to_dict())
+
+
+def test_there_is_nothing_to_set_about_the_belt():
+    """No speed limit, no STOP hotkey, no manual speed, no disclaimer to
+    accept before a belt is moved: the companion moves no belt."""
+    assert set(Config().to_dict()) == {"units", "profile", "treadmill", "heart_rate", "wow", "web"}
+    assert set(Config().to_dict()["treadmill"]) == {"kind", "address", "name_prefixes", "units", "auto_connect"}
+    assert {section for section, _name in _BOUNDS} == {"profile", "wow", "web"}
 
 
 def test_defaults_are_inside_their_own_bounds():
@@ -46,8 +44,8 @@ def test_defaults_are_inside_their_own_bounds():
 def test_instances_do_not_share_mutable_defaults():
     a, b = Config(), Config()
     a.treadmill.name_prefixes.append("X")
-    a.limits.max_speed_kmh = 1.0
-    assert b.treadmill.name_prefixes == ["URTM", "WELLFIT TM Linker"] and b.limits.max_speed_kmh != 1.0
+    a.profile.weight_kg = 99.0
+    assert b.treadmill.name_prefixes == ["URTM", "WELLFIT TM Linker"] and b.profile.weight_kg != 99.0
 
 
 @pytest.mark.parametrize("section,name", sorted(_BOUNDS))
@@ -65,52 +63,44 @@ def test_every_bounded_field_is_clamped(section: str, name: str):
     assert getattr(getattr(config, section), name) == pytest.approx(inside, abs=1)
 
 
-def test_a_typo_cannot_configure_a_dangerous_belt():
+def test_a_typo_cannot_put_nonsense_into_the_numbers():
     config = apply_update(
         Config(),
-        {
-            "limits": {
-                "max_speed_kmh": 483,  # meant 4.83
-                "accel_kmh_per_s": 50,
-                "decel_kmh_per_s": 0,
-                "command_interval_s": 0,
-                "signal_timeout_s": 99999,
-                "safe_speed_kmh": 16,
-            }
-        },
+        {"profile": {"weight_kg": 7500, "height_cm": 1.72, "step_calibration": 100}, "wow": {"capture_fps": 0}},
     )
-    limits = config.limits
-    assert limits.max_speed_kmh == MAX_SPEED_CAP_KMH
-    assert limits.accel_kmh_per_s == 1.0
-    assert limits.decel_kmh_per_s == 0.1  # the belt can always slow down
-    assert limits.command_interval_s == 0.5
-    assert limits.signal_timeout_s == 15.0
-    assert limits.safe_speed_kmh == 4.0
+    assert config.profile.weight_kg == 250.0 and config.profile.height_cm == 120.0
+    assert config.profile.step_calibration == _BOUNDS[("profile", "step_calibration")][1]
+    assert config.wow.capture_fps == 2.0
 
 
 @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
 def test_non_finite_numbers_are_made_safe(bad: float):
     config = apply_update(
         Config(),
-        {"limits": {"max_speed_kmh": bad, "accel_kmh_per_s": bad, "hold_s": bad}, "web": {"port": bad}},
+        {"profile": {"weight_kg": bad, "height_cm": bad}, "wow": {"capture_fps": bad}, "web": {"port": bad}},
     )
-    lo, hi = _BOUNDS[("limits", "max_speed_kmh")]
-    assert lo <= config.limits.max_speed_kmh <= hi
-    assert 0.05 <= config.limits.accel_kmh_per_s <= 1.0
-    assert 0.0 <= config.limits.hold_s <= 60.0
+    lo, hi = _BOUNDS[("profile", "weight_kg")]
+    assert lo <= config.profile.weight_kg <= hi
+    assert 120.0 <= config.profile.height_cm <= 230.0
+    assert 2.0 <= config.wow.capture_fps <= 60.0
     assert isinstance(config.web.port, int) and 1 <= config.web.port <= 65535
 
 
 @pytest.mark.parametrize(
     "patch",
     [
-        {"limits": {"max_speed_kmh": "fast"}},
-        {"limits": {"max_speed_kmh": [4.0]}},
-        {"limits": {"max_speed_kmh": {"kmh": 4}}},
-        {"limits": "not a table"},
-        {"limits": None},
-        {"limits": [1, 2, 3]},
         {"profile": {"weight_kg": "heavy"}},
+        {"profile": {"weight_kg": [80.0]}},
+        {"profile": {"weight_kg": {"kg": 80}}},
+        {"profile": "not a table"},
+        {"profile": None},
+        {"profile": [1, 2, 3]},
+        # What a version that drove the belt kept in the same file: not read.
+        {"limits": {"max_speed_kmh": 4.0, "safe_speed_kmh": 1.3}},
+        {"manual": {"speed_kmh": 3.2}},
+        {"terms": {"accepted_version": 1}},
+        {"stop_hotkey": "ctrl+alt+x"},
+        {"treadmill": {"stop_on_exit": False}},
         {"web": {"port": "eighty"}},
         {"web": {"port": [8787]}},
         {"treadmill": 5},
@@ -125,10 +115,10 @@ def test_bad_types_are_ignored_and_leave_the_defaults(patch: dict):
 def test_numeric_strings_and_ints_are_coerced():
     config = apply_update(
         Config(),
-        {"limits": {"max_speed_kmh": "4.5", "hold_s": 7}, "web": {"port": "9000"}, "profile": {"weight_kg": 80}},
+        {"wow": {"capture_fps": "20.5"}, "web": {"port": "9000"}, "profile": {"weight_kg": 80, "height_cm": "181"}},
     )
-    assert config.limits.max_speed_kmh == 4.5 and isinstance(config.limits.max_speed_kmh, float)
-    assert config.limits.hold_s == 7.0 and isinstance(config.limits.hold_s, float)
+    assert config.wow.capture_fps == 20.5 and isinstance(config.wow.capture_fps, float)
+    assert config.profile.height_cm == 181.0 and isinstance(config.profile.height_cm, float)
     assert config.web.port == 9000 and isinstance(config.web.port, int)
     assert config.profile.weight_kg == 80.0 and isinstance(config.profile.weight_kg, float)
 
@@ -142,20 +132,18 @@ def test_booleans_are_read_as_meant(value, expected: bool):
     """bool("false") is True in Python - a hand-edited file must not fall for that."""
     for start in (True, False):
         config = Config()
-        config.treadmill.stop_on_exit = start
-        config.limits.resume_requires_movement = start
-        apply_update(config, {"treadmill": {"stop_on_exit": value}, "limits": {"resume_requires_movement": value}})
-        assert config.treadmill.stop_on_exit is expected
-        assert config.limits.resume_requires_movement is expected
+        config.treadmill.auto_connect = start
+        config.web.open_browser = start
+        apply_update(config, {"treadmill": {"auto_connect": value}, "web": {"open_browser": value}})
+        assert config.treadmill.auto_connect is expected
+        assert config.web.open_browser is expected
 
 
 @pytest.mark.parametrize("value", ["maybe", "", 2, -1, 0.5, [], [False], {}, "nope"])
-def test_unreadable_booleans_keep_the_safe_default(value):
-    config = apply_update(
-        Config(), {"treadmill": {"stop_on_exit": value}, "limits": {"resume_requires_movement": value}}
-    )
-    assert config.treadmill.stop_on_exit is True
-    assert config.limits.resume_requires_movement is True
+def test_unreadable_booleans_keep_the_default(value):
+    config = apply_update(Config(), {"treadmill": {"auto_connect": value}, "web": {"open_browser": value}})
+    assert config.treadmill.auto_connect is True
+    assert config.web.open_browser is True
 
 
 def test_unknown_keys_are_ignored():
@@ -163,15 +151,15 @@ def test_unknown_keys_are_ignored():
         Config(),
         {
             "surprise": 1,
-            "limits": {"max_speed_kmh": 4.0, "warp_factor": 9},
+            "wow": {"capture_fps": 20.0, "warp_factor": 9},
             "profile": {"shoe_size": 44},
             "new_section": {"a": 1},
         },
     )
-    assert config.limits.max_speed_kmh == 4.0
+    assert config.wow.capture_fps == 20.0
     data = config.to_dict()
     assert "surprise" not in data and "new_section" not in data
-    assert "warp_factor" not in data["limits"] and "shoe_size" not in data["profile"]
+    assert "warp_factor" not in data["wow"] and "shoe_size" not in data["profile"]
 
 
 def test_enumerated_settings_fall_back_when_invalid():
@@ -184,19 +172,19 @@ def test_enumerated_settings_fall_back_when_invalid():
 def test_partial_updates_leave_everything_else_alone():
     config = Config()
     apply_update(config, {"profile": {"weight_kg": 82.5}})
-    apply_update(config, {"limits": {"max_speed_kmh": 5.0}})
+    apply_update(config, {"wow": {"capture_fps": 30.0}})
     apply_update(config, {})
     assert config.profile.weight_kg == 82.5 and config.profile.height_cm == 172.0
-    assert config.limits.max_speed_kmh == 5.0 and config.limits.accel_kmh_per_s == 0.2
+    assert config.wow.capture_fps == 30.0 and config.wow.origin is None
 
 
-def test_update_mutates_the_limits_object_in_place():
-    """The governor holds a reference to ``config.limits``: a settings change
-    must reach it, not a copy."""
+def test_update_mutates_the_profile_object_in_place():
+    """The recorder is handed ``config.profile`` on every tick: a settings
+    change must reach it, not a copy."""
     config = Config()
-    limits = config.limits
-    apply_update(config, {"limits": {"max_speed_kmh": 2.5}})
-    assert config.limits is limits and limits.max_speed_kmh == 2.5
+    profile = config.profile
+    apply_update(config, {"profile": {"weight_kg": 90}})
+    assert config.profile is profile and profile.weight_kg == 90.0
 
 
 # ---- optional fields ----------------------------------------------------------------
@@ -299,12 +287,10 @@ def test_save_load_round_trip(tmp_path: Path):
         {
             "units": "kmh",
             "profile": {"weight_kg": 68.5, "height_cm": 181.0, "age": 33, "sex": "female"},
-            "limits": {"max_speed_kmh": 5.5, "hold_s": 3.0, "resume_requires_movement": False},
             "treadmill": {"address": "AA:BB:CC:DD:EE:FF", "units": "mph", "auto_connect": False},
             "heart_rate": {"enabled": True, "address": "11:22", "name": "HRM-Dual"},
             "wow": {"addon_dir": r"C:\Games\WoW\_forever_\Interface\AddOns\Walka", "origin": [100, 50]},
             "web": {"port": 9123, "open_browser": False},
-            "manual": {"speed_kmh": 2.4},
         },
     )
     path = save(config, tmp_path)
@@ -327,7 +313,7 @@ def test_save_load_round_trip(tmp_path: Path):
         b'"just a string"',
         b"null",
         b"\xff\xfe\x00\x01 binary",
-        b'{"limits": {"max_speed_kmh": ',
+        b'{"profile": {"weight_kg": ',
     ],
 )
 def test_corrupt_file_gives_defaults(tmp_path: Path, content: bytes):
@@ -341,7 +327,7 @@ def test_hand_edited_file_with_out_of_range_and_junk_values(tmp_path: Path):
             {
                 "units": "kmh",
                 "limits": {"max_speed_kmh": 99, "accel_kmh_per_s": "quick", "stall_s": 1},
-                "profile": {"weight_kg": 900, "age": 300},
+                "profile": {"weight_kg": 900, "height_cm": "tall", "age": 300},
                 "web": {"port": 1e400, "host": 12345},
                 "wow": {"capture_fps": 1000, "origin": "top-left"},
                 "treadmill": {"name_prefixes": "URTM"},
@@ -352,10 +338,8 @@ def test_hand_edited_file_with_out_of_range_and_junk_values(tmp_path: Path):
     )
     config = load(tmp_path)  # must not raise: a typo cannot stop the companion from starting
     assert config.units == "kmh"
-    assert config.limits.max_speed_kmh == MAX_SPEED_CAP_KMH
-    assert config.limits.accel_kmh_per_s == 0.2
-    assert config.limits.stall_s == 2.0
-    assert config.profile.weight_kg == 250.0 and config.profile.age is None
+    assert not hasattr(config, "limits")  # (from a version that drove the belt: not read)
+    assert config.profile.weight_kg == 250.0 and config.profile.height_cm == 172.0 and config.profile.age is None
     assert isinstance(config.web.port, int) and 1 <= config.web.port <= 65535
     assert config.web.host == "127.0.0.1", "anything that is not this computer itself is refused"
     assert config.wow.capture_fps == 60.0 and config.wow.origin is None
@@ -387,8 +371,9 @@ def test_data_dir_override(monkeypatch, tmp_path: Path):
 
 @pytest.mark.parametrize("host", ["0.0.0.0", "", "192.168.1.20", "::", "example.com", 12345, None])
 def test_the_dashboard_is_only_ever_served_to_this_computer(host):
-    """It can start and stop the belt and has no password: bound to the
-    network it would hand the belt to every device on the Wi-Fi."""
+    """It has no password: bound to the network it would show the walker's
+    walks, weight and height to every device on the Wi-Fi, and let any of
+    them change the settings."""
     config = Config()
     apply_update(config, {"web": {"host": host}})
     assert config.web.host == "127.0.0.1"

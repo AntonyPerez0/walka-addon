@@ -126,18 +126,16 @@ def run_probe(screen: list[str] | None = None, **kwargs) -> list[str]:
 def test_only_the_standard_characteristics_are_listened_to(radio: Radio):
     radio.add("F4:12:FA:00:30:AB", "URTM030", fitness_machine=True)
     report = "\n".join(run_probe())
-    assert radio.subscribed == [
-        ftms.TREADMILL_DATA,
-        ftms.CONTROL_POINT,
-        ftms.FITNESS_MACHINE_STATUS,
-        ftms.TRAINING_STATUS,
-    ]
+    # (Not the control point - the one characteristic a belt can be moved
+    # through: it is listed in the report, and otherwise left alone.)
+    assert radio.subscribed == [ftms.TREADMILL_DATA, ftms.FITNESS_MACHINE_STATUS, ftms.TRAINING_STATUS]
     assert radio.written == []
+    assert f"char {ftms.CONTROL_POINT}" in report and "Fitness Machine Control Point" in report
     # The vendor channel is still listed and read from - just not switched on - and the report says so.
     assert VENDOR_NOTIFY in report
     assert "Not listening to 1 characteristic(s) outside the standard services: fff1" in report
     assert "walka probe --all" in report
-    assert "Listening to 4 characteristic(s)" in report
+    assert "Listening to 3 characteristic(s)" in report
     assert "2acd=1" in report  # the packet that did arrive is in the report
     assert "min=0.96 max=6.43 step=0.16 km/h (0.1 mph grid: US firmware)" in report
 
@@ -145,8 +143,9 @@ def test_only_the_standard_characteristics_are_listened_to(radio: Radio):
 def test_all_listens_to_the_vendor_channels_too(radio: Radio):
     radio.add("F4:12:FA:00:30:AB", "URTM030", fitness_machine=True)
     report = "\n".join(run_probe(all_characteristics=True))
-    assert radio.subscribed[-1] == VENDOR_NOTIFY and len(radio.subscribed) == 5
-    assert "Not listening" not in report and "Listening to 5 characteristic(s)" in report
+    assert radio.subscribed[-1] == VENDOR_NOTIFY and len(radio.subscribed) == 4
+    assert ftms.CONTROL_POINT not in radio.subscribed  # not even with --all
+    assert "Not listening" not in report and "Listening to 4 characteristic(s)" in report
     assert radio.written == []
 
 

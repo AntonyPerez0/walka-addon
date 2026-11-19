@@ -14,7 +14,7 @@ from __future__ import annotations
 import pytest
 from walka.protocol import Flags
 
-from .conftest import MPH_STEP, nearest_step
+from .conftest import DEFAULT_PACE_KMH
 from .harness import lua_dict, lua_list, lua_plain
 
 
@@ -209,9 +209,9 @@ def test_session_keeps_working_through_combat(rt):
     after = lua_dict(rt.walka.GetSession(rt.walka))
     assert after["yards"] - before["yards"] == pytest.approx(7.0 * 30, rel=0.01)
     assert after["steps"] > before["steps"] and after["kcal"] > before["kcal"]
-    # The running pace (on the belt's 0.1 mph grid), fight or no fight.
-    running = nearest_step(rt.ns.SpeedModel.DEFAULTS.runKmh, MPH_STEP)
-    assert rt.walka.GetLiveSpeed(rt.walka)[1] == pytest.approx(running, abs=1e-6)
+    # Counted at the walker's pace, fight or no fight.
+    assert rt.walka.GetLiveSpeed(rt.walka) == DEFAULT_PACE_KMH
+    assert after["distanceM"] - before["distanceM"] == pytest.approx(DEFAULT_PACE_KMH / 3.6 * 30, rel=0.01)
     rt.slash("/walka status")
     assert "estimated" in rt.printed[-2]
     record = rt.walka.StopSession(rt.walka)

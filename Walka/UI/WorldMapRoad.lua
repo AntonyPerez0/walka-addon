@@ -750,8 +750,8 @@ local function buttonText()
     end
     body[#body + 1] = ""
     body[#body + 1] = "Colour is your level: " .. table.concat(bands, "  ")
-    body[#body + 1] = "Bright with a glow: walked on the treadmill. Dimmer: the belt was off. "
-        .. "Thin and pale: flight paths."
+    body[#body + 1] = "Bright with a glow: walked on the treadmill (a walking session was running). "
+        .. "Dimmer: travelled without one. Thin and pale: flight paths."
     if view.unseen and overlay and overlay:IsShown() then
         body[#body + 1] = "This view of the map hides the map's own picture, and the road with it."
     elseif view.stitched and overlay and overlay:IsShown() then

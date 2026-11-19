@@ -1,5 +1,8 @@
 """The simulated pad must behave like the hardware notes say a real one does,
-because every higher-level test (and the demo) stands on it."""
+because every higher-level test (and the demo) stands on it.
+
+Like a real pad it is worked with its remote - ``press_*`` - and with
+nothing else: the companion has no way to move it."""
 
 from __future__ import annotations
 
@@ -9,9 +12,8 @@ import time
 
 import pytest
 
-from walka.treadmill.base import KMH_PER_MPH, BeltState, TreadmillError, TreadmillEvent
+from walka.treadmill.base import KMH_PER_MPH, BeltState, TreadmillEvent
 from walka.treadmill.simulated import SimulatedTreadmill
-from walka_fakes import us_firmware_mph_tenths
 
 MPH = KMH_PER_MPH
 
@@ -39,7 +41,7 @@ def advance(sim: SimulatedTreadmill, seconds: float, dt: float = 0.1) -> list[fl
 
 async def started(sim: SimulatedTreadmill) -> None:
     await sim.connect()
-    await sim.start()
+    sim.press_start()
     advance(sim, 5)
     assert sim.status.state is BeltState.RUNNING
 
@@ -72,15 +74,28 @@ def test_connect_and_disconnect_events_are_emitted_once():
     assert not sim.status.connected
 
 
-def test_commands_need_a_connection():
-    sim, _, _ = make()
+def test_connecting_moves_nothing():
+    """A pad that is listened to stands still until somebody presses start
+    on it - for as long as it takes."""
+    sim, events, _ = make()
 
     async def scenario():
-        for call in (sim.start(), sim.pause(), sim.stop(), sim.set_speed(3.0)):
-            with pytest.raises(TreadmillError, match="not connected"):
-                await call
+        await sim.connect()
+        speeds = advance(sim, 600)
+        assert set(speeds) == {0.0} and sim.status.state is BeltState.STOPPED
+        assert sim.status.target_kmh is None and sim.status.distance_m == 0
 
     run(scenario())
+    assert events == [TreadmillEvent.CONNECTED]
+
+
+def test_the_remote_does_nothing_to_a_pad_that_is_switched_off():
+    sim, events, _ = make()
+    sim.press_start()
+    sim.press_speed(3.0)
+    sim.press_faster()
+    advance(sim, 5)
+    assert sim.status.state is BeltState.UNKNOWN and sim.status.speed_kmh == 0 and events == []
 
 
 def test_start_counts_down_then_runs_at_minimum_speed():
@@ -88,7 +103,7 @@ def test_start_counts_down_then_runs_at_minimum_speed():
 
     async def scenario():
         await sim.connect()
-        await sim.start()
+        sim.press_start()
         assert sim.status.state is BeltState.STARTING
         speeds = advance(sim, 2.9)
         assert set(speeds) == {0.0}  # 3-2-1: nothing moves
@@ -99,22 +114,26 @@ def test_start_counts_down_then_runs_at_minimum_speed():
         assert speeds[-1] == pytest.approx(0.6 * MPH)  # settles at the minimum
         assert max(speeds) <= 0.6 * MPH + 1e-9
         assert sim.status.target_kmh == pytest.approx(0.6 * MPH)
+        sim.press_start()  # already running: nothing changes
+        assert sim.status.state is BeltState.RUNNING and sim.status.target_kmh == pytest.approx(0.6 * MPH)
 
     run(scenario())
 
 
-def test_speed_commands_are_ignored_while_stopped_or_paused():
+def test_the_speed_buttons_do_nothing_while_stopped_or_paused():
     sim, _, _ = make()
 
     async def scenario():
         await sim.connect()
-        await sim.set_speed(4.0)
+        sim.press_speed(4.0)
+        sim.press_faster()
         assert sim.status.target_kmh is None and sim.status.state is BeltState.STOPPED
         advance(sim, 5)
         assert sim.status.speed_kmh == 0
         await started(sim)
-        await sim.pause()
-        await sim.set_speed(4.0)
+        sim.press_pause()
+        sim.press_speed(4.0)
+        sim.press_slower()
         assert sim.status.target_kmh is None and sim.status.state is BeltState.PAUSED
         advance(sim, 5)
         assert sim.status.speed_kmh == 0
@@ -127,12 +146,12 @@ def test_belt_ramps_instead_of_jumping():
 
     async def scenario():
         await started(sim)
-        await sim.set_speed(3.0 * MPH)
+        sim.press_speed(3.0 * MPH)
         speeds = [sim.status.speed_kmh] + advance(sim, 10)
         steps = [b - a for a, b in itertools.pairwise(speeds)]
         assert max(steps) <= 0.8 * 0.1 + 1e-9
         assert speeds[-1] == pytest.approx(3.0 * MPH)
-        await sim.set_speed(1.0 * MPH)
+        sim.press_speed(1.0 * MPH)
         speeds = [sim.status.speed_kmh] + advance(sim, 10)
         steps = [b - a for a, b in itertools.pairwise(speeds)]
         assert min(steps) >= -0.8 * 0.1 - 1e-9
@@ -148,36 +167,45 @@ def test_us_firmware_grid_every_step_is_reachable():
         await started(sim)
         for tenths in range(6, 41):
             for nudge in (0.0, 0.05, -0.05):
-                await sim.set_speed(tenths * MPH / 10 + nudge)
+                sim.press_speed(tenths * MPH / 10 + nudge)
                 assert sim.status.target_kmh == pytest.approx(tenths * MPH / 10, abs=1e-9)
-        await sim.set_speed(0.1)
+        sim.press_speed(0.1)
         assert sim.status.target_kmh == pytest.approx(0.6 * MPH)
-        await sim.set_speed(50.0)
+        sim.press_speed(50.0)
         assert sim.status.target_kmh == pytest.approx(4.0 * MPH)
 
     run(scenario())
 
 
-def test_us_firmware_truncation_matches_the_independent_model():
-    """The simulator's idea of the firmware == the integer model used to
-    check the real driver."""
-    sim, _, _ = make()
-    for raw in range(0, 700):
-        expected = max(6, min(40, us_firmware_mph_tenths(raw)))
-        assert sim._firmware_speed(raw / 100) == pytest.approx(expected * MPH / 10, abs=1e-9), raw
-    # The documented trap: 3.22 km/h is 1.9 mph to the firmware, 3.3 km/h is 2.0.
-    assert sim._firmware_speed(3.22) == pytest.approx(1.9 * MPH)
-    assert sim._firmware_speed(3.3) == pytest.approx(2.0 * MPH)
-
-
-def test_metric_firmware_truncates_to_tenths():
+def test_metric_firmware_keeps_to_tenths_and_to_its_range():
     sim, _, _ = make(us_firmware=False)
 
     async def scenario():
         await started(sim)
-        for asked, expected in ((3.14, 3.1), (3.19, 3.1), (3.2, 3.2), (0.3, 1.0), (9.0, 6.0)):
-            await sim.set_speed(asked)
+        for asked, expected in ((3.14, 3.1), (3.16, 3.2), (3.2, 3.2), (0.3, 1.0), (9.0, 6.0)):
+            sim.press_speed(asked)
             assert sim.status.target_kmh == pytest.approx(expected)
+
+    run(scenario())
+
+
+def test_plus_and_minus_move_two_steps_like_the_pads_console():
+    sim, _, _ = make()
+
+    async def scenario():
+        await started(sim)
+        sim.press_speed(2.0 * MPH)
+        sim.press_faster()
+        assert sim.status.target_kmh == pytest.approx(2.2 * MPH)
+        sim.press_slower()
+        sim.press_slower()
+        assert sim.status.target_kmh == pytest.approx(1.8 * MPH)
+        for _ in range(40):
+            sim.press_faster()
+        assert sim.status.target_kmh == pytest.approx(4.0 * MPH)  # the pad's own top speed
+        for _ in range(40):
+            sim.press_slower()
+        assert sim.status.target_kmh == pytest.approx(0.6 * MPH)  # ... and its slowest: never a stop
 
     run(scenario())
 
@@ -187,7 +215,7 @@ def test_counters_survive_a_pause_but_not_a_stop():
 
     async def scenario():
         await started(sim)
-        await sim.set_speed(3.0 * MPH)
+        sim.press_speed(3.0 * MPH)
         advance(sim, 120)
         status = sim.status
         distance, steps, energy, elapsed = status.distance_m, status.steps, status.energy_kcal, status.elapsed_s
@@ -196,25 +224,25 @@ def test_counters_survive_a_pause_but_not_a_stop():
         assert energy == pytest.approx(distance / 1000 * 50, abs=1.01)
         assert 120 <= elapsed <= 123  # the two seconds at minimum speed before, plus these two minutes
 
-        await sim.pause()
+        sim.press_pause()
         advance(sim, 30)
         assert status.speed_kmh == 0 and status.state is BeltState.PAUSED
         assert status.distance_m >= distance and status.steps >= steps  # (it coasted a little)
         assert status.elapsed_s == elapsed
         paused_distance = status.distance_m
 
-        await sim.start()  # resume
+        sim.press_start()  # resume
         advance(sim, 30)
         assert status.distance_m > paused_distance  # carries on counting, no reset
         assert status.elapsed_s > elapsed
 
-        await sim.stop()
+        sim.press_stop()
         advance(sim, 0.1)
         assert status.state is BeltState.STOPPED
         assert status.elapsed_s == 0 and status.steps <= 1 and status.distance_m <= 1  # "END": zeroed
 
         advance(sim, 10)
-        await sim.start()
+        sim.press_start()
         advance(sim, 10)
         assert status.distance_m < 5  # a new workout counts from zero
 
@@ -226,9 +254,9 @@ def test_halting_coasts_to_zero_quickly():
 
     async def scenario():
         await started(sim)
-        await sim.set_speed(4.0 * MPH)
+        sim.press_speed(4.0 * MPH)
         advance(sim, 15)
-        await sim.stop()
+        sim.press_stop()
         speeds = advance(sim, 4)
         assert speeds[0] > 5.0 and speeds[-1] == 0.0
         assert all(b <= a for a, b in itertools.pairwise(speeds))
@@ -236,61 +264,25 @@ def test_halting_coasts_to_zero_quickly():
     run(scenario())
 
 
-def test_buttons_on_the_machine_emit_external_events():
+def test_the_buttons_announce_nothing_to_the_companion():
+    """What the walker does at the pad is theirs. The reader reports the
+    link coming and going; the belt is read from the status."""
     sim, events, _ = make()
 
     async def scenario():
         await sim.connect()
         events.clear()
-        sim.press_stop()  # already stopped: nothing to report
-        assert events == []
+        sim.press_stop()  # already stopped
         sim.press_start()
-        assert events == [TreadmillEvent.EXTERNAL_START] and sim.status.state is BeltState.STARTING
-        sim.press_start()  # already starting
-        assert len(events) == 1
+        assert sim.status.state is BeltState.STARTING
         advance(sim, 5)
-        sim.press_stop()
-        assert events[-1] is TreadmillEvent.EXTERNAL_STOP and sim.status.state is BeltState.STOPPED
-        await sim.start()
-        advance(sim, 5)
-        await sim.pause()
+        sim.press_pause()
+        assert sim.status.state is BeltState.PAUSED
         sim.press_stop()  # paused -> stopped is a real change
-        assert events.count(TreadmillEvent.EXTERNAL_STOP) == 2
-
-    run(scenario())
-
-
-def test_our_own_commands_emit_no_external_events():
-    sim, events, _ = make()
-
-    async def scenario():
-        await started(sim)
-        await sim.set_speed(3.0)
-        await sim.pause()
-        await sim.start()
-        await sim.stop()
-
-    run(scenario())
-    assert events == [TreadmillEvent.CONNECTED]
-
-
-def test_fail_commands_raises_and_changes_nothing():
-    sim, _, _ = make()
-
-    async def scenario():
-        await started(sim)
-        await sim.set_speed(2.0 * MPH)
-        sim.fail_commands = True
-        for call in (sim.start(), sim.pause(), sim.stop(), sim.set_speed(4.0 * MPH)):
-            with pytest.raises(TreadmillError, match="simulated command failure"):
-                await call
-        assert sim.status.state is BeltState.RUNNING
-        assert sim.status.target_kmh == pytest.approx(2.0 * MPH)
-        sim.fail_commands = False
-        await sim.stop()
         assert sim.status.state is BeltState.STOPPED
 
     run(scenario())
+    assert events == []
 
 
 def test_nothing_advances_while_disconnected_or_with_no_time():
@@ -321,7 +313,7 @@ def test_auto_run_advances_in_real_time_and_stops_on_disconnect():
 
     async def scenario():
         await sim.connect()
-        await sim.start()
+        sim.press_start()
         deadline = time.monotonic() + 4.0
         while time.monotonic() < deadline:
             await asyncio.sleep(0.03)

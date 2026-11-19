@@ -13,7 +13,6 @@ import pytest
 from walka import beacon, protocol
 from walka.protocol import LEGACY_FLAGS, Flags, Frame, FrameError
 
-from .conftest import MPH_STEP, nearest_step
 from .harness import lua_list
 
 
@@ -100,7 +99,7 @@ def test_flags_follow_the_game_state(rt, state, flag):
 
 
 @pytest.mark.parametrize("state", ["dead", "combat", "falling", "resting"])
-def test_what_the_belt_does_not_need_stays_in_the_game(rt, state):
+def test_what_the_companion_does_not_need_stays_in_the_game(rt, state):
     """The companion never acted on these, so the strip does not say them:
     what can be read off the screen is how the character moves and whether
     anyone is there, and nothing more."""
@@ -131,7 +130,6 @@ def test_session_flags_and_session_number(rt):
     rt.tick()
     frame = decode(rt)
     assert frame.flags == Flags.ACTIVE | Flags.PAUSED
-    assert frame.target_raw == 0, "a paused session must not ask for belt speed"
     assert frame.session == 1
 
     rt.slash("/walka resume")
@@ -141,34 +139,49 @@ def test_session_flags_and_session_number(rt):
     rt.slash("/walka stop")
     rt.tick()
     frame = decode(rt)
-    assert frame.flags == Flags(0) and frame.session == 0 and frame.target_raw == 0
+    assert frame.flags == Flags(0) and frame.session == 0
 
     rt.slash("/walka start")
     rt.tick()
     assert decode(rt).session == 2
 
 
-def test_target_speed_is_walkas_target(rt):
+def test_the_strip_never_asks_for_a_belt_speed(rt):
+    """Until 0.7 the live frame carried the belt speed the addon wanted. The
+    field is still in the frame, and it is always 0: whatever the character
+    does, whatever the session and the pace are, nothing on the strip can be
+    read as a speed for a belt."""
+    walka = rt.walka
+    seen = []
+
+    def watch(ticks):
+        for _ in range(ticks):
+            rt.tick()
+            frame = rt.shown_frame()
+            if isinstance(frame, Frame):
+                seen.append(frame.target_raw)
+
     rt.set(speed=7.0)
+    watch(50)                               # no session
     rt.slash("/walka start")
-    seen = set()
-    for _ in range(400):
-        rt.tick()
-        frame = decode(rt)
-        _, target = rt.walka.GetLiveSpeed(rt.walka)
-        assert frame.target_raw == protocol.kmh_to_raw(target)
-        assert frame.target_kmh == pytest.approx(target, abs=0.005)
-        seen.add(frame.target_raw)
-    assert len(seen) > 3, "the target should ramp, not jump"
-    # Default (enUS) settings: the running pace, on the belt's 0.1 mph grid.
-    running = nearest_step(rt.ns.SpeedModel.DEFAULTS.runKmh, MPH_STEP)
-    assert decode(rt).target_kmh == pytest.approx(running, abs=0.005)
-
-
-def test_no_target_without_a_session(rt):
-    rt.set(speed=7.0)
-    rt.tick(50)
-    assert decode(rt).target_raw == 0
+    watch(100)                              # running
+    walka.SetPace(walka, 9.5)
+    rt.set(speed=14.0, mounted=True)
+    watch(100)                              # mounted, at a fast pace
+    rt.set(speed=30.0, mounted=False, taxi=True)
+    watch(50)                               # a flight path
+    rt.set(speed=0, taxi=False, combat=True)
+    watch(50)                               # standing in a fight
+    rt.slash("/walka pause")
+    watch(20)
+    rt.slash("/walka resume")
+    rt.set(afk=True)
+    watch(20)                               # the automatic pause
+    rt.set(afk=False, speed=7.0)
+    watch(20)
+    rt.slash("/walka stop")
+    watch(20)
+    assert len(seen) > 300 and set(seen) == {0}
 
 
 @pytest.mark.parametrize("speed", [0, 2.5, 4.7222, 7.0, 8.75, 9.8, 14.0, 26.6, 60.0, 81.9, 120.0])

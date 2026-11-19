@@ -64,6 +64,10 @@ def _found(device: BLEDevice, adv: AdvertisementData | None) -> FoundDevice:
 
 
 class BleakClientAdapter:
+    """One connection, as the reader may use it (``ftms_ble.BleClient``):
+    read a value, switch notifications on, and nothing else. bleak's own
+    client, which could also write, does not leave this class."""
+
     def __init__(self, device: BLEDevice | str, on_disconnect: Callable[[], None], timeout: float = 20.0) -> None:
         self._client = BleakClient(
             device,
@@ -87,24 +91,13 @@ class BleakClientAdapter:
     def has_characteristic(self, uuid: str) -> bool:
         return self._char(uuid) is not None
 
-    def characteristic_properties(self, uuid: str) -> Sequence[str]:
-        char = self._char(uuid)
-        return list(char.properties) if char is not None else []
-
     async def read(self, uuid: str) -> bytes:
         return bytes(await self._client.read_gatt_char(uuid))
-
-    async def write(self, uuid: str, data: bytes, response: bool) -> None:
-        await self._client.write_gatt_char(uuid, data, response=response)
 
     async def subscribe(self, uuid: str, callback: Callable[[bytes], None]) -> None:
         # start_notify enables notifications or indications, whichever the
         # characteristic supports.
         await self._client.start_notify(uuid, lambda _char, data: callback(bytes(data)))
-
-    @property
-    def raw(self) -> BleakClient:
-        return self._client
 
 
 class BleakBackend:
@@ -121,11 +114,11 @@ class BleakBackend:
         With an address, or once a device with a known name is heard, the
         scan ends at once. A device that only advertises the Fitness Machine
         Service could just as well be a bike trainer or the neighbours'
-        treadmill - and "Start" in the game would then start *that* belt -
-        so it is only settled for when the whole scan has turned up no known
-        name, and then the one with the strongest signal is taken. One that
-        says in its advertisement that it is another kind of machine (a
-        bike, a rower) is never taken.
+        treadmill - whose walk would then be counted as yours - so it is
+        only settled for when the whole scan has turned up no known name,
+        and then the one with the strongest signal is taken. One that says
+        in its advertisement that it is another kind of machine (a bike, a
+        rower) is never taken.
         """
         prepare_windows_threading()
         wanted = address.upper() if address else None

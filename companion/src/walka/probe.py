@@ -107,7 +107,7 @@ def describe_value(uuid: str, data: bytes) -> str:
             if f:
                 return (
                     f"features=0x{f.features:08X} targets=0x{f.target_settings:08X} "
-                    f"speed_target={'yes' if f.speed_target_supported else 'NO'}"
+                    f"step_count={'yes' if f.step_count_supported else 'no'}"
                 )
         if uuid == ftms.FITNESS_MACHINE_STATUS:
             s = ftms.parse_machine_status(data)
@@ -234,6 +234,10 @@ async def probe(
                             out(line)
                     except Exception as exc:
                         out(f"      read failed: {exc}")
+                if char.uuid.lower() == ftms.CONTROL_POINT:
+                    # The one characteristic a belt can be moved through:
+                    # listed, and otherwise left alone.
+                    continue
                 if "notify" in char.properties or "indicate" in char.properties:
                     if listens_to(service.uuid, all_characteristics=all_characteristics):
                         notifiable.append(char)

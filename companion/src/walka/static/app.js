@@ -5,7 +5,7 @@
 // visible view, which writes only what changed (see the setters in util.js).
 // Everything that changes state goes out as a JSON POST/DELETE (util.js: api).
 
-import { $, U, fmt, post, setAttr, setShown, setText, setTone, state, toast } from "./util.js";
+import { $, U, fmt, setAttr, setShown, setText, setTone, state } from "./util.js";
 import { OFFLINE, describe, health, staleHealth } from "./status.js";
 import { initLive, updateLive } from "./live.js";
 import { historyUnitsChanged, initHistory, updateHistory } from "./history.js";
@@ -35,18 +35,9 @@ const pills = ["treadmill", "game", "hr", "addon"].map((name) => {
 
 // ---- rendering ---------------------------------------------------------------------------
 
-// STOP's name for assistive tech. It starts with the word on the button, which changes while
-// a stop request is on its way - so it is built here, from the button's own state.
-let stopHotkey = "";
-function nameStop() {
-  const button = $("stop");
-  const lead = button.dataset.busy === "1" ? "STOPPING - stop request sent" : "STOP - stop the belt now";
-  setAttr(button, "aria-label", stopHotkey ? `${lead} (also ${stopHotkey}, from anywhere on this computer)` : lead);
-}
-
 // What cannot work without the companion is switched off while it is silent (and looks it),
-// instead of failing one press at a time. STOP is not among them: it is always tried.
-const NEEDS_COMPANION = "#terms, #manual, #treadmill, #links, #setup, #view-settings .card";
+// instead of failing one press at a time.
+const NEEDS_COMPANION = "#treadmill, #links, #setup, #view-settings .card";
 let companionHeard = null;
 let focusToReturn = null; // what had focus when its card was switched off
 function gateControls(online) {
@@ -71,28 +62,12 @@ function updateChrome(s, summary, links, online) {
   if (links) {
     for (const pill of pills) {
       const link = links[pill.name];
-      const ignored = link.ignored && link.tone === "ok";
-      setTone(pill.el, ignored ? "idle" : link.tone);
-      setText(pill.stateEl, ignored ? "ignored" : link.pill);
-      setAttr(
-        pill.el,
-        "aria-label",
-        `${pill.label}: ${ignored ? "ignored while manual mode is on" : link.state}. Show details.`,
-      );
+      setTone(pill.el, link.tone);
+      setText(pill.stateEl, link.pill);
+      setAttr(pill.el, "aria-label", `${pill.label}: ${link.state}. Show details.`);
     }
   }
-  const hotkey = online && s && s.hotkey && s.hotkey.active ? s.hotkey.combination : "";
-  stopHotkey = hotkey;
-  nameStop();
-  setAttr($("stop"), "title", hotkey ? `${hotkey} also stops the belt - even from inside the game` : null);
-  // The hotkey, written the way it is printed on keys: "ctrl+alt+x" -> "Ctrl+Alt+X".
-  const keys = hotkey
-    .split("+")
-    .map((key) => key.charAt(0).toUpperCase() + key.slice(1))
-    .join("+");
-  setText($("stop-key"), keys);
-  setShown($("stop-key"), !!keys);
-  // What the belt is doing, beside STOP on every view (the Live view says it in full).
+  // What the belt is doing, on every view (the Live view says it in full).
   const belt = $("belt");
   setTone(belt, summary.tone, `#i-${summary.icon}`);
   setText($("belt-title"), summary.short);
@@ -216,32 +191,6 @@ function route() {
   }
 }
 
-// ---- STOP ----------------------------------------------------------------------------------------
-
-async function stop(button) {
-  // Say that the press was taken, in words: the request can take seconds when something is wrong.
-  const word = $("stop-word");
-  button.style.minWidth = `${button.offsetWidth}px`; // hold its size: the word is about to get longer
-  button.dataset.busy = "1";
-  button.setAttribute("aria-busy", "true");
-  setText(word, "STOPPING");
-  nameStop();
-  try {
-    await post("/api/stop", {}, { timeoutMs: 5000 });
-    toast("Stop sent. The belt stays off until you resume.", "warn");
-  } catch {
-    toast("STOP could not reach the companion. Use the stop button on the pad or its remote now.", "error", {
-      sticky: true,
-    });
-  } finally {
-    delete button.dataset.busy;
-    button.removeAttribute("aria-busy");
-    setText(word, "STOP");
-    button.style.minWidth = "";
-    nameStop();
-  }
-}
-
 // ---- start ---------------------------------------------------------------------------------------
 
 initLive();
@@ -253,8 +202,6 @@ initSettings({
     unitsChanged(units);
   },
 });
-
-$("stop").addEventListener("click", (event) => stop(event.currentTarget));
 
 window.addEventListener("hashchange", route);
 // Following a link to the place you already are does not fire hashchange.

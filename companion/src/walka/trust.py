@@ -1,8 +1,9 @@
 """Believing the strip: one decoded frame is never enough.
 
-A person stands on the belt this program drives, so a frame that did not
-come from the running game must never move it. The decoder cannot promise
-that by itself. A frame is protected by a 16-bit CRC, and a screen is full of
+What is read off the screen decides which game session a walk is filed
+under, and what the Share page says about a character - so a frame that did
+not come from the running game must not be believed. The decoder cannot
+promise that by itself. A frame is protected by a 16-bit CRC, and a screen is full of
 rows of light and dark runs - source code, a terminal, a chat window - that
 pass such a check by accident: about one screenful of code in a hundred did,
 before ``beacon.py`` learned to look at the picture around the frame. That
@@ -36,8 +37,8 @@ is what the game is; ``capture.BeaconReader`` sees to it that only the
 game's own window is looked at wherever the window can be found.
 
 Until a place is believed, ``TrustGate.admit`` answers exactly as if nothing
-had been decoded, so nothing behind it - the reading the belt follows, the
-journey numbers, the "game is running" check - ever sees an unproven frame.
+had been decoded, so nothing behind it - the live reading, the journey
+numbers, the "game is running" check - ever sees an unproven frame.
 """
 
 from __future__ import annotations

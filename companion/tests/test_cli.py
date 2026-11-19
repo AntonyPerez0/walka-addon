@@ -11,6 +11,7 @@ import socket
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -124,7 +125,8 @@ def test_beacon_diagnosis_names_both_kinds_of_frame():
     live = Decoded(
         Frame(seq=7, session=2, flags=Flags.ACTIVE | Flags.MOVING, target_raw=322, char_speed_raw=350), 0, 4.0, 255, 0
     )
-    assert cli._frame_text(live) == "seq=7 session=2 target=3.22 km/h char=7.00 yd/s [ACTIVE,MOVING]"
+    # (What an addon older than 0.7 asks of the belt - 3.22 km/h here - is not even printed.)
+    assert cli._frame_text(live) == "seq=7 session=2 char=7.00 yd/s [ACTIVE,MOVING]"
     assert cli._frame_text(Decoded(Frame(seq=8), 0, 4.0, 255, 0)).endswith("[-]")
     stat = Decoded(None, 0, 4.0, 255, 0, stat=StatFrame(seq=9, stat_id=Stat.FOOT_YD, value=123456))
     assert cli._frame_text(stat) == "seq=9 journey FOOT_YD=123456"
@@ -165,9 +167,10 @@ def free_port() -> int:
         return probe.getsockname()[1]
 
 
-def test_demo_run_in_process_stops_the_belt_when_interrupted(tmp_path: Path, monkeypatch):
-    """Ctrl+C cancels the main task; whatever the belt was doing, it must be
-    stopped and the companion must leave nothing behind."""
+def test_demo_run_in_process_leaves_the_belt_alone_when_interrupted(tmp_path: Path, monkeypatch):
+    """Ctrl+C cancels the main task. The companion must leave nothing behind
+    - and must leave the belt as it is: the demo's made-up walker started
+    it, and it is not the companion's to stop."""
     built: list[SimulatedTreadmill] = []
     real_build = cli._build_treadmill
 
@@ -179,7 +182,8 @@ def test_demo_run_in_process_stops_the_belt_when_interrupted(tmp_path: Path, mon
         return treadmill
 
     monkeypatch.setattr(cli, "_build_treadmill", build)
-    monkeypatch.setattr(cli, "DEMO_SESSION_STARTS_AFTER_S", 0.5)
+    monkeypatch.setattr(cli, "DEMO_SESSION_STARTS_AFTER_S", 0.3)
+    monkeypatch.setattr(cli, "DEMO_WALK_STARTS_AFTER_S", 0.5)
     port = free_port()
     args = cli.build_parser().parse_args(["--demo", "--no-browser", "--port", str(port), "--data-dir", str(tmp_path)])
 
@@ -191,12 +195,12 @@ def test_demo_run_in_process_stops_the_belt_when_interrupted(tmp_path: Path, mon
             if built and built[0].status.speed_kmh > 1.0:
                 treadmill = built[0]
                 break
-        assert treadmill is not None, "the demo never got the belt moving"
+        assert treadmill is not None, "the demo's walker never got the belt moving"
         assert treadmill.status.state is BeltState.RUNNING
         task.cancel()  # what asyncio.run does on SIGINT
         assert await asyncio.wait_for(task, 10) == 0
-        assert treadmill.status.state is BeltState.STOPPED, "the belt was left running on exit"
-        assert not treadmill.status.connected
+        assert treadmill.status.state is BeltState.RUNNING, "closing the companion stopped a belt"
+        assert treadmill.status.target_kmh is not None and not treadmill.status.connected
         leftovers = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
         assert leftovers == []
 
@@ -204,6 +208,52 @@ def test_demo_run_in_process_stops_the_belt_when_interrupted(tmp_path: Path, mon
     assert (tmp_path / "config.json").exists()
     with socket.socket() as again:  # the dashboard port was released
         again.bind(("127.0.0.1", port))
+
+
+def test_without_the_demos_walker_the_simulated_belt_never_moves(tmp_path: Path, monkeypatch):
+    """--simulate: a pad, and nobody on it. Nothing in the companion presses
+    start - whatever the dashboard is asked."""
+    built: list[SimulatedTreadmill] = []
+    real_build = cli._build_treadmill
+
+    def build(cfg, simulate):
+        built.append(real_build(cfg, simulate))
+        built[-1].countdown_s = 0.05
+        return built[-1]
+
+    monkeypatch.setattr(cli, "_build_treadmill", build)
+    port = free_port()
+    args = cli.build_parser().parse_args(
+        ["--simulate", "--no-capture", "--no-browser", "--port", str(port), "--data-dir", str(tmp_path)]
+    )
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+    def post(path: str) -> int:
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{port}{path}", data=b"{}", headers={"Content-Type": "application/json"}, method="POST"
+        )
+        try:
+            with opener.open(request, timeout=5) as response:
+                return response.status
+        except urllib.error.HTTPError as error:
+            return error.code
+
+    async def scenario():
+        task = asyncio.create_task(cli._run(args))
+        for _ in range(300):
+            await asyncio.sleep(0.01)
+            if built and built[0].status.connected:
+                break
+        assert built[0].status.connected
+        # What the dashboard of an older version could ask for is not there to be asked.
+        for gone in ("/api/manual", "/api/resume", "/api/stop", "/api/terms/accept"):
+            assert await asyncio.to_thread(post, gone) in (404, 405), gone
+        await asyncio.sleep(1.0)
+        assert built[0].status.state is BeltState.STOPPED and built[0].status.speed_kmh == 0
+        task.cancel()
+        assert await asyncio.wait_for(task, 10) == 0
+
+    asyncio.run(asyncio.wait_for(scenario(), 30))
 
 
 def test_run_falls_back_to_the_next_port_when_the_port_is_taken(tmp_path: Path, monkeypatch, capsys):
@@ -234,7 +284,8 @@ def test_demo_subprocess_serves_a_moving_belt_and_exits_cleanly_when_told_to(tmp
     """The real thing: ``python -m walka --demo --no-browser --port N``,
     ended the three ways a program is ended off Windows - Ctrl+C, a log-out
     or shutdown (SIGTERM), and its terminal window being closed (SIGHUP,
-    which is how Walka is closed on a Mac). Each must stop the belt first."""
+    which is how Walka is closed on a Mac). Each must end in an orderly
+    close-down."""
     port = free_port()
     env = dict(os.environ)
     env["PYTHONPATH"] = str(SRC) + os.pathsep + env.get("PYTHONPATH", "")
@@ -264,10 +315,10 @@ def test_demo_subprocess_serves_a_moving_belt_and_exits_cleanly_when_told_to(tmp
             time.sleep(0.2)
         assert state is not None, "the dashboard never answered"
         assert state["treadmill"]["kind"] == "simulated" and state["treadmill"]["connected"]
-        assert state["treadmill"]["speed_kmh"] > 0.5, f"the belt never moved: {state['governor']}"
-        assert state["treadmill"]["speed_kmh"] <= state["treadmill"]["cap_kmh"] + 1e-6
-        assert state["governor"]["phase"] == "following" and state["source"]["kind"] == "wow"
+        assert state["treadmill"]["speed_kmh"] > 0.5, f"the demo's walker never started the belt: {state['events']}"
+        assert state["treadmill"]["moving"] is True and state["source"]["kind"] == "wow"
         assert state["session"]["source"] == "wow"
+        assert "governor" not in state and "terms" not in state and "hotkey" not in state
 
         process.send_signal(getattr(signal, how))
         out, err = process.communicate(timeout=15)
@@ -279,7 +330,7 @@ def test_demo_subprocess_serves_a_moving_belt_and_exits_cleanly_when_told_to(tmp
     assert process.returncode in ((0, 130) if how == "SIGINT" else (0,)), err
     assert "Traceback" not in err, err
     assert f"dashboard: http://127.0.0.1:{port}/" in out and "SIMULATED" in out
-    # App.stop() ran to its last step (stop the belt, save the walk, disconnect, save the config).
+    # App.stop() ran to its last step (save the walk, let go of the treadmill, save the config).
     assert (tmp_path / "config.json").exists()
     assert not (tmp_path / "active-session.json").exists()
 
@@ -350,6 +401,16 @@ def test_selfcheck_is_not_advertised():
     assert cli.build_parser().parse_args(["selfcheck"]).command == "selfcheck"
 
 
+def test_there_is_no_guard_command_any_more(capsys):
+    """Versions that drove the belt started a second copy of themselves,
+    "walka guard", to stop it if they were killed. There is no belt of
+    Walka's to stop."""
+    with pytest.raises(SystemExit):
+        cli.build_parser().parse_args(["guard"])
+    assert "invalid choice" in capsys.readouterr().err
+    assert "walka.guard" not in cli.RUNTIME_MODULES
+
+
 def test_the_build_bundles_what_selfcheck_looks_for(repo_root: Path):
     """winrt.windows.foundation.collections is imported by name from inside
     winrt's compiled modules: without a hidden import it is left out of
@@ -415,20 +476,10 @@ def test_licenses_prints_what_the_build_packed(tmp_path: Path, capsys, monkeypat
 def test_selfcheck_of_a_packaged_program_wants_the_licences(tmp_path: Path, capsys, monkeypatch):
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     monkeypatch.setattr(cli, "LICENCES_FILE", tmp_path / "missing.txt")
-    monkeypatch.setattr(cli, "_guard_problem", lambda: "")
     assert cli.main(["selfcheck"]) == 1
     assert "licences of the packed libraries are missing" in capsys.readouterr().out
     (tmp_path / "missing.txt").write_text("x", "utf-8")
     assert cli.main(["selfcheck"]) == 0
-    # ... and a guard that can be started from it.
-    monkeypatch.setattr(cli, "_guard_problem", lambda: "the guard could not be started: no")
-    assert cli.main(["selfcheck"]) == 1
-    assert "the guard could not be started" in capsys.readouterr().out
-
-
-def test_the_guard_command_is_not_advertised():
-    assert "guard" not in cli.build_parser().format_help()
-    assert cli.build_parser().parse_args(["guard"]).command == "guard"
 
 
 def test_selfcheck_imports_what_this_kind_of_computer_needs():
@@ -549,7 +600,7 @@ def test_logging_does_not_wait_for_the_console():
 
     stop_logging = cli._start_logging(verbose=False, stream=StuckConsole())
     try:
-        logging.getLogger("walka.test").warning("STOP pressed - belt stopped.")
+        logging.getLogger("walka.test").warning("The belt is moving.")
         logging.getLogger("walka.test").info("a second line")
         # Both calls came back although nothing has been written yet ...
         assert writing.wait(5) and written == []
@@ -558,7 +609,7 @@ def test_logging_does_not_wait_for_the_console():
         stop_logging()
     # ... and nothing is lost: stopping flushes the queue.
     text = "".join(written)
-    assert "WARNING STOP pressed - belt stopped." in text and "a second line" in text
+    assert "WARNING The belt is moving." in text and "a second line" in text
     assert not any(isinstance(h, logging.handlers.QueueHandler) for h in logging.getLogger().handlers)
 
 
@@ -577,43 +628,44 @@ def test_debug_lines_only_with_verbose():
 # ---- Ctrl+C twice ---------------------------------------------------------------------------------------
 
 
-def test_a_second_ctrl_c_during_shutdown_does_not_leave_the_belt_running(tmp_path: Path, monkeypatch):
-    """The first Ctrl+C starts the shutdown, which ends with the belt being
-    stopped. A second one while that stop is on its way used to abort the
-    shutdown: the companion exited and the belt kept turning."""
+def test_a_second_ctrl_c_during_shutdown_does_not_lose_the_walk(tmp_path: Path, monkeypatch):
+    """The first Ctrl+C starts the shutdown, which ends with the walk and
+    the settings being saved. A second one while that is under way (a
+    double tap, key repeat) must not abort it half way."""
     built: list[SimulatedTreadmill] = []
     interrupts: list[str] = []
 
-    class SlowToStop(SimulatedTreadmill):
-        async def set_speed(self, kmh: float) -> None:
-            await super().set_speed(kmh)
+    class Pad(SimulatedTreadmill):
+        def advance(self, dt: float) -> None:
+            super().advance(dt)
             if not interrupts and self.status.speed_kmh > 0.5:
                 interrupts.append("first")
-                signal.raise_signal(signal.SIGINT)  # Ctrl+C, with the belt running
+                signal.raise_signal(signal.SIGINT)  # Ctrl+C, with a walk being recorded
 
-        async def stop(self) -> None:
+        async def disconnect(self) -> None:
             if interrupts == ["first"]:
                 interrupts.append("second")
-                signal.raise_signal(signal.SIGINT)  # ... and again, while the stop is being sent
+                signal.raise_signal(signal.SIGINT)  # ... and again, while the companion is closing down
             await asyncio.sleep(0.1)
-            await super().stop()
+            await super().disconnect()
 
     def build(cfg, simulate):
-        treadmill = SlowToStop(us_firmware=True)
+        treadmill = Pad(us_firmware=True)
         treadmill.countdown_s = 0.2
         treadmill.ramp_kmh_per_s = 20.0
         built.append(treadmill)
         return treadmill
 
     monkeypatch.setattr(cli, "_build_treadmill", build)
-    monkeypatch.setattr(cli, "DEMO_SESSION_STARTS_AFTER_S", 0.3)
+    monkeypatch.setattr(cli, "DEMO_SESSION_STARTS_AFTER_S", 0.2)
+    monkeypatch.setattr(cli, "DEMO_WALK_STARTS_AFTER_S", 0.3)
     before = signal.getsignal(signal.SIGINT)
     try:
         code = cli.main(["--demo", "--no-browser", "--port", str(free_port()), "--data-dir", str(tmp_path)])
     except KeyboardInterrupt:
         pytest.fail("the second Ctrl+C aborted the shutdown")
     assert interrupts == ["first", "second"]
-    assert built[0].status.state is BeltState.STOPPED, "the belt was left running"
+    assert not built[0].status.connected
     assert code in (0, 130)  # (130 on Python 3.10, whose asyncio.run re-raises the first interrupt)
     assert (tmp_path / "config.json").exists()  # App.stop() ran to its end
     assert signal.getsignal(signal.SIGINT) is before  # Ctrl+C works again afterwards
@@ -639,7 +691,7 @@ def test_ctrl_c_is_listened_to_again_after_the_shutdown():
 # ---- being closed from outside (console window, log-off, shutdown) -----------------------------------------
 
 
-def test_windows_is_held_off_until_the_belt_has_been_stopped():
+def test_windows_is_held_off_until_the_walk_has_been_saved():
     import threading
 
     async def scenario():
@@ -666,9 +718,9 @@ def test_windows_is_held_off_until_the_belt_has_been_stopped():
     assert time.monotonic() - started < 5
 
 
-def test_the_wait_for_the_belt_is_bounded():
+def test_the_wait_for_the_close_down_is_bounded():
     """Windows kills a program that does not answer within about five
-    seconds; the answer must come before that even if stopping hangs."""
+    seconds; the answer must come before that even if closing down hangs."""
     import threading
 
     async def scenario():

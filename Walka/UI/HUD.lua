@@ -1,7 +1,7 @@
 -- Walka HUD: the small window you glance at while walking and playing.
 --
 --   Walka  * Walking            [>] [#]  [h] [o]
---   ~2.0 mph  > 2.5                 This session
+--   ~1.5 mph [-][+]                 This session
 --   ~1,234 steps                         ~56 kcal
 --   ~0.52 mi                                23:45
 --   [======= today's steps / daily goal ========]
@@ -9,11 +9,16 @@
 -- With no session running it shows today's totals instead, so it is still
 -- worth keeping on screen. The frame is an ordinary (unprotected) frame: it
 -- can be shown, hidden and moved in combat.
+--
+-- The speed in it is the walker's pace: what they have told Walka the belt
+-- is set to, and what the numbers under it are counted with. The two small
+-- buttons change that number - never the belt.
 
 local ADDON_NAME, ns = ...
 
 local Walka = ns.Walka
 local Widgets = ns.Widgets
+local Metrics = ns.Metrics
 local COLOR = Widgets.COLOR
 
 local HUD = {}
@@ -41,29 +46,18 @@ local parts = {}     -- its font strings, textures and buttons
 local STATES = {
     off = { text = "Off", color = COLOR.grey },
     walking = { text = "Walking", color = COLOR.green },
-    -- the treadmill counts down before the belt moves
-    starting = { text = "Starting", color = COLOR.accent },
-    -- session running, but the belt is stopped because the character stands
-    -- still and "stop the belt when standing" is on
-    waiting = { text = "Waiting", color = COLOR.accent },
     paused = { text = "Paused", color = COLOR.amber },
     afk = { text = "Paused (AFK)", color = COLOR.amber },
 }
 
-local function currentState(session, beltKmh, targetKmh)
+local function currentState(session)
     if not session then
         return "off"
     end
     if session.paused then
         return session.pauseReason == "afk" and "afk" or "paused"
     end
-    if beltKmh > 0 then
-        return "walking"
-    end
-    if targetKmh > 0 then
-        return "starting"
-    end
-    return "waiting"
+    return "walking"
 end
 
 ----------------------------------------------------------------------------
@@ -159,8 +153,25 @@ end
 -- Settings-derived values (refreshed on "SETTINGS", read on every tick)
 ----------------------------------------------------------------------------
 
-local stepKmh = 0.1     -- the treadmill's speed increment
 local stepGoal = 0      -- daily step goal, 0 = off
+
+----------------------------------------------------------------------------
+-- Pace
+----------------------------------------------------------------------------
+
+-- One press of - or +: a tenth in the unit on display.
+local PACE_STEP = 0.1
+
+-- The pace `steps` presses away, in km/h - on the grid of tenths in the
+-- display unit, whatever the pace was before.
+local function nudgedPace(steps)
+    local shown = math.floor(Walka:FromKmh(Walka:GetPace()) / PACE_STEP + 0.5)
+    return Walka:ToKmh((shown + steps) * PACE_STEP)
+end
+
+local function nudgePace(steps)
+    Walka:SetPace(nudgedPace(steps))
+end
 
 ----------------------------------------------------------------------------
 -- Redraw
@@ -191,9 +202,7 @@ local function update()
     refreshTotals()
 
     local session = Walka:GetSession()
-    local beltKmh, targetKmh = Walka:GetLiveSpeed()
-    beltKmh, targetKmh = beltKmh or 0, targetKmh or 0
-    local state = currentState(session, beltKmh, targetKmh)
+    local state = currentState(session)
     local info = STATES[state]
 
     -- Header.
@@ -202,9 +211,10 @@ local function update()
     parts.toggle:SetGlyph((session and not session.paused) and "pause" or "play")
     parts.stop:SetActive(session ~= nil)
 
-    -- Belt speed. With a session running it is the addon's estimate of what
-    -- the belt is doing, hence the "~".
-    parts.speed:SetText(Walka:FormatSpeed(beltKmh, true))
+    -- The pace: what the walker says the belt is set to. With a session
+    -- running the numbers below are counted with it, hence the "~".
+    local paceKmh = Walka:GetPace()
+    parts.speed:SetText(Walka:FormatSpeed(paceKmh, true))
     parts.unit:SetText(Walka:SpeedUnit())
     parts.tilde:SetText(session and "~" or "")
     local speedColor = COLOR.white
@@ -214,13 +224,9 @@ local function update()
         speedColor = COLOR.amber
     end
     parts.speed:SetTextColor(speedColor[1], speedColor[2], speedColor[3])
-
-    -- Where the belt is heading, when that is not where it is.
-    local heading = session and not session.paused and math.abs(targetKmh - beltKmh) > stepKmh
-    parts.hint:SetShown(heading and true or false)
-    if heading then
-        parts.hintText:SetText(Walka:FormatSpeed(targetKmh, true))
-    end
+    -- (Half a thousandth of slack: the pace is stored to a thousandth.)
+    parts.slower:SetActive(nudgedPace(-1) >= Metrics.MIN_PACE_KMH - 0.0005)
+    parts.faster:SetActive(nudgedPace(1) <= Metrics.MAX_PACE_KMH + 0.0005)
 
     -- Numbers: the session's while one is running, otherwise today's.
     local steps, kcal, distanceM, seconds, estimated
@@ -257,35 +263,18 @@ end
 
 local STATE_HELP = {
     off = "No session is running. The numbers are today's totals.",
-    walking = "A session is running: the belt follows your character.",
-    starting = "The treadmill is counting down; the belt starts at its slowest speed.",
-    waiting = "Your character is standing still, so the belt is stopped. It restarts when you move.",
-    paused = "The session is paused and the belt is stopped. Press the play button (or /walka resume) to carry on.",
-    afk = "You went AFK, so the session is paused. It resumes when your character moves - "
-        .. "for ten minutes; after that, press the play button.",
+    walking = "A session is running: Walka counts your walk at the pace shown.",
+    paused = "The session is paused: nothing is counted. Press the play button (or /walka resume) to carry on.",
+    afk = "You went AFK, so the session is paused. It carries on when your character moves.",
 }
-
--- "Waiting" although the character is moving: it is the settings that keep
--- the belt stopped - a standing pace of zero on a flight path, or a maximum
--- below what the treadmill can do. Say so, rather than "standing still".
-local WAITING_BY_SETTINGS = "The belt is stopped although your character is moving: your speed settings "
-    .. "ask for no belt speed right now. Check the speed mapping and the maximum in the options."
 
 local function tooltipBody()
     local lines = {}
-    local session = Walka:GetSession()
-    local beltKmh, targetKmh = Walka:GetLiveSpeed()
-    local state = currentState(session, beltKmh or 0, targetKmh or 0)
-    local help = STATE_HELP[state]
+    local state = currentState(Walka:GetSession())
     local gameState = Walka:GetGameState()
-    if state == "waiting" and gameState and gameState.moving then
-        help = WAITING_BY_SETTINGS
-    end
-    lines[#lines + 1] = Widgets.Colorize(help, COLOR.white)
-
-    if session and not session.paused then
-        lines[#lines + 1] = "Target speed: " .. Walka:FormatSpeed(targetKmh or 0) .. "."
-    end
+    lines[#lines + 1] = Widgets.Colorize(STATE_HELP[state], COLOR.white)
+    lines[#lines + 1] = "Your pace: " .. Walka:FormatSpeed(Walka:GetPace())
+        .. " - what you have told Walka your treadmill is set to. Walka does not set the belt's speed: you do."
     if stepGoal > 0 then
         refreshTotals()
         local todaySteps = todayNumbers()
@@ -317,12 +306,6 @@ local function tooltipBody()
         lines[#lines + 1] = Widgets.Colorize(
             "In combat the game hides your character's real speed from addons, so Walka is estimating it.",
             COLOR.amber
-        )
-    end
-    if Walka:Get("speed.keepWalking") == true then
-        lines[#lines + 1] = Widgets.Colorize(
-            "Keep walking is on: the belt holds your walking pace when your character stops.",
-            COLOR.grey
         )
     end
 
@@ -379,7 +362,6 @@ local function applySettings()
     frame:SetAlpha(alpha)
     applyPosition()
 
-    stepKmh = Walka:GetBeltLimits().stepKmh or 0.1
     stepGoal = math.max(0, tonumber(Walka:Get("dailyStepGoal")) or 0)
     parts.barBack:SetShown(stepGoal > 0)
     if stepGoal <= 0 then
@@ -405,11 +387,6 @@ local function openMenu(owner)
             return Walka:Get("hud.locked") == true
         end, function()
             Walka:Set("hud.locked", not Walka:Get("hud.locked"))
-        end)
-        root:CreateCheckbox("Keep walking when standing", function()
-            return Walka:Get("speed.keepWalking") == true
-        end, function()
-            Walka:SetKeepWalking(not Walka:Get("speed.keepWalking"))
         end)
         root:CreateButton("History", function()
             if ns.History then
@@ -483,7 +460,7 @@ local function create()
         end
     end)
     parts.options:SetPoint("RIGHT", frame, "TOPRIGHT", -8, -15)
-    Widgets.Tooltip(parts.options, "Options", "Speed mapping, units, your profile and more.")
+    Widgets.Tooltip(parts.options, "Options", "Your pace, units, your profile and more.")
 
     parts.history = Widgets.GlyphButton(frame, 16, "chart", function()
         if ns.History then
@@ -501,7 +478,7 @@ local function create()
     parts.stop:SetPoint("RIGHT", parts.history, "LEFT", -7, 0)
     Widgets.Tooltip(parts.stop, "Stop", function()
         if Walka:GetSession() then
-            return "Ends the session, stops the belt and files the session in the history."
+            return "Ends the session and files it in the history."
         end
         return "No session is running."
     end)
@@ -519,11 +496,12 @@ local function create()
     end, function()
         local session = Walka:GetSession()
         if not session then
-            return "Starts a session: after the treadmill's countdown the belt follows your character's speed."
+            return "Starts a session: from now on Walka counts your walk, at the pace shown. "
+                .. "The belt is yours to start, at the treadmill."
         elseif session.paused then
-            return "The belt restarts at its slowest speed after the treadmill's countdown."
+            return "Carries on counting."
         end
-        return "Stops the belt and keeps the session open."
+        return "Stops counting and keeps the session open."
     end)
 
     local rule = Widgets.Fill(frame, "ARTWORK", 1, 1, 1, 0.08)
@@ -531,7 +509,7 @@ local function create()
     rule:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -26)
     rule:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -8, -26)
 
-    -- Belt speed. The "~" keeps its own fixed-width slot so that the number
+    -- The pace. The "~" keeps its own fixed-width slot so that the number
     -- does not jump sideways when it appears.
     parts.tilde = Widgets.Text(frame, "GameFontNormal", "", "RIGHT")
     parts.tilde:SetPoint("TOPLEFT", frame, "TOPLEFT", 8, -40)
@@ -544,22 +522,19 @@ local function create()
     parts.unit = Widgets.Text(frame, "GameFontNormalSmall", "", "LEFT")
     parts.unit:SetPoint("BOTTOMLEFT", parts.speed, "BOTTOMRIGHT", 3, 5)
 
-    -- Target hint: a small arrow and the speed the belt is heading for.
-    parts.hint = CreateFrame("Frame", nil, frame)
-    parts.hint:SetSize(44, 12)
-    parts.hint:SetPoint("BOTTOMLEFT", parts.unit, "BOTTOMRIGHT", 7, -1)
-    local arrow = Widgets.Fill(parts.hint, "ARTWORK", COLOR.accent[1], COLOR.accent[2], COLOR.accent[3], 1)
-    arrow:SetSize(5, 8)
-    arrow:SetPoint("LEFT", parts.hint, "LEFT", 0, 0)
-    if arrow.SetVertexOffset then
-        -- Pull the right-hand corners together: a triangle pointing right.
-        arrow:SetVertexOffset(3, 0, -4)
-        arrow:SetVertexOffset(4, 0, 4)
-    end
-    parts.hintText = Widgets.Text(parts.hint, "GameFontHighlightSmall", "", "LEFT")
-    parts.hintText:SetPoint("LEFT", arrow, "RIGHT", 3, 0)
-    parts.hintText:SetTextColor(COLOR.accent[1], COLOR.accent[2], COLOR.accent[3])
-    parts.hint:Hide()
+    -- Slower and faster: they change the pace Walka counts with.
+    parts.slower = Widgets.GlyphButton(frame, 12, "minus", function()
+        nudgePace(-1)
+    end)
+    parts.slower:SetPoint("BOTTOMLEFT", parts.unit, "BOTTOMRIGHT", 7, -1)
+    parts.faster = Widgets.GlyphButton(frame, 12, "plus", function()
+        nudgePace(1)
+    end)
+    parts.faster:SetPoint("LEFT", parts.slower, "RIGHT", 3, 0)
+    local paceHelp = "Tells Walka what your treadmill is set to, so that its estimate fits. "
+        .. "It does not change the belt's speed."
+    Widgets.Tooltip(parts.slower, "My treadmill is slower", paceHelp)
+    Widgets.Tooltip(parts.faster, "My treadmill is faster", paceHelp)
 
     parts.caption = Widgets.Text(frame, "GameFontNormalSmall", "", "RIGHT")
     parts.caption:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -10, -33)

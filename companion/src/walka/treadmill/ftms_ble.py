@@ -1,10 +1,19 @@
-"""Bluetooth FTMS treadmill driver (bleak).
+"""Bluetooth FTMS treadmill reader (bleak).
 
-Drives any treadmill that implements the Fitness Machine Service with a
-speed target. It was written around UREVO walking pads (Strol 2E "URTM030"
-and siblings), and the careful habits below come from them; a treadmill of
-another make is found by the service it advertises (see ``known.py`` for
-the names that are recognised at once, and docs/HARDWARE.md).
+Listens to any treadmill that implements the Fitness Machine Service: its
+Treadmill Data (speed, distance, and on some pads steps), its status events
+and its training status. It was written around UREVO walking pads (Strol 2E
+"URTM030" and siblings); a treadmill of another make is found by the
+service it advertises (see ``known.py`` for the names that are recognised
+at once, and docs/HARDWARE.md).
+
+**It only listens.** The reader never writes to a characteristic: it does
+not ask the treadmill for control, and it has no start, stop, pause or
+speed command to send. The Fitness Machine Control Point is not even
+subscribed to. What the reader does on a connection is read one value
+(the speed range) and switch notifications on for the three things it
+listens to - and ``BleClient`` below, the only door to the Bluetooth
+link, has no method that could write anything else.
 
 How UREVO pads behave (from hardware captures by other open-source
 projects - see docs/HARDWARE.md):
@@ -12,18 +21,8 @@ projects - see docs/HARDWARE.md):
 * They advertise their model code as the name ("URTM030") and need no
   pairing. Only one central can be connected, so the maker's phone app must
   be closed and the pad must not be paired in Windows Settings.
-* Sequence: enable Control Point indications, write Request Control (00),
-  Start (07), wait for the belt to move (3-2-1 countdown, then minimum
-  speed), then Set Target Speed (02 + uint16 0.01 km/h).
-* Speed writes are ignored while the belt is stopped; 0 is not a valid speed.
-* US firmware thinks in 0.1 mph steps (see ``mph_tenths_to_command_kmh``).
-* A timed-out command may still have been applied, so motor commands are
-  never blindly retried.
-
-Somebody is standing on the belt, so a pause or stop never queues behind
-another command: it cuts short the wait for that command's answer, a start
-or speed change that has not been written yet is dropped, and the stop goes
-out as soon as the pad can take another write.
+* US firmware thinks in 0.1 mph steps, and reports its speed range in
+  truncated km/h.
 """
 
 from __future__ import annotations
@@ -36,42 +35,21 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from .. import ftms
-from .base import (
-    KMH_PER_MPH,
-    BeltState,
-    CommandRejected,
-    CommandSuperseded,
-    Treadmill,
-    TreadmillError,
-    TreadmillEvent,
-    kmh_to_mph_tenths,
-    mph_tenths_to_command_kmh,
-)
-from .known import DEFAULT_NAME_PREFIXES, KnownTreadmill, known_treadmill
+from .base import KMH_PER_MPH, BeltState, Treadmill, TreadmillError, TreadmillEvent
+from .known import DEFAULT_NAME_PREFIXES
 
 log = logging.getLogger(__name__)
 
-# After one of our own start commands, "started" events for this long are
-# attributed to us rather than to someone pressing a button on the machine.
-# It is also how long a belt is taken to be running down after a halt.
-OWN_EVENT_WINDOW_S = 6.0
-
-# The pad announces a pause or stop of ours once, as "stopped or paused by
-# the user" with the parameter we sent. Some firmware may only say so when
-# the belt has come to rest, so that one announcement is waited for this
-# long. Any other stop event is somebody at the pad (see ``_is_own_halt``).
-OWN_HALT_EVENT_WINDOW_S = 10.0
+# After a stop or pause the belt runs down for a moment and still reports
+# a speed: for this long that does not make it "running" again.
+COAST_S = 6.0
 
 # Cheap Bluetooth modules drop requests that arrive back to back: leave a
-# gap between subscriptions and between control-point writes.
+# gap between subscriptions.
 SUBSCRIBE_GAP_S = 0.15
-WRITE_GAP_S = 0.4
 
-# A Bluetooth write normally completes within a connection interval or two.
-# One that has not after this long (a dying link) is given up on, so that it
-# cannot hold up the commands behind it - a stop above all - for ever.
-WRITE_TIMEOUT_S = 2.0
-# The same for the reads and subscriptions made while connecting.
+# The reads and subscriptions made while connecting are given up on after
+# this long (a dying link).
 SETUP_TIMEOUT_S = 20.0
 
 PAD_TIMEOUT_HINT = "is the treadmill switched on and in range, and is its own phone app closed?"
@@ -79,7 +57,6 @@ PAD_TIMEOUT_HINT = "is the treadmill switched on and in range, and is its own ph
 # Training Status values (second byte of 0x2AD3).
 TRAINING_IDLE = 0x01
 TRAINING_PRE_WORKOUT = 0x0E  # countdown
-TRAINING_POST_WORKOUT = 0x0F  # closing a workout: a start is ignored
 
 
 @dataclass(frozen=True)
@@ -101,7 +78,8 @@ class FoundDevice:
 
 
 class BleClient(Protocol):
-    """The subset of bleak.BleakClient the driver uses."""
+    """The subset of bleak.BleakClient the reader uses. There is no write
+    here, and that is the point: see the top of this file."""
 
     @property
     def is_connected(self) -> bool: ...
@@ -112,11 +90,7 @@ class BleClient(Protocol):
 
     def has_characteristic(self, uuid: str) -> bool: ...
 
-    def characteristic_properties(self, uuid: str) -> Sequence[str]: ...
-
     async def read(self, uuid: str) -> bytes: ...
-
-    async def write(self, uuid: str, data: bytes, response: bool) -> None: ...
 
     async def subscribe(self, uuid: str, callback: Callable[[bytes], None]) -> None: ...
 
@@ -153,7 +127,7 @@ def is_treadmill_candidate(
     if name_matches(name, prefixes):
         return True
     if treadmill is False:
-        return False  # a bike trainer, a rower: there is no belt to drive
+        return False  # a bike trainer, a rower: there is no belt to read
     return any(u.lower() == ftms.FTMS_SERVICE for u in service_uuids)
 
 
@@ -172,14 +146,6 @@ def describe_bluetooth_error(exc: BaseException, timeout_hint: str = PAD_TIMEOUT
     return str(exc).strip() or type(exc).__name__
 
 
-@dataclass(eq=False)
-class _OwnHalt:
-    """A pause or stop we sent that the pad has not announced yet."""
-
-    param: int  # ftms.STOP_PARAM or ftms.PAUSE_PARAM, as it will appear in the event
-    until: float  # time.monotonic() after which we stop expecting it
-
-
 class FtmsTreadmill(Treadmill):
     kind = "ftms"
 
@@ -190,7 +156,6 @@ class FtmsTreadmill(Treadmill):
         name_prefixes: Sequence[str] = DEFAULT_NAME_PREFIXES,
         units: str = "auto",  # "auto" | "mph" | "kmh": the firmware's speed grid
         scan_timeout_s: float = 15.0,
-        command_timeout_s: float = 3.0,
         backend: BleBackend | None = None,
     ) -> None:
         super().__init__()
@@ -198,23 +163,10 @@ class FtmsTreadmill(Treadmill):
         self.name_prefixes = tuple(name_prefixes)
         self.units = units
         self.scan_timeout_s = scan_timeout_s
-        self.command_timeout_s = command_timeout_s
         self._backend = backend
         self._client: BleClient | None = None
-        self._lock = asyncio.Lock()
-        self._response: asyncio.Future[ftms.ControlResponse | None] | None = None
-        self._response_op: int | None = None  # the opcode that answer is for
-        self._halts_waiting = 0  # pause/stop calls waiting for their turn to write
-        self._has_control = False
-        self._write_with_response = True
-        self._own_halts: list[_OwnHalt] = []
-        self._own_start_until = 0.0
-        self._coast_until = 0.0  # after any stop/pause: speed reports are the belt running down
-        self._next_write_at = 0.0  # pacing of control-point writes
-        self._top_step_refused = False  # the pad rejected the rounded-up value for its top speed
-        self._known: KnownTreadmill | None = None  # the connected pad, if its name is a known one
+        self._coast_until = 0.0  # after a stop/pause: speed reports are the belt running down
         self._data = ftms.TreadmillData()
-        self.features: ftms.MachineFeatures | None = None
         self.raw_speed_range: ftms.SpeedRange | None = None
 
     # ---- backend ---------------------------------------------------------------
@@ -268,15 +220,14 @@ class FtmsTreadmill(Treadmill):
         client = backend.client(device, link_lost)
         try:
             await client.connect()
-            if not client.has_characteristic(ftms.CONTROL_POINT) or not client.has_characteristic(ftms.TREADMILL_DATA):
-                raise TreadmillError(f"{device.name or device.address} does not expose the FTMS treadmill service")
+            if not client.has_characteristic(ftms.TREADMILL_DATA):
+                raise TreadmillError(f"{device.name or device.address} does not send FTMS treadmill data")
             self._client = client
-            self._known = known_treadmill(device.name)
             await asyncio.wait_for(self._setup(client), SETUP_TIMEOUT_S)
             # The link can drop during set-up without any step failing (the
             # optional subscriptions are allowed to). Saying "connected" then
-            # would leave a driver that can send nothing - not even a stop -
-            # and that nobody reconnects.
+            # would leave a reader that hears nothing and that nobody
+            # reconnects.
             if self._client is not client or not client.is_connected:
                 raise TreadmillError("the connection was lost while it was being set up")
         except Exception as exc:
@@ -310,18 +261,10 @@ class FtmsTreadmill(Treadmill):
         self._emit(TreadmillEvent.CONNECTED)
 
     async def _setup(self, client: BleClient) -> None:
-        self._has_control = False
-        self._own_halts.clear()
+        """Read what the treadmill says it is, and start listening to it."""
         self._data = ftms.TreadmillData()
-        props = [p.lower() for p in client.characteristic_properties(ftms.CONTROL_POINT)]
-        # Prefer write-with-response when the characteristic offers it.
-        self._write_with_response = "write" in props or "write-without-response" not in props
+        self._coast_until = 0.0
 
-        if client.has_characteristic(ftms.FITNESS_MACHINE_FEATURE):
-            try:
-                self.features = ftms.parse_features(await client.read(ftms.FITNESS_MACHINE_FEATURE))
-            except Exception as exc:
-                log.debug("could not read FTMS features: %s", exc)
         speed_range = None
         if client.has_characteristic(ftms.SUPPORTED_SPEED_RANGE):
             try:
@@ -331,10 +274,6 @@ class FtmsTreadmill(Treadmill):
         self.raw_speed_range = speed_range
         self._apply_speed_range(speed_range)
 
-        # Register the indication handler before the first write: some
-        # devices indicate before the write call returns.
-        await client.subscribe(ftms.CONTROL_POINT, self._on_control_response)
-        await asyncio.sleep(SUBSCRIBE_GAP_S)
         await client.subscribe(ftms.TREADMILL_DATA, self._on_data)
         for uuid, handler in (
             (ftms.FITNESS_MACHINE_STATUS, self._on_status),
@@ -346,9 +285,6 @@ class FtmsTreadmill(Treadmill):
                     await client.subscribe(uuid, handler)
                 except Exception as exc:
                     log.debug("could not subscribe to %s: %s", uuid, exc)
-        self._next_write_at = time.monotonic() + SUBSCRIBE_GAP_S
-        self._top_step_refused = False
-        self.status.busy = False
 
     def _apply_speed_range(self, speed_range: ftms.SpeedRange | None) -> None:
         status = self.status
@@ -362,10 +298,10 @@ class FtmsTreadmill(Treadmill):
         else:
             lo, hi, step = 1.0, 6.0, 0.1
         if speed_range is not None and speed_range.max_kmh > 0:
-            # The advertised maximum is a promise never to command more, so
-            # it is kept even when the rest of the range is odd: some pads
-            # report a minimum of zero (the default minimum is used then),
-            # and a minimum above the maximum can only mean the maximum.
+            # The advertised maximum is kept even when the rest of the
+            # range is odd: some pads report a minimum of zero (the default
+            # minimum is used then), and a minimum above the maximum can
+            # only mean the maximum.
             hi = speed_range.max_kmh
             if speed_range.min_kmh > 0:
                 lo = speed_range.min_kmh
@@ -404,33 +340,11 @@ class FtmsTreadmill(Treadmill):
         status.state = BeltState.UNKNOWN
         status.speed_kmh = 0.0
         status.target_kmh = None
-        status.busy = False
         status.detail = detail
-        self._has_control = False
-        self._own_halts.clear()
-        if self._response is not None and not self._response.done():
-            self._response.cancel()
         if was:
             self._emit(TreadmillEvent.DISCONNECTED)
 
     # ---- notifications ---------------------------------------------------------
-    def _on_control_response(self, data: bytes) -> None:
-        response = ftms.parse_control_response(bytes(data))
-        if response is None:
-            return
-        pending = self._response
-        if pending is None or pending.done():
-            return
-        if response.request_op != self._response_op:
-            # A late answer to an earlier command (or to a Request Control we
-            # did not wait for). Taking it for the answer to this one could
-            # turn a stop that worked into "rejected", or hide a refusal.
-            # (Two commands with the same opcode cannot be told apart: the
-            # protocol has no sequence numbers.)
-            log.debug("ignoring a stale control point answer: %s", response.describe())
-            return
-        pending.set_result(response)
-
     def _on_data(self, data: bytes) -> None:
         packet = ftms.parse_treadmill_data(bytes(data))
         self._data = self._data.merge(packet)
@@ -444,10 +358,10 @@ class FtmsTreadmill(Treadmill):
                 # moment; that does not make it "running" again.
                 if status.state not in (BeltState.PAUSED, BeltState.STOPPED) or now > self._coast_until:
                     status.state = BeltState.RUNNING
-            elif status.state is BeltState.RUNNING and now > self._own_start_until:
-                # Moving -> not moving without a status event; the governor
-                # decides whether this is a stall.
-                pass
+            elif status.state is BeltState.RUNNING:
+                # Moving -> not moving without a status event (not every
+                # pad announces a stop): the belt has stopped all the same.
+                status.state = BeltState.STOPPED
         if packet.total_distance_m is not None:
             status.distance_m = float(packet.total_distance_m)
         if packet.total_energy_kcal is not None:
@@ -471,228 +385,20 @@ class FtmsTreadmill(Treadmill):
         elif event.started:
             if status.state is not BeltState.RUNNING:
                 status.state = BeltState.STARTING
-            if now > self._own_start_until:
-                self._emit(TreadmillEvent.EXTERNAL_START)
         elif event.paused or event.stopped:
             status.state = BeltState.PAUSED if event.paused else BeltState.STOPPED
             status.target_kmh = None
-            self._coast_until = now + OWN_EVENT_WINDOW_S
-            if not self._is_own_halt(event, now):
-                self._emit(TreadmillEvent.EXTERNAL_STOP)
+            self._coast_until = now + COAST_S
         elif event.op == ftms.StatusOp.RESET:
             status.state = BeltState.STOPPED
             status.target_kmh = None
-        elif event.op == ftms.StatusOp.CONTROL_PERMISSION_LOST:
-            self._has_control = False
-
-    def _is_own_halt(self, event: ftms.MachineStatus, now: float) -> bool:
-        """Is this stop/pause event the pad announcing a command of ours?
-
-        Decided by what the event says, and once per command: a pause of
-        ours is announced as "paused", a stop as "stopped", one time each.
-        A second event, one of the other kind, and anything from the safety
-        key is somebody at the pad - however soon after our own command it
-        comes - and a stop at the pad is final.
-        """
-        self._own_halts = [halt for halt in self._own_halts if now <= halt.until]
-        if event.op != ftms.StatusOp.STOPPED_OR_PAUSED_BY_USER:
-            return False
-        for halt in self._own_halts:
-            if event.params[:1] == bytes([halt.param]):
-                self._own_halts.remove(halt)
-                return True
-        return False
 
     def _on_training_status(self, data: bytes) -> None:
         if len(data) < 2:
             return
         value = data[1]
         status = self.status
-        # After a stop the pad spends a while "post-workout"; a start sent
-        # then is acknowledged and ignored. Tell the governor to wait.
-        status.busy = value == TRAINING_POST_WORKOUT
         if value == TRAINING_PRE_WORKOUT and status.state is not BeltState.RUNNING:
             status.state = BeltState.STARTING
         elif value == TRAINING_IDLE and status.speed_kmh <= 0.05 and status.state is BeltState.UNKNOWN:
             status.state = BeltState.STOPPED
-
-    # ---- commands --------------------------------------------------------------
-    def _require_client(self) -> BleClient:
-        client = self._client
-        if client is None or not client.is_connected:
-            raise TreadmillError("treadmill is not connected")
-        return client
-
-    def _interrupt_wait(self) -> None:
-        """Stop waiting for the answer to the command in flight, so that a
-        stop does not queue behind it. That command's outcome is then
-        unknown, exactly as if its answer had been lost."""
-        if self._response is not None and not self._response.done():
-            self._response.set_result(None)
-
-    async def _write(self, payload: bytes, *, halt: bool = False, wait: bool = True) -> ftms.ControlResponse | None:
-        """Write one control-point command and wait for its indication.
-
-        Returns ``None`` if no indication arrives in time (or the wait was
-        cut short by a stop): the command may or may not have been applied,
-        and the caller must not retry it blindly. With ``wait=False`` it
-        returns as soon as the command is written.
-        """
-        client = self._require_client()
-        gap = self._next_write_at - time.monotonic()
-        if gap > 0:
-            await asyncio.sleep(min(gap, WRITE_GAP_S))
-            client = self._require_client()
-        if self._halts_waiting and not halt:
-            # Not written yet, so it certainly was not carried out - and the
-            # stop behind it gets the pad's next write slot instead.
-            raise CommandSuperseded("not sent - a stop was asked for first")
-        loop = asyncio.get_running_loop()
-        self._response = loop.create_future()
-        self._response_op = payload[0]
-        try:
-            await asyncio.wait_for(
-                client.write(ftms.CONTROL_POINT, payload, self._write_with_response), WRITE_TIMEOUT_S
-            )
-        except asyncio.TimeoutError:
-            raise TreadmillError("Bluetooth write timed out") from None
-        except Exception as exc:
-            raise TreadmillError(f"Bluetooth write failed: {exc}") from exc
-        finally:
-            self._next_write_at = time.monotonic() + WRITE_GAP_S
-        if not wait or self._halts_waiting:
-            return None  # a stop is waiting for its turn: do not make it wait for our answer
-        try:
-            return await asyncio.wait_for(self._response, self.command_timeout_s)
-        except asyncio.TimeoutError:
-            log.debug("no response to control point command %s", payload.hex())
-            return None
-        except asyncio.CancelledError:
-            if self._client is None:
-                raise TreadmillError("treadmill disconnected") from None
-            raise
-
-    async def _ensure_control(self, *, halt: bool = False) -> None:
-        if self._has_control:
-            return
-        # A stop does not wait for the answer to Request Control: the pad
-        # gets the request and, one write gap later, the stop itself.
-        response = await self._write(ftms.cmd_request_control(), halt=halt, wait=not halt)
-        if self._known is not None and self._known.request_control_twice and not halt:
-            # Some firmware only takes the request the second time. (Not
-            # before a stop: that goes out one write gap sooner instead.)
-            response = await self._write(ftms.cmd_request_control()) or response
-        # Some pads never acknowledge Request Control, and some answer it with
-        # a failure yet obey every command that follows. Either way the next
-        # command tells us: "control not permitted" makes us ask again.
-        if response is not None and not response.ok:
-            log.debug("request control answered %s - carrying on", response.describe())
-        self._has_control = True
-
-    async def _command(self, payload: bytes, *, halt: bool = False) -> None:
-        """Send one command; ``halt`` marks a pause or stop, which goes first.
-
-        Commands are written one at a time. A halt does not wait for the one
-        in flight to be answered, and a start or speed command that is still
-        waiting to be written when a halt arrives is dropped
-        (``CommandSuperseded``) rather than sent ahead of it.
-        """
-        if halt:
-            self._halts_waiting += 1
-            self._interrupt_wait()
-            try:
-                await self._lock.acquire()
-            finally:
-                self._halts_waiting -= 1
-        else:
-            await self._lock.acquire()
-        try:
-            await self._ensure_control(halt=halt)
-            response = await self._write(payload, halt=halt)
-            if response is not None and response.result == ftms.ResultCode.CONTROL_NOT_PERMITTED:
-                # Definitely not executed: safe to take control and retry once.
-                self._has_control = False
-                await self._ensure_control(halt=halt)
-                response = await self._write(payload, halt=halt)
-            if response is not None and not response.ok:
-                raise CommandRejected(f"treadmill rejected command: {response.describe()}", response.result)
-        finally:
-            self._lock.release()
-
-    async def start(self) -> None:
-        earlier_halts = list(self._own_halts)
-        window_before = self._own_start_until
-        self._own_start_until = time.monotonic() + OWN_EVENT_WINDOW_S
-        try:
-            await self._command(ftms.cmd_start_or_resume())
-        except BaseException:
-            # Nothing was started (or not that we know): a "started" event
-            # now is the remote's, and the governor needs to hear of it.
-            self._own_start_until = window_before
-            raise
-        self._own_start_until = time.monotonic() + OWN_EVENT_WINDOW_S
-        # The belt has been told to move again: a stop or pause event from
-        # now on is somebody saying no, not the late announcement of a halt
-        # we sent before this start. (A halt asked for while the start was
-        # in flight is newer, and is still expected.)
-        self._own_halts = [halt for halt in self._own_halts if halt not in earlier_halts]
-        if self.status.state is not BeltState.RUNNING:
-            self.status.state = BeltState.STARTING
-
-    async def _halt(self, payload: bytes, param: int, state: BeltState) -> None:
-        """Pause or stop the belt (``param`` is how the pad will announce it)."""
-        expected = _OwnHalt(param, time.monotonic() + OWN_HALT_EVENT_WINDOW_S)
-        self._own_halts.append(expected)  # before writing: the event can beat the answer
-        try:
-            await self._command(payload, halt=True)
-        except BaseException:
-            # Refused, not sent, or not known to have arrived: if a stop
-            # event does come, the careful reading is "somebody at the pad".
-            if expected in self._own_halts:
-                self._own_halts.remove(expected)
-            raise
-        now = time.monotonic()
-        expected.until = now + OWN_HALT_EVENT_WINDOW_S
-        self._coast_until = now + OWN_EVENT_WINDOW_S
-        self.status.state = state
-        self.status.target_kmh = None
-
-    async def pause(self) -> None:
-        await self._halt(ftms.cmd_pause(), ftms.PAUSE_PARAM, BeltState.PAUSED)
-
-    async def stop(self) -> None:
-        await self._halt(ftms.cmd_stop(), ftms.STOP_PARAM, BeltState.STOPPED)
-
-    def quantise(self, kmh: float) -> tuple[float, float]:
-        """Return ``(speed the belt will run at, value to send)`` for a target."""
-        status = self.status
-        kmh = max(status.min_kmh, min(status.max_kmh, kmh))
-        if status.mph_grid:
-            tenths = kmh_to_mph_tenths(kmh)
-            tenths = max(kmh_to_mph_tenths(status.min_kmh), min(kmh_to_mph_tenths(status.max_kmh), tenths))
-            return tenths / 10.0 * KMH_PER_MPH, mph_tenths_to_command_kmh(tenths)
-        step = status.step_kmh if status.step_kmh > 0 else 0.1
-        snapped = round(round(kmh / step) * step, 2)
-        snapped = max(status.min_kmh, min(status.max_kmh, snapped))
-        return snapped, snapped
-
-    async def set_speed(self, kmh: float) -> None:
-        actual, send = self.quantise(kmh)
-        raw = self.raw_speed_range
-        try:
-            await self._command(ftms.cmd_set_target_speed(send))
-        except CommandRejected as exc:
-            # On mph firmware the value for the top step is rounded up past
-            # the range the pad advertises (4.0 mph is sent as 6.5 km/h,
-            # advertised maximum 6.43). A pad that refuses it gets the
-            # advertised maximum instead, and one step less from then on.
-            out_of_range = exc.result in (ftms.ResultCode.INVALID_PARAMETER, ftms.ResultCode.OPERATION_FAILED)
-            if raw is None or send <= raw.max_kmh + 1e-9 or not out_of_range or self.status.speed_kmh <= 0.05:
-                raise
-            await self._command(ftms.cmd_set_target_speed(raw.max_kmh))
-            if not self._top_step_refused:
-                self._top_step_refused = True
-                self.status.max_kmh = max(self.status.min_kmh, self.status.max_kmh - self.status.step_kmh)
-                log.info("the treadmill refused its top speed step; maximum is now %.2f km/h", self.status.max_kmh)
-            actual = self.status.max_kmh
-        self.status.target_kmh = actual

@@ -267,14 +267,13 @@ def test_payload_fields():
     payload = build_payload(
         [rec],
         profile={"weightKg": 75.0, "heightCm": 172.0},
-        limits={"minKmh": 0.9656, "maxKmh": 4.83},
         treadmill_name="URTM030",
         now=T0 + 5000.9,
     )
     assert payload["version"] == addon_sync.DATA_VERSION == 1
     assert payload["written"] == int(T0 + 5000)
     assert payload["profile"] == {"weightKg": 75.0, "heightCm": 172.0}
-    assert payload["limits"] == {"minKmh": 0.9656, "maxKmh": 4.83}
+    assert "limits" not in payload  # the game no longer needs to know what the belt can do
     assert payload["treadmill"] == "URTM030"
     assert "older" not in payload
     assert payload["sessions"] == [
@@ -297,8 +296,8 @@ def test_payload_fields():
 
 def test_payload_optional_fields_are_left_out(lua):
     rec = record(T0, avg_hr=None, max_hr=None, beacon_session=None, source="free", steps_source="estimate")
-    payload = build_payload([rec], profile={}, limits=None, treadmill_name="", now=T0)
-    assert payload["limits"] is None and payload["treadmill"] is None
+    payload = build_payload([rec], profile={}, treadmill_name="", now=T0)
+    assert payload["treadmill"] is None
     data = through_lua(lua, payload)
     assert "limits" not in data and "treadmill" not in data
     entry = data["sessions"][0]
@@ -308,7 +307,7 @@ def test_payload_optional_fields_are_left_out(lua):
 
 def test_sessions_are_listed_newest_first_whatever_the_input_order():
     records = [record(T0 + 3600 * i, steps=i) for i in (3, 0, 4, 1, 2)]
-    payload = build_payload(records, profile={}, limits=None, now=T0)
+    payload = build_payload(records, profile={}, now=T0)
     assert [s["steps"] for s in payload["sessions"]] == [4, 3, 2, 1, 0]
     starts = [s["start"] for s in payload["sessions"]]
     assert starts == sorted(starts, reverse=True)
@@ -322,7 +321,7 @@ def test_older_sessions_are_folded_into_a_summary():
         for i in range(limit + 7)
     ]
     random.Random(1).shuffle(records)
-    payload = build_payload(records, profile={}, limits=None, now=T0)
+    payload = build_payload(records, profile={}, now=T0)
     assert len(payload["sessions"]) == limit
     # The newest 300 are listed ...
     assert payload["sessions"][0]["steps"] == 1000 + limit + 6
@@ -346,9 +345,9 @@ def test_older_sessions_are_folded_into_a_summary():
 
 def test_exactly_the_limit_has_no_older_block():
     records = [record(T0 + 60 * i) for i in range(addon_sync.MAX_SESSIONS_IN_FILE)]
-    payload = build_payload(records, profile={}, limits=None, now=T0)
+    payload = build_payload(records, profile={}, now=T0)
     assert len(payload["sessions"]) == addon_sync.MAX_SESSIONS_IN_FILE and "older" not in payload
-    assert build_payload([], profile={}, limits=None, now=T0)["sessions"] == []
+    assert build_payload([], profile={}, now=T0)["sessions"] == []
 
 
 # ---- the file ----------------------------------------------------------------------------
@@ -358,7 +357,6 @@ def test_rendered_file_is_a_single_ascii_assignment(lua):
     payload = build_payload(
         [record(T0, treadmill="Pad “é” 🏃")],
         profile={"weightKg": 80.5, "heightCm": 180.0},
-        limits=None,
         treadmill_name='Mat "No. 1" \\ é',
         now=T0,
     )
@@ -377,7 +375,7 @@ def test_rendered_file_is_a_single_ascii_assignment(lua):
 
 def test_write_data_file_is_atomic_and_leaves_no_tmp(tmp_path: Path, lua):
     addon = make_addon_dir(tmp_path)
-    payload = build_payload([record(T0)], profile={"weightKg": 75.0}, limits=None, now=T0)
+    payload = build_payload([record(T0)], profile={"weightKg": 75.0}, now=T0)
     target = write_data_file(addon, payload)
     assert target == addon / DATA_FILE
     assert sorted(p.name for p in addon.iterdir()) == [DATA_FILE, "Walka.toc"]
@@ -387,7 +385,7 @@ def test_write_data_file_is_atomic_and_leaves_no_tmp(tmp_path: Path, lua):
     assert lua.globals()[DATA_GLOBAL].sessions[1].steps == 912
 
     # Replacing an existing file.
-    payload2 = build_payload([record(T0), record(T0 + 9000, steps=5)], profile={}, limits=None, now=T0)
+    payload2 = build_payload([record(T0), record(T0 + 9000, steps=5)], profile={}, now=T0)
     write_data_file(addon, payload2)
     lua.execute(target.read_text("ascii"))
     assert lua.eval(f"#{DATA_GLOBAL}.sessions") == 2
@@ -397,7 +395,7 @@ def test_write_data_file_is_atomic_and_leaves_no_tmp(tmp_path: Path, lua):
 def test_write_refuses_a_folder_that_is_not_the_addon(tmp_path: Path):
     folder = tmp_path / "SomeOtherAddon"
     folder.mkdir()
-    payload = build_payload([], profile={}, limits=None, now=T0)
+    payload = build_payload([], profile={}, now=T0)
     with pytest.raises(FileNotFoundError, match="Walka.toc"):
         write_data_file(folder, payload)
     assert list(folder.iterdir()) == []  # nothing was written, not even a temp file
@@ -409,7 +407,7 @@ def test_write_retries_while_the_game_holds_the_file(tmp_path: Path, monkeypatch
     addon = make_addon_dir(tmp_path)
     target = addon / DATA_FILE
     target.write_text("-- previous contents\n", "utf-8")
-    payload = build_payload([record(T0)], profile={}, limits=None, now=T0)
+    payload = build_payload([record(T0)], profile={}, now=T0)
     real_replace = os.replace
     calls = {"n": 0}
     naps: list[float] = []
@@ -446,12 +444,12 @@ def test_sync_writes_the_stores_history(tmp_path: Path, lua):
     store.add(record(T0, steps=100))
     store.add(record(T0 + 5000, steps=200))
     path = addon_sync.sync(
-        addon, store, profile={"weightKg": 75.0, "heightCm": 172.0}, limits={"maxKmh": 4.83}, treadmill_name="URTM030"
+        addon, store, profile={"weightKg": 75.0, "heightCm": 172.0}, treadmill_name="URTM030"
     )
     lua.execute(path.read_text("ascii"))
     data = lua_to_py(lua.globals()[DATA_GLOBAL])
     assert [s["steps"] for s in data["sessions"]] == [200, 100]
-    assert data["limits"] == {"maxKmh": 4.83} and data["treadmill"] == "URTM030"
+    assert "limits" not in data and data["treadmill"] == "URTM030"
     assert abs(data["written"] - time.time()) < 60
 
 
@@ -471,7 +469,7 @@ def test_addon_merges_the_written_file_with_its_own_sessions(tmp_path: Path, lua
     addon = make_addon_dir(tmp_path)
     in_game = record(T0, steps=1000, distance_m=800.0, kcal=60.0, seconds=900.0, end=T0 + 930)
     outside = record(T0 + 20_000, steps=400, source="manual", beacon_session=None, avg_hr=None, max_hr=None)
-    payload = build_payload([in_game, outside], profile={"weightKg": 75.0}, limits=None, now=T0 + 30_000)
+    payload = build_payload([in_game, outside], profile={"weightKg": 75.0}, now=T0 + 30_000)
     lua.execute(write_data_file(addon, payload).read_text("ascii"))
     companion = lua.globals()[DATA_GLOBAL]
 
@@ -527,7 +525,7 @@ def test_addon_totals_match_the_companions(tmp_path: Path, lua, session_log, mon
                 kcal=float(rng.randrange(10, 300)),
             )
         )
-    path = addon_sync.sync(addon, store, profile={}, limits=None)
+    path = addon_sync.sync(addon, store, profile={})
     lua.execute(path.read_text("ascii"))
     companion = lua.globals()[DATA_GLOBAL]
     assert lua.eval(f"#{DATA_GLOBAL}.sessions") == 9 and companion.older.sessions == 3

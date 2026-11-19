@@ -2,12 +2,19 @@
 
 * ``FakeScreen`` - a virtual desktop a ``capture.Grabber`` can photograph.
 * ``FakePad`` / ``FakeBackend`` / ``FakeClient`` - a UREVO walking pad
-  emulated at the GATT level, for the Bluetooth driver.
+  emulated at the GATT level, for the Bluetooth reader.
 * Lua helpers - run the addon's pure-Lua modules under an embedded Lua 5.1.
 
 The pad model is written from the hardware notes (docs/HARDWARE.md) and
-deliberately shares no code with the driver or the simulator, so the driver
+deliberately shares no code with the reader or the simulator, so the reader
 is checked against an independent statement of what the firmware does.
+
+Like a real pad, the emulated one has a Fitness Machine Control Point: the
+characteristic through which an app could start, stop and steer the belt.
+Walka must never use it. So the pad is worked the way its owner works it -
+``press_start``, ``press_speed``, ``press_stop`` are its remote - and it
+keeps a list of everything that was ever written to it (``FakePad.writes``)
+or subscribed to on its control point, which the tests expect to stay empty.
 """
 
 from __future__ import annotations
@@ -174,17 +181,6 @@ class FakeScreen:
 KMH_PER_MPH_MICRO = 1_609_344  # km/h per mph, times 1e6 (exact)
 
 
-def us_firmware_mph_tenths(raw_centi_kmh: int) -> int:
-    """What UREVO's US firmware does with a Set Target Speed value.
-
-    ``raw_centi_kmh`` is the uint16 on the wire (0.01 km/h). The firmware
-    truncates it to 0.1 km/h, converts to mph and truncates again to 0.1 mph.
-    Pure integer arithmetic; returns tenths of a mph.
-    """
-    tenth_kmh = raw_centi_kmh // 10
-    return tenth_kmh * 1_000_000 // KMH_PER_MPH_MICRO
-
-
 def mph_tenths_to_centi_kmh(tenths: int) -> int:
     """How the pad reports a speed on its mph grid: km/h truncated to 0.01."""
     return tenths * KMH_PER_MPH_MICRO // 100_000
@@ -210,13 +206,9 @@ class FakePad:
         has_ftms: bool = True,
         has_speed_range: bool = True,
         has_features: bool = True,
-        speed_target: bool = True,  # what the features say; the pad obeys either way
+        has_control_point: bool = True,  # a pad that only shows its numbers has none
         says_treadmill: bool | None = None,  # the machine type in its advertisement, if any
         has_status: bool = True,
-        require_control: bool = False,
-        silent: bool = False,
-        write_without_response_only: bool = False,
-        inline_indications: bool = False,
         steps_in_data: bool = False,
         countdown_s: float = 3.0,
         ramp_kmh_per_s: float = 1.0,
@@ -229,27 +221,18 @@ class FakePad:
         self.has_ftms = has_ftms
         self.has_speed_range = has_speed_range
         self.has_features = has_features
-        self.speed_target = speed_target
+        self.has_control_point = has_control_point
         self.says_treadmill = says_treadmill
         self.has_status = has_status
-        self.require_control = require_control
-        self.silent = silent
-        self.write_without_response_only = write_without_response_only
-        self.inline_indications = inline_indications
         self.steps_in_data = steps_in_data
         self.countdown_s = countdown_s
         self.ramp_kmh_per_s = ramp_kmh_per_s
 
         self.powered = True
         self.busy = False  # another central (the phone app) holds the connection
-        self.fail_writes = False  # the GATT write itself errors
-        self.lose_writes = False  # the write "succeeds" but never reaches the pad
-        self.reject: dict[int, int] = {}  # opcode -> result code to answer with
-        self.reject_payloads: dict[bytes, int] = {}  # exact command -> result code
         self.speed_range_override: bytes | None = None
 
         self.client: FakeClient | None = None
-        self.has_control = False
         self.state = "idle"  # idle | countdown | running | paused
         self.count_left = 0.0
         self.speed_kmh = 0.0  # what the belt is really doing
@@ -259,8 +242,10 @@ class FakePad:
         self.kcal = 0.0
         self.steps = 0.0
         self.elapsed_s = 0.0
-        self.writes: list[bytes] = []  # every control point write, in order
-        self.write_modes: list[bool] = []  # ... and whether it was write-with-response
+        # Everything written to any characteristic of this pad, as (uuid,
+        # bytes). Walka only listens, so this stays empty - whatever the test.
+        self.writes: list[tuple[str, bytes]] = []
+        self.reads: list[str] = []  # every characteristic that was read, in order
         self.subscriptions: dict[str, Callable[[bytes], None]] = {}
         self.connects = 0
 
@@ -269,9 +254,8 @@ class FakePad:
         table: dict[str, list[str]] = {}
         if self.has_ftms:
             table[ftms.TREADMILL_DATA] = ["notify"]
-            table[ftms.CONTROL_POINT] = (
-                ["write-without-response", "indicate"] if self.write_without_response_only else ["write", "indicate"]
-            )
+            if self.has_control_point:
+                table[ftms.CONTROL_POINT] = ["write", "indicate"]
             if self.has_features:
                 table[ftms.FITNESS_MACHINE_FEATURE] = ["read"]
             if self.has_speed_range:
@@ -282,6 +266,7 @@ class FakePad:
         return table
 
     def read(self, uuid: str) -> bytes:
+        self.reads.append(uuid)
         if uuid == ftms.SUPPORTED_SPEED_RANGE:
             if self.speed_range_override is not None:
                 return self.speed_range_override
@@ -291,23 +276,14 @@ class FakePad:
             return struct.pack("<HHH", *self.kmh_range)
         if uuid == ftms.FITNESS_MACHINE_FEATURE:
             # features: total distance, step count, expended energy, elapsed time; targets: speed
-            return struct.pack("<II", 0x0004 | 0x0040 | 0x0200 | 0x1000, 0x0001 if self.speed_target else 0)
+            return struct.pack("<II", 0x0004 | 0x0040 | 0x0200 | 0x1000, 0x0001 if self.has_control_point else 0)
         raise OSError(f"characteristic {uuid} is not readable")
 
     # -- notifications -----------------------------------------------------------
-    def _send(self, uuid: str, data: bytes, *, inline: bool = True) -> None:
+    def _send(self, uuid: str, data: bytes) -> None:
         callback = self.subscriptions.get(uuid)
-        if callback is None or self.client is None:
-            return
-        if inline:
+        if callback is not None and self.client is not None:
             callback(data)
-        else:
-            asyncio.get_running_loop().call_soon(callback, data)
-
-    def _indicate(self, op: int, result: int) -> None:
-        if self.silent:
-            return
-        self._send(ftms.CONTROL_POINT, bytes([0x80, op, result]), inline=self.inline_indications)
 
     def _status(self, *payload: int) -> None:
         self._send(ftms.FITNESS_MACHINE_STATUS, bytes(payload))
@@ -316,10 +292,6 @@ class FakePad:
         """Training Status notification: flags byte, then the status code
         (0x01 idle, 0x0D manual mode, 0x0E pre-workout, 0x0F post-workout)."""
         self._send(ftms.TRAINING_STATUS, bytes([0x00, status]))
-
-    def send_stray_indication(self, op: int, result: int) -> None:
-        """An indication nobody asked for (e.g. a late answer to an old command)."""
-        self._send(ftms.CONTROL_POINT, bytes([0x80, op, result]))
 
     def data_packet(self) -> bytes:
         flags = 0x0484  # speed (More Data = 0), total distance, expended energy, elapsed time
@@ -332,59 +304,15 @@ class FakePad:
             body += int(self.steps).to_bytes(3, "little")
         return struct.pack("<H", flags) + body
 
-    # -- the control point -------------------------------------------------------
-    def control_write(self, data: bytes) -> None:
-        self.writes.append(bytes(data))
-        if self.lose_writes or not data:
-            return
-        op = data[0]
-        if op in self.reject or bytes(data) in self.reject_payloads:
-            self._indicate(op, self.reject_payloads.get(bytes(data), self.reject.get(op, 0x04)))
-            return
-        if op == 0x00:  # request control
-            self.has_control = True
-            self._indicate(op, 0x01)
-            return
-        if self.require_control and not self.has_control:
-            self._indicate(op, 0x05)  # control not permitted
-            return
-        if op == 0x07:
-            self._begin()
-            self._indicate(op, 0x01)
-            self._status(0x04)
-        elif op == 0x08:
-            if len(data) < 2 or data[1] not in (0x01, 0x02):
-                self._indicate(op, 0x03)
-                return
-            self._halt(paused=data[1] == 0x02)
-            self._indicate(op, 0x01)
-            self._status(0x02, data[1])
-        elif op == 0x02:
-            if len(data) < 3:
-                self._indicate(op, 0x03)
-                return
-            raw = int.from_bytes(data[1:3], "little")
-            if self.state == "running":
-                self._set_target(raw)
-                assert self.target_centi is not None
-                self._status(0x05, *self.target_centi.to_bytes(2, "little"))
-            # Speed writes while the belt is not moving are acknowledged and ignored.
-            self._indicate(op, 0x01)
-        elif op == 0x01:  # reset
-            self._halt(paused=False)
-            self._indicate(op, 0x01)
-            self._status(0x01)
-        else:
-            self._indicate(op, 0x02)  # op code not supported
-
-    def _set_target(self, raw: int) -> None:
+    # -- what the firmware does --------------------------------------------------
+    def _set_target(self, kmh: float) -> None:
         if self.us_firmware:
-            tenths = max(self.min_tenths, min(self.max_tenths, us_firmware_mph_tenths(raw)))
+            tenths = max(self.min_tenths, min(self.max_tenths, round(kmh * 1e7 / KMH_PER_MPH_MICRO)))
             self.target_tenths = tenths
             self.target_centi = mph_tenths_to_centi_kmh(tenths)
         else:
-            lo, hi, _step = self.kmh_range
-            self.target_centi = max(lo, min(hi, raw // 10 * 10))
+            lo, hi, step = self.kmh_range
+            self.target_centi = max(lo, min(hi, round(kmh * 100 / step) * step))
 
     def _begin(self) -> None:
         if self.state in ("running", "countdown"):
@@ -418,18 +346,22 @@ class FakePad:
         self._halt(paused=True)
         self._status(0x02, 0x02)
 
+    def press_speed(self, kmh: float) -> None:
+        """The remote's + and - buttons: the belt goes to the step nearest
+        ``kmh``, and the pad says what it is now set to."""
+        if self.state not in ("running", "countdown"):
+            return
+        self._set_target(kmh)
+        assert self.target_centi is not None
+        self._status(0x05, *self.target_centi.to_bytes(2, "little"))
+
     def pull_safety_key(self) -> None:
         self._halt(paused=False)
         self._status(0x03)
 
-    def take_control_away(self) -> None:
-        self.has_control = False
-        self._status(0xFF)
-
     def drop_link(self) -> None:
         """The Bluetooth link dies (out of range, pad switched off)."""
         client, self.client = self.client, None
-        self.has_control = False
         self.subscriptions.clear()
         if client is not None:
             client.on_disconnect()
@@ -471,7 +403,13 @@ class FakePad:
 
 
 class FakeClient:
-    """The driver's view of one connection to a :class:`FakePad`."""
+    """The reader's view of one connection to a :class:`FakePad`.
+
+    It can do more than the reader may ask of it (``BleClient`` in
+    ``walka.treadmill.ftms_ble`` has no ``write``): a write is possible
+    here, as on a real link, so that one would be *seen* - in
+    ``FakePad.writes`` - and not fail quietly for want of a method.
+    """
 
     def __init__(self, pad: FakePad, on_disconnect: Callable[[], None]) -> None:
         self.pad = pad
@@ -487,7 +425,6 @@ class FakeClient:
         if not self.pad.powered or self.pad.busy:
             raise OSError("device unreachable (simulated)")
         self.pad.client = self
-        self.pad.has_control = False
         self.pad.connects += 1
 
     async def disconnect(self) -> None:
@@ -498,24 +435,13 @@ class FakeClient:
     def has_characteristic(self, uuid: str) -> bool:
         return uuid in self.pad.characteristics()
 
-    def characteristic_properties(self, uuid: str) -> Sequence[str]:
-        return self.pad.characteristics().get(uuid, [])
-
     async def read(self, uuid: str) -> bytes:
         await asyncio.sleep(0)
         return self.pad.read(uuid)
 
-    async def write(self, uuid: str, data: bytes, response: bool) -> None:
+    async def write(self, uuid: str, data: bytes, response: bool = True) -> None:
         await asyncio.sleep(0)
-        if not self.is_connected:
-            raise OSError("not connected (simulated)")
-        if self.pad.fail_writes:
-            raise OSError("GATT write failed (simulated)")
-        if response and self.pad.write_without_response_only:
-            raise OSError("characteristic does not support write-with-response (simulated)")
-        assert uuid == ftms.CONTROL_POINT
-        self.pad.write_modes.append(response)
-        self.pad.control_write(bytes(data))
+        self.pad.writes.append((uuid, bytes(data)))
 
     async def subscribe(self, uuid: str, callback: Callable[[bytes], None]) -> None:
         await asyncio.sleep(0)

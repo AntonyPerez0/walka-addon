@@ -354,6 +354,8 @@ local GLYPHS = {
     play = { { 0.5, 0, 9, 10, point = true } },
     pause = { { -2.5, 0, 3, 10 }, { 2.5, 0, 3, 10 } },
     stop = { { 0, 0, 9, 9 } },
+    minus = { { 0, 0, 9, 2.5 } },
+    plus = { { 0, 0, 9, 2.5 }, { 0, 0, 2.5, 9 } },
     -- three rising bars: "history / statistics"
     chart = { { -3.5, -3, 2.5, 4 }, { 0, -1.5, 2.5, 7 }, { 3.5, 0, 2.5, 10 } },
     -- two sliders: "options"
@@ -381,7 +383,7 @@ local function drawGlyph(holder, spec, unit)
 end
 
 --- A small square icon button. `glyph` is one of "play", "pause", "stop",
--- "chart", "sliders". Returns a Button with two extra methods:
+-- "minus", "plus", "chart", "sliders". Returns a Button with two extra methods:
 --   button:SetGlyph(name)      - swap the icon
 --   button:SetActive(enabled)  - enable/disable (greyed out when disabled)
 function Widgets.GlyphButton(parent, size, glyph, onClick)

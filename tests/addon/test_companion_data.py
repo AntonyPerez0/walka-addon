@@ -1,5 +1,5 @@
 """CompanionData.lua: what the companion app writes and the addon picks up
-at login or /reload (body profile, treadmill limits, measured sessions)."""
+at login or /reload (body profile, measured sessions)."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import pytest
 from walka import addon_sync
 from walka.session import SessionRecord
 
-from .conftest import KMH_PER_MPH, MPH_STEP, local_noon, nearest_step
+from .conftest import DEFAULT_PACE_KMH, local_noon
 from .harness import lua_dict, lua_list, lua_plain
 
 DAY = 86400
@@ -18,7 +18,6 @@ WalkaCompanionData = {{
     version = 1,
     written = {NOW - 3600},
     profile = {{ weightKg = 90.5, heightCm = 185 }},
-    limits = {{ minKmh = 1.0, maxKmh = 3.0, stepKmh = 0.1, accelKmhPerS = 0.25, decelKmhPerS = 0.8 }},
     treadmill = "UREVO Strol 2E",
     sessions = {{
         {{ start = {NOW - 2 * 3600}, ["end"] = {NOW - 2 * 3600 + 1800}, seconds = 1790, distanceM = 1502,
@@ -64,7 +63,8 @@ def test_estimates_use_the_companions_profile(crt):
     crt.tick(600)
     session = lua_dict(crt.walka.GetSession(crt.walka))
     metrics = crt.ns.Metrics
-    belt = crt.walka.GetLiveSpeed(crt.walka)[0]
+    belt = crt.walka.GetLiveSpeed(crt.walka)
+    assert belt == DEFAULT_PACE_KMH
     crt.tick(600)
     later = lua_dict(crt.walka.GetSession(crt.walka))
     assert later["kcal"] - session["kcal"] == pytest.approx(metrics.kcalPerMinute(belt, 90.5), rel=0.01)
@@ -85,82 +85,56 @@ def test_partial_companion_profile(make_rt):
     assert lua_dict(rt.walka.GetProfile(rt.walka)) == {"weightKg": 75, "heightCm": 172}
 
 
-# ---- belt limits ----------------------------------------------------------------------------
+# ---- treadmill limits: a thing of the past -----------------------------------------------------
+# Until 0.7 the companion wrote what the treadmill could do (its speed
+# range and step, the companion's ramp rates) and the addon shaped the belt
+# speeds it asked for with them. The addon asks for nothing now. A file
+# written by an older companion still has the table: it is not read.
+
+OLD_LIMITS = [
+    "{ minKmh = 1.0, maxKmh = 3.0, stepKmh = 0.1, accelKmhPerS = 0.25, decelKmhPerS = 0.8 }",
+    "{ minKmh = 0.9656, maxKmh = 4.83, stepKmh = 0.16093, accelKmhPerS = 0.2, decelKmhPerS = 0.4, mphGrid = true }",
+    "{ minKmh = 6.0, maxKmh = 1.0, stepKmh = 0 }",
+    "{ minKmh = 0/0, maxKmh = 1/0, stepKmh = -0.1, accelKmhPerS = 'x' }",
+    "{}", "'broken'", "5",
+]
 
 
-def test_belt_limits_come_from_the_companion(crt):
-    limits = lua_dict(crt.walka.GetBeltLimits(crt.walka))
-    assert limits == {
-        "minKmh": 1.0, "maxKmh": 3.0, "stepKmh": 0.1, "accelKmhPerS": 0.25, "decelKmhPerS": 0.8,
-        "fromCompanion": True,
-    }
-
-
-def test_targets_respect_the_treadmills_range_and_grid(crt):
-    assert crt.db.settings.units == "mph"       # the display unit no longer decides the grid
-    defaults = crt.ns.SpeedModel.DEFAULTS
-    assert defaults.mountKmh > 3.0 + 0.1, "the mounted pace asks for more than this treadmill's 3.0 km/h"
-    crt.set(speed=14.0, mounted=True)
-    crt.slash("/walka start")
-    targets = set()
-    for _ in range(900):
-        crt.tick()
-        targets.add(round(crt.walka.GetLiveSpeed(crt.walka)[1], 6))
-    assert max(targets) == 3.0, "never ask for more than the treadmill can do"
-    assert all(abs(target * 10 - round(target * 10)) < 1e-6 for target in targets), "0.1 km/h steps"
-    assert crt.db.settings.speed.maxKmh == defaults.maxKmh > 3.0, "the user's own cap is kept for a faster treadmill"
-
-
-def test_default_paces_on_a_us_pad_reported_by_the_companion(make_rt):
-    """A 0.6-4.0 mph pad as the companion writes it: km/h rounded to a few
-    decimals, the top limited to the companion's own 3.0 mph. The default
-    paces are whole tenths of a mph; on this belt's grid they must come out
-    as exactly those - the cap too, although it is stored a hair under."""
-    limits = "{ minKmh = 0.9656, maxKmh = 4.83, stepKmh = 0.16093, accelKmhPerS = 0.2, decelKmhPerS = 0.4, mphGrid = true }"
-    rt = make_rt(files={"CompanionData.lua": f"WalkaCompanionData = {{ limits = {limits} }}"})
-    walka, defaults = rt.walka, rt.ns.SpeedModel.DEFAULTS
-    assert lua_dict(walka.GetBeltLimits(walka))["fromCompanion"] is True
+def walk_a_minute(rt) -> dict:
+    """A minute's session through every way of moving; what it counted."""
     rt.slash("/walka start")
-    for speed, key in [(0, "standKmh"), (2.5, "walkKmh"), (7.0, "runKmh"), (14.0, "mountKmh")]:
+    for speed in (7.0, 0, 0.3, 14.0, 7.0, 0):
         rt.set(speed=speed)
-        rt.tick(600)
-        mph = round(defaults[key] / KMH_PER_MPH, 1)
-        assert walka.GetLiveSpeed(walka)[1] / KMH_PER_MPH == pytest.approx(mph, abs=0.0005), key
-    walka.Set(walka, "speed.mountKmh", 6.0)             # above the cap: now the cap decides
-    rt.tick(600)
-    cap_mph = round(defaults.maxKmh / KMH_PER_MPH, 1)
-    assert walka.GetLiveSpeed(walka)[1] / KMH_PER_MPH == pytest.approx(cap_mph, abs=0.0005)
-    assert walka.GetLiveSpeed(walka)[1] <= defaults.maxKmh + rt.ns.SpeedModel.CAP_TOLERANCE_KMH
+        rt.tick(100)
+    session = lua_plain(rt.walka.GetSession(rt.walka))
+    rt.slash("/walka stop")
+    return session
 
 
-def test_belt_estimate_uses_the_companions_ramp_rates(crt):
-    crt.set(speed=7.0)
-    crt.slash("/walka start")
-    crt.tick(50)                                # 3 s countdown, then 2 s of ramp
-    assert crt.walka.GetLiveSpeed(crt.walka)[0] == pytest.approx(1.0 + 0.25 * 2.0, abs=0.06)
+@pytest.mark.parametrize("limits", OLD_LIMITS)
+def test_a_limits_table_from_an_older_companion_is_ignored(make_rt, rt, limits):
+    with_limits = make_rt(files={"CompanionData.lua": f"WalkaCompanionData = {{ limits = {limits} }}"})
+    assert with_limits.walka.GetBeltLimits is None, "nothing in the addon asks what the treadmill can do"
+    assert with_limits.walka.GetPace(with_limits.walka) == DEFAULT_PACE_KMH
+    # The walk is counted exactly as with no file at all - at the walker's
+    # pace, whatever range, step or ramp the table claims.
+    counted = walk_a_minute(with_limits)
+    assert counted == walk_a_minute(rt)
+    assert counted["maxKmh"] == DEFAULT_PACE_KMH
+    assert counted["distanceM"] == pytest.approx(DEFAULT_PACE_KMH / 3.6 * 60, rel=1e-6)
+    assert set(decoded_targets(with_limits)) == {0}, "and nothing of it reaches the strip"
+    with_limits.reload()
 
 
-def test_assumed_limits_without_companion_data(rt):
-    limits = lua_dict(rt.walka.GetBeltLimits(rt.walka))
-    assert "fromCompanion" not in limits
-    assert limits["minKmh"] == pytest.approx(0.6 * KMH_PER_MPH)
-    assert limits["maxKmh"] == pytest.approx(4.0 * KMH_PER_MPH)
-    assert limits["stepKmh"] == pytest.approx(MPH_STEP)
-
-
-@pytest.mark.parametrize(
-    "limits",
-    ["nil", "{}", "{ minKmh = 1.0 }", "{ maxKmh = 6.0 }", "'broken'", "{ minKmh = 'a', maxKmh = 'b' }"],
-)
-def test_incomplete_limits_fall_back_to_the_assumed_ones(make_rt, limits):
-    rt = make_rt(files={"CompanionData.lua": f"WalkaCompanionData = {{ limits = {limits} }}"})
-    assert "fromCompanion" not in lua_dict(rt.walka.GetBeltLimits(rt.walka))
-    rt.set(speed=7.0)
+def decoded_targets(rt) -> list[int]:
     rt.slash("/walka start")
-    rt.tick(300)
-    # The running pace on the assumed belt's grid: whole tenths of a mph.
-    running = nearest_step(rt.ns.SpeedModel.DEFAULTS.runKmh, MPH_STEP)
-    assert rt.walka.GetLiveSpeed(rt.walka)[1] == pytest.approx(running, abs=1e-6)
+    rt.set(speed=14.0, mounted=True)
+    targets = []
+    for _ in range(40):
+        rt.tick()
+        targets.append(rt.live_frame().target_raw)
+    rt.slash("/walka stop")
+    return targets
 
 
 # ---- history and totals -----------------------------------------------------------------------
@@ -281,7 +255,6 @@ def test_file_written_by_the_companion_loads_and_merges(make_rt, tmp_path):
     payload = addon_sync.build_payload(
         records,
         profile={"weightKg": 90.5, "heightCm": 185.0},
-        limits={"minKmh": 1.0, "maxKmh": 6.0, "stepKmh": 0.1, "accelKmhPerS": 0.5, "decelKmhPerS": 1.0},
         treadmill_name='UREVO "Strol" 2E \\ Größe',
         now=NOW - 60,
     )
@@ -292,7 +265,7 @@ def test_file_written_by_the_companion_loads_and_merges(make_rt, tmp_path):
     assert data.version == 1 and data.written == NOW - 60
     assert data.treadmill.encode() == 'UREVO "Strol" 2E \\ Größe'.encode()
     assert lua_dict(rt.walka.GetProfile(rt.walka)) == {"weightKg": 90.5, "heightCm": 185.0, "fromCompanion": True}
-    assert lua_dict(rt.walka.GetBeltLimits(rt.walka))["fromCompanion"] is True
+    assert data.limits is None, "the companion no longer says what the treadmill can do"
 
     entries = [lua_dict(entry) for entry in lua_list(rt.walka.GetHistory(rt.walka))]
     assert len(entries) == 3
@@ -310,14 +283,13 @@ def test_companion_writes_many_sessions_and_an_older_summary(make_rt):
                       seconds=1800, distance_m=1500, steps=2600, kcal=110.0, max_kmh=3.2)
         for index in range(count)
     ]
-    payload = addon_sync.build_payload(records, profile={"weightKg": 75, "heightCm": 172}, limits=None, now=NOW)
+    payload = addon_sync.build_payload(records, profile={"weightKg": 75, "heightCm": 172}, now=NOW)
     rt = make_rt(files={"CompanionData.lua": addon_sync.render_data_file(payload)}, state={"clock": NOW})
     assert len(lua_list(rt.walka.GetHistory(rt.walka))) == addon_sync.MAX_SESSIONS_IN_FILE
     totals = lua_plain(rt.walka.GetTotals(rt.walka))
     assert totals["all"]["sessions"] == count
     assert totals["all"]["steps"] == count * 2600
     assert totals["all"]["kcal"] == pytest.approx(count * 110.0)
-    assert "fromCompanion" not in lua_dict(rt.walka.GetBeltLimits(rt.walka))     # limits = nil: not connected yet
 
 
 def test_damaged_own_records_do_not_break_the_merge(make_rt):
@@ -332,70 +304,8 @@ def test_damaged_own_records_do_not_break_the_merge(make_rt):
 
 # ---- nonsense in the data file -------------------------------------------------------------------
 # The file is written by another program (possibly another version of it).
-# Whatever it says, the addon must not paint garbage into the beacon, ask
-# for a speed above the user's cap, or put a number into its saved variables
+# Whatever it says, the addon must not put a number into its saved variables
 # that the client cannot write back.
-
-ASSUMED = (0.6 * KMH_PER_MPH, 4.0 * KMH_PER_MPH)
-
-
-def drive(rt):
-    """A varied walk; returns every target and belt estimate seen."""
-    rt.slash("/walka start")
-    targets, belts = [], []
-    for speed in (7.0, 0, 0.3, 14.0, 7.0):
-        rt.set(speed=speed)
-        for _ in range(120):
-            rt.tick()
-            belt, target = rt.walka.GetLiveSpeed(rt.walka)
-            belts.append(belt)
-            targets.append(target)
-    return targets, belts
-
-
-@pytest.mark.parametrize(
-    "limits, accepted",
-    [
-        ("{ minKmh = 2.0, maxKmh = 6.0, stepKmh = 0 }", True),              # no step reported
-        ("{ minKmh = 1.0, maxKmh = 6.0, stepKmh = -0.1 }", True),
-        ("{ minKmh = 1.0, maxKmh = 6.0, stepKmh = 0/0 }", True),
-        ("{ minKmh = 1.0, maxKmh = 6.0, stepKmh = 1/0 }", True),
-        ("{ minKmh = 1.0, maxKmh = 6.0, stepKmh = 0.1, accelKmhPerS = 0, decelKmhPerS = -1 }", True),
-        ("{ minKmh = 1.0, maxKmh = 6.0, stepKmh = 0.1, accelKmhPerS = 'x', decelKmhPerS = 0/0 }", True),
-        ("{ minKmh = 6.0, maxKmh = 1.0, stepKmh = 0.1 }", False),           # range upside down
-        ("{ minKmh = 0, maxKmh = 6.0, stepKmh = 0.1 }", False),             # a belt cannot hold 0
-        ("{ minKmh = -1, maxKmh = 6.0, stepKmh = 0.1 }", False),
-        ("{ minKmh = 0/0, maxKmh = 6.0, stepKmh = 0.1 }", False),
-        ("{ minKmh = 1.0, maxKmh = 0/0, stepKmh = 0.1 }", False),
-        ("{ minKmh = 1.0, maxKmh = 1/0, stepKmh = 0.1 }", False),
-    ],
-)
-def test_nonsense_limits_never_reach_the_belt(make_rt, limits, accepted):
-    rt = make_rt(files={"CompanionData.lua": f"WalkaCompanionData = {{ limits = {limits} }}"})
-    found = lua_dict(rt.walka.GetBeltLimits(rt.walka))
-    assert found.get("fromCompanion", False) is accepted
-    low, high = (found["minKmh"], found["maxKmh"])
-    assert 0 < low <= high < 100 and 0 < found["stepKmh"] < 10
-    for key in ("accelKmhPerS", "decelKmhPerS"):
-        assert found.get(key) is None or 0 < found[key] < 100
-
-    targets, belts = drive(rt)
-    cap = min(high, rt.db.settings.speed.maxKmh)
-    for value in targets + belts:
-        assert value == value and abs(value) != float("inf"), "not a number"
-        assert value == 0 or low - 1e-6 <= value <= cap + 0.005 + 1e-6
-    assert max(belts) > 0, "the estimate must still move"
-    # (drive() rides mounted for twelve seconds: most of the way to that pace)
-    fastest = min(rt.db.settings.speed.mountKmh, cap)
-    assert fastest > 2.5 and max(belts) >= fastest - 0.4, "... and get up to speed"
-    rt.slash("/walka stop")
-    rt.reload()
-
-
-def test_a_step_larger_than_the_range_cannot_push_the_target_past_the_cap(make_rt):
-    rt = make_rt(files={"CompanionData.lua": "WalkaCompanionData = { limits = { minKmh = 1, maxKmh = 6, stepKmh = 50 } }"})
-    targets, _ = drive(rt)
-    assert max(targets) <= rt.db.settings.speed.maxKmh
 
 
 @pytest.mark.parametrize(

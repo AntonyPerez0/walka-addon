@@ -1,35 +1,27 @@
 // Plain words for machine state.
 //
-// Pure functions from a snapshot to what the page should say: the governor's
-// phase as a headline with the next thing to do, and the health of each link
-// (treadmill, game signal, heart-rate sensor, addon). No DOM in here.
+// Pure functions from a snapshot to what the page should say: what the belt
+// is doing and what Walka makes of it, as a headline with the next thing to
+// do, and the health of each link (treadmill, game signal, heart-rate sensor,
+// addon). No DOM in here.
+//
+// Walka only listens to the treadmill, so nothing here is something Walka
+// does to the belt: the belt is started, stopped and set at the treadmill.
 
-import { capitalise, fmt, sentence } from "./util.js";
+import { fmt, sentence } from "./util.js";
 
 const PAD_ADVICE =
   "Switch the treadmill on and close its own phone app - most treadmills accept only one Bluetooth connection. No pairing in the computer's Bluetooth settings is needed.";
 const WINDOW_ADVICE = "Bring the game window to the front; nothing may cover its top-left corner.";
+const NOT_FILED = "Screen reading is off, so walks are not filed under a game session.";
 
-/** Seconds since the game signal was declared lost (0 while it is fresh). */
-function lostFor(s) {
-  const age = s.source.signal_age_s;
-  if (age == null) return 0;
-  return Math.max(0, age - s.config.limits.signal_timeout_s);
-}
+/** What a walk is filed under. ("manual": walks recorded by a version that had dashboard sessions.) */
+export const SOURCE_LABEL = { wow: "World of Warcraft", free: "No game session", manual: "Manual session" };
 
-function aboutSeconds(seconds) {
-  const n = Math.max(0, Math.ceil(seconds));
-  if (n >= 90) return `about ${Math.round(n / 60)} min`;
-  return n <= 1 ? "a moment" : `about ${n} s`;
-}
-
-export const SOURCE_LABEL = { wow: "World of Warcraft", manual: "Manual mode", free: "Pad remote", none: "" };
-
-/** Where the current belt target comes from, as shown next to the state. */
+/** What the walk being recorded is filed under, as shown next to the state. */
 export function sourceLabel(s) {
-  if (s.source.kind !== "none") return SOURCE_LABEL[s.source.kind] || "";
-  if (s.session && s.session.source === "free") return SOURCE_LABEL.free;
-  return "";
+  if (s.session) return SOURCE_LABEL[s.session.source] || "";
+  return s.source.kind === "wow" ? SOURCE_LABEL.wow : "";
 }
 
 // ---- links -----------------------------------------------------------------------
@@ -42,7 +34,7 @@ export function treadmillHealth(s) {
         tone: "warn",
         pill: "no data",
         state: "no data",
-        detail: `Connected, but the pad has sent nothing for ${Math.round(t.age_s)} s. Walka treats the belt as stopped until data returns.`,
+        detail: `Connected, but the pad has sent nothing for ${Math.round(t.age_s)} s. Walka counts the belt as standing still until data returns.`,
       };
     }
     return { tone: "ok", pill: "connected", state: "connected", detail: "" };
@@ -54,6 +46,11 @@ export function treadmillHealth(s) {
       state: "disconnected",
       detail: "Not connected. Press Connect when the pad is switched on.",
     };
+  }
+  if (/reconnects when/i.test(t.error)) {
+    // The link dropped while nothing was being recorded: the companion says
+    // when it looks for the pad again, and is not searching meanwhile.
+    return { tone: "idle", pill: "off", state: "not connected", detail: sentence(t.error) };
   }
   if (t.error) {
     let detail = sentence(t.error);
@@ -76,7 +73,8 @@ export function gameHealth(s) {
       tone: "idle",
       pill: "off",
       state: "off",
-      detail: "Screen reading is switched off (the companion was started with --no-capture). Use manual control.",
+      detail:
+        "Screen reading is switched off (the companion was started with --no-capture). Walks are still recorded, just not filed under a game session.",
     };
   }
   const age = beacon.age_s;
@@ -106,7 +104,7 @@ export function gameHealth(s) {
         tone: "idle",
         pill: "closed",
         state: "game closed",
-        detail: "The game was closed, so the session has ended.",
+        detail: "The game was closed, so its session has ended.",
       };
       break;
     case "error":
@@ -140,11 +138,6 @@ export function gameHealth(s) {
           detail: `The signal is not visible: the game is minimised, covered, or on a loading screen. ${WINDOW_ADVICE}`,
         };
       }
-  }
-  if (s.source.manual.active) {
-    health.detail =
-      `Manual mode is on, so the game signal is ignored until you end the manual session. ${health.detail}`.trim();
-    health.ignored = true;
   }
   return health;
 }
@@ -228,7 +221,6 @@ export function staleHealth(s) {
     link.tone = "idle";
     link.pill = "unknown";
     link.state = "unknown";
-    link.ignored = false;
     link.detail = "Not known while the companion is not running.";
   }
   return links;
@@ -236,263 +228,121 @@ export function staleHealth(s) {
 
 // ---- the headline -------------------------------------------------------------------
 
-const RESUME_NOTE = "The belt starts after the pad's 3-2-1 countdown.";
-
 /**
- * The governor's state in plain words.
- * Returns {tone, icon, title, short, detail, action?: {kind, label, note}}.
- * tone: "ok" belt driven / session live, "warn" waiting or degraded,
- *       "bad" stopped or broken, "idle" at rest.
+ * What the belt is doing, and what Walka makes of it, in plain words.
+ * Returns {tone, icon, title, short, detail, action?: {label}} - the one
+ * action there is asks the companion to look for the treadmill.
+ * tone: "ok" a walk is being recorded, "warn" waiting or degraded,
+ *       "bad" broken, "idle" at rest.
  */
-/** Is Walka still waiting for the disclaimer to be accepted (a real treadmill only)? */
-export function termsPending(s) {
-  return !!(s && s.terms && s.terms.required && !s.terms.accepted);
-}
-
 export function describe(s) {
-  const g = s.governor;
   const t = s.treadmill;
-  const lim = s.config.limits;
-  const manual = s.source.manual;
-  const reason = g.reason || "";
+  const link = treadmillHealth(s);
 
-  if (termsPending(s)) {
-    return {
-      tone: "warn",
-      icon: "note",
-      title: "Waiting for you to accept the disclaimer",
-      short: "Not accepted",
-      detail:
-        "Walka does not start or steer the belt until you have accepted the disclaimer at the top of this page. " +
-        "It shows and records what the treadmill does, and STOP works.",
-    };
-  }
-
-  switch (g.phase) {
-    case "no_treadmill": {
-      const link = treadmillHealth(s);
-      const waiting = manual.active ? " Your manual session is waiting for the pad." : "";
-      if (!t.want_connected) {
-        return {
-          tone: "idle",
-          icon: "idle",
-          title: "Treadmill disconnected",
-          short: "No treadmill",
-          detail: `Walka is not connected to the pad. Press Connect when you want to walk.${waiting}`,
-          action: { kind: "connect", label: "Connect" },
-        };
-      }
-      if (t.error) {
-        return {
-          tone: "bad",
-          icon: "x",
-          title: "Treadmill not connected",
-          short: "No treadmill",
-          detail: `${link.detail}${waiting}`,
-          action: { kind: "connect", label: "Try again now" },
-        };
-      }
-      return {
-        tone: "warn",
-        icon: "search",
-        title: "Looking for the treadmill",
-        short: "Searching",
-        detail: `${link.detail}${waiting}`,
-      };
-    }
-
-    case "starting":
-      return {
-        tone: "warn",
-        icon: "go",
-        title: "Starting the belt",
-        short: "Starting",
-        detail: "The pad counts down 3-2-1, then the belt starts at its slowest speed. Get ready to walk.",
-      };
-
-    case "following": {
-      if (manual.active) {
-        return {
-          tone: "ok",
-          icon: "go",
-          title: "Manual session running",
-          short: "Manual",
-          detail:
-            "The belt holds the speed set under Manual control. The game signal is ignored until you end the manual session.",
-        };
-      }
-      const asked = s.source.frame ? s.source.frame.target_kmh : 0;
-      const capped = asked - g.wanted_kmh > 0.08;
-      if (g.ceiling_kmh != null) {
-        // The walker slowed the belt with the remote: Walka follows the game
-        // below that speed and never above it, until told otherwise.
-        return {
-          tone: "ok",
-          icon: "go",
-          title: "Following - held at the speed you set",
-          short: "Held",
-          detail: `You slowed the belt at the treadmill, so Walka keeps it at ${fmt.speedU(g.ceiling_kmh)} or slower. Press Resume (or pause and resume in game) to let it follow your character's full speed again.`,
-          action: { kind: "resume", label: "Resume", note: "Lifts the limit you set at the treadmill." },
-        };
-      }
-      return {
-        tone: "ok",
-        icon: "go",
-        title: "Following your character",
-        short: "Following",
-        detail: capped
-          ? `Your character asks for ${fmt.speedU(asked)}; the belt is held at ${fmt.speedU(g.wanted_kmh)}, the most your limits and the pad allow.`
-          : "The belt follows your character's speed. Nothing to do - just walk.",
-      };
-    }
-
-    case "holding":
-      if (reason.includes("holding")) {
-        const left = lim.hold_s - lostFor(s);
-        const next = lim.safe_speed_kmh > 0 ? `slows to the safe speed (${fmt.speedU(lim.safe_speed_kmh)})` : "pauses";
-        return {
-          tone: "warn",
-          icon: "warn",
-          title: "Signal lost: holding speed",
-          short: "Signal lost",
-          detail: `The belt keeps its speed and ${next} in ${aboutSeconds(left)} unless the signal returns. ${WINDOW_ADVICE}`,
-        };
-      }
-      return {
-        tone: "warn",
-        icon: "warn",
-        title: "Game signal lost",
-        short: "Signal lost",
-        detail: `The belt is stopped and carries on when the signal returns. ${WINDOW_ADVICE}`,
-      };
-
-    case "safe": {
-      const left = lim.hold_s + lim.loss_pause_s - lostFor(s);
-      return {
-        tone: "warn",
-        icon: "warn",
-        title: "Slowed to safe speed",
-        short: "Safe speed",
-        detail: `The game signal has been gone for a while. The belt pauses in ${aboutSeconds(left)} unless it returns. ${WINDOW_ADVICE}`,
-      };
-    }
-
-    case "standing":
-      if (reason.includes("cap")) {
-        return {
-          tone: "warn",
-          icon: "warn",
-          title: "Max speed is below the pad's minimum",
-          short: "Capped",
-          detail: `Your max speed (${fmt.speedU(lim.max_speed_kmh)}) is lower than the slowest this pad can go (${fmt.speedU(t.min_kmh)}), so the belt stays paused. Raise Max speed under Settings, Safety limits.`,
-          action: { kind: "limits", label: "Open safety limits" },
-        };
-      }
-      return {
-        tone: "ok",
-        icon: "pause",
-        title: "Standing: belt paused",
-        short: "Standing",
-        detail:
-          "Your character is standing still, so the belt is paused. It starts again by itself when your character moves.",
-      };
-
-    case "paused":
-      if (manual.active) {
-        return {
-          tone: "idle",
-          icon: "pause",
-          title: "Paused",
-          short: "Paused",
-          detail: `Your manual session is paused. Resume to carry on at ${fmt.speedU(manual.speed_kmh)}.`,
-          action: { kind: "manual-resume", label: "Resume", note: RESUME_NOTE },
-        };
-      }
-      return {
-        tone: "idle",
-        icon: "pause",
-        title: "Paused",
-        short: "Paused",
-        detail: "The session is paused in game. Resume there with /walka resume or the HUD button.",
-      };
-
-    case "waiting":
-      if (reason.startsWith("move your character")) {
-        return {
-          tone: "warn",
-          icon: "warn",
-          title: "Waiting for you to move",
-          short: "Waiting",
-          detail:
-            "Walka did not watch this session begin, so it will not start the belt by itself. Stand still, then start moving your character - or press Resume.",
-          action: { kind: "resume", label: "Resume", note: RESUME_NOTE },
-        };
-      }
-      return {
-        tone: "warn",
-        icon: "warn",
-        title: "Paused: game signal lost",
-        short: "Waiting",
-        detail: `The belt was paused because the game signal stayed away. ${WINDOW_ADVICE} Then move your character, or press Resume.`,
-        action: { kind: "resume", label: "Resume", note: "Counts for one minute: the belt starts if the game is back in view by then." },
-      };
-
-    case "user_stopped":
-      if (reason.startsWith("belt is not moving")) {
-        return {
-          tone: "bad",
-          icon: "stop",
-          title: "Belt is not moving",
-          short: "Stopped",
-          detail:
-            "The pad did not start, or it stopped by itself. Check the pad - power, safety key, an error on its display - then press Resume.",
-          action: { kind: "resume", label: "Resume", note: RESUME_NOTE },
-        };
-      }
-      return {
-        tone: "bad",
-        icon: "stop",
-        title: "Stopped",
-        short: "Stopped",
-        detail:
-          "The belt was stopped with STOP or at the treadmill, and it stays off until you say so: press Resume, press start on the pad, or pause and resume in game.",
-        action: { kind: "resume", label: "Resume", note: RESUME_NOTE },
-      };
-
-    default: {
-      if (g.phase !== "idle") {
-        // A phase this page does not know yet: say what the companion says.
-        return {
-          tone: "idle",
-          icon: "idle",
-          title: capitalise(g.phase.replace(/_/g, " ")),
-          short: capitalise(g.phase.replace(/_/g, " ")),
-          detail: sentence(reason),
-        };
-      }
-      // idle: no session - the governor keeps its hands off the belt.
-      if (s.session && s.session.source === "free" && t.speed_kmh > 0.05) {
-        return {
-          tone: "ok",
-          icon: "go",
-          title: "Walking with the pad's remote",
-          short: "Free walk",
-          detail:
-            "The belt is running from the pad's own controls. Walka records the walk but does not touch the speed. To let the game set the pace, type /walka start in game.",
-        };
-      }
-      const how = s.source.beacon
-        ? "Start one in game with /walka start, or start a manual session here."
-        : "Screen reading is off, so start a manual session to walk.";
+  if (!t.connected) {
+    if (!t.want_connected || link.tone === "idle") {
       return {
         tone: "idle",
         icon: "idle",
-        title: "Ready",
-        short: "Ready",
-        detail: `No session is running, so Walka leaves the belt alone. ${how}`,
+        title: "Treadmill disconnected",
+        short: "No treadmill",
+        detail: t.want_connected
+          ? link.detail
+          : "Walka is not listening to the pad, so no walk is recorded. Press Connect when you want to walk.",
+        action: { label: "Connect" },
       };
     }
+    if (t.error) {
+      return {
+        tone: "bad",
+        icon: "x",
+        title: "Treadmill not connected",
+        short: "No treadmill",
+        detail: link.detail,
+        action: { label: "Try again now" },
+      };
+    }
+    return {
+      tone: "warn",
+      icon: "search",
+      title: "Looking for the treadmill",
+      short: "Searching",
+      detail: link.detail,
+    };
   }
+
+  if (link.tone !== "ok") {
+    return { tone: "warn", icon: "warn", title: "No data from the treadmill", short: "No data", detail: link.detail };
+  }
+
+  const inGame = s.source.kind === "wow"; // a walking session is marked in the game, and in view
+  const frame = s.source.frame;
+
+  if (t.moving) {
+    let detail;
+    if (s.session && s.session.source === "wow") {
+      detail = "The belt is moving, and Walka counts the walk for the session marked in World of Warcraft.";
+      if (inGame && frame && frame.paused) {
+        detail += " That session is paused in game; the walk is recorded all the same.";
+      }
+    } else if (s.source.beacon) {
+      detail =
+        "The belt is moving. No session is marked in a game, so the walk is recorded on its own. In World of Warcraft, /walka start files it under your character.";
+    } else {
+      detail = `The belt is moving. ${NOT_FILED}`;
+    }
+    return { tone: "ok", icon: "go", title: "Recording your walk", short: "Recording", detail };
+  }
+
+  if (t.state === "starting") {
+    return {
+      tone: "ok",
+      icon: "go",
+      title: "The pad is counting down",
+      short: "Starting",
+      detail: "The belt was started at the treadmill and moves when its countdown is over. Walka records the walk from then on.",
+    };
+  }
+
+  if (t.state === "paused") {
+    return {
+      tone: "idle",
+      icon: "pause",
+      title: "Paused at the treadmill",
+      short: "Paused",
+      detail: "The belt was paused with the treadmill's own controls. Start it again there to carry on.",
+    };
+  }
+
+  if (s.session && s.session.source === "free") {
+    return {
+      tone: "idle",
+      icon: "idle",
+      title: "The belt is standing still",
+      short: "Standing still",
+      detail:
+        "The walk stays open for about a minute: start the belt again at the treadmill and it carries on. Otherwise it is saved as it is.",
+    };
+  }
+  if (inGame || s.session) {
+    return {
+      tone: "idle",
+      icon: "idle",
+      title: "The belt is standing still",
+      short: "Standing still",
+      detail:
+        "A walking session is marked in World of Warcraft. Start the belt with the treadmill's own remote - Walka records the walk and counts it for your character.",
+    };
+  }
+  return {
+    tone: "idle",
+    icon: "idle",
+    title: "Ready",
+    short: "Ready",
+    detail: `Start the belt with the treadmill's own remote - Walka records the walk by itself. ${
+      s.source.beacon ? "In World of Warcraft, /walka start files it under your character." : NOT_FILED
+    }`,
+  };
 }
 
 /** What to show when the event stream is down. */
@@ -502,7 +352,7 @@ export const OFFLINE = {
   title: "Companion not running",
   short: "Offline",
   detail:
-    "This page has lost the Walka companion and cannot see or control the belt. If the belt is moving, stop it with the pad's own remote. The page reconnects by itself.",
+    "This page has lost the Walka companion and cannot see the belt. No walk is recorded until the companion runs again. The page reconnects by itself.",
 };
 
 /** The four first-run steps, ticked from the snapshot. */

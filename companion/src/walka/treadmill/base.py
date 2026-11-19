@@ -1,4 +1,11 @@
-"""Treadmill driver interface shared by the real (FTMS) and simulated belts."""
+"""Treadmill reader interface shared by the real (FTMS) and simulated belts.
+
+Walka only listens to a treadmill. A reader connects, takes in what the
+machine reports about itself and lets go again: it has no way to start,
+stop or pause a belt or to change its speed, and nothing in the companion
+asks it to. The belt is the walker's, by the treadmill's own remote and
+buttons.
+"""
 
 from __future__ import annotations
 
@@ -23,13 +30,11 @@ class BeltState(str, Enum):
 class TreadmillEvent(str, Enum):
     CONNECTED = "connected"
     DISCONNECTED = "disconnected"
-    EXTERNAL_STOP = "external_stop"  # stopped/paused at the machine itself
-    EXTERNAL_START = "external_start"  # started/resumed at the machine itself
 
 
 @dataclass
 class TreadmillStatus:
-    """Everything a driver knows about its treadmill.
+    """Everything a reader knows about its treadmill.
 
     The counters (distance, energy, steps, elapsed) are the *machine's own*
     session counters. They reset whenever the machine feels like it (end of
@@ -42,8 +47,8 @@ class TreadmillStatus:
     address: str = ""
     state: BeltState = BeltState.UNKNOWN
     speed_kmh: float = 0.0
-    target_kmh: float | None = None
-    min_kmh: float = 1.0
+    target_kmh: float | None = None  # the speed the machine says it is set to, if it says
+    min_kmh: float = 1.0  # the range the machine says it has (for display only)
     max_kmh: float = 6.0
     step_kmh: float = 0.1
     mph_grid: bool = False  # firmware works in 0.1 mph steps (US models)
@@ -52,7 +57,6 @@ class TreadmillStatus:
     steps: int | None = None
     elapsed_s: int | None = None
     heart_rate_bpm: int | None = None
-    busy: bool = False  # the machine is still closing a workout and will ignore a start
     updated_at: float = 0.0  # time.monotonic() of the last data packet
     detail: str = ""  # human-readable connection detail / last error
 
@@ -74,10 +78,10 @@ EventHandler = Callable[[TreadmillEvent], None]
 
 
 class Treadmill(abc.ABC):
-    """A treadmill that can be started, paused, stopped and set to a speed.
+    """A treadmill that is listened to. ``status`` is what it last said.
 
-    All command coroutines raise ``TreadmillError`` on failure. Drivers must
-    never retry a motor command whose outcome is unknown.
+    There is deliberately nothing here that could move a belt: no start, no
+    stop, no speed. A reader that grew one would be a different program.
     """
 
     kind = "abstract"
@@ -98,51 +102,9 @@ class Treadmill(abc.ABC):
     async def disconnect(self) -> None:
         """Disconnect and release the device (idempotent)."""
 
-    @abc.abstractmethod
-    async def start(self) -> None:
-        """Start or resume the belt."""
-
-    @abc.abstractmethod
-    async def pause(self) -> None:
-        """Pause the belt, keeping the machine's workout counters."""
-
-    @abc.abstractmethod
-    async def stop(self) -> None:
-        """Stop the belt and end the machine's workout."""
-
-    @abc.abstractmethod
-    async def set_speed(self, kmh: float) -> None:
-        """Set the belt's target speed. Only valid while the belt is running."""
-
 
 class TreadmillError(RuntimeError):
-    """A treadmill command or connection failed."""
-
-
-class CommandRejected(TreadmillError):
-    """The treadmill answered a command with a failure code (so the command
-    was definitely not carried out)."""
-
-    def __init__(self, message: str, result: int) -> None:
-        super().__init__(message)
-        self.result = result
-
-
-class CommandSuperseded(TreadmillError):
-    """A start or speed command was not sent because a stop or pause was
-    asked for while it was still waiting its turn (so it was definitely not
-    carried out, and the belt is being halted)."""
-
-
-def mph_tenths_to_command_kmh(mph_tenths: int) -> float:
-    """Speed to send so that mph-firmware lands on exactly ``mph_tenths``/10 mph.
-
-    UREVO's US firmware truncates an FTMS target to 0.1 km/h, converts it to
-    mph and truncates again to 0.1 mph - so the naive 3.22 km/h for 2.0 mph
-    arrives as 1.9 mph. Rounding the km/h value *up* to the next 0.1 km/h
-    survives both truncations (2.0 mph -> 3.3 km/h -> 2.05 mph -> 2.0 mph).
-    """
-    return math.ceil(mph_tenths * KMH_PER_MPH - 1e-9) / 10.0
+    """The treadmill could not be found, reached or listened to."""
 
 
 def kmh_to_mph_tenths(kmh: float) -> int:

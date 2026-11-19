@@ -19,7 +19,7 @@ preamble and refines it until the postamble and CRC agree.
 The strip shows one frame at a time: usually a live frame, now and then a
 stat frame (see ``protocol``). The decoder hands back both, in separate
 places (``Decoded.frame`` and ``Decoded.stat``), so that a stat frame can
-never be taken for news about the belt.
+never be taken for news about the walking session.
 
 A CRC of 16 bits is not much against a whole screen: text, tables and window
 decorations are rows of light and dark runs too, and a decoder that tries
@@ -126,7 +126,7 @@ class Decoded:
 
     It carried either a live frame (``frame``) or a stat frame (``stat``);
     the other one is None. They are kept apart on purpose: ``frame`` is
-    what the belt follows, and a stat frame must never turn up there.
+    the live state, and a stat frame must never turn up there.
     """
 
     frame: Frame | None  # the live frame; None while the strip shows a stat frame

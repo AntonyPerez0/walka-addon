@@ -1,6 +1,6 @@
 ## Interface: 16001, 16002
 ## Title: Walka
-## Notes: Links an under-desk walking pad to your character: the belt follows your character's speed, and the HUD tracks speed, steps, distance and calories.
+## Notes: Walk on your walking pad while you play: Walka counts your time, steps, distance and calories, and draws your character's road on the map.
 ## Author: Walka
 ## Version: 0.6.1
 ## X-License: MIT
@@ -13,7 +13,6 @@
 
 CompanionData.lua
 Core\Protocol.lua
-Core\SpeedModel.lua
 Core\Metrics.lua
 Core\SessionLog.lua
 Core\Journey.lua

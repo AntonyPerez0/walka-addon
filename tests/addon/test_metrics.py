@@ -1,4 +1,4 @@
-"""Core/Metrics.lua: calories, cadence and the in-game belt estimate."""
+"""Core/Metrics.lua: calories, cadence and the in-game estimate of a walk."""
 
 from __future__ import annotations
 
@@ -110,122 +110,86 @@ def test_implied_stride_is_human(ns, kmh):
     assert 0.20 <= stride_m <= 0.95
 
 
-# ---- the belt estimator ---------------------------------------------------------------
+# ---- the estimate of a walk ---------------------------------------------------------------
+# Metrics.walk adds a stretch of walking at one pace to a table of totals.
+# The pace is what the walker says the belt is set to: there is no model of
+# a belt in the addon - no countdown, no ramp, nothing that follows a target.
 
 
-class Belt:
-    def __init__(self, rt, **limits):
-        self.rt = rt
-        self.limits = rt.to_lua(limits)
-        self.estimator = rt.ns.Metrics.Estimator.new(self.limits)
-        self.totals = rt.to_lua({"seconds": 0, "distanceM": 0, "steps": 0, "kcal": 0})
-        self.profile = rt.to_lua({"weightKg": 75, "heightCm": 172})
-
-    def run(self, seconds, target, dt=0.1):
-        speeds = []
-        for _ in range(int(round(seconds / dt))):
-            speeds.append(self.estimator.update(self.estimator, dt, target, self.totals, self.profile))
-        return speeds
+def walk(rt, totals, seconds, kmh, dt=0.1, profile=None):
+    profile = rt.to_lua({"weightKg": 75, "heightCm": 172} if profile is None else profile)
+    for _ in range(int(round(seconds / dt))):
+        rt.ns.Metrics.walk(totals, dt, kmh, profile)
 
 
-def default_rates(rt):
-    """The companion's default rate limits (km/h per second up, down) - the
-    estimator's defaults follow them, see Estimator.DEFAULTS."""
-    defaults = rt.ns.Metrics.Estimator.DEFAULTS
-    return defaults.accelKmhPerS, defaults.decelKmhPerS
+def test_the_pace_walka_counts_with(ns):
+    metrics = ns.Metrics
+    assert metrics.DEFAULT_PACE_KMH == 2.414, "1.5 mph, where people settle at a treadmill desk"
+    assert metrics.DEFAULT_PACE_KMH / KMH_PER_MPH == pytest.approx(1.5, abs=0.0005)
+    assert (metrics.MIN_PACE_KMH, metrics.MAX_PACE_KMH) == (0.5, 10)
+    assert metrics.Estimator is None, "the model of a belt that follows a target is gone"
 
 
-def test_countdown_then_minimum_then_ramp(rt):
-    belt = Belt(rt)
-    accel, _ = default_rates(rt)
-    speeds = belt.run(3 + (3.2 - 1.0) / accel + 2, 3.2)
-    # Three seconds of countdown with the belt still ...
-    assert set(speeds[:29]) == {0}
-    started = next(index for index, value in enumerate(speeds) if value > 0)
-    assert 29 <= started <= 31
-    # ... then it appears at its minimum speed ...
-    assert speeds[started] == pytest.approx(1.0)
-    # ... and speeds up at the companion's rate limit to the target.
-    assert speeds[started + 10] == pytest.approx(1.0 + accel * 1.0, abs=0.06)
-    assert speeds[started + 20] == pytest.approx(1.0 + accel * 2.0, abs=0.06)
-    assert speeds[-1] == pytest.approx(3.2)
-    assert max(speeds) <= 3.2 + 1e-9
-    assert speeds == sorted(speeds)
-
-
-def test_slows_at_the_deceleration_limit_and_coasts_to_a_stop(rt):
-    belt = Belt(rt)
-    accel, decel = default_rates(rt)
-    belt.run(3 + (4.0 - 1.0) / accel + 2, 4.0)
-    slowing = belt.run(1, 2.0)
-    assert slowing[-1] == pytest.approx(4.0 - decel * 1.0, abs=0.01)
-    belt.run(2.0 / decel, 2.0)
-    stopping = belt.run(2, 0)
-    assert stopping[3] == pytest.approx(2.0 - 2.5 * 0.4, abs=0.01)   # 2.5 km/h per second
-    assert stopping[-1] == 0
-    assert min(stopping) >= 0
-
-
-def test_a_target_below_the_belt_minimum_starts_at_the_target(rt):
-    belt = Belt(rt)
-    assert belt.run(5, 0.6)[-1] == pytest.approx(0.6)
-
-
-def test_stopping_during_the_countdown_restarts_it(rt):
-    belt = Belt(rt)
-    belt.run(2, 3.0)            # two of the three seconds
-    belt.run(0.5, 0)            # paused
-    speeds = belt.run(4, 3.0)
-    assert set(speeds[:29]) == {0}
-    assert speeds[-1] > 0
-
-
-def test_limits_can_be_overridden_and_are_read_live(rt):
-    belt = Belt(rt, countdownSeconds=0, accelKmhPerS=2.0, minBeltKmh=0.6)
-    speeds = belt.run(2, 3.0)
-    assert speeds[0] == pytest.approx(0.6)
-    assert speeds[10] == pytest.approx(0.6 + 2.0 * 1.0, abs=0.01)
-    belt.limits.decelKmhPerS = 3.0
-    assert belt.run(0.5, 1.0)[-1] == pytest.approx(3.0 - 3.0 * 0.5, abs=0.01)
-
-
-def test_totals_accumulate_only_while_the_belt_moves(rt):
-    belt = Belt(rt)
-    belt.run(3, 3.0)
-    assert lua_dict(belt.totals)["seconds"] <= 0.2      # the countdown does not count
-    belt.run(600, 3.0)
-    totals = lua_dict(belt.totals)
-    assert totals["seconds"] == pytest.approx(600, abs=1)
-    # Ten minutes at 3 km/h (less a little for the ramp).
-    assert totals["distanceM"] == pytest.approx(500, rel=0.02)
-    assert totals["steps"] == pytest.approx(10 * rt.ns.Metrics.stepsPerMinute(3.0, 172), rel=0.02)
-    assert totals["kcal"] == pytest.approx(10 * rt.ns.Metrics.kcalPerMinute(3.0, 75), rel=0.02)
-    assert totals["maxKmh"] == pytest.approx(3.0)
-
-    before = lua_dict(belt.totals)
-    belt.run(60, 0)                                     # stopped: coasts for a second, then nothing
-    after = lua_dict(belt.totals)
-    assert after["seconds"] - before["seconds"] <= 1.5
-    assert after["distanceM"] - before["distanceM"] <= 1.0
-    assert after["maxKmh"] == before["maxKmh"]
-
-
-def test_estimator_tolerates_missing_arguments(rt):
-    estimator = rt.ns.Metrics.Estimator.new()
-    assert estimator.update(estimator, 0.1, None, None, None) == 0
-    assert estimator.update(estimator, None, 3.0) == 0
-    assert estimator.update(estimator, -1, 3.0) == 0
+def test_a_walk_counts_from_its_first_moment_at_the_pace_given(rt):
     totals = rt.lua.table()
+    walk(rt, totals, 0.1, 3.0)
+    first = lua_dict(totals)
+    assert first["seconds"] == pytest.approx(0.1), "no countdown, no ramp"
+    assert first["distanceM"] == pytest.approx(3.0 / 3.6 * 0.1)
+    assert first["maxKmh"] == 3.0
+
+    walk(rt, totals, 599.9, 3.0)
+    totals = lua_dict(totals)
+    metrics = rt.ns.Metrics
+    assert totals["seconds"] == pytest.approx(600)
+    assert totals["distanceM"] == pytest.approx(500)
+    assert totals["steps"] == pytest.approx(10 * metrics.stepsPerMinute(3.0, 172))
+    assert totals["kcal"] == pytest.approx(10 * metrics.kcalPerMinute(3.0, 75))
+    assert totals["maxKmh"] == 3.0
+
+
+def test_a_change_of_pace_counts_from_that_moment(rt):
+    totals = rt.lua.table()
+    walk(rt, totals, 60, 2.0)
+    walk(rt, totals, 60, 5.0)
+    walk(rt, totals, 60, 3.0)
+    totals = lua_dict(totals)
+    assert totals["seconds"] == pytest.approx(180)
+    assert totals["distanceM"] == pytest.approx((2.0 + 5.0 + 3.0) / 3.6 * 60)
+    assert totals["maxKmh"] == 5.0, "the fastest pace of the walk"
+
+
+@pytest.mark.parametrize("kmh", [0, -3.0, None])
+def test_nothing_is_counted_at_no_pace(rt, kmh):
+    """A paused session is a pace of zero: no time, no distance."""
+    totals = rt.lua.table()
+    walk(rt, totals, 60, 3.0)
+    before = lua_dict(totals)
+    walk(rt, totals, 60, kmh)
+    assert lua_dict(totals) == before
+
+
+def test_the_profile_decides_steps_and_calories(rt):
+    metrics = rt.ns.Metrics
+    small, tall = rt.lua.table(), rt.lua.table()
+    walk(rt, small, 60, 3.0, profile={"weightKg": 55, "heightCm": 158})
+    walk(rt, tall, 60, 3.0, profile={"weightKg": 95, "heightCm": 192, "stepCalibration": 1.2})
+    assert small.distanceM == pytest.approx(tall.distanceM)
+    assert small.steps == pytest.approx(metrics.stepsPerMinute(3.0, 158))
+    assert tall.steps == pytest.approx(metrics.stepsPerMinute(3.0, 192, 1.2))
+    assert small.kcal == pytest.approx(metrics.kcalPerMinute(3.0, 55))
+    assert tall.kcal == pytest.approx(metrics.kcalPerMinute(3.0, 95))
+
+
+def test_walk_tolerates_missing_arguments(rt):
+    metrics = rt.ns.Metrics
+    totals = rt.lua.table()
+    metrics.walk(totals, None, 3.0)
+    metrics.walk(totals, -1, 3.0)
+    metrics.walk(totals, 0, 3.0)
+    assert lua_dict(totals) == {}, "no time, nothing counted - not even a top speed"
     for _ in range(100):
-        estimator.update(estimator, 0.1, 3.0, totals)   # default profile, empty totals
-    assert totals.seconds > 0 and totals.steps > 0 and totals.kcal > 0
-
-
-def test_reset(rt):
-    belt = Belt(rt)
-    belt.run(20, 3.0)
-    belt.estimator.reset(belt.estimator, 0)
-    assert belt.estimator.beltKmh == 0
-    assert belt.run(1, 3.0)[-1] == 0                    # a new countdown
-    belt.estimator.reset(belt.estimator, 2.5)           # e.g. after /reload
-    assert belt.run(0.1, 3.0)[-1] == pytest.approx(2.5 + default_rates(rt)[0] * 0.1)
+        metrics.walk(totals, 0.1, 3.0)                  # default profile, empty totals
+    assert totals.seconds == pytest.approx(10)
+    assert totals.steps == pytest.approx(metrics.stepsPerMinute(3.0, 172) / 6)
+    assert totals.kcal == pytest.approx(metrics.kcalPerMinute(3.0, 75) / 6)

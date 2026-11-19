@@ -1,13 +1,13 @@
 """Core behaviour the windows rely on, found or pinned down while the UI
 was integrated: timestamps the game cannot format, non-finite numbers in
-the data files, the target right after a session starts, totals from a
+the data files, the pace right after a session starts, totals from a
 history that is already merged, and garbage on the tick."""
 
 from __future__ import annotations
 
 import pytest
 
-from .conftest import KMH_PER_MPH, MPH_STEP, local_noon, nearest_step
+from .conftest import DEFAULT_PACE_KMH, local_noon
 from .harness import lua_dict, lua_list, lua_plain
 
 NOW = local_noon(2026, 11, 17)
@@ -145,50 +145,50 @@ def test_sync_time_without_companion_data(rt):
     assert rt.walka.GetSyncTime(rt.walka) is None
 
 
-# ---- the target right after a start ------------------------------------------------------------------
+# ---- the pace right after a start ------------------------------------------------------------------
 
 
-def test_target_is_known_as_soon_as_a_session_starts(rt):
+def test_the_pace_is_known_as_soon_as_a_session_starts(rt):
     walka = rt.walka
     seen = []
-    walka.On(walka, "SESSION", lambda *args: seen.append((str(args[0]), walka.GetLiveSpeed(walka)[1])))
+    walka.On(walka, "SESSION", lambda *args: seen.append((str(args[0]), walka.GetLiveSpeed(walka))))
     rt.set(speed=7.0)
     rt.tick(3)
+    assert walka.GetLiveSpeed(walka) == 0, "no session: nothing is counted"
     rt.slash("/walka start")
     # The windows redraw on this event - before any tick. They must see the
-    # pace the belt is about to be asked for (a session starts out at the
-    # standing pace, on the belt's 0.1 mph grid), not a stopped belt.
-    standing = nearest_step(rt.ns.SpeedModel.DEFAULTS.standKmh, MPH_STEP)
-    assert standing >= 0.6 * KMH_PER_MPH
-    assert seen == [("start", pytest.approx(standing, abs=1e-6))]
-    primed = walka.GetLiveSpeed(walka)[1]
-    rt.tick(1)
-    sent = rt.live_frame().target_kmh
-    assert sent == pytest.approx(primed, abs=0.17), "the first frame asks for (about) what was announced"
+    # pace the session counts with, not a walk that has not begun.
+    assert seen == [("start", DEFAULT_PACE_KMH)]
 
     rt.tick(100)
     rt.slash("/walka pause")
     assert seen[-1] == ("pause", 0)
     rt.tick(50)
     rt.slash("/walka resume")
-    assert seen[-1][0] == "resume" and seen[-1][1] >= 0.6 * KMH_PER_MPH - 0.01
+    assert seen[-1] == ("resume", DEFAULT_PACE_KMH)
+    rt.slash("/walka stop")
+    assert seen[-1] == ("stop", 0)
 
 
-def test_no_target_is_announced_when_the_belt_will_stay_stopped(rt):
+def test_the_live_speed_follows_the_pace_and_nothing_else(rt):
+    """What the session counts with is the pace the walker set - the same
+    whether the character stands, runs, rides or flies."""
     walka = rt.walka
-    walka.Set(walka, "speed.standKmh", 0)
-    rt.set(speed=0)
-    rt.tick(3)
     rt.slash("/walka start")
-    assert walka.GetLiveSpeed(walka) == (0, 0)
-    rt.tick(50)
-    assert walka.GetLiveSpeed(walka) == (0, 0)
+    for state in ({"speed": 0}, {"speed": 2.5}, {"speed": 7.0}, {"speed": 14.0, "mounted": True},
+                  {"speed": 30.0, "taxi": True}, {"speed": 7.0, "falling": True}, {"speed": 0, "combat": True}):
+        rt.set(mounted=False, taxi=False, falling=False, combat=False)
+        rt.set(**state)
+        rt.tick(20)
+        assert walka.GetLiveSpeed(walka) == DEFAULT_PACE_KMH, state
+    walka.SetPace(walka, 4.0)
+    assert walka.GetLiveSpeed(walka) == 4.0, "a new pace counts at once"
 
 
-def test_afk_resume_also_knows_its_target(rt):
+def test_afk_resume_also_knows_its_pace(rt):
     walka = rt.walka
     seen = []
-    walka.On(walka, "SESSION", lambda *args: seen.append((str(args[0]), walka.GetLiveSpeed(walka)[1])))
+    walka.On(walka, "SESSION", lambda *args: seen.append((str(args[0]), walka.GetLiveSpeed(walka))))
     rt.set(speed=7.0)
     rt.slash("/walka start")
     rt.tick(100)
@@ -196,26 +196,23 @@ def test_afk_resume_also_knows_its_target(rt):
     rt.tick(20)
     rt.set(afk=False)                       # back, but not moving yet: still paused
     rt.tick(20)
-    assert [name for name, _ in seen] == ["start", "pause"]
-    assert seen[-1] == ("pause", 0)
+    assert seen == [("start", DEFAULT_PACE_KMH), ("pause", 0)]
     rt.set(speed=7.0)                       # the character moves: the session resumes
     rt.tick(1)
-    assert [name for name, _ in seen] == ["start", "pause", "resume"]
-    assert seen[-1][1] >= 0.6 * KMH_PER_MPH - 0.01
+    assert seen[-1] == ("resume", DEFAULT_PACE_KMH) and len(seen) == 3
 
 
 def test_starting_while_falling_or_on_a_flight_path(rt):
-    # Odd moments to start, but the zero-length model update must cope.
+    # Odd moments to start: the session counts from the first tick all the same.
     walka = rt.walka
     for state in ({"falling": True, "speed": 7.0}, {"taxi": True, "speed": 30.0}, {"dead": True, "speed": 0}):
         rt.set(falling=False, taxi=False, dead=False)
         rt.set(**state)
         rt.tick(2)
         rt.slash("/walka start")
-        target = walka.GetLiveSpeed(walka)[1]
-        limits = lua_dict(walka.GetBeltLimits(walka))
-        assert target == 0 or limits["minKmh"] - 1e-6 <= target <= limits["maxKmh"] + 1e-6
+        assert walka.GetLiveSpeed(walka) == DEFAULT_PACE_KMH
         rt.tick(30)
+        assert walka.GetSession(walka).seconds == pytest.approx(3.0)
         rt.slash("/walka stop")
 
 

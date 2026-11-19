@@ -1,4 +1,4 @@
-"""The FTMS codec against hand-built packets."""
+"""The FTMS decoder against hand-built packets."""
 
 from __future__ import annotations
 
@@ -10,12 +10,9 @@ import pytest
 from walka import ftms, probe
 from walka.ftms import (
     MachineStatus,
-    Op,
-    ResultCode,
     StatusOp,
     TreadmillData,
     build_treadmill_data,
-    parse_control_response,
     parse_features,
     parse_heart_rate,
     parse_machine_status,
@@ -217,7 +214,6 @@ def test_garbage_never_raises():
         blob = bytes(rng.randrange(256) for _ in range(rng.randrange(0, 40)))
         parse_treadmill_data(blob)
         parse_machine_status(blob)
-        parse_control_response(blob)
         parse_heart_rate(blob)
         parse_rsc_measurement(blob)
         parse_supported_speed_range(blob)
@@ -298,9 +294,9 @@ def test_supported_speed_range():
 def test_features():
     features = parse_features(struct.pack("<II", 0x0040 | 0x0004, 0x0001))
     assert features is not None
-    assert features.speed_target_supported and features.step_count_supported
+    assert features.step_count_supported and features.target_settings == 0x0001
     plain = parse_features(struct.pack("<II", 0x0004, 0x0002))
-    assert plain is not None and not plain.speed_target_supported and not plain.step_count_supported
+    assert plain is not None and not plain.step_count_supported
     assert parse_features(b"\x00" * 7) is None
 
 
@@ -312,60 +308,6 @@ def test_uuids():
     assert ftms.FITNESS_MACHINE_STATUS.startswith("00002ada-")
     assert ftms.SUPPORTED_SPEED_RANGE.startswith("00002ad4-")
     assert ftms.HEART_RATE_MEASUREMENT.startswith("00002a37-")
-
-
-# ---- control point ------------------------------------------------------------------------
-
-
-def test_command_bytes():
-    assert ftms.cmd_request_control() == b"\x00"
-    assert ftms.cmd_reset() == b"\x01"
-    assert ftms.cmd_start_or_resume() == b"\x07"
-    assert ftms.cmd_stop() == b"\x08\x01"
-    assert ftms.cmd_pause() == b"\x08\x02"
-    assert ftms.cmd_stop() != ftms.cmd_pause()
-
-
-@pytest.mark.parametrize(
-    "kmh,payload",
-    [
-        (3.3, "024a01"),
-        (0.96, "026000"),
-        (1.0, "026400"),
-        (6.5, "028a02"),
-        (3.218688, "024201"),  # rounds to 3.22
-        (0.0, "020000"),
-        (-2.0, "020000"),
-        (655.35, "02ffff"),
-        (9999.0, "02ffff"),
-    ],
-)
-def test_set_target_speed_encoding(kmh: float, payload: str):
-    assert ftms.cmd_set_target_speed(kmh).hex() == payload
-
-
-def test_set_target_speed_is_exact_on_the_tenth_grid():
-    """Every 0.1 km/h value the driver sends must arrive as exactly that."""
-    for tenths in range(0, 200):
-        payload = ftms.cmd_set_target_speed(tenths / 10.0)
-        assert payload[0] == 0x02 and int.from_bytes(payload[1:], "little") == tenths * 10
-
-
-def test_control_responses():
-    ok = parse_control_response(bytes([0x80, 0x07, 0x01]))
-    assert ok is not None and ok.ok and ok.request_op == Op.START_OR_RESUME and ok.result == ResultCode.SUCCESS
-    assert ok.describe() == "START_OR_RESUME: SUCCESS"
-    for result in (0x02, 0x03, 0x04, 0x05):
-        response = parse_control_response(bytes([0x80, 0x02, result]))
-        assert response is not None and not response.ok and response.request_op == Op.SET_TARGET_SPEED
-    denied = parse_control_response(bytes([0x80, 0x08, 0x05, 0xAA]))
-    assert denied is not None and denied.result == ResultCode.CONTROL_NOT_PERMITTED
-    assert denied.describe() == "STOP_OR_PAUSE: CONTROL_NOT_PERMITTED"
-    odd = parse_control_response(bytes([0x80, 0x42, 0x99]))
-    assert odd is not None and not odd.ok and odd.describe() == "0x42: 0x99"
-    assert parse_control_response(bytes([0x80, 0x07])) is None
-    assert parse_control_response(bytes([0x07, 0x07, 0x01])) is None
-    assert parse_control_response(b"") is None
 
 
 # ---- machine status -------------------------------------------------------------------------
@@ -505,7 +447,8 @@ def test_probe_describes_what_it_understands():
     line = probe.describe_value(ftms.SUPPORTED_SPEED_RANGE, bytes.fromhex("600083021000"))
     assert "min=0.96 max=6.43 step=0.16" in line and "US firmware" in line
     assert "US firmware" not in probe.describe_value(ftms.SUPPORTED_SPEED_RANGE, struct.pack("<HHH", 100, 600, 10))
-    assert "speed_target=yes" in probe.describe_value(ftms.FITNESS_MACHINE_FEATURE, struct.pack("<II", 4, 1))
+    assert "step_count=yes" in probe.describe_value(ftms.FITNESS_MACHINE_FEATURE, struct.pack("<II", 0x44, 1))
+    assert "step_count=no" in probe.describe_value(ftms.FITNESS_MACHINE_FEATURE, struct.pack("<II", 4, 1))
     assert probe.describe_value(ftms.FITNESS_MACHINE_STATUS, b"\x04") == "STARTED_OR_RESUMED_BY_USER"
     assert probe.describe_value(ftms.TRAINING_STATUS, b"\x00\x0e") == "pre-workout (countdown)"
     assert probe.describe_value(ftms.HEART_RATE_MEASUREMENT, b"\x00\x50") == "bpm=80"

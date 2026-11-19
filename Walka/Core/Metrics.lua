@@ -1,4 +1,4 @@
--- Walka metrics: calories, cadence and the in-game belt estimate.
+-- Walka metrics: calories, cadence and the in-game estimate of a walk.
 --
 -- Pure Lua 5.1 (no WoW API). The companion app has the same formulas in
 -- companion/src/walka/metrics.py; tests/shared/metrics_vectors.json keeps the
@@ -6,11 +6,10 @@
 --
 -- Why the addon estimates at all: an addon cannot receive live data from
 -- outside the game, so the HUD cannot show what the treadmill really did.
--- But the addon decides the belt's target speed, and the companion follows
--- it with known rate limits - so replaying those limits here gives a belt
--- speed, and from it distance, steps and calories, that track the real
--- numbers closely. The companion's measured totals replace these estimates
--- in the history after the next /reload or login.
+-- The walker sets the belt's speed at the treadmill and tells the addon
+-- what it is (the pace); from that pace the addon counts distance, steps
+-- and calories while a session runs. The companion's measured totals
+-- replace these estimates in the history after the next /reload or login.
 
 local ADDON_NAME, ns = ...
 ns = ns or {}
@@ -108,89 +107,36 @@ function Metrics.stepsPerMinute(kmh, heightCm, calibration)
 end
 
 ----------------------------------------------------------------------------
--- Belt estimator
+-- The estimate of a walk
 ----------------------------------------------------------------------------
 
-local Estimator = {}
-Estimator.__index = Estimator
-Metrics.Estimator = Estimator
+-- The pace the addon counts with: the speed the walker says the belt is set
+-- to. People settle at 1-2 mph on a treadmill desk, where typing is barely
+-- affected, so that is where it starts (1.5 mph); the range takes in every
+-- walking pad and a slow jog.
+Metrics.DEFAULT_PACE_KMH = 2.414
+Metrics.MIN_PACE_KMH = 0.5
+Metrics.MAX_PACE_KMH = 10
 
---- How the companion and the treadmill move the belt. The two rate limits
--- are the companion's defaults (walka.governor.Limits) and must stay equal
--- to them - a test in companion/tests compares the two - or the HUD's
--- estimate drifts from the belt until the companion's own figures arrive
--- in CompanionData.lua.
-Estimator.DEFAULTS = {
-    accelKmhPerS = 0.2,   -- companion's limit on speeding up
-    decelKmhPerS = 0.4,   -- ... and on slowing down
-    stopKmhPerS = 2.5,    -- belt coasting to a halt when paused/stopped
-    countdownSeconds = 3, -- treadmill's countdown before the belt starts
-    minBeltKmh = 1.0,     -- speed the belt starts at
-}
-
---- `limits` may override any of Estimator.DEFAULTS and is read live.
-function Estimator.new(limits)
-    local self = setmetatable({}, Estimator)
-    self.limits = limits or {}
-    self:reset(0)
-    return self
-end
-
-function Estimator:reset(beltKmh)
-    self.beltKmh = beltKmh or 0
-    self.countdown = 0
-end
-
-local function limitOf(self, key)
-    local value = self.limits[key]
-    if value == nil then
-        return Estimator.DEFAULTS[key]
-    end
-    return value
-end
-
---- Advance by `dt` seconds towards `targetKmh` (0 = belt stopped) and add
--- what was walked to `totals` (a table with seconds, distanceM, steps, kcal).
--- `profile` supplies weightKg, heightCm and optionally stepCalibration.
--- Returns the estimated belt speed.
-function Estimator:update(dt, targetKmh, totals, profile)
+--- Add `dt` seconds of walking at `kmh` to `totals` (a table with seconds,
+-- distanceM, steps, kcal and maxKmh). `profile` supplies weightKg, heightCm
+-- and optionally stepCalibration. At a pace of zero - the session is
+-- paused - nothing is added.
+function Metrics.walk(totals, dt, kmh, profile)
     dt = max(0, dt or 0)
-    targetKmh = targetKmh or 0
-    local belt = self.beltKmh
-
-    if targetKmh <= 0 then
-        self.countdown = 0
-        belt = max(0, belt - limitOf(self, "stopKmhPerS") * dt)
-    elseif belt <= 0 then
-        -- Starting from rest: countdown, then the belt appears at minimum.
-        if self.countdown <= 0 then
-            self.countdown = limitOf(self, "countdownSeconds")
-        end
-        self.countdown = self.countdown - dt
-        if self.countdown <= 0 then
-            self.countdown = 0
-            belt = min(targetKmh, limitOf(self, "minBeltKmh"))
-        end
-    elseif belt < targetKmh then
-        belt = min(targetKmh, belt + limitOf(self, "accelKmhPerS") * dt)
-    elseif belt > targetKmh then
-        belt = max(targetKmh, belt - limitOf(self, "decelKmhPerS") * dt)
+    if not kmh or kmh <= 0 or dt <= 0 then
+        return
     end
-    self.beltKmh = belt
-
-    if belt > 0 and totals then
-        profile = profile or Metrics.DEFAULT_PROFILE
-        local minutes = dt / 60
-        totals.seconds = (totals.seconds or 0) + dt
-        totals.distanceM = (totals.distanceM or 0) + belt / 3.6 * dt
-        totals.steps = (totals.steps or 0)
-            + Metrics.stepsPerMinute(belt, profile.heightCm, profile.stepCalibration) * minutes
-        totals.kcal = (totals.kcal or 0) + Metrics.kcalPerMinute(belt, profile.weightKg) * minutes
-        if belt > (totals.maxKmh or 0) then
-            totals.maxKmh = belt
-        end
+    profile = profile or Metrics.DEFAULT_PROFILE
+    local minutes = dt / 60
+    totals.seconds = (totals.seconds or 0) + dt
+    totals.distanceM = (totals.distanceM or 0) + kmh / 3.6 * dt
+    totals.steps = (totals.steps or 0)
+        + Metrics.stepsPerMinute(kmh, profile.heightCm, profile.stepCalibration) * minutes
+    totals.kcal = (totals.kcal or 0) + Metrics.kcalPerMinute(kmh, profile.weightKg) * minutes
+    if kmh > (totals.maxKmh or 0) then
+        totals.maxKmh = kmh
     end
-    return belt
 end
 
 return Metrics

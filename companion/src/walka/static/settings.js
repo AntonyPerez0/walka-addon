@@ -49,22 +49,6 @@ const floorTo = (value, digits) => Math.floor(value * 10 ** digits + 1e-9) / 10 
 
 const same = (value) => value;
 const KINDS = {
-  speed: {
-    unit: () => U.speedUnit,
-    digits: () => 1,
-    fixed: true,
-    shown: (kmh) => U.speed(kmh),
-    metric: (v) => U.toKmh(v),
-  },
-  rate: {
-    unit: () => `${U.speedUnit} per second`,
-    digits: () => 2,
-    fixed: true,
-    shown: (kmh) => U.speed(kmh),
-    metric: (v) => U.toKmh(v),
-  },
-  seconds: { unit: () => "s", digits: () => 1, shown: same, metric: same },
-  minutes: { unit: () => "min", digits: () => 1, shown: (s) => s / 60, metric: (m) => m * 60 },
   weight: {
     unit: () => U.weightUnit,
     digits: () => (U.mph ? 0 : 1),
@@ -339,7 +323,7 @@ class CheckField extends Field {
     this.helpEl = h("span", { class: "help", id: `${this.id}-help`, text: spec.help || "" });
     this.el = h(
       "label",
-      { class: "check full", for: this.id },
+      { class: "check", for: this.id },
       this.input,
       h("strong", { text: spec.label }),
       this.helpEl,
@@ -366,35 +350,18 @@ const TYPES = { number: NumberField, height: HeightField, text: TextField, selec
 // ---- a form card --------------------------------------------------------------------------
 
 class Form {
-  /** spec: {fields, advanced?, confirm?: section that is sent even when unchanged} */
+  /** spec: {fields, confirm?: section that is sent even when unchanged} */
   constructor(root, spec) {
     this.root = root;
     this.spec = spec;
-    const make = (field) => new TYPES[field.type](field);
-    this.main = spec.fields.map(make);
-    this.advanced = (spec.advanced || []).map(make);
-    this.fields = [...this.main, ...this.advanced];
+    this.fields = spec.fields.map((field) => new TYPES[field.type](field));
     this.note = "";
     this.filled = false; // nothing to compare against until the first config arrives
 
     this.saveButton = h("button", { class: "btn primary", type: "submit", text: "Save", disabled: true });
     this.revertButton = h("button", { class: "btn quiet", type: "button", text: "Undo changes", hidden: true });
     this.statusEl = h("span", { class: "status", role: "status" });
-    root.append(...this.main.map((field) => field.el));
-    if (this.advanced.length) {
-      root.append(
-        h(
-          "details",
-          null,
-          h("summary", { text: "Advanced timing" }),
-          h(
-            "div",
-            { class: "details-grid" },
-            this.advanced.map((field) => field.el),
-          ),
-        ),
-      );
-    }
+    root.append(...this.fields.map((field) => field.el));
     root.append(h("div", { class: "form-foot" }, this.saveButton, this.revertButton, this.statusEl));
 
     const refresh = () => {
@@ -510,116 +477,6 @@ const FORMS = {
       },
     ],
   },
-  limits: {
-    fields: [
-      {
-        type: "number",
-        kind: "speed",
-        path: "limits.max_speed_kmh",
-        min: 0.8,
-        max: 6.5,
-        label: "Max speed",
-        help: "The hard cap. Nothing - the game, manual mode or a glitch - can drive the belt faster than this.",
-      },
-      {
-        type: "number",
-        kind: "rate",
-        path: "limits.accel_kmh_per_s",
-        min: 0.05,
-        max: 1,
-        label: "Speeding up",
-        help: "The most speed the belt may gain each second.",
-      },
-      {
-        type: "number",
-        kind: "rate",
-        path: "limits.decel_kmh_per_s",
-        min: 0.1,
-        max: 2,
-        label: "Slowing down",
-        help: "The most speed the belt may lose each second.",
-      },
-      {
-        type: "number",
-        kind: "seconds",
-        path: "limits.hold_s",
-        min: 0,
-        max: 60,
-        label: "Signal lost: hold speed for",
-        help: "How long the belt keeps its speed after the game signal disappears.",
-      },
-      {
-        type: "number",
-        kind: "speed",
-        path: "limits.safe_speed_kmh",
-        min: 0,
-        max: 4,
-        label: "Then slow down to",
-        help: "The safe speed it drops to next. 0 pauses the belt straight away instead.",
-      },
-      {
-        type: "number",
-        kind: "minutes",
-        path: "limits.loss_pause_s",
-        min: 0,
-        max: 3600,
-        label: "Then pause after",
-        help: "How long it stays at the safe speed before the belt is paused.",
-      },
-      {
-        type: "check",
-        path: "limits.resume_requires_movement",
-        label: "After a pause, the belt restarts only when the character moves",
-        help: "On: a belt paused by a lost signal - or a session Walka did not watch begin - waits for your character to move, or for Resume. Off: it restarts as soon as the signal is back.",
-      },
-      {
-        type: "text",
-        path: "stop_hotkey",
-        optional: true,
-        label: "STOP hotkey",
-        placeholder: "Off",
-        help: "A key combination that stops the belt from anywhere on this computer, even while the game has focus. Use ctrl, alt, shift or win plus a key, for example ctrl+alt+x. On a Mac, alt is the Option key and win (or cmd) the Command key. The key press is not passed on to the game. Empty turns it off.",
-      },
-    ],
-    advanced: [
-      {
-        type: "number",
-        kind: "seconds",
-        path: "limits.signal_timeout_s",
-        min: 1,
-        max: 15,
-        label: "Signal counts as lost after",
-        help: "A game signal older than this is treated as lost.",
-      },
-      {
-        type: "number",
-        kind: "seconds",
-        path: "limits.command_interval_s",
-        min: 0.5,
-        max: 5,
-        label: "Time between speed commands",
-        help: "How often Walka may send the pad a new speed.",
-      },
-      {
-        type: "number",
-        kind: "seconds",
-        path: "limits.start_grace_s",
-        min: 5,
-        max: 60,
-        label: "Belt start allowance",
-        help: "How long the pad may take to get the belt moving (its countdown) before Walka decides it did not start.",
-      },
-      {
-        type: "number",
-        kind: "seconds",
-        path: "limits.stall_s",
-        min: 2,
-        max: 30,
-        label: "Stall detection",
-        help: "A running belt that reports zero speed for this long counts as stopped at the machine.",
-      },
-    ],
-  },
   treadmill: {
     fields: [
       {
@@ -641,19 +498,13 @@ const FORMS = {
           ["mph", "mph - 0.1 mph steps (US pads)"],
           ["kmh", "km/h - 0.1 km/h steps"],
         ],
-        help: "How the pad's own firmware counts speed. Walka rounds its commands to this grid. Applies the next time the pad connects.",
+        help: "How the pad's own firmware counts speed: Walka shows the pad's speed range and step on this grid. Applies the next time the pad connects.",
       },
       {
         type: "check",
         path: "treadmill.auto_connect",
         label: "Connect automatically",
-        help: "Look for the pad as soon as the companion starts.",
-      },
-      {
-        type: "check",
-        path: "treadmill.stop_on_exit",
-        label: "Stop the belt when the companion exits",
-        help: "Recommended. If the companion closes while it is driving the belt, it stops the belt first.",
+        help: "Look for the pad as soon as the companion starts, so that a walk is recorded from its first step.",
       },
     ],
   },

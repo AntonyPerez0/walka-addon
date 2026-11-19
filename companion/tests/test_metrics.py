@@ -255,54 +255,35 @@ def test_lua_and_python_share_constants_and_defaults(lua_metrics):
 # ---- the addon's live estimate against the companion's recorder ----------------------------
 
 
-def test_lua_estimator_accumulates_like_the_python_recorder(lua, lua_metrics):
-    """Feed the addon's belt estimator a scripted target profile, then give
-    the belt speeds it produced to the companion's recorder: the in-game
-    estimate and the companion's speed-based numbers must be the same sums."""
+def test_lua_walk_accumulates_like_the_python_recorder(lua, lua_metrics):
+    """Give the addon's count of a walk and the companion's recorder the
+    same belt speeds: the in-game estimate and the companion's speed-based
+    numbers must be the same sums."""
     profile = Profile(weight_kg=82.0, height_cm=178.0)
     lua_profile = lua.table(weightKg=profile.weight_kg, heightCm=profile.height_cm)
-    estimator = lua_metrics.Estimator.new(lua.table(minBeltKmh=0.6 * KMH_PER_MPH))
     totals = lua.table()
     recorder = SessionRecorder(source="wow", beacon_session=1, treadmill="", started_at=1_000_000.0)
 
     dt = 0.25  # exactly representable: both sides add identical floats
-    script = [  # (seconds, target km/h)
-        (30, 3.2),  # start: countdown, minimum speed, ramp up
+    script = [  # (seconds, the pace the walker told the addon, km/h)
+        (30, 3.2),
         (60, 4.8),
-        (20, 1.6),  # slow down
-        (15, 0.0),  # stand speed 0: belt stops
-        (45, 3.2),  # and starts again (another countdown)
+        (20, 1.6),
+        (15, 0.0),  # paused: nothing is counted
+        (45, 3.2),
         (120, 6.4),
         (10, 0.0),
     ]
     now = recorder.started_at
-    belts = []
-    for seconds, target in script:
+    for seconds, pace in script:
         for _ in range(int(seconds / dt)):
-            belt = estimator.update(estimator, dt, target, totals, lua_profile)
-            belts.append(belt)
+            lua_metrics.walk(totals, dt, pace, lua_profile)
             now += dt
-            recorder.update(now, speed_kmh=belt, profile=profile)
-
-    assert max(belts) == pytest.approx(6.4)
-    assert belts[0] == 0 and belts[int(3 / dt) - 2] == 0  # the 3 s countdown
-    assert belts[int(3 / dt) - 1] == pytest.approx(0.6 * KMH_PER_MPH)  # then the belt appears at its minimum
-    assert not any(0 < b <= 0.05 for b in belts)  # (the two sides only differ on a creeping belt)
+            recorder.update(now, speed_kmh=pace, profile=profile)
 
     assert totals.seconds == pytest.approx(recorder.seconds, rel=1e-9)
     assert totals.distanceM == pytest.approx(recorder.distance_speed_m, rel=1e-9)
     assert totals.steps == pytest.approx(recorder.steps_estimate, rel=1e-9)
     assert totals.kcal == pytest.approx(recorder.kcal_speed, rel=1e-9)
     assert totals.maxKmh == pytest.approx(recorder.max_kmh, rel=1e-12)
-    assert 250 < recorder.seconds < 300 and 300 < recorder.distance_speed_m < 420
-
-
-def test_lua_estimator_ramps_with_the_companions_default_limits(lua, lua_metrics):
-    """The addon replays the governor's rate limits; its defaults must be the
-    governor's defaults or the in-game numbers drift from the real ones."""
-    from walka.governor import Limits
-
-    defaults = lua_metrics.Estimator.DEFAULTS
-    assert defaults.accelKmhPerS == Limits().accel_kmh_per_s
-    assert defaults.decelKmhPerS == Limits().decel_kmh_per_s
-    assert defaults.countdownSeconds == 3
+    assert recorder.seconds == 275 and 300 < recorder.distance_speed_m < 420

@@ -14,11 +14,9 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from test_app import Rig
 from walka import web
-from walka.config import MAX_SPEED_CAP_KMH
-from walka.governor import Phase
 from walka.protocol import djb2
 from walka.session import SessionRecord
-from walka.treadmill import BeltState, TreadmillError
+from walka.treadmill import BeltState
 
 JSON = {"Content-Type": "application/json"}
 
@@ -120,15 +118,15 @@ def test_dns_rebinding_style_requests_are_refused(rig: Rig):
                 ("GET", "/"),
                 ("GET", "/api/events"),
                 ("GET", "/static/app.js"),
-                ("POST", "/api/stop"),
-                ("POST", "/api/manual"),
+                ("POST", "/api/config"),
+                ("POST", "/api/treadmill/forget"),
                 ("DELETE", "/api/sessions/x"),
             ):
                 response = await client.request(
-                    method, path, headers={"Host": host, **JSON}, data=json.dumps({"action": "start"})
+                    method, path, headers={"Host": host, **JSON}, data=json.dumps({"units": "kmh"})
                 )
                 assert response.status == 403, (host, method, path)
-        assert not rig.app.manual.active
+        assert rig.config.units == "mph"
 
     serve(rig, scenario)
 
@@ -139,7 +137,7 @@ def test_local_hosts_are_served(rig: Rig):
             response = await client.get("/api/state", headers={"Host": host})
             assert response.status == 200, host
             response = await client.post(
-                "/api/resume", headers={"Host": host, "Origin": f"http://{host}", **JSON}, data="{}"
+                "/api/addon/sync", headers={"Host": host, "Origin": f"http://{host}", **JSON}, data="{}"
             )
             assert response.status == 200, host
 
@@ -159,16 +157,16 @@ def test_cross_origin_posts_are_refused(rig: Rig):
             f"ftp://{host}",
         ):
             response = await client.post(
-                "/api/manual", data=json.dumps({"action": "start", "speed_kmh": 4}), headers={"Origin": origin, **JSON}
+                "/api/config", data=json.dumps({"units": "kmh"}), headers={"Origin": origin, **JSON}
             )
             assert response.status == 403, origin
-        assert not rig.app.manual.active
+        assert rig.config.units == "mph"
         # The dashboard's own origin, and clients that send none (curl), are fine.
-        for headers in ({"Origin": f"http://{host}"}, {}):
+        for units, headers in (("kmh", {"Origin": f"http://{host}"}), ("mph", {})):
             response = await client.post(
-                "/api/manual", data=json.dumps({"action": "pause"}), headers={**headers, **JSON}
+                "/api/config", data=json.dumps({"units": units}), headers={**headers, **JSON}
             )
-            assert response.status == 200
+            assert response.status == 200 and rig.config.units == units
 
     serve(rig, scenario)
 
@@ -178,7 +176,7 @@ def test_state_changing_requests_must_be_json(rig: Rig):
     without a preflight - none of which is accepted."""
 
     async def scenario(client: TestClient):
-        body = json.dumps({"action": "start", "speed_kmh": 4})
+        body = json.dumps({"units": "kmh", "address": "AA:BB:CC:DD:EE:FF"})
         for content_type in (
             "text/plain",
             "application/x-www-form-urlencoded",
@@ -186,21 +184,21 @@ def test_state_changing_requests_must_be_json(rig: Rig):
             None,
         ):
             headers = {"Content-Type": content_type} if content_type else {}
-            for path in ("/api/manual", "/api/stop", "/api/resume", "/api/config", "/api/treadmill/connect"):
+            for path in ("/api/config", "/api/treadmill/connect", "/api/treadmill/forget", "/api/addon/sync"):
                 response = await client.post(path, data=body, headers=headers)
                 assert response.status == 415, (content_type, path)
         response = await client.delete("/api/sessions/anything")
         assert response.status == 415
         response = await client.put("/api/config", data=body, headers={"Content-Type": "text/plain"})
         assert response.status in (405, 415)
-        assert not rig.app.manual.active
+        assert rig.config.units == "mph" and rig.config.treadmill.address == ""
         # With a charset parameter it is still JSON.
         response = await client.post(
-            "/api/manual",
-            data=json.dumps({"action": "pause"}),
+            "/api/config",
+            data=json.dumps({"units": "kmh"}),
             headers={"Content-Type": "application/json; charset=utf-8"},
         )
-        assert response.status == 200
+        assert response.status == 200 and rig.config.units == "kmh"
 
     serve(rig, scenario)
 
@@ -208,7 +206,7 @@ def test_state_changing_requests_must_be_json(rig: Rig):
 def test_preflight_is_never_granted(rig: Rig):
     async def scenario(client: TestClient):
         response = await client.options(
-            "/api/stop",
+            "/api/config",
             headers={
                 "Origin": "http://evil.example.com",
                 "Access-Control-Request-Method": "POST",
@@ -241,28 +239,17 @@ def test_state_snapshot(rig: Rig):
     async def scenario(client: TestClient):
         await rig.connect()
         await rig.run(1, active=False)
-        await rig.run(30, target=3.2)
+        await rig.walk(3.2)
+        await rig.run(30)
         response = await client.get("/api/state")
         assert response.status == 200
         state = await response.json()
-        assert {
-            "version",
-            "time",
-            "units",
-            "treadmill",
-            "governor",
-            "source",
-            "session",
-            "totals",
-            "config",
-            "events",
-        } <= set(state)
-        assert state["governor"]["phase"] == "following"
+        assert {"version", "time", "units", "treadmill", "source", "session", "totals", "config", "events"} <= set(state)
+        assert not {"governor", "terms", "hotkey"} & set(state)
         assert state["treadmill"]["connected"] and state["treadmill"]["kind"] == "simulated"
-        assert state["treadmill"]["speed_kmh"] > 2.5
+        assert state["treadmill"]["speed_kmh"] > 2.5 and state["treadmill"]["moving"] is True
         assert state["source"]["kind"] == "wow" and state["source"]["frame"]["active"] is True
         assert state["session"]["source"] == "wow"
-        assert state["treadmill"]["cap_kmh"] == rig.config.limits.max_speed_kmh
 
     serve(rig, scenario)
 
@@ -277,11 +264,11 @@ def test_event_stream_delivers_snapshots(rig: Rig):
         first = await asyncio.wait_for(response.content.readuntil(b"\n\n"), 5)
         assert first.startswith(b"data: ")
         snapshot = json.loads(first[len(b"data: ") :])
-        assert snapshot["treadmill"]["connected"] is True and snapshot["governor"]["phase"]
+        assert snapshot["treadmill"]["connected"] is True and snapshot["treadmill"]["state"] == "stopped"
         # State changes show up in the following events.
-        rig.app.manual_start(3.0)
+        rig.treadmill.press_start()
         second = await asyncio.wait_for(response.content.readuntil(b"\n\n"), 5)
-        assert json.loads(second[len(b"data: ") :])["source"]["manual"]["active"] is True
+        assert json.loads(second[len(b"data: ") :])["treadmill"]["state"] == "starting"
         response.close()
 
     serve(rig, scenario)
@@ -295,169 +282,90 @@ def test_index_page_and_unknown_routes(rig: Rig):
         else:
             assert response.status == 404
         assert (await client.get("/api/nope")).status == 404
-        assert (await client.get("/api/stop")).status == 405  # stopping needs a POST
+        assert (await client.get("/api/treadmill/forget")).status == 405  # changing anything needs a POST
         assert (await client.get("/static/../web.py")).status in (403, 404)
         assert (await client.get("/static/%2e%2e/web.py")).status in (403, 404)
 
     serve(rig, scenario)
 
 
-# ---- manual sessions ---------------------------------------------------------------------
-
-
-def test_manual_session_over_http(rig: Rig):
-    async def scenario(client: TestClient):
-        await rig.connect()
-        response = await post(client, "/api/manual", {"action": "start", "speed_kmh": 3.0})
-        assert response.status == 200 and (await response.json()) == {"ok": True}
-        await rig.run(40, signal=False)
-        assert rig.treadmill.status.speed_kmh > 2.5
-
-        assert (await post(client, "/api/manual", {"action": "speed", "speed_kmh": 2.0})).status == 200
-        await rig.run(10, signal=False)
-        assert rig.treadmill.status.speed_kmh < 2.2
-
-        assert (await post(client, "/api/manual", {"action": "pause"})).status == 200
-        await rig.run(5, signal=False)
-        assert rig.treadmill.status.speed_kmh == 0 and rig.app.governor.phase is Phase.PAUSED
-
-        assert (await post(client, "/api/manual", {"action": "resume"})).status == 200
-        await rig.run(30, signal=False)
-        assert rig.treadmill.status.speed_kmh > 1.5
-
-        assert (await post(client, "/api/manual", {"action": "stop"})).status == 200
-        await rig.run(5, signal=False)
-        assert rig.treadmill.status.speed_kmh == 0 and not rig.app.manual.active
-
-        # Start without a speed uses the remembered one.
-        assert (await post(client, "/api/manual", {"action": "start"})).status == 200
-        assert rig.app.manual.active and rig.app.manual.speed_kmh == 2.0
-
-    serve(rig, scenario)
+# ---- nothing that moves a belt ---------------------------------------------------------------
+#
+# Versions up to 0.6 had a manual session, STOP, Resume and a disclaimer to
+# accept before a belt was moved. None of that is here to be asked for.
 
 
 @pytest.mark.parametrize(
-    "raw",
+    "path,body",
     [
-        '{"action": "start", "speed_kmh": "fast"}',
-        '{"action": "start", "speed_kmh": [3]}',
-        '{"action": "start", "speed_kmh": {"kmh": 3}}',
-        '{"action": "start", "speed_kmh": NaN}',
-        '{"action": "start", "speed_kmh": Infinity}',
-        '{"action": "start", "speed_kmh": -Infinity}',
-        '{"action": "start", "speed_kmh": 1e999}',
-        '{"action": "start", "speed_kmh": "nan"}',
-        '{"action": "start", "speed_kmh": "inf"}',
-        '{"action": "speed", "speed_kmh": NaN}',
-        '{"action": "speed"}',
-        '{"action": "speed", "speed_kmh": null}',
-        '{"action": "warp", "speed_kmh": 3}',
-        '{"speed_kmh": 3}',
-        "{}",
-        '{"action": null}',
-        '{"action": ["start"]}',
-        "[1, 2]",
-        '"start"',
-        "null",
-        "{not json",
-        "",
+        ("/api/manual", {"action": "start", "speed_kmh": 3.0}),
+        ("/api/manual", {"action": "speed", "speed_kmh": 9.0}),
+        ("/api/manual", {"action": "resume"}),
+        ("/api/resume", {}),
+        ("/api/stop", {}),
+        ("/api/terms/accept", {"version": 1}),
+        ("/api/treadmill/start", {}),
+        ("/api/treadmill/speed", {"speed_kmh": 3.0}),
     ],
 )
-def test_manual_bad_input_is_refused_and_changes_nothing(rig: Rig, raw: str):
+def test_the_endpoints_that_moved_a_belt_are_gone(rig: Rig, path: str, body: dict):
     async def scenario(client: TestClient):
         await rig.connect()
-        response = await client.post("/api/manual", data=raw, headers=JSON)
-        assert response.status == 400, await response.text()
-        assert not rig.app.manual.active
-        assert rig.app.manual.speed_kmh == rig.config.manual.speed_kmh
-        await rig.run(5, signal=False)
-        assert rig.treadmill.status.state is BeltState.STOPPED
+        await rig.run(1)
+        assert (await post(client, path, body)).status == 404
+        await rig.run(30)
+        assert rig.treadmill.status.state is BeltState.STOPPED and rig.treadmill.status.speed_kmh == 0
 
     serve(rig, scenario)
 
 
-def test_manual_extreme_speeds_are_capped_not_obeyed(rig: Rig):
-    async def scenario(client: TestClient):
-        await rig.connect()
-        assert (await post(client, "/api/manual", {"action": "start", "speed_kmh": 1e9})).status == 200
-        await rig.run(60, signal=False)
-        assert rig.treadmill.status.speed_kmh <= rig.config.limits.max_speed_kmh + 1e-6
-        assert (await post(client, "/api/manual", {"action": "speed", "speed_kmh": -50})).status == 200
-        await rig.run(10, signal=False)
-        assert rig.treadmill.status.speed_kmh == 0  # a non-positive speed pauses, never reverses
-        json.dumps(rig.app.snapshot())
+def test_no_route_of_the_api_reaches_a_real_treadmill(rig: Rig):
+    """The whole API, asked everything it can be asked, against a reader
+    that would notice: one that has the commands an older Walka used, each
+    of them a tripwire."""
+    tripped: list[str] = []
 
-    serve(rig, scenario)
+    class Tripwired:
+        kind = "ftms"
+        status = rig.treadmill.status
+        address = None
+        units = "auto"
+        on_event = None
 
+        async def connect(self) -> None:
+            self.status.connected = True
 
-def test_manual_speed_as_a_numeric_string_is_accepted(rig: Rig):
-    async def scenario(client: TestClient):
-        assert (await post(client, "/api/manual", {"action": "speed", "speed_kmh": "2.5"})).status == 200
-        assert rig.app.manual.speed_kmh == 2.5
+        async def disconnect(self) -> None:
+            self.status.connected = False
 
-    serve(rig, scenario)
+        async def discover(self, timeout: float):
+            return []
 
-
-# ---- stop / resume ------------------------------------------------------------------------
-
-
-def test_emergency_stop_and_resume_over_http(rig: Rig):
-    async def scenario(client: TestClient):
-        await rig.connect()
-        await rig.run(1, active=False)
-        await rig.run(30, target=3.2)
-        response = await post(client, "/api/stop")
-        assert response.status == 200 and (await response.json())["ok"] is True
-        await rig.run(10, target=3.2)
-        assert rig.treadmill.status.speed_kmh == 0 and rig.app.governor.phase is Phase.USER_STOPPED
-        # An empty body is fine too (the button sends "{}" or nothing).
-        response = await client.post("/api/stop", headers=JSON)
-        assert response.status == 200
-        response = await post(client, "/api/resume")
-        assert response.status == 200
-        await rig.run(30, target=3.2)
-        assert rig.treadmill.status.speed_kmh > 2.5
-
-    serve(rig, scenario)
-
-
-def test_emergency_stop_answers_ok_even_when_the_treadmill_command_fails(rig: Rig):
-    async def scenario(client: TestClient):
-        await rig.connect()
-        await rig.run(1, active=False)
-        await rig.run(30, target=3.2)
-        rig.treadmill.fail_commands = True
-        response = await post(client, "/api/stop")
-        assert response.status == 200  # the latch is set whatever the radio does
-        assert rig.app.governor.user_stopped
-        state = await (await client.get("/api/state")).json()
-        assert state["governor"]["user_stopped"] is True
-        assert any(e["level"] == "error" and "stop button" in e["text"] for e in state["events"])
-        # Nothing restarts it, and once commands work again the stop is repeated.
-        rig.treadmill.fail_commands = False
-        await rig.run(10, target=3.2)
-        assert rig.treadmill.status.speed_kmh == 0
-
-    serve(rig, scenario)
-
-
-def test_emergency_stop_survives_an_unexpected_driver_error(rig: Rig):
-    """Even a bug in a driver must not leave the latch unset."""
+        def __getattr__(self, name: str):
+            if name.startswith(("start", "stop", "pause", "resume", "set_", "press_", "write", "command", "halt")):
+                tripped.append(name)
+                raise AssertionError(f"the companion reached for treadmill.{name}")
+            raise AttributeError(name)
 
     async def scenario(client: TestClient):
-        await rig.connect()
-        await rig.run(1, active=False)
-        await rig.run(30, target=3.2)
-
-        async def broken_stop():
-            raise TreadmillError("radio on fire")
-
-        rig.treadmill.stop = broken_stop
-        response = await post(client, "/api/stop")
-        assert response.status == 200
-        assert rig.app.governor.user_stopped and not rig.app.manual.active
+        rig.app.treadmill = Tripwired()
+        routes = sorted(
+            (route.method, route.resource.canonical)
+            for route in client.app.router.routes()
+            if route.method in ("POST", "DELETE") and route.resource is not None
+        )
+        assert ("POST", "/api/treadmill/press") in routes and len(routes) >= 10
+        for method, path in routes:
+            for body in ({}, {"button": "start"}, {"button": "faster"}, {"action": "start", "speed_kmh": 3.0}):
+                response = await client.request(
+                    method, path.replace("{session_id}", "nothing"), data=json.dumps(body), headers=JSON
+                )
+                assert response.status < 500, (method, path, body)
+            await rig.app.tick()
+        assert (await post(client, "/api/treadmill/press", {"button": "start"})).status == 400
 
     serve(rig, scenario)
+    assert tripped == []
 
 
 # ---- treadmill -----------------------------------------------------------------------------
@@ -479,16 +387,28 @@ def test_treadmill_endpoints(rig: Rig):
         assert response.status == 200 and rig.config.treadmill.address == "AA:BB:CC:DD:EE:FF"
 
         await rig.connect()
+        # The simulated pad's remote (--simulate, --demo): the only buttons there are.
         response = await post(client, "/api/treadmill/press", {"button": "start"})
         assert response.status == 200 and rig.treadmill.status.state is BeltState.STARTING
+        await rig.run(5, signal=False)
+        response = await post(client, "/api/treadmill/press", {"button": "faster"})
+        assert response.status == 200 and rig.treadmill.status.target_kmh > rig.treadmill.status.min_kmh
+        response = await post(client, "/api/treadmill/press", {"button": "pause"})
+        assert response.status == 200 and rig.treadmill.status.state is BeltState.PAUSED
         response = await post(client, "/api/treadmill/press", {"button": "stop"})
         assert response.status == 200 and rig.treadmill.status.state is BeltState.STOPPED
-        for bad in ({"button": "eject"}, {}, {"button": None}):
+        for bad in ({"button": "eject"}, {}, {"button": None}, {"button": "speed"}, {"button": ["start"]}):
             assert (await post(client, "/api/treadmill/press", bad)).status == 400
 
+        # Forgetting and disconnecting are never refused, and touch no belt.
+        response = await post(client, "/api/treadmill/press", {"button": "start"})
+        await rig.run(5, signal=False)
+        response = await post(client, "/api/treadmill/forget")
+        assert response.status == 200 and rig.config.treadmill.address == ""
         response = await post(client, "/api/treadmill/disconnect")
         assert response.status == 200
         assert not rig.treadmill.status.connected and not rig.app.want_connected
+        assert rig.treadmill.status.state is BeltState.RUNNING
 
     serve(rig, scenario)
 
@@ -537,12 +457,14 @@ def test_press_is_not_available_on_a_real_treadmill(rig: Rig):
 def test_config_read_and_clamped_update(rig: Rig):
     async def scenario(client: TestClient):
         config = await (await client.get("/api/config")).json()
-        assert config["limits"]["max_speed_kmh"] == rig.config.limits.max_speed_kmh
+        assert set(config) == {"units", "profile", "treadmill", "heart_rate", "wow", "web"}
         response = await post(
             client,
             "/api/config",
             {
                 "limits": {"max_speed_kmh": 99, "accel_kmh_per_s": 50, "signal_timeout_s": 0},
+                "stop_hotkey": "f13",
+                "wow": {"capture_fps": 5000},
                 "profile": {"weight_kg": 82.5, "age": 41, "sex": "female"},
                 "units": "kmh",
                 "bogus": {"x": 1},
@@ -551,9 +473,8 @@ def test_config_read_and_clamped_update(rig: Rig):
         assert response.status == 200
         body = await response.json()
         assert body["ok"] is True
-        assert body["config"]["limits"]["max_speed_kmh"] == MAX_SPEED_CAP_KMH  # clamped, not obeyed
-        assert body["config"]["limits"]["accel_kmh_per_s"] == 1.0
-        assert body["config"]["limits"]["signal_timeout_s"] == 1.0
+        assert "limits" not in body["config"] and "stop_hotkey" not in body["config"]  # nothing left for them to set
+        assert body["config"]["wow"]["capture_fps"] == 60.0  # clamped, not obeyed
         assert body["config"]["profile"] == {
             "weight_kg": 82.5,
             "height_cm": 172.0,
@@ -562,7 +483,6 @@ def test_config_read_and_clamped_update(rig: Rig):
             "step_calibration": 1.0,
         }
         assert body["config"]["units"] == "kmh" and "bogus" not in body["config"]
-        assert rig.app.governor.limits.max_speed_kmh == MAX_SPEED_CAP_KMH  # the governor sees it at once
         saved = json.loads((rig.app.data_dir / "config.json").read_text("utf-8"))
         assert saved == body["config"]
 
@@ -575,8 +495,8 @@ def test_config_read_and_clamped_update(rig: Rig):
         ("{not json", 400),
         ("[1, 2, 3]", 400),
         ('"text"', 400),
-        ('{"limits": {"max_speed_kmh": NaN}}', 200),
-        ('{"limits": {"max_speed_kmh": Infinity}}', 200),
+        ('{"profile": {"weight_kg": NaN}}', 200),
+        ('{"profile": {"weight_kg": Infinity}}', 200),
         ('{"web": {"port": 1e999}}', 200),
         ('{"profile": {"age": 1e999}}', 200),
         ('{"limits": "fast", "profile": 7, "wow": {"origin": "x"}, "treadmill": {"name_prefixes": 3}}', 200),
@@ -584,12 +504,11 @@ def test_config_read_and_clamped_update(rig: Rig):
         ("", 200),
     ],
 )
-def test_config_update_with_bad_input_never_breaks_the_limits(rig: Rig, raw: str, status: int):
+def test_config_update_with_bad_input_never_breaks_the_settings(rig: Rig, raw: str, status: int):
     async def scenario(client: TestClient):
         response = await client.post("/api/config", data=raw, headers=JSON)
         assert response.status == status, await response.text()
-        limits = rig.config.limits
-        assert 0.8 <= limits.max_speed_kmh <= MAX_SPEED_CAP_KMH
+        assert 30.0 <= rig.config.profile.weight_kg <= 250.0
         assert isinstance(rig.config.web.port, int) and 1 <= rig.config.web.port <= 65535
         assert rig.config.profile.age is None
         assert rig.config.wow.origin is None and rig.config.treadmill.name_prefixes == ["URTM", "WELLFIT TM Linker"]
