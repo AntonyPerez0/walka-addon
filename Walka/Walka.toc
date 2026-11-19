@@ -2,7 +2,7 @@
 ## Title: Walka
 ## Notes: Links an under-desk walking pad to your character: the belt follows your character's speed, and the HUD tracks speed, steps, distance and calories.
 ## Author: Walka
-## Version: 0.3.0
+## Version: 0.4.0
 ## SavedVariables: WalkaDB
 ## SavedVariablesPerCharacter: WalkaCharDB
 ## OptionalDeps: OpenMap
