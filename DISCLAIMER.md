@@ -1,37 +1,39 @@
 # Disclaimer
 
-**Walka moves a motorised belt while you stand on it and look at a game.
-You use it at your own risk.**
+**Walka does not move your treadmill. It only listens to it: the belt is
+started, stopped and set to a speed by you, at the treadmill itself. You
+walk on it while you look at a game, and you do that at your own risk.**
 
 Please read this page before your first walk. It says what Walka is and is
-not, what is yours to check, and what its authors do not promise. The
-companion shows the short form of it the first time, and does not start or
-steer a belt until you have accepted that.
+not, what is yours to check, and what its authors do not promise.
 
 ## What Walka is, and is not
 
+* **A notebook, not a remote control.** Walka reads what your treadmill
+  reports over Bluetooth - speed, distance, on some pads steps - and writes
+  your walks down. It has no way to start or stop a belt or to change its
+  speed, and it sends the treadmill no commands
+  ([docs/SAFETY.md](docs/SAFETY.md) says how that is made sure of).
+  Versions up to 0.6 did drive the belt. They have been withdrawn: do not
+  use one.
 * **A free hobby project, and an early one.** Its author has not yet run it
   against a physical treadmill (see
   [What has and has not been verified](docs/SAFETY.md#what-has-and-has-not-been-verified)).
-* **Not a guarantee.** [docs/SAFETY.md](docs/SAFETY.md) describes what the
-  software is designed to do, and what its automated tests check against a
-  simulated treadmill. It does not promise how Walka behaves with your
-  treadmill, your computer or your Bluetooth. Software has bugs, Bluetooth
-  drops, computers freeze.
-* **Not a safety device.** Nothing in Walka replaces the treadmill's own
-  stop button, remote and safety key. Bluetooth is not an emergency stop.
+* **Not a safety device.** Walka cannot stop a belt. The treadmill's own
+  stop button, remote and safety key are what stops it - keep them within
+  reach.
 * **Not a medical device, and not medical advice.** Calories, steps, heart
   rate and everything worked out from them are estimates, for interest
   only. Do not use them to decide anything about your health, your diet,
   your medication or your training.
-* **Not made, tested or approved by the maker of your treadmill.** Driving
-  a treadmill from software other than its maker's own may be something the
-  maker does not support, and may affect its warranty. That is yours to
-  check.
+* **Not made, tested or approved by the maker of your treadmill.** Walka
+  connects to the treadmill the way a fitness app does, to read its
+  numbers. Most treadmills accept one such connection at a time, so the
+  maker's own app cannot be connected while Walka is.
 * **Not approved by Blizzard.** See
   [Is this allowed?](README.md#is-this-allowed)
 
-## Before you use it
+## Before you walk
 
 * **Ask a doctor first** if you have a heart condition, high blood
   pressure, trouble with balance or dizziness, an injury, if you are
@@ -45,20 +47,17 @@ steer a belt until you have accepted that.
   or clip, the free space it asks for behind and beside the belt, the
   floor it stands on, what to wear on your feet.
 * **Adults only.** Keep children and pets away from the treadmill, and
-  never leave a session running when you step off.
+  stop the belt when you step off.
 * **Your eyes are on a game.** Walking while you play takes more care than
-  walking. Start slowly, keep the treadmill's remote within reach, and do
-  not use Walka when you are tired or have been drinking.
-* **Do the checks under
-  [Before your first walk](README.md#before-your-first-walk)**, standing
-  beside the belt, before you ever stand on it.
+  walking. Choose a slow speed, keep the treadmill's remote within reach,
+  and do not do it when you are tired or have been drinking.
 
 ## It is your decision
 
 By downloading, installing or using Walka you accept that you do so at your
-own risk. Whether it is safe for you, for your treadmill and for the room
-you use it in is for you to decide - and so is whether to let anyone else
-use it on your equipment.
+own risk. Whether walking at a desk while playing is safe for you, for your
+treadmill and for the room you do it in is for you to decide - and so is
+whether to let anyone else do it on your equipment.
 
 ## No warranty
 
@@ -97,4 +96,5 @@ Warcraft is a trademark of Blizzard Entertainment, Inc.; the other names
 belong to their owners. Code and ideas taken from other projects are listed
 in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
-*Version 1 of this disclaimer. The companion asks again when it changes.*
+*Version 2 of this disclaimer: since 0.7 Walka only listens to the
+treadmill.*

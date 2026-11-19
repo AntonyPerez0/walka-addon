@@ -1,216 +1,89 @@
 # Safety
 
-Walka changes the speed of a motorised belt you are standing on, based on
-what a video game character is doing. That deserves some care. This page
-explains what the software is built to do and not to do, so that you know
-what to expect.
+**Walka does not move the belt.** It listens to what your treadmill reports
+- its speed, its distance, on some pads its steps - and writes your walks
+down. Starting the belt, stopping it and choosing its speed are yours, with
+the treadmill's own remote, buttons and safety key, exactly as if Walka
+were not there.
 
-**Bluetooth is not an emergency stop.** Keep the treadmill's remote within
-reach and use the safety key if your pad has one. If anything feels wrong,
-stop the belt at the treadmill itself: Walka is built to treat that as
-final, and not to restart it.
+Versions up to 0.6 were different: the belt followed your character, and
+the companion started, stopped and steered it. That has been taken out, not
+switched off. A motorised belt under someone who is looking at a game was
+not worth the risk of a program getting it wrong. Those versions have been
+withdrawn; do not use one.
 
-**This page describes a design, not a guarantee.** The rules below are what
-the software is built to do, and what its automated tests check against a
-simulated treadmill. Software has bugs, Bluetooth drops and computers
-freeze, so Walka is not a safety device and must not be the only thing
-between you and a moving belt. Read every "never", "always" and "cannot"
-on this page that way: as what the code is written to do, not as a
-promise. You use Walka at your own risk and it comes with no warranty: see
-the [disclaimer](../DISCLAIMER.md).
+You still walk on a treadmill while you play, and that is at your own
+risk: see the [disclaimer](../DISCLAIMER.md), and
+[You, before the belt](#you-before-the-belt) below.
 
-Ways to stop, fastest first:
+## What Walka does to a treadmill, all of it
 
-1. the treadmill's remote, stop button or safety key;
-2. **Ctrl+Alt+X** (**Control+Option+X** on a Mac) - a system-wide hotkey
-   the companion registers; it works while the game has focus and the key
-   press is not passed on to the game (change it under *Settings -> Safety
-   limits*);
-3. the STOP button on the dashboard;
-4. *Stop* on the in-game HUD, or `/walka stop`.
+When the companion connects to a treadmill it:
 
-## The rules the companion is built to enforce
+1. reads one value - its speed range (*Supported Speed Range*), which the
+   dashboard shows;
+2. switches notifications on for three things it listens to: *Treadmill
+   Data* (speed, distance, time, steps where the pad sends them), *Fitness
+   Machine Status* (the pad saying that it was started, stopped, paused or
+   set to another speed) and *Training Status* (its countdown).
 
-These live in one small state machine (`companion/src/walka/governor.py`)
-with no I/O, so every rule below is covered by automated tests - against a
-simulated treadmill, not a real one.
+That is everything. Switching a notification on is the only thing Walka
+ever writes to a treadmill, and it is what every app that shows a
+treadmill's numbers has to do.
 
-1. **Hands off unless a session is active.** Until you press *Start* (in the
-   game HUD or the dashboard) Walka never sends the treadmill a command. You
-   can use the pad with its remote as if Walka were not there (it will still
-   log the walk). And until you have accepted the
-   [disclaimer](../DISCLAIMER.md) on the dashboard, Walka does not start or
-   steer the belt whatever is pressed: of its commands only a stop (STOP,
-   the hotkey) is sent.
+The treadmill's *Fitness Machine Control Point* - the one channel through
+which an app can start, stop or steer a belt - is never written to and
+never listened to. Walka does not ask the treadmill for control.
 
-2. **Your speed cap comes first.** The companion has a hard maximum speed
-   (3.0 mph out of the box; change it in the dashboard under *Settings →
-   Safety limits*). No game state, addon setting or corrupted frame can make the
-   companion command more than that, nor more than the range the treadmill
-   itself advertises. (On a pad that counts in mph the cap is the nearest
-   0.1 mph step at or below it; the number sent over Bluetooth is that
-   step rounded up to the next 0.1 km/h, which the pad cuts back down.) If you lower the cap during a walk, the belt starts
-   coming down to it at once - at the gentle rate of rule 3, not in one
-   jump.
+## How that is made sure of
 
-3. **Changes are gentle.** Speed commands go out at most once a second and
-   move by at most 0.2 km/h per second up and 0.4 km/h per second down - on
-   a US pad that is one 0.1 mph step per second up, two down. (Research
-   treadmills that change speed under a walker limit themselves to about
-   twice that.) Speed-ups are measured from what the belt *reports*, not
-   from what Walka asked for: no command is ever more than one step above
-   the speed the belt is really doing, so a command that got lost cannot
-   turn into a jump later. The addon also smooths the game's instant speed
-   changes before they ever reach the companion, and holds your pace
-   through short stops (looting, talking) so the belt does not surge and
-   sag.
+Not by a setting, and not by a rule that could be got round. The parts
+that moved the belt are gone:
 
-4. **Losing the game signal slows the belt, never speeds it up.** The signal
-   is lost whenever the companion cannot see the strip in the corner of the
-   game window: a loading screen, the game minimised, another window on top
-   of that corner, the game frozen or closed. Counted from the last picture
-   the companion saw:
-   * after 1 second the belt may still slow down but is no longer sped up
-     (and is not started);
-   * until 5 seconds it holds its speed;
-   * then it slows to the *safe speed* (0.8 mph by default) - never faster
-     than it was already going, and never faster than the belt reports;
-   * after 2 minutes of that, it pauses;
-   * if the game window disappears altogether, the session ends and the belt
-     stops - also if the treadmill was out of Bluetooth reach at that
-     moment: the stop is delivered when it is back;
-   * if you start the belt with the remote while the game is out of view,
-     that walk is yours: Walka leaves the belt alone until it can see the
-     game again. After a quarter of an hour without the game, with the belt
-     off, Walka lets go of the session altogether.
+* **There is no command to send.** The code that builds treadmill commands
+  (request control, start, stop, pause, set speed) has been deleted, with
+  the rules that decided when to send them (the *governor*), the manual
+  session, the STOP button and hotkey, and the second process that stopped
+  the belt if the companion was killed (the *guard*).
+* **There is no way to send one.** The companion reaches a treadmill
+  through one small interface (`BleClient` in
+  `companion/src/walka/treadmill/ftms_ble.py`), which can connect, read a
+  value and switch notifications on. It has no write. The treadmill reader
+  built on it (`Treadmill` in `treadmill/base.py`) can connect and
+  disconnect, and nothing else.
+* **Nothing the game shows reaches the treadmill.** The strip in the
+  corner of the game window says one thing the companion uses: which
+  walking session of which character a walk is filed under. The old "belt
+  speed wanted" field of the strip is always zero now, and a companion
+  ignores it whatever an older addon puts there.
+* **Nothing the dashboard does reaches the treadmill either.** Its buttons
+  connect and disconnect the companion, change settings, install the addon
+  and delete walks.
+  *Disconnect* and closing the companion let go of the treadmill and leave
+  the belt exactly as it is.
 
-5. **A stop at the treadmill is final.** If the belt is stopped or paused
-   with the pad's own button, its remote or its safety key - or if it simply
-   stops moving, or is found stopped when the Bluetooth link comes back -
-   Walka will not start it again by itself. To carry on,
-   pause and resume the session yourself (HUD or dashboard), start a new
-   session, or press start on the remote. The addon's *automatic* pause
-   when you go AFK does not count as you resuming: stop the belt at the
-   pad, walk away, come back and touch a key, and it stays stopped.
-
-6. **The belt only starts on a deliberate act.** Pressing *Start* starts it
-   (after the treadmill's own 3-2-1 countdown, at its minimum speed). In
-   every other situation where the belt is stopped but a session is still
-   marked active - the companion was started mid-session, the treadmill
-   reconnected, the belt was paused after a long signal loss - Walka waits
-   until **your character starts moving** or you press *Resume*. "Starts
-   moving" means Walka saw the character stand still and then move, after
-   any stretch in which it could not watch: a character that is already
-   being carried along when the picture returns (a flight path, auto-run)
-   pressed no key for you. A *Resume* that cannot be acted on - the game is
-   out of view, the treadmill out of reach - counts for one minute; after
-   that it has to be pressed again. Ending a dashboard (manual) session
-   always stops the belt, even if a game session is running behind it; the
-   game session then waits for the same deliberate act.
-
-7. **Starts and speed changes are never repeated on a guess; stops are
-   repeated until they work.** If a start or speed command gets no
-   acknowledgement it may or may not have been applied, and Walka does not
-   send it again blindly. A stop is the opposite case: after any pause or
-   stop of its own, Walka watches the speed the belt reports and sends a
-   stop every few seconds for as long as it is still moving and not slowing
-   down. A stop that could not be delivered because the Bluetooth link
-   dropped stays owed: Walka keeps trying to reconnect (for up to half an
-   hour) and stops the belt as soon as it can reach it.
-
-8. **Closing the companion stops the belt** it was driving (Ctrl+C, or
-   closing its window; on a Mac also logging out or shutting down, which
-   reach it as a signal) - before anything else is tidied up, and including a
-   belt whose earlier stop had not been confirmed. *Disconnect* on the
-   dashboard does the same: a belt in use is stopped first.
-
-   **A companion that is killed cannot do that** - a crash, *End task* in
-   Task Manager. For that there is the *guard*: a second, small process
-   that the companion starts and keeps informed of whether a belt of its
-   own may be turning. When the companion vanishes without saying goodbye
-   while one is, the guard connects to that treadmill itself and stops the
-   belt (and nothing else: a stop is the only command it has). It keeps
-   trying for three minutes, and the next time Walka starts the dashboard
-   says what happened. The same guard takes over a stop that the companion
-   could not deliver when it was closed (the treadmill out of Bluetooth
-   reach). It is a net, not a promise: reaching the pad takes several
-   seconds at best, and nothing stops the belt if the guard goes down with
-   the companion (*End process tree*, a power cut, a computer that
-   freezes). Then the belt keeps its speed until you stop it at the
-   treadmill.
-
-9. **STOP latches.** The dashboard's STOP button and the hotkey stop the
-   belt immediately, and nothing - not a session still running in the game,
-   not the game coming back into view - restarts it until you resume.
-
-10. **Speeds stay in walking territory.** The cap can be raised from its
-    default 3.0 mph, but not above 6.5 km/h (4.0 mph), the top of a pad's
-    desk mode. Walka changes speed by itself under someone who is looking at
-    a game; running speeds are not for that.
-
-11. **A speed you set at the treadmill is a ceiling.** If you slow the belt
-    with the remote, Walka does not fight you: it keeps following your
-    character below that speed and never goes above it. The dashboard says
-    so ("held at the speed you set"). The ceiling is lifted by *Resume*, by
-    pausing and resuming in game, by a new session - or by you raising the
-    speed at the pad again. If you speed the belt up with the remote beyond
-    what the game asks for, Walka walks it back down at the gentle rate.
-
-12. **One treadmill.** The first treadmill Walka connects to is remembered,
-    and from then on it only ever reconnects to that one, so a second pad
-    in Bluetooth range cannot be driven by mistake. *Forget this treadmill*
-    on the dashboard (refused while a belt is in use) lets you move to
-    another.
-
-13. **The pad is given time between a stop and a start.** A treadmill that
-    has just been stopped is still closing its workout and would ignore a
-    start; Walka waits about ten seconds (you will see "waiting for the
-    treadmill to finish its previous workout").
-
-14. **A sleeping computer does not drive a belt.** Asleep, the companion can
-    watch neither the game nor the belt, and the treadmill would keep the
-    speed it was last given. So when the computer is about to sleep
-    (Windows and macOS say so), the belt is stopped first, exactly as by
-    STOP: it stays stopped until you resume. Not every computer says so in
-    time - a laptop with "Modern Standby" may not - so the companion also
-    notices on waking that it has not been running (20 seconds or more
-    without a look at the belt, which is also what a frozen program looks
-    like), and stops the belt then, again until you resume.
+The automated tests check each of these: that the reader and the Bluetooth
+adapter have no method that could write; that no command builder exists;
+that an emulated treadmill which records every byte written to it has
+recorded none after long runs of everything the game, the dashboard and
+the radio can do; and that a belt does the same, tick for tick, whether or
+not a companion is listening to it and whatever the game shows meanwhile.
 
 ## What the addon does
 
-* *Start* in the HUD is the only thing that arms the system from the game
-  side. *Stop* ends the session and stops the belt.
-* Going AFK pauses the session (and the belt) automatically. Coming back
-  does not restart it by itself: the session resumes when your character
-  next *starts moving* - it must be seen standing still and then move - so
-  typing a chat line does not start a belt, and neither does a character
-  that is being carried along anyway (a flight path never counts; with
-  auto-run or /follow, stop and go again, or press Resume). You can turn
-  the automatic pause off.
-* **That only holds for ten minutes.** After a longer break nobody can say
-  who is at the keyboard or what stands on the belt by now - a chair rolled
-  onto the pad, a child, a pet. The pause then becomes one that only
-  *Resume* ends (the play button on the HUD, or `/walka resume`): the HUD
-  says "Paused" instead of "Paused (AFK)", and moving the character does
-  nothing to the belt.
-* Inside dungeons, raids and battlegrounds the game hides its AFK flag from
-  addons. There Walka keeps its own clock: five minutes without your
-  character moving or fighting count as away, and the first movement
-  after that as back.
-* By default the belt never stops while a session runs: when your character
-  stands still it drops to the *standing* pace (0.8 mph). Two options
-  change that: *Keep walking* holds your walking pace instead, and *Stop
-  the belt when my character stands still* pauses it - every restart then
-  costs the treadmill's countdown, and the belt starts when your character
-  moves.
-* The option *In combat, never drop below running pace* only applies once
-  your character has moved in that fight: something attacking a character
-  that stands still never speeds the belt up, and never starts it.
-* During combat the game hides the character's exact speed from addons.
-  Walka then estimates it (moving or not, plus your last known run speed),
-  so the belt keeps a sensible pace; it does not try to read the hidden
-  value.
+The addon in the game does not move anything either - it never could; it
+only ever drew the strip.
+
+* *Start* on the HUD (or `/walka start`) marks a walking session: "I am
+  walking now, for this character". The companion files the walk it
+  records under that session.
+* The numbers on the HUD are estimates, counted from the pace you tell the
+  addon (`/walka pace`, or the − and + buttons on the HUD): an addon cannot
+  be told what the treadmill is really doing while the game runs. What the
+  treadmill measured replaces them after the next `/reload` or login.
+* Going AFK pauses the session - that is, the addon's count - if you leave
+  that option on. The belt is not touched by it: stop the belt yourself
+  when you step off.
 
 ## You, before the belt
 
@@ -224,52 +97,38 @@ calories, steps and heart rate are estimates, for interest only.
 * Stop at once if you feel dizzy, faint, short of breath, have pain in your
   chest, or anything hurts: stop the belt at the treadmill and step off.
 * Follow your treadmill's own manual - weight limit, safety key or clip,
-  free space behind and beside the belt, footwear. Driving it from software
-  that is not its maker's may not be supported by the maker, and may affect
-  its warranty.
-* Walka is for adults. Do not use it when you are tired or have been
-  drinking: your eyes are on a game, not on your feet.
+  free space behind and beside the belt, footwear.
+* Walking at a desk while you play is for adults. Do not do it when you are
+  tired or have been drinking: your eyes are on a game, not on your feet.
 
 ## Sensible habits
 
 * Start slow. Studies of treadmill desks find people settle at 1-2 mph,
   that typing is barely affected there, and that mouse work suffers most
-  (expect your aim to be worse than seated). The defaults sit in that range
-  and the cap is 3.0 mph. Raise things gradually.
-* Do the first sessions out of combat, somewhere quiet, until you know how
-  the belt responds to your play style.
-* Use the *Steady* feel preset if the speed changes distract you.
-* Keep the top-left corner of the game window uncovered, and run the game
-  windowed or borderless.
-* Leave the pad's buzzer on. Its beeps at a speed change can be a
-  nuisance, but on most pads the same buzzer is the countdown before the
-  belt starts - the one warning that it is about to move, for you and for
-  whoever else is in the room. If the beeps bother you, use the *Steady*
-  preset: fewer speed changes, fewer beeps.
-* Do not leave a session running when you walk away: stop it (or let the
-  AFK pause do it).
-* Children and pets: a belt that starts when someone touches the keyboard
-  is a hazard. Stop the session when you step off.
+  (expect your aim to be worse than seated).
+* Keep the remote where your hand finds it without looking, and use the
+  safety key or clip if your treadmill has one.
+* Choose a speed and leave it. Changing the speed in the middle of a fight
+  is one more thing to do with a hand you need.
+* Do the first sessions out of combat, somewhere quiet.
+* Leave the pad's buzzer on: its countdown is the warning that the belt is
+  about to move, for you and for whoever else is in the room.
+* Stop the belt when you step off. Walka will not do it for you - nothing
+  will. Children and pets: a belt left running is a hazard.
 
 ## What has and has not been verified
 
-The logic above is exercised by a large automated test-suite against a
-simulated treadmill that mimics the UREVO firmware's documented behaviour.
-The Bluetooth driver follows the same command sequence as open-source
-projects that control UREVO pads, including one that lists the Strol 2E
-(URTM030) as verified on hardware. But this software has **not yet been run
-against a physical treadmill** by its author. Before your first real
-session, run `walka probe` (it only reads; it sends the treadmill no commands) and
-then try a manual session from the dashboard while standing beside the pad,
-not on it.
+Walka's logic is exercised by a large automated test-suite against a
+simulated treadmill and against an emulated one at the Bluetooth level,
+both modelled on the documented behaviour of UREVO firmware. The reader
+listens to the same standard characteristics as open-source projects that
+work with UREVO pads, including one that lists the Strol 2E (URTM030) as
+verified on hardware. But this software has **not yet been run against a
+physical treadmill** by its author.
 
-**Treadmills of other makes** (a WELLFIT, or any other treadmill found by
-its Fitness Machine Service) are driven by the same commands and the same
-rules, but the simulated treadmill is modelled on UREVO firmware: how
-another make rounds a speed, announces a stop or behaves after one has not
-been seen at all. The rules that do not depend on the firmware still hold -
-Walka's own speed cap (never above 6.5 km/h, whatever the treadmill can
-do), slowing and then pausing when the game's signal is lost, and never
-restarting a belt that was stopped at the machine. A full-size treadmill is faster and heavier than a
-walking pad, so the first session beside the belt matters more, not less.
-See [HARDWARE.md](HARDWARE.md#other-treadmills).
+What that leaves open is whether your walks are *counted right* - whether
+a particular treadmill is found, and whether its numbers are read as it
+means them. It does not leave open whether the belt can be moved: there is
+nothing in Walka that could. `walka probe` prints what a treadmill
+exposes, for a treadmill whose numbers do not come out right; see
+[HARDWARE.md](HARDWARE.md).

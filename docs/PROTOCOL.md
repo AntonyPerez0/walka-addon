@@ -17,8 +17,9 @@ checks them against each other.
 Ten bytes: eight payload bytes followed by a CRC-16.
 
 There are two kinds of frame, told apart by the frame type. This section
-describes the *live frame*: the addon's state from moment to moment, and the
-only thing the belt follows. The other kind, the *stat frame*, carries the
+describes the *live frame*: the addon's state from moment to moment - the
+walking session it has marked, and how the character is moving. The other
+kind, the *stat frame*, carries the
 numbers of a character's journey and is described in
 [section 4](#4-stat-frames).
 
@@ -31,7 +32,7 @@ Payload of the live frame, most-significant bit first:
 | 6–13   | 8     | seq             | Heartbeat. +1 on every redraw (10 per second) of either kind of frame, wraps at 256. |
 | 14–21  | 8     | session         | Walking-session counter, 1–255. `0` = no session. |
 | 22–37  | 16    | flags           | See below. |
-| 38–49  | 12    | target speed    | Belt speed the addon wants, in 0.01 km/h (0–40.95). |
+| 38–49  | 12    | -               | Not used: `0`. (Until 0.6: a belt speed the addon asked for, in 0.01 km/h.) |
 | 50–61  | 12    | character speed | Character's speed in 0.02 yd/s (0–81.9). |
 | 62–63  | 2     | reserved        | `0` |
 
@@ -45,8 +46,8 @@ Bit 0 is the least-significant bit of the 16-bit field.
 
 | Value | Name      | Meaning |
 |------:|-----------|---------|
-| 1     | ACTIVE    | A walking session is running: the companion may drive the belt. |
-| 2     | PAUSED    | The session is paused: the belt must be paused. |
+| 1     | ACTIVE    | A walking session is marked in the game: the walk the companion records is filed under it. |
+| 2     | PAUSED    | The session is paused in the game. |
 | 4     | MOVING    | The character is moving. |
 | 8     | MOUNTED   | |
 | 16    | TAXI      | On a flight path. |
@@ -59,23 +60,25 @@ Bit 0 is the least-significant bit of the 16-bit field.
 | 2048  | -         | Not used. |
 | 4096  | ESTIMATED | The character speed is an estimate (see below). |
 
-ACTIVE, PAUSED, MOVING and AFK change what the companion does; the rest are
-for display. The strip says how the character is moving and whether anyone
-is there, and nothing more: until version 0.5 the four bits marked *not
+ACTIVE - with the session number - is the one thing the companion acts on:
+it says which session a walk belongs to. The rest are for display. The
+strip says how the character is moving and whether anyone is there, and
+nothing more: until version 0.5 the four bits marked *not
 used* said that the character was dead (128), in combat (256), falling
 (1024) or resting (2048). The companion never acted on any of them, so the
 addon no longer sets them. A companion still takes a frame that carries
 one for a frame of the addon's - an older addon may be drawing it - and
 shows the flag nowhere.
 
-AFK matters together with PAUSED: the addon
-pauses a session by itself when the player goes AFK, and keeps the AFK flag
-set for as long as that automatic pause lasts. (That is ten minutes at
-most: after that the addon turns it into a pause that only *Resume* ends,
-and drops the flag.) The companion treats a pause
-*without* AFK as something the player asked for (pause then resume is a
-deliberate way to restart a belt that was stopped at the treadmill); an
-automatic one is not.
+AFK together with PAUSED says what kind of pause it is: the addon pauses a
+session by itself when the player goes AFK (if that option is on), and
+keeps the AFK flag set for as long as that automatic pause lasts. A pause
+without it is one the player asked for.
+
+**Nothing on the strip reaches the treadmill.** The companion only listens
+to that ([SAFETY.md](SAFETY.md)). The 12 bits that used to carry a belt
+speed are zero; a companion takes a frame from an older addon that still
+fills them in, and does nothing with them.
 
 ### Why "ESTIMATED" exists
 
@@ -92,17 +95,14 @@ sets this flag. A hidden value is never drawn on screen.
   stops changing, the picture is frozen (a loading screen over a stale frame,
   a hung client) and the companion treats the signal as lost. Only the `seq`
   of live frames counts here (section 4).
-* **session** changing means a new walking session started; the companion
-  starts a new recording. It counts as an explicit start - one that may
-  start the belt - only if the companion watched it begin (the frame before
-  it said "no session"); a session id that simply changes under it does
-  not, and a stopped belt then waits for a deliberate act (SAFETY.md, rule
-  6).
-* **target speed** is a *request*. The companion clamps it to the treadmill's
-  range and to the user's hard speed cap, rate-limits changes, and ignores it
-  entirely unless ACTIVE is set and PAUSED is not. `0` with ACTIVE set means
-  "stop the belt but keep the session" (the character is standing still and
-  the user chose a stand speed of zero).
+* **session** with ACTIVE says what the walk is filed under. The walk
+  itself is whatever the belt does: the companion records while the belt
+  reports a speed, with or without a session, paused in the game or not. A
+  session number that changes starts a new recording; no session, with the
+  belt moving, is a walk of its own (the history calls it "no game
+  session"). While the strip is out of view in the middle of a session - a
+  loading screen, another window on top - the walk stays with that
+  session; when the game is closed, the session is over.
 
 ## 2. The strip
 
@@ -221,17 +221,18 @@ on screen.
 
 The strip is not drawn during loading screens, and the companion cannot see
 it while the game is minimised or another window covers that corner. That is
-expected and safe: see "signal loss" in [SAFETY.md](SAFETY.md).
+expected, and nothing depends on it but the filing: the walk is recorded
+all the same.
 
 ## 3. The return path
 
 There is no live return path - an addon cannot receive anything while the
 game runs. The companion writes `Walka/CompanionData.lua` (one global table,
-`WalkaCompanionData`: measured sessions, body profile, treadmill limits),
-and the game loads it at login and on `/reload`, like the data files written
-by other addon companion apps. Until then the in-game HUD shows the addon's
-own estimates, which replay the companion's rate limits and so stay close to
-the real numbers.
+`WalkaCompanionData`: measured sessions, body profile, the treadmill's
+name), and the game loads it at login and on `/reload`, like the data files
+written by other addon companion apps. Until then the in-game HUD shows the
+addon's own estimates, counted from the pace the walker tells it
+(`/walka pace`).
 
 There is one more way out of the game, a slow one: what an addon keeps in
 its saved variables, the game writes to a file at logout and on `/reload`.
@@ -240,8 +241,8 @@ The road a character has travelled reaches the companion that way: see
 
 ## 4. Stat frames
 
-Besides driving the belt, the addon keeps a record of each character's
-journey: its level and time played, how far it has travelled on foot, and
+Besides marking walking sessions, the addon keeps a record of each
+character's journey: its level and time played, how far it has travelled on foot, and
 the real-world walking done while playing it. The companion's dashboard
 turns those numbers into a picture to share. The game only writes an addon's
 saved data to disk at logout or `/reload`, so to reach the companion while
@@ -305,8 +306,8 @@ sent).
 ### When they are sent
 
 Every 5th redraw is a stat frame instead of a live frame - never two in a
-row - so the belt still hears from the game four times out of five, and the
-longest gap between two live frames grows from 0.1 to 0.2 seconds. The stats
+row - so the live state is still on the strip four times out of five, and
+the longest gap between two live frames grows from 0.1 to 0.2 seconds. The stats
 go round in a fixed order:
 
 ```
@@ -320,19 +321,18 @@ CHAR_KEY means another character has logged in.
 
 ### A stat frame is never a live frame
 
-A stat frame says nothing about what the belt should do, and the companion
+A stat frame says nothing about the walking session, and the companion
 makes sure it can never be mistaken for a frame that does:
 
-* Only live frames (type 0) feed the reading the belt is driven by: its
-  content, its age, the frozen-picture check and the "game window closed"
-  rule. To all of these a stat frame is the same as no frame at all.
+* Only live frames (type 0) feed the live reading: its content, its age,
+  the frozen-picture check and the "game window closed" rule. To all of
+  these a stat frame is the same as no frame at all.
 * Stat frames are handed to the part of the companion that keeps the
-  journey numbers, which has no way to reach the belt.
+  journey numbers, and to nothing else.
 * A frame of type 2 or 3, like a frame of another version, is refused: for
   the companion there is no beacon in that picture.
 * So a picture that froze while a stat frame was on the strip is a lost
-  signal like any other ([SAFETY.md](SAFETY.md)), although a valid frame
-  can still be read from it.
+  signal like any other, although a valid frame can still be read from it.
 
 The frame type is covered by the CRC like every other bit, so a misread
 pixel cannot turn one kind of frame into the other.
@@ -384,7 +384,7 @@ WalkaCharDB = {
     segments = {                -- unbroken stretches travelled the same way
         { c = 1,                -- continent id (the game's, of the world position)
           m = "w",              -- on foot; "r" mounted, "t" flight path, "g" ghost
-          b = 1,                -- the treadmill belt was moving (absent otherwise)
+          b = 1,                -- a walking session was running (absent otherwise)
           l = 17,               -- character level
           t = 1795000000,       -- when it began (epoch seconds)
           x = -600, y = 4200,   -- first point, world yards (x north, y west)
@@ -425,10 +425,10 @@ How the companion reads it (`savedvars.py`, `road.py`):
 * **Only when asked.** The files are looked at when the Share page asks for
   a road (`GET /api/road?character=<id>`), at most every three seconds, and
   each is read again only when its size or date has changed. None of this
-  runs on the loop that drives the belt, and nothing here can reach it.
+  runs on the loop that records the walk.
 * **For the page** the road is thinned to at most 6,000 points
   (Ramer-Douglas-Peucker, the same tolerance everywhere) and grouped by
-  continent and by how it was travelled (`walked` with the belt moving,
+  continent and by how it was travelled (`walked` during a walking session,
   `road` without, `flight`), with its length measured before the thinning.
   With it go the places where the road begins and ends, where every tenth
   level was reached, and the passages from one continent to another (from
