@@ -15,6 +15,17 @@ on:
 permissions:
   contents: read
 
+# What goes into a release is fixed before the build starts:
+# * Every action is named by the commit it is at, not by a tag: a tag can be
+#   moved to other code by whoever holds the action's repository. (The
+#   version that commit is stands next to it; .github/dependabot.yml
+#   proposes newer ones.)
+# * Python packages are installed from the lock files in companion/, which
+#   name every package, its version and the checksums of its files. pip
+#   refuses anything else (--require-hashes). Walka itself is not
+#   "installed": the tests and the build take it from companion/src, so no
+#   packaging tool that nobody pinned runs here either.
+
 jobs:
   test:
     name: Tests (${{ matrix.os }})
@@ -24,12 +35,12 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
       - name: Install
-        run: python -m pip install -e "companion[dev]"
+        run: python -m pip install --require-hashes -r companion/requirements-dev.lock
       - name: Lint
         working-directory: companion
         run: ruff check src tests
@@ -41,12 +52,12 @@ jobs:
     name: Windows executable
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
       - name: Install
-        run: python -m pip install -e "companion[build]"
+        run: python -m pip install --require-hashes -r companion/requirements-build.lock
       - name: Build
         working-directory: companion
         run: python build_exe.py
@@ -64,6 +75,17 @@ jobs:
           # from the bundle.
           & $exe selfcheck
           if ($LASTEXITCODE -ne 0) { throw "selfcheck failed: something the app needs at run time is missing from Walka.exe" }
+          # The licences of the libraries packed into the program go with it.
+          $licences = (& $exe licenses | Out-String)
+          if ($licences -notmatch "THIRD-PARTY SOFTWARE IN WALKA" -or $licences -notmatch "Apache License" -or $licences -notmatch "aiohttp" -or $licences -notmatch "winrt-runtime") { throw "Walka.exe does not carry the licences of what is packed into it" }
+          # The guard - the second process, which stops the belt if Walka is
+          # killed - is this same program started once more. It must start
+          # from the packaged file, load the Bluetooth driver, and go when
+          # told to.
+          $guardData = Join-Path $env:RUNNER_TEMP "walka-guard"
+          "bye" | & $exe --data-dir $guardData guard
+          if ($LASTEXITCODE -ne 0) { throw "the guard did not start from Walka.exe" }
+          if (-not (Select-String -Path (Join-Path $guardData "guard.log") -Pattern "watching" -Quiet)) { throw "the guard did not get as far as watching" }
           # The Bluetooth stack must load inside the frozen app. The runner
           # has no Bluetooth adapter, so the scan itself is expected to say
           # so - what must not happen is an import error.
@@ -99,7 +121,7 @@ jobs:
           # disclaimer go with it to wherever the addon is passed on.
           Copy-Item LICENSE, DISCLAIMER.md release/Walka/
           Copy-Item README.md release/
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: Walka-windows
           path: release/
@@ -119,12 +141,12 @@ jobs:
           - { os: macos-latest, chip: Apple silicon, machine: arm64, file: Walka-mac-apple-silicon }
           - { os: macos-15-intel, chip: Intel, machine: x86_64, file: Walka-mac-intel }
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
       - name: Install
-        run: python -m pip install -e "companion[build]"
+        run: python -m pip install --require-hashes -r companion/requirements-build.lock
       - name: Build
         working-directory: companion
         run: python build_exe.py
@@ -141,6 +163,17 @@ jobs:
           # backend, what it asks macOS), the dashboard page and the
           # bundled addon.
           "$exe" selfcheck || fail "selfcheck failed: something the app needs at run time is missing from Walka"
+          # The licences of the libraries packed into the program go with it.
+          "$exe" licenses > "$RUNNER_TEMP/licences.txt" || fail "Walka does not print the licences of what is packed into it"
+          for wanted in "THIRD-PARTY SOFTWARE IN WALKA" "Apache License" "aiohttp" "pyobjc-core"; do
+            grep -q "$wanted" "$RUNNER_TEMP/licences.txt" || fail "the licences packed into Walka do not mention: $wanted"
+          done
+          # The guard - the second process, which stops the belt if Walka is
+          # killed - is this same program started once more. It must start
+          # from the packaged file, load the Bluetooth driver, and go when
+          # told to.
+          echo bye | "$exe" --data-dir "$RUNNER_TEMP/walka-guard" guard || fail "the guard did not start from Walka"
+          grep -q watching "$RUNNER_TEMP/walka-guard/guard.log" || fail "the guard did not get as far as watching"
           # The Bluetooth stack must load inside the frozen app. Whether
           # this machine lets it scan is another matter - what must not
           # happen is an import error.
@@ -177,7 +210,7 @@ jobs:
           chmod +x companion/dist/Walka
           zip -j "release/${{ matrix.file }}.zip" companion/dist/Walka
           unzip -Z "release/${{ matrix.file }}.zip"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{ matrix.file }}
           path: release/
@@ -190,11 +223,11 @@ jobs:
     needs: [windows-exe, mac-app]
     runs-on: windows-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: Walka-windows
           path: release
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: Walka-mac-*
           path: release
@@ -262,7 +295,7 @@ jobs:
           } | ConvertTo-Json | Set-Content -Encoding utf8 release/virus-scan.json
           Get-Content release/virus-scan.json
           $global:LASTEXITCODE = 0
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: Walka-release
           path: release/
@@ -281,30 +314,63 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # For the signed statement that this run built these files (below).
+      id-token: write
+      attestations: write
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       TAG: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', inputs.release_version) || github.ref_name }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: The tag is the version written in the code
         run: |
           echo "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$' || { echo "::error::'$TAG' is not a version like v0.1.0"; exit 1; }
+          # Run by hand, a release is made from the main line of the code and from nowhere else.
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && [ "$GITHUB_REF_NAME" != "$DEFAULT_BRANCH" ]; then
+            echo "::error::A release is published from the branch '$DEFAULT_BRANCH', not from '$GITHUB_REF_NAME'. Choose it under 'Use workflow from'."
+            exit 1
+          fi
           version="${TAG#v}"
           fail() { echo "::error::tag $TAG does not match $1"; exit 1; }
           grep -qx "version = \"$version\"" companion/pyproject.toml || fail "version in companion/pyproject.toml"
           grep -qx "__version__ = \"$version\"" companion/src/walka/__init__.py || fail "__version__ in companion/src/walka/__init__.py"
           grep -qx "## Version: $version" Walka/Walka.toc || fail "## Version in Walka/Walka.toc"
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: Walka-release
           path: release
       - name: Pack the addon
         working-directory: release
         run: zip -r -q ../Walka-addon.zip Walka
+      # The checksums of everything people download, in one file: a download
+      # can be compared with it (sha256sum -c, or Get-FileHash on Windows).
+      - name: Checksums
+        run: |
+          mkdir assets
+          cp release/Walka.exe release/Walka-mac-apple-silicon.zip release/Walka-mac-intel.zip release/virus-scan.json Walka-addon.zip assets/
+          (cd assets && sha256sum Walka.exe Walka-mac-apple-silicon.zip Walka-mac-intel.zip Walka-addon.zip > SHA256SUMS.txt && cat SHA256SUMS.txt)
+          # The files that were scanned are the files that are published.
+          for name in Walka.exe Walka-mac-apple-silicon.zip Walka-mac-intel.zip; do
+            scanned=$(python3 -c 'import json, sys; print(json.load(open("assets/virus-scan.json", encoding="utf-8-sig"))["sha256"][sys.argv[1]])' "$name")
+            grep -q "^$scanned  $name\$" assets/SHA256SUMS.txt || { echo "::error::$name is not the file the virus scan saw"; exit 1; }
+          done
+      # A statement, signed by GitHub and kept in a public log, that this
+      # run of this workflow, from this commit, produced exactly these
+      # files. Anyone can check a download against it:
+      #   gh attestation verify Walka.exe --repo <this repository>
+      - name: Say where these files were built
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            assets/Walka.exe
+            assets/Walka-mac-apple-silicon.zip
+            assets/Walka-mac-intel.zip
+            assets/Walka-addon.zip
       - name: Publish
         run: |
-          files="release/Walka.exe release/Walka-mac-apple-silicon.zip release/Walka-mac-intel.zip Walka-addon.zip release/virus-scan.json"
+          files="assets/Walka.exe assets/Walka-mac-apple-silicon.zip assets/Walka-mac-intel.zip assets/Walka-addon.zip assets/virus-scan.json assets/SHA256SUMS.txt"
           for file in $files; do test -s "$file" || { echo "::error::$file is missing"; exit 1; }; done
           notes="**To get Walka on Windows:** under **Assets** below, click **Walka.exe**, then open it. If Windows says *Windows protected your PC*, click **More info**, then **Run anyway**. The steps are at the top of the [README](https://github.com/$GH_REPO#readme).
 
@@ -314,14 +380,23 @@ jobs:
 
           **At your own risk:** Walka moves a motorised belt while you stand on it. It comes with no warranty, and it is not a safety device or a medical device. Read the [disclaimer](https://github.com/$GH_REPO/blob/$TAG/DISCLAIMER.md) before your first walk.
 
-          **Virus scan:** before this was published, Microsoft Defender scanned Walka.exe, the Mac programs and the addon's files, and found nothing. *virus-scan.json* under Assets says when, and with which virus definitions.
+          **Virus scan:** before this was published, Microsoft Defender scanned Walka.exe, the Mac programs and the addon's files, and found nothing. *virus-scan.json* under Assets says when, and with which virus definitions. A scan that finds nothing is not proof that a file is harmless: see [Is the download safe?](https://github.com/$GH_REPO#is-the-download-safe)
+
+          **Is this the file that was built here?** *SHA256SUMS.txt* has the checksum of every download. GitHub also keeps a signed record that these files were built by this repository's workflow from this version of the code: \`gh attestation verify Walka.exe --repo $GH_REPO\` checks a download against it. The files of a published release are never replaced.
 
           **Walka-addon.zip** is the game addon on its own. Walka.exe can put it in the game for you; to do it by hand, unzip it into the game's Interface\\AddOns folder. The Source code files are for developers."
           # A tag like v0.2.0-rc1 is a trial: published, but never "the latest" that the README's button gives.
           pre=""
           case "$TAG" in *-*) pre="--prerelease" ;; esac
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            # A second run for the same tag: replace the files, and publish it if a first try left a draft.
+          if draft=$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null); then
+            # A second run for the same tag. A published release is never
+            # changed: people may have downloaded its files, checked them,
+            # or be comparing a download with its checksums right now.
+            if [ "$draft" != "true" ]; then
+              echo "::error::Release $TAG is already published, and a published release is never changed. Give the fix a new version number and publish that."
+              exit 1
+            fi
+            # A draft that a failed first try left behind: finish it.
             gh release upload "$TAG" $files --clobber
             gh release edit "$TAG" --draft=false
           else

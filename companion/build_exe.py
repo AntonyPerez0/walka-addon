@@ -4,8 +4,9 @@
     python build_exe.py
 
 Produces dist/Walka.exe on Windows and dist/Walka on a Mac: the companion,
-its dashboard page and a copy of the addon (so the dashboard's "Install
-addon" button works) in one file. It is built for the kind of computer it
+its dashboard page, a copy of the addon (so the dashboard's "Install
+addon" button works) and the licences of the libraries packed with it
+(third_party.py) in one file. It is built for the kind of computer it
 is built on - on a Mac, for that Mac's processor (Apple silicon or Intel).
 """
 
@@ -17,6 +18,10 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ADDON = HERE.parent / "Walka"
+# The licences of what is packed into the program (written by third_party.py
+# just before the build), and where they go inside it: next to the package's
+# own files, where "Walka.exe licenses" looks for them.
+LICENCES = HERE / "build" / "THIRD-PARTY-LICENSES.txt"
 
 # Where the addon goes inside the bundle (walka.addon_sync looks for it
 # there). Not "Walka" at the top level: file names on Windows - and on a
@@ -67,6 +72,7 @@ def pyinstaller_args(platform: str = sys.platform) -> list[str]:
         "--paths", str(HERE / "src"),
         "--add-data", f"{HERE / 'src' / 'walka' / 'static'}{sep}walka/static",
         "--add-data", f"{ADDON}{sep}{ADDON_DESTINATION}",
+        "--add-data", f"{LICENCES}{sep}walka",
         # bleak picks its Bluetooth backend (WinRT on Windows, CoreBluetooth
         # on a Mac) at run time, which PyInstaller's static analysis cannot see.
         "--collect-submodules", "bleak",
@@ -94,6 +100,11 @@ def main() -> int:
     if not (ADDON / "Walka.toc").exists():
         print(f"addon folder not found at {ADDON}", file=sys.stderr)
         return 1
+    import third_party
+
+    # (After PyInstaller has been found: its --clean empties build/ only
+    # of its own work folders, and this file must be there when it packs.)
+    third_party.write(LICENCES)
     PyInstaller.__main__.run(pyinstaller_args())
     return 0
 

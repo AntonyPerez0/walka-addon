@@ -37,7 +37,9 @@ dev = [
     "ruff>=0.6",
 ]
 build = [
-    "pyinstaller>=6.6",
+    # 6.9: PYINSTALLER_RESET_ENVIRONMENT, which the guard process needs to
+    # unpack a copy of the program of its own (walka.guard).
+    "pyinstaller>=6.9",
 ]
 
 [project.scripts]
