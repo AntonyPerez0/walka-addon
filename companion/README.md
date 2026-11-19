@@ -19,3 +19,6 @@ Terminal may use Bluetooth and record the screen: see
 [On a Mac](../README.md#on-a-mac).
 
 See the [project README](../README.md) for setup, safety and how it works.
+
+Walka moves a motorised belt. You use it at your own risk and it comes with
+no warranty: see the [disclaimer](../DISCLAIMER.md).

@@ -26,6 +26,16 @@ from .road import demo_road
 
 log = logging.getLogger("walka")
 
+DISCLAIMER_URL = "https://github.com/AntonyPerez0/walka-addon/blob/HEAD/DISCLAIMER.md"
+
+# Shown every time the companion starts: most people get Walka from the
+# download button and never see the repository's DISCLAIMER.md.
+AT_YOUR_OWN_RISK = (
+    "\nWalka moves a motorised belt. You use it at your own risk, and it comes with no warranty.\n"
+    "It is not a safety device: keep the treadmill's remote within reach, and stop if you feel unwell.\n"
+    f"  disclaimer: {DISCLAIMER_URL}\n"
+)
+
 
 def _open_browser(url: str) -> None:
     try:
@@ -354,6 +364,7 @@ async def _run(args: argparse.Namespace) -> int:
         if simulate:
             print("  treadmill: SIMULATED (no Bluetooth)")
         print("Press Ctrl+C to quit (the belt is stopped first).")
+        print(AT_YOUR_OWN_RISK)
         if cfg.web.open_browser and not args.no_browser:
             # On its own thread: launching a browser can initialise COM on
             # the calling thread in a mode the Bluetooth stack cannot use.

@@ -10,6 +10,13 @@ reach and use the safety key if your pad has one. If anything feels wrong,
 stop the belt at the treadmill itself: Walka treats that as final and will
 not restart it.
 
+**This page describes a design, not a guarantee.** The rules below are what
+the software is built to do, and what its automated tests check against a
+simulated treadmill. Software has bugs, Bluetooth drops and computers
+freeze, so Walka is not a safety device and must not be the only thing
+between you and a moving belt. You use it at your own risk and it comes
+with no warranty: see the [disclaimer](../DISCLAIMER.md).
+
 Ways to stop, fastest first:
 
 1. the treadmill's remote, stop button or safety key;
@@ -169,6 +176,24 @@ with no I/O, so every rule below is covered by automated tests.
   Walka then estimates it (moving or not, plus your last known run speed),
   so the belt keeps a sensible pace; it does not try to read the hidden
   value.
+
+## You, before the belt
+
+Walka is not a medical device and nothing in it is medical advice. Its
+calories, steps and heart rate are estimates, for interest only.
+
+* Ask a doctor first if you have a heart condition, high blood pressure,
+  trouble with balance or dizziness, an injury, if you are pregnant, if you
+  take medicine that affects your balance or heart rate, if you have not
+  exercised for a long time - or if you are in any doubt.
+* Stop at once if you feel dizzy, faint, short of breath, have pain in your
+  chest, or anything hurts: stop the belt at the treadmill and step off.
+* Follow your treadmill's own manual - weight limit, safety key or clip,
+  free space behind and beside the belt, footwear. Driving it from software
+  that is not its maker's may not be supported by the maker, and may affect
+  its warranty.
+* Walka is for adults. Do not use it when you are tired or have been
+  drinking: your eyes are on a game, not on your feet.
 
 ## Sensible habits
 

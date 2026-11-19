@@ -236,6 +236,7 @@ def test_session_ids_run_from_1_to_255_and_never_0(rt):
 
 def test_announcements_can_be_turned_off(rt):
     rt.walka.Set(rt.walka, "announce", False)
+    rt.db.riskNoticeShown = True            # (not a session message: its own test is below)
     rt.clear_printed()
     rt.slash("/walka start")
     rt.slash("/walka pause")
@@ -244,6 +245,23 @@ def test_announcements_can_be_turned_off(rt):
     rt.slash("/walka stop")
     assert rt.printed == []
     assert len(history(rt)) == 1
+
+
+def test_the_first_session_ever_says_that_it_is_at_your_own_risk_once(rt):
+    """Someone who has the addon on its own never saw DISCLAIMER.md: the
+    first start says it in chat - also with session messages switched off -
+    and no later start does."""
+    rt.walka.Set(rt.walka, "announce", False)
+    rt.clear_printed()
+    rt.slash("/walka start")
+    assert len(rt.printed) == 1
+    assert "at your own risk" in rt.printed[0] and "no warranty" in rt.printed[0]
+    assert rt.db.riskNoticeShown is True
+    rt.tick(300)
+    rt.slash("/walka stop")
+    rt.clear_printed()
+    rt.slash("/walka start")
+    assert rt.printed == []
 
 
 # ---- AFK ------------------------------------------------------------------------------

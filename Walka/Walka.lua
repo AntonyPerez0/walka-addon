@@ -25,6 +25,10 @@ local FLAG = Protocol.FLAG
 local KMH_PER_MPH = Metrics.KMH_PER_MPH
 
 Walka.PREFIX = "|cff4fc3f7Walka|r: "
+-- Said in chat the first time a session is started (see StartSession).
+Walka.RISK_NOTICE = "this moves a real treadmill belt, and you use it at your own risk - no warranty. "
+    .. "Keep the treadmill's remote within reach, start slowly, and stop if you feel dizzy or unwell. "
+    .. "(Said once. The whole of it is in DISCLAIMER.md, where you got Walka.)"
 Walka.TICK_SECONDS = 0.1      -- game state sampling + beacon refresh
 Walka.UI_SECONDS = 0.25       -- how often the windows are told to redraw
 Walka.MIN_SESSION_SECONDS = 20 -- shorter sessions are not kept
@@ -426,6 +430,13 @@ function Walka:StartSession()
     self.model:reset(nil)
     self.estimator:reset(0)
     primeTarget(self)
+    if not db.riskNoticeShown then
+        -- Once per account, and whatever "announce" says: this is not a
+        -- session message. Someone who got the addon on its own has never
+        -- seen the README or DISCLAIMER.md.
+        db.riskNoticeShown = true
+        self:Print(Walka.RISK_NOTICE)
+    end
     if db.settings.announce then
         self:Print("session started - the belt follows your character. /walka stop to finish.")
     end
@@ -695,6 +706,7 @@ local function initDatabase()
         db.sessions = {}
     end
     db.sessionCounter = tonumber(db.sessionCounter) or 0
+    db.riskNoticeShown = db.riskNoticeShown == true or nil
     return db
 end
 

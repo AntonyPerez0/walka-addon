@@ -63,6 +63,13 @@ World of Warcraft: Forever.
 > [Before your first walk](#before-your-first-walk) and keep the pad's
 > remote in your hand the first time.
 
+> [!CAUTION]
+> **You use Walka at your own risk.** It moves a motorised belt while you
+> stand on it. It comes with no warranty, and it is not a safety device or
+> a medical device. If you have a health condition, are pregnant or are in
+> any doubt, ask a doctor first - and stop if you feel dizzy or unwell.
+> The whole of it: [DISCLAIMER.md](DISCLAIMER.md).
+
 *These steps are for Windows. On a Mac, steps 1 and 2 are different - they
 are under [On a Mac](#on-a-mac) - and the rest is the same.*
 
@@ -143,6 +150,7 @@ Everything below is the long version, for when you want it.
 
 **Safety and help** ·
 [Safety](#safety) ·
+[Disclaimer](DISCLAIMER.md) ·
 [Is the download safe?](#is-the-download-safe) ·
 [Is this allowed?](#is-this-allowed) ·
 [Before your first walk](#before-your-first-walk) ·
@@ -668,6 +676,12 @@ Short version - the long one is [docs/SAFETY.md](docs/SAFETY.md):
 
 Bluetooth is not an emergency stop: keep the remote within reach.
 
+These rules are what Walka is designed to do, and what its tests check
+against a simulated treadmill. They are not a guarantee, and Walka is not a
+safety device: the treadmill's own stop button, remote and safety key are.
+You use Walka at your own risk, with no warranty - see
+[DISCLAIMER.md](DISCLAIMER.md), which also says when to ask a doctor first.
+
 ## Is the download safe?
 
 `Walka.exe` - like `Walka` for the Mac - is a program from the internet
@@ -835,5 +849,6 @@ More: [docs/PROTOCOL.md](docs/PROTOCOL.md) ·
 ---
 
 <p align="center">
-  <sub>Walka is a fan-made tool. It is not affiliated with or endorsed by Blizzard Entertainment or UREVO.</sub>
+  <sub>Walka is a fan-made tool. It is not affiliated with or endorsed by Blizzard Entertainment, UREVO, WELLFIT or any other maker of treadmills.<br>
+  It is provided as is, with no warranty, and you use it at your own risk: see <a href="DISCLAIMER.md">DISCLAIMER.md</a>.</sub>
 </p>
