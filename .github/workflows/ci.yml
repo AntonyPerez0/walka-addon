@@ -223,11 +223,11 @@ jobs:
     needs: [windows-exe, mac-app]
     runs-on: windows-latest
     steps:
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: Walka-windows
           path: release
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: Walka-mac-*
           path: release
@@ -337,7 +337,7 @@ jobs:
           grep -qx "version = \"$version\"" companion/pyproject.toml || fail "version in companion/pyproject.toml"
           grep -qx "__version__ = \"$version\"" companion/src/walka/__init__.py || fail "__version__ in companion/src/walka/__init__.py"
           grep -qx "## Version: $version" Walka/Walka.toc || fail "## Version in Walka/Walka.toc"
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: Walka-release
           path: release
