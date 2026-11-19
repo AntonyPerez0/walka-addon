@@ -16,7 +16,7 @@ import {
   setTransform,
   toast,
 } from "./util.js";
-import { setupSteps, sourceLabel } from "./status.js";
+import { setupSteps, sourceLabel, termsPending } from "./status.js";
 
 const EPS = 1e-6;
 const SETUP_KEY = "walka.setup.hidden";
@@ -284,7 +284,8 @@ function updateManual(s) {
   setAttr($("manual-plus"), "aria-label", `Faster by 0.1 ${unit}`);
 
   let note;
-  if (!t.connected) note = "Connect the treadmill to start a manual session.";
+  if (termsPending(s)) note = "Accept the disclaimer at the top of this page to start a manual session.";
+  else if (!t.connected) note = "Connect the treadmill to start a manual session.";
   else if (!m.active)
     note = `Starts the belt after the pad's 3-2-1 countdown, then holds ${fmt.speedU(kmh)}. Overrides the game while it runs.`;
   else if (m.paused) note = "Paused. Resume to carry on, or end the session.";
@@ -292,7 +293,7 @@ function updateManual(s) {
   setText($("manual-note"), note);
 
   setShown($("manual-start"), !m.active);
-  setDisabled($("manual-start"), !t.connected);
+  setDisabled($("manual-start"), !t.connected || termsPending(s));
   setShown($("manual-pause"), m.active && !m.paused);
   setShown($("manual-resume"), m.active && m.paused);
   setShown($("manual-stop"), m.active);
@@ -535,10 +536,30 @@ function updateSetup(s) {
   setTransform($("setup-bar"), `scaleX(${done / names.length})`);
 }
 
+// ---- the disclaimer --------------------------------------------------------------------------------
+
+function updateTerms(s) {
+  const pending = termsPending(s);
+  setShown($("terms"), pending);
+  if (pending) setDisabled($("terms-accept"), !$("terms-check").checked);
+}
+
 // ---- wiring ----------------------------------------------------------------------------------------------
 
 export function initLive() {
   const manual = (action, extra) => post("/api/manual", { action, ...extra });
+
+  $("terms-check").addEventListener("change", (event) => {
+    setDisabled($("terms-accept"), !event.currentTarget.checked);
+  });
+  $("terms-accept").addEventListener("click", (event) => {
+    if (!$("terms-check").checked) return;
+    // The version of the text that is on this page: the companion refuses another.
+    const version = Number($("terms").dataset.version);
+    run(event.currentTarget, () => post("/api/terms/accept", { version }), {
+      success: "Accepted. Walka can now start and steer the belt.",
+    });
+  });
 
   $("hero-action").addEventListener("click", (event) => {
     const button = event.currentTarget;
@@ -605,4 +626,5 @@ export function updateLive(s, view, links, online) {
   updateLinks(s, links, online);
   updateLog(s);
   updateSetup(s);
+  updateTerms(s);
 }

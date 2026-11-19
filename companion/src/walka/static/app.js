@@ -46,7 +46,7 @@ function nameStop() {
 
 // What cannot work without the companion is switched off while it is silent (and looks it),
 // instead of failing one press at a time. STOP is not among them: it is always tried.
-const NEEDS_COMPANION = "#manual, #treadmill, #links, #setup, #view-settings .card";
+const NEEDS_COMPANION = "#terms, #manual, #treadmill, #links, #setup, #view-settings .card";
 let companionHeard = null;
 let focusToReturn = null; // what had focus when its card was switched off
 function gateControls(online) {

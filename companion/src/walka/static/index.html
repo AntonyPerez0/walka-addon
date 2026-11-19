@@ -89,6 +89,30 @@
 
   <div class="live-grid">
 
+    <!-- The disclaimer, to be accepted once before Walka starts or steers a real belt. A card
+         in the page, not a dialog over it: nothing covers STOP. data-version is
+         walka.config.TERMS_VERSION, and the two paragraphs in capitals are DISCLAIMER.md's own
+         (both are checked by the tests). -->
+    <section class="card terms" id="terms" aria-labelledby="terms-title" data-version="1" tabindex="-1" hidden>
+      <header class="card-head"><h3 id="terms-title">Before Walka moves your treadmill</h3></header>
+      <p><strong>Walka moves a motorised belt while you stand on it and look at a game. You use it at your own risk.</strong>
+      Until you accept what is said here, Walka does not start or steer the belt. It shows and records what the treadmill does, and STOP works.</p>
+      <ul class="terms-points">
+        <li>Walka is a free hobby project, and an early version. Its safety rules are a design, tested against a simulated treadmill - not a guarantee of how it behaves with yours.</li>
+        <li>It is not a safety device. Bluetooth is not an emergency stop: keep the treadmill's own remote within reach, and use its safety key if it has one.</li>
+        <li>It is not a medical device, and nothing in it is medical advice. Ask a doctor first if you have a health condition, are pregnant or are in any doubt - and stop at once if you feel dizzy, faint or unwell.</li>
+        <li>It is for adults. Follow your treadmill's own manual, keep children and pets away from it, and never leave a session running when you step off.</li>
+      </ul>
+      <div class="terms-legal">
+        <p>WALKA IS PROVIDED "AS IS" AND "AS AVAILABLE", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, SAFETY, ACCURACY AND NONINFRINGEMENT. NOTHING IN WALKA, ITS DOCUMENTATION OR ITS DASHBOARD IS A PROMISE THAT IT WILL WORK WITHOUT FAULT OR WITHOUT INTERRUPTION.</p>
+        <p>TO THE FULLEST EXTENT PERMITTED BY LAW, IN NO EVENT SHALL THE AUTHORS, CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY - INCLUDING PERSONAL INJURY, DEATH, DAMAGE TO PROPERTY OR EQUIPMENT, LOSS OF DATA, AND ACTION TAKEN AGAINST A GAME ACCOUNT - WHETHER IN AN ACTION OF CONTRACT, TORT (INCLUDING NEGLIGENCE) OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH WALKA OR THE USE OF IT.</p>
+        <p>The law of some places does not allow all of this. Nothing here takes away a right that the law says cannot be taken away; where that is so, the two paragraphs above apply as far as the law allows.</p>
+      </div>
+      <p class="muted small">This is the short form of Walka's <a href="https://github.com/AntonyPerez0/walka-addon/blob/HEAD/DISCLAIMER.md" target="_blank" rel="noopener noreferrer">disclaimer</a>. Walka is published under the <a href="https://github.com/AntonyPerez0/walka-addon/blob/HEAD/LICENSE" target="_blank" rel="noopener noreferrer">MIT licence</a>.</p>
+      <label class="check"><input id="terms-check" type="checkbox"><strong>I am an adult, I have read this, and I use Walka at my own risk.</strong></label>
+      <div class="btn-row"><button class="btn primary" id="terms-accept" type="button" disabled>I accept</button></div>
+    </section>
+
     <section class="card hero" id="hero" data-tone="idle" aria-label="Belt state and speed">
       <div class="annun">
         <span class="lamp"><svg aria-hidden="true"><use id="hero-icon" href="#i-idle"/></svg></span>

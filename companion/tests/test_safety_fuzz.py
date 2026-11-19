@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 
 from walka.app import TICK_S, App
-from walka.config import Config
+from walka.config import TERMS_VERSION, Config
 from walka.protocol import Flags, Frame, kmh_to_raw, yps_to_raw
 from walka.sources import BeaconSource
 from walka.treadmill import BeltState, Treadmill, TreadmillError, TreadmillEvent
@@ -157,6 +157,8 @@ class Fuzz:
         self.mono, self.wall = Clock(1000.0), Clock(1.7e9)
         self.trace: collections.deque[str] = collections.deque(maxlen=40)
         self.config = Config()
+        # The walker has accepted the disclaimer (the time before that: test_terms.py).
+        self.config.terms.accepted_version = TERMS_VERSION
         self.phys = SimulatedTreadmill(us_firmware=seed % 2 == 0, clock=self.mono, auto_run=False)
         self.phys.status.connected = True  # the pad itself is always switched on
         self.phys.status.state = BeltState.STOPPED

@@ -14,7 +14,7 @@ import pytest
 
 from test_app import Clock
 from walka.app import TICK_S, App
-from walka.config import MAX_SPEED_CAP_KMH, Config, apply_update
+from walka.config import MAX_SPEED_CAP_KMH, TERMS_VERSION, Config, apply_update
 from walka.governor import Phase
 from walka.protocol import Flags, Frame, kmh_to_raw
 from walka.sources import BeaconSource
@@ -35,6 +35,8 @@ class PadRig:
         driver_kwargs.setdefault("command_timeout_s", 0.02)
         self.treadmill = FtmsTreadmill(backend=self.backend, **driver_kwargs)
         self.config = Config()
+        # The walker has accepted the disclaimer (the time before that: test_terms.py).
+        self.config.terms.accepted_version = TERMS_VERSION
         self.beacon = BeaconSource(None, clock=lambda: self.clock.mono)
         self.addon = tmp_path / "AddOns" / "Walka"
         self.addon.mkdir(parents=True)

@@ -20,6 +20,12 @@ log = logging.getLogger(__name__)
 
 CONFIG_FILE = "config.json"
 
+# The disclaimer the dashboard asks to be accepted before the companion
+# starts or steers a real belt: DISCLAIMER.md, and the card that shows it
+# (static/index.html, which carries the same number). Raise it when what the
+# disclaimer says changes in substance - everyone is then asked again.
+TERMS_VERSION = 1
+
 
 def default_data_dir() -> Path:
     """Where config and recorded walks live.
@@ -88,6 +94,14 @@ class ManualConfig:
 
 
 @dataclass
+class TermsConfig:
+    """The walker's acceptance of the disclaimer (see TERMS_VERSION)."""
+
+    accepted_version: int = 0  # 0 = not accepted
+    accepted_at: str = ""  # when: UTC, ISO 8601
+
+
+@dataclass
 class Config:
     units: str = "mph"  # dashboard display: "mph" | "kmh"
     profile: Profile = field(default_factory=Profile)
@@ -98,6 +112,7 @@ class Config:
     wow: WowConfig = field(default_factory=WowConfig)
     web: WebConfig = field(default_factory=WebConfig)
     manual: ManualConfig = field(default_factory=ManualConfig)
+    terms: TermsConfig = field(default_factory=TermsConfig)
     # System-wide key combination that stops the belt from inside a game
     # (Windows and macOS, where "alt" is the Option key). Empty = off.
     stop_hotkey: str = "ctrl+alt+x"

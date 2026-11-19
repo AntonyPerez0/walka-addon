@@ -2,20 +2,22 @@
 
 Walka changes the speed of a motorised belt you are standing on, based on
 what a video game character is doing. That deserves some care. This page
-explains what the software will and will not do, so that nothing it does is
-a surprise.
+explains what the software is built to do and not to do, so that you know
+what to expect.
 
 **Bluetooth is not an emergency stop.** Keep the treadmill's remote within
 reach and use the safety key if your pad has one. If anything feels wrong,
-stop the belt at the treadmill itself: Walka treats that as final and will
-not restart it.
+stop the belt at the treadmill itself: Walka is built to treat that as
+final, and not to restart it.
 
 **This page describes a design, not a guarantee.** The rules below are what
 the software is built to do, and what its automated tests check against a
 simulated treadmill. Software has bugs, Bluetooth drops and computers
 freeze, so Walka is not a safety device and must not be the only thing
-between you and a moving belt. You use it at your own risk and it comes
-with no warranty: see the [disclaimer](../DISCLAIMER.md).
+between you and a moving belt. Read every "never", "always" and "cannot"
+on this page that way: as what the code is written to do, not as a
+promise. You use Walka at your own risk and it comes with no warranty: see
+the [disclaimer](../DISCLAIMER.md).
 
 Ways to stop, fastest first:
 
@@ -27,17 +29,21 @@ Ways to stop, fastest first:
 3. the STOP button on the dashboard;
 4. *Stop* on the in-game HUD, or `/walka stop`.
 
-## The rules the companion enforces
+## The rules the companion is built to enforce
 
 These live in one small state machine (`companion/src/walka/governor.py`)
-with no I/O, so every rule below is covered by automated tests.
+with no I/O, so every rule below is covered by automated tests - against a
+simulated treadmill, not a real one.
 
 1. **Hands off unless a session is active.** Until you press *Start* (in the
    game HUD or the dashboard) Walka never sends the treadmill a command. You
    can use the pad with its remote as if Walka were not there (it will still
-   log the walk).
+   log the walk). And until you have accepted the
+   [disclaimer](../DISCLAIMER.md) on the dashboard, Walka does not start or
+   steer the belt whatever is pressed: of its commands only a stop (STOP,
+   the hotkey) is sent.
 
-2. **Your speed cap always wins.** The companion has a hard maximum speed
+2. **Your speed cap comes first.** The companion has a hard maximum speed
    (3.0 mph out of the box; change it in the dashboard under *Settings →
    Safety limits*). No game state, addon setting or corrupted frame can make the
    companion command more than that, nor more than the range the treadmill
@@ -220,7 +226,7 @@ The Bluetooth driver follows the same command sequence as open-source
 projects that control UREVO pads, including one that lists the Strol 2E
 (URTM030) as verified on hardware. But this software has **not yet been run
 against a physical treadmill** by its author. Before your first real
-session, run `walka probe` (it only reads; it cannot move the belt) and
+session, run `walka probe` (it only reads; it sends the treadmill no commands) and
 then try a manual session from the dashboard while standing beside the pad,
 not on it.
 

@@ -28,7 +28,7 @@ Walka.PREFIX = "|cff4fc3f7Walka|r: "
 -- Said in chat the first time a session is started (see StartSession).
 Walka.RISK_NOTICE = "this moves a real treadmill belt, and you use it at your own risk - no warranty. "
     .. "Keep the treadmill's remote within reach, start slowly, and stop if you feel dizzy or unwell. "
-    .. "(Said once. The whole of it is in DISCLAIMER.md, where you got Walka.)"
+    .. "(Said once. The whole of it is in DISCLAIMER.md, with Walka.)"
 Walka.TICK_SECONDS = 0.1      -- game state sampling + beacon refresh
 Walka.UI_SECONDS = 0.25       -- how often the windows are told to redraw
 Walka.MIN_SESSION_SECONDS = 20 -- shorter sessions are not kept

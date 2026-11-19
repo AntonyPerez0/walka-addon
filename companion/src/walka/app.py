@@ -15,13 +15,14 @@ import math
 import time
 from collections import deque
 from collections.abc import Callable
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from . import __version__, addon_sync
 from . import config as config_module
 from . import hotkey as hotkey_module
-from .config import Config
+from .config import TERMS_VERSION, Config
 from .governor import ABANDONED_AFTER_S, Action, Belt, Command, Governor, Reading
 from .hotkey import GlobalHotkey
 from .journey import attach as attach_journeys
@@ -41,6 +42,10 @@ FREE_WALK_GRACE_S = 60.0  # a remote-controlled walk ends after this long stoppe
 # movement is closed - and let go of - after this long.)
 STALE_DATA_S = 5.0  # treadmill data older than this is not trusted
 STATE_FILE = "state.json"
+
+TERMS_NEEDED = (
+    "Accept the disclaimer on the dashboard first. Until then Walka does not start or steer the belt."
+)
 
 # What the governor has to tell the user, in plain words: (level, text).
 _NOTES = {
@@ -91,6 +96,10 @@ class App:
         self.beacon = beacon
         self.treadmill = treadmill
         self.treadmill.on_event = self._on_treadmill_event
+        # A belt that someone can stand on is only started and steered once
+        # the disclaimer has been accepted (terms_accepted). The simulated
+        # treadmill has no belt, and the demo runs on it.
+        self._terms_apply = getattr(treadmill, "kind", "") != "simulated"
         self.heart_rate = heart_rate
         # The numbers behind the Share page's picture. They arrive in stat frames,
         # which never reach the governor (stat_route.py, journey.py).
@@ -226,8 +235,35 @@ class App:
                 level, text = _NOTES[note]
                 self.log_event(text, level)
 
+    # ---- the disclaimer ----------------------------------------------------------
+    def terms_accepted(self) -> bool:
+        """May Walka start and steer this belt? Not before the walker has
+        accepted the disclaimer (in its current version) on the dashboard."""
+        return not self._terms_apply or self.config.terms.accepted_version >= TERMS_VERSION
+
+    def accept_terms(self) -> None:
+        if self.config.terms.accepted_version >= TERMS_VERSION:
+            return
+        self.config.terms.accepted_version = TERMS_VERSION
+        self.config.terms.accepted_at = datetime.fromtimestamp(self.wall(), timezone.utc).isoformat(timespec="seconds")
+        self.save_config()
+        self.log_event("Disclaimer accepted. Walka can now start and steer the belt.")
+
+    def _refused_without_terms(self) -> bool:
+        if self.terms_accepted():
+            return False
+        self.log_event(TERMS_NEEDED, "warning")
+        return True
+
     # ---- the control tick --------------------------------------------------------
     def current_reading(self, mono: float) -> Reading:
+        if not self.terms_accepted():
+            # Whatever the game shows, no session is running as far as the
+            # governor is concerned: it stays hands-off, as it is before
+            # Start is pressed. (Marked as ours: a session that is under way
+            # when the disclaimer is accepted was not watched to begin, so
+            # the belt then waits for the character to start moving.)
+            return Reading(age_s=0.0, active=False, synthetic=True)
         if self.manual.active:
             self._manual_was_active = True
             return self.manual.reading()
@@ -269,8 +305,11 @@ class App:
 
     async def _execute(self, command: Command) -> None:
         treadmill = self.treadmill
-        if self._stopping.is_set() and command.action in (Action.START, Action.SET_SPEED):
-            return  # the companion is closing: nothing that moves the belt goes out any more
+        if command.action in (Action.START, Action.SET_SPEED):
+            if self._stopping.is_set():
+                return  # the companion is closing: nothing that moves the belt goes out any more
+            if not self.terms_accepted():
+                return  # (the governor is given no session to ask this for: a second lock on the same door)
         try:
             if command.action is Action.PAUSE:
                 # A pause or stop never queues behind another command: the
@@ -513,17 +552,25 @@ class App:
         return installed
 
     # ---- control API (dashboard / CLI) -------------------------------------------
-    def manual_start(self, speed_kmh: float | None = None) -> None:
+    def manual_start(self, speed_kmh: float | None = None) -> bool:
+        """Returns False, with nothing started, while the disclaimer has
+        not been accepted (and so do the two kinds of resume below)."""
+        if self._refused_without_terms():
+            return False
         self.manual.start(speed_kmh)
         self.governor.resume()
         self.log_event("Manual session started.")
+        return True
 
     def manual_pause(self) -> None:
         self.manual.pause()
 
-    def manual_resume(self) -> None:
+    def manual_resume(self) -> bool:
+        if self._refused_without_terms():
+            return False
         self.manual.resume()
         self.governor.resume()
+        return True
 
     def manual_stop(self) -> None:
         if self.manual.active:
@@ -534,9 +581,12 @@ class App:
         self.manual.set_speed(speed_kmh)
         self.config.manual.speed_kmh = self.manual.speed_kmh
 
-    def resume(self) -> None:
+    def resume(self) -> bool:
         """Explicit "carry on": clears a stop-at-the-machine or a wait state."""
+        if self._refused_without_terms():
+            return False
         self.governor.resume()
+        return True
 
     async def emergency_stop(self) -> None:
         """Stop the belt now and keep it stopped until explicitly resumed."""
@@ -702,6 +752,8 @@ class App:
 
     def update_config(self, patch: dict[str, Any]) -> None:
         """Apply a partial config (from the dashboard), save and re-sync."""
+        # (The disclaimer is accepted with accept_terms, not as a setting.)
+        patch = {key: value for key, value in patch.items() if key != "terms"}
         treadmill_patch = patch.get("treadmill")
         if isinstance(treadmill_patch, dict) and "address" in treadmill_patch and self._belt_in_use():
             wanted = treadmill_patch["address"]
@@ -815,6 +867,11 @@ class App:
                 "error": self.addon_error,
             },
             "setup": {"profile_set": self.profile_is_set()},
+            "terms": {
+                "required": self._terms_apply,
+                "accepted": self.terms_accepted(),
+                "version": TERMS_VERSION,
+            },
             "hotkey": self.hotkey.to_dict() if self.hotkey is not None else None,
             "config": self.config.to_dict(),
             "events": list(self.events)[:30],

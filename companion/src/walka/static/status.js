@@ -244,12 +244,29 @@ const RESUME_NOTE = "The belt starts after the pad's 3-2-1 countdown.";
  * tone: "ok" belt driven / session live, "warn" waiting or degraded,
  *       "bad" stopped or broken, "idle" at rest.
  */
+/** Is Walka still waiting for the disclaimer to be accepted (a real treadmill only)? */
+export function termsPending(s) {
+  return !!(s && s.terms && s.terms.required && !s.terms.accepted);
+}
+
 export function describe(s) {
   const g = s.governor;
   const t = s.treadmill;
   const lim = s.config.limits;
   const manual = s.source.manual;
   const reason = g.reason || "";
+
+  if (termsPending(s)) {
+    return {
+      tone: "warn",
+      icon: "note",
+      title: "Waiting for you to accept the disclaimer",
+      short: "Not accepted",
+      detail:
+        "Walka does not start or steer the belt until you have accepted the disclaimer at the top of this page. " +
+        "It shows and records what the treadmill does, and STOP works.",
+    };
+  }
 
   switch (g.phase) {
     case "no_treadmill": {

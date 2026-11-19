@@ -28,7 +28,8 @@ from typing import Any
 from aiohttp import web
 
 from . import addon_sync
-from .app import App
+from .app import TERMS_NEEDED, App
+from .config import TERMS_VERSION
 from .export import record_to_tcx
 
 log = logging.getLogger(__name__)
@@ -130,6 +131,10 @@ def ok(**extra: Any) -> web.Response:
     return web.json_response({"ok": True, **extra})
 
 
+def terms_needed() -> web.Response:
+    return web.json_response({"ok": False, "error": TERMS_NEEDED}, status=403)
+
+
 def create_app(app: App) -> web.Application:
     routes = web.RouteTableDef()
 
@@ -174,11 +179,13 @@ def create_app(app: App) -> web.Application:
         action = data.get("action")
         speed = _number(data, "speed_kmh")
         if action == "start":
-            app.manual_start(speed)
+            if not app.manual_start(speed):
+                return terms_needed()
         elif action == "pause":
             app.manual_pause()
         elif action == "resume":
-            app.manual_resume()
+            if not app.manual_resume():
+                return terms_needed()
         elif action == "stop":
             app.manual_stop()
         elif action == "speed":
@@ -191,7 +198,19 @@ def create_app(app: App) -> web.Application:
 
     @routes.post("/api/resume")
     async def resume(_request: web.Request) -> web.Response:
-        app.resume()
+        if not app.resume():
+            return terms_needed()
+        return ok()
+
+    @routes.post("/api/terms/accept")
+    async def accept_terms(request: web.Request) -> web.Response:
+        """The walker ticked the box under the disclaimer and pressed
+        "I accept". The page says which version of it was on the screen."""
+        data = await _body(request)
+        if data.get("version") != TERMS_VERSION or isinstance(data.get("version"), bool):
+            error = "The disclaimer on this page is not the current one. Reload the page and read it again."
+            return web.json_response({"ok": False, "error": error}, status=409)
+        app.accept_terms()
         return ok()
 
     @routes.post("/api/stop")

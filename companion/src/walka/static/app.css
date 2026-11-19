@@ -959,6 +959,19 @@ main {
     grid-template-rows: auto auto auto 1fr;
     align-items: start;
   }
+  /* Until the disclaimer is accepted, its card is the first thing on the page. */
+  .live-grid:has(> #terms:not([hidden])) {
+    grid-template-areas:
+      "terms terms terms"
+      "hero hero session"
+      "setup setup setup"
+      "manual treadmill links"
+      "activity treadmill links";
+    grid-template-rows: auto auto auto auto 1fr;
+  }
+  #terms {
+    grid-area: terms;
+  }
   .pair {
     display: contents;
   }
@@ -1410,6 +1423,29 @@ main {
 .risk strong {
   color: var(--ink);
   font-weight: 600;
+}
+
+/* The disclaimer, until it is accepted. */
+.terms {
+  border-color: var(--warn);
+}
+.terms-points {
+  display: grid;
+  gap: 8px;
+  padding-left: 20px;
+  list-style: disc;
+  color: var(--ink-2);
+  font-size: 14px;
+}
+.terms-legal {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border-radius: var(--r);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 /* Getting started. */

@@ -365,6 +365,8 @@ async def _run(args: argparse.Namespace) -> int:
             print("  treadmill: SIMULATED (no Bluetooth)")
         print("Press Ctrl+C to quit (the belt is stopped first).")
         print(AT_YOUR_OWN_RISK)
+        if not app.terms_accepted():
+            print("Before Walka starts or steers the belt, accept the disclaimer on the dashboard.\n")
         if cfg.web.open_browser and not args.no_browser:
             # On its own thread: launching a browser can initialise COM on
             # the calling thread in a mode the Bluetooth stack cannot use.

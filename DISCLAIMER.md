@@ -4,7 +4,9 @@
 You use it at your own risk.**
 
 Please read this page before your first walk. It says what Walka is and is
-not, what is yours to check, and what its authors do not promise.
+not, what is yours to check, and what its authors do not promise. The
+companion shows the short form of it the first time, and does not start or
+steer a belt until you have accepted that.
 
 ## What Walka is, and is not
 
@@ -81,6 +83,12 @@ Nothing on this page takes away a right that the law says cannot be taken
 away. Where that is so, the two sections above apply as far as the law
 allows.
 
+## The code
+
+Walka's code is published under the MIT licence: see [LICENSE](LICENSE),
+which says the same "as is, no warranty" about the code. If you pass Walka
+on or build on it, that licence and this page go with it.
+
 ## Names
 
 Walka is a fan-made tool. It is not affiliated with or endorsed by Blizzard
@@ -88,3 +96,5 @@ Entertainment, UREVO, WELLFIT or any other maker of treadmills. World of
 Warcraft is a trademark of Blizzard Entertainment, Inc.; the other names
 belong to their owners. Code and ideas taken from other projects are listed
 in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+
+*Version 1 of this disclaimer. The companion asks again when it changes.*
