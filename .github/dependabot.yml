@@ -1,11 +1,17 @@
 # The actions the build uses are pinned to exact commits (see ci.yml). This
-# has GitHub propose the pull request when a newer version of one is out,
-# so that the pins do not rot. A pull request runs the tests and the build.
+# has GitHub propose newer versions of them, so that the pins do not rot:
+# GitHub retires old versions of its actions, and a build pinned to one
+# then stops on the day it is needed. Once a month, and all of them in one
+# pull request, which runs the tests and the builds: green means merge.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
+    groups:
+      actions:
+        patterns:
+          - "*"
     commit-message:
       prefix: "CI"
