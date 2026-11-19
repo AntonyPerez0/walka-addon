@@ -9,8 +9,9 @@ The treadmill's own remote is still the primary way to stop the belt.
 
 On Windows the hotkey lives on a background thread with a message loop of
 its own. The same kind of thread, with a hidden window instead of a hotkey,
-is how the companion learns that Windows is logging off or shutting down
-(``SessionEndWatcher``), so that it can stop the belt first.
+is how the companion learns that Windows is logging off or shutting down -
+or going to sleep - (``SessionEndWatcher``), so that it can stop the belt
+first.
 
 On macOS a hotkey is registered with the system's Carbon library, which
 needs no permission from the user. It hands key presses to the program's
@@ -40,6 +41,8 @@ WM_QUIT = 0x0012
 WM_CLOSE = 0x0010
 WM_QUERYENDSESSION = 0x0011
 WM_ENDSESSION = 0x0016
+WM_POWERBROADCAST = 0x0218
+PBT_APMSUSPEND = 0x0004  # the computer is about to sleep or hibernate
 
 # (A Mac keyboard has Option where a PC has Alt, and Command where it has
 # the Windows key: both spellings mean the same key on either.)
@@ -482,8 +485,14 @@ def session_end_reply(message: int, wparam: int) -> tuple[int | None, bool]:
     return None, False
 
 
+def is_suspend(message: int, wparam: int) -> bool:
+    """Is this the message that says the computer is about to sleep?"""
+    return message == WM_POWERBROADCAST and wparam == PBT_APMSUSPEND
+
+
 class SessionEndWatcher:
-    """Calls ``callback`` when Windows logs the user off or shuts down.
+    """Calls ``callback`` when Windows logs the user off or shuts down, and
+    ``on_suspend`` (if given) when the computer is about to sleep.
 
     A console program is normally told through its console control handler -
     but not once it has loaded user32 or gdi32, as this one has for the
@@ -495,12 +504,19 @@ class SessionEndWatcher:
     ``callback`` runs on that thread. It should return only when the
     process may be killed: Windows waits a few seconds for the answer and
     can end the process as soon as it has it.
+
+    ``on_suspend`` runs there too, and should return once the belt has been
+    told to stop: Windows gives a program about two seconds before it
+    sleeps. (A computer with "Modern Standby" may go to sleep without
+    telling programs at all. The companion then notices when it wakes:
+    ``App._stop_after_gap``.)
     """
 
     _serial = itertools.count(1)
 
-    def __init__(self, callback: Callable[[], None]) -> None:
+    def __init__(self, callback: Callable[[], None], on_suspend: Callable[[], None] | None = None) -> None:
         self.callback = callback
+        self.on_suspend = on_suspend
         self.error = ""
         self.active = False
         self.hwnd: int | None = None  # the hidden window, while it exists
@@ -512,6 +528,13 @@ class SessionEndWatcher:
     def handle(self, message: int, wparam: int) -> int | None:
         """What the window procedure does with one message; returns the
         reply, or ``None`` to leave the message to Windows."""
+        if is_suspend(message, wparam):
+            if self.on_suspend is not None:
+                try:
+                    self.on_suspend()
+                except Exception:
+                    log.exception("stopping the belt before the computer sleeps failed")
+            return 1  # (TRUE: the message was dealt with)
         reply, stop_now = session_end_reply(message, wparam)
         if stop_now:
             try:

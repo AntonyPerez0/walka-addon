@@ -333,6 +333,14 @@ class Governor:
         return self._halting is not None and (self._ours or self._orphan)
 
     @property
+    def belt_ours(self) -> bool:
+        """A belt that turns because of us, or may: one we are driving, one
+        whose stop has not been seen to work, or one that was running when
+        the link dropped. (What ``shutdown`` would stop - and what is left
+        running if the companion is killed instead.)"""
+        return (self.driving and self.belt_on) or self._ours or self._orphan
+
+    @property
     def belt_out_of_sight(self) -> bool:
         """The link dropped under a belt we were driving, and the belt has
         not reported since: it is probably still running."""

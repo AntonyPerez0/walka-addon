@@ -384,7 +384,51 @@ def test_the_build_bundles_what_selfcheck_looks_for(repo_root: Path):
     destinations = [windows[i + 1].split(os.pathsep)[-1] for i, arg in enumerate(windows) if arg == "--add-data"]
     assert "/".join(addon_sync.BUNDLED_ADDON_PATH) in destinations
     top_level = [destination.split("/")[0].lower() for destination in destinations]
-    assert len(set(top_level)) == len(top_level) == 2 and "walka" in top_level
+    assert set(top_level) == {"walka", "_addon"}
+    # The licences of the packed libraries go where "Walka.exe licenses" looks for them.
+    data = [windows[i + 1] for i, arg in enumerate(windows) if arg == "--add-data"]
+    assert [entry for entry in data if entry.endswith(os.pathsep + "walka")] == [
+        f"{build.LICENCES}{os.pathsep}walka"
+    ]
+    assert build.LICENCES.name == cli.LICENCES_FILE.name
+
+
+# ---- the licences of what is packed into the program -----------------------------------------
+
+
+def test_licenses_from_source_says_where_they_are(capsys):
+    assert not cli.LICENCES_FILE.exists(), "only a build writes this file: it must not be committed"
+    assert cli.main(["licenses"]) == 0
+    out = capsys.readouterr().out
+    assert "run from its source code" in out and "THIRD-PARTY-NOTICES.md" in out
+
+
+def test_licenses_prints_what_the_build_packed(tmp_path: Path, capsys, monkeypatch):
+    packed = tmp_path / "THIRD-PARTY-LICENSES.txt"
+    packed.write_text("THIRD-PARTY SOFTWARE IN WALKA\n\naiohttp 3 - Apache-2.0\nCopyright aio-libs contributors\n", "utf-8")
+    monkeypatch.setattr(cli, "LICENCES_FILE", packed)
+    assert cli.main(["licenses"]) == 0
+    assert capsys.readouterr().out == packed.read_text("utf-8")
+    assert "licenses" in cli.build_parser().format_help()
+
+
+def test_selfcheck_of_a_packaged_program_wants_the_licences(tmp_path: Path, capsys, monkeypatch):
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(cli, "LICENCES_FILE", tmp_path / "missing.txt")
+    monkeypatch.setattr(cli, "_guard_problem", lambda: "")
+    assert cli.main(["selfcheck"]) == 1
+    assert "licences of the packed libraries are missing" in capsys.readouterr().out
+    (tmp_path / "missing.txt").write_text("x", "utf-8")
+    assert cli.main(["selfcheck"]) == 0
+    # ... and a guard that can be started from it.
+    monkeypatch.setattr(cli, "_guard_problem", lambda: "the guard could not be started: no")
+    assert cli.main(["selfcheck"]) == 1
+    assert "the guard could not be started" in capsys.readouterr().out
+
+
+def test_the_guard_command_is_not_advertised():
+    assert "guard" not in cli.build_parser().format_help()
+    assert cli.build_parser().parse_args(["guard"]).command == "guard"
 
 
 def test_selfcheck_imports_what_this_kind_of_computer_needs():

@@ -11,6 +11,12 @@ channels is not known, so those are listened to only with ``--all``.
 The report answers the questions no manual does (speed range and step, where
 the step counter lives, what the pad says when you press its buttons) and is
 the thing to attach to a bug report.
+
+A bug report is public, so the *saved* report holds less than the screen
+shows: only fitness machines are listed (the other Bluetooth devices in
+range - headphones, watches, the neighbours' television - are counted, not
+named), Bluetooth addresses are cut short, and the treadmill's serial number
+is left out. The screen shows everything: it is the user's own.
 """
 
 from __future__ import annotations
@@ -41,6 +47,24 @@ _KNOWN = {
     ftms.RSC_MEASUREMENT: "RSC Measurement",
     ftms.DEVICE_INFORMATION_SERVICE: "Device Information",
 }
+
+# Characteristics that identify one particular treadmill rather than its
+# make: read, shown on screen, and left out of the saved report.
+SERIAL_NUMBER = "00002a25-0000-1000-8000-00805f9b34fb"
+SYSTEM_ID = "00002a23-0000-1000-8000-00805f9b34fb"
+IDENTIFYING = frozenset({SERIAL_NUMBER, SYSTEM_ID})
+_KNOWN_IDENTIFYING = {SERIAL_NUMBER: "Serial Number", SYSTEM_ID: "System ID"}
+
+
+def short_address(address: str) -> str:
+    """A Bluetooth address as the saved report shows it: enough to tell the
+    maker of the radio (the first three bytes), not enough to name the device.
+    (A Mac gives a long identifier of its own making instead: its beginning.)"""
+    parts = address.split(":")
+    if len(parts) == 6:
+        return ":".join(parts[:3] + ["..", "..", ".."])
+    return address[:8] + "..." if len(address) > 8 else address
+
 
 # Services whose notifications the probe switches on without being asked to:
 # standard ones, where doing so is what every fitness app does.
@@ -122,9 +146,11 @@ async def probe(
     prepare_windows_threading()
     report: list[str] = []
 
-    def out(line: str = "") -> None:
+    def out(line: str = "", *, shown: str | None = None) -> None:
+        """One line of the report. ``shown``: what the screen says instead,
+        where the report holds less (see the top of this file)."""
         report.append(line)
-        emit(line)
+        emit(line if shown is None else shown)
 
     out(f"Walka Bluetooth probe - {time.strftime('%Y-%m-%d %H:%M:%S')}")
     out("This tool only reads and listens. It never writes a command to the treadmill, so the belt")
@@ -144,23 +170,47 @@ async def probe(
         order = (not name_matches(name, name_prefixes), not candidate, -(adv.rssi or -999))
         rows.append((order, name, device, adv, candidate, machine_type))
     rows.sort(key=lambda r: r[0])
+    others = 0
     for _, name, device, adv, candidate, machine_type in rows:
         marker = "*" if candidate else " "
         services = ",".join(u[4:8] for u in adv.service_uuids) or "-"
         kind = f"  kind={ftms.describe_machine_type(machine_type)}" if machine_type is not None else ""
-        out(f" {marker} {device.address}  rssi={adv.rssi:>4}  name={name or '(none)':<24} services={services}{kind}")
-        if address and device.address.upper() == address.upper():
+        chosen = bool(address) and device.address.upper() == address.upper()
+        if chosen:
             target = device
         elif not address and candidate and target is None:
             target = device
+
+        def row(shown_address: str, *, marker=marker, adv=adv, name=name, services=services, kind=kind) -> str:
+            return f" {marker} {shown_address}  rssi={adv.rssi:>4}  name={name or '(none)':<24} services={services}{kind}"
+
+        fitness_machine = any(u.lower() == ftms.FTMS_SERVICE for u in adv.service_uuids) or machine_type is not None
+        if candidate or chosen or fitness_machine:
+            out(row(short_address(device.address)), shown=row(device.address))
+        else:
+            # Somebody's headphones, watch or television: on the screen,
+            # not in a report that is going to be posted.
+            others += 1
+            emit(row(device.address))
     out("   (* = looks like a treadmill)")
+    if others:
+        report.append(
+            f"   ({others} other Bluetooth device(s) in range are left out of this report: they are not fitness machines)"
+        )
+        emit(
+            f"   (The saved report leaves out the {others} device(s) that are not fitness machines, and cuts"
+        )
+        emit("    addresses short. If your treadmill is one of those, run the probe with --address <its address>.)")
     out("")
     if target is None:
         out("No treadmill found. Is it switched on and in range? Is its own phone app closed")
         out("(most treadmills accept one connection at a time)? Do not pair it in Windows Bluetooth settings.")
         return report
 
-    out(f"Connecting to {target.address} ({target.name or 'unnamed'}) ...")
+    out(
+        f"Connecting to {short_address(target.address)} ({target.name or 'unnamed'}) ...",
+        shown=f"Connecting to {target.address} ({target.name or 'unnamed'}) ...",
+    )
     async with BleakClient(target, timeout=20.0) as client:
         out("Connected. GATT table:")
         notifiable = []
@@ -169,11 +219,19 @@ async def probe(
             out(f"  service {service.uuid}  {_KNOWN.get(service.uuid.lower(), '')}")
             for char in service.characteristics:
                 props = ",".join(char.properties)
-                out(f"    char {char.uuid}  [{props}]  {_KNOWN.get(char.uuid.lower(), '')}")
+                label = _KNOWN.get(char.uuid.lower()) or _KNOWN_IDENTIFYING.get(char.uuid.lower(), "")
+                out(f"    char {char.uuid}  [{props}]  {label}")
                 if "read" in char.properties:
                     try:
                         value = bytes(await client.read_gatt_char(char))
-                        out(f"      read: {value.hex(' ')}  {describe_value(char.uuid, value)}")
+                        line = f"      read: {value.hex(' ')}  {describe_value(char.uuid, value)}"
+                        if char.uuid.lower() in IDENTIFYING:
+                            out(
+                                f"      read: ({len(value)} bytes, left out of this report: they name this one treadmill)",
+                                shown=line,
+                            )
+                        else:
+                            out(line)
                     except Exception as exc:
                         out(f"      read failed: {exc}")
                 if "notify" in char.properties or "indicate" in char.properties:

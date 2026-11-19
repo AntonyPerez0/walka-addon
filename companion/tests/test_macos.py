@@ -205,3 +205,41 @@ def test_a_real_mac_answers():
     assert found is None or isinstance(found, GameWindow)
     assert macos.screen_recording_allowed() in (True, False)
     assert capture.default_window_finder() is macos.find_wow_window
+
+
+# ---- going to sleep ----------------------------------------------------------------------
+
+
+def test_what_is_done_with_a_power_message():
+    # "I am going to sleep": stop the belt, and say that it may.
+    assert macos.sleep_message_action(macos.MESSAGE_WILL_SLEEP) == (True, True)
+    # "May I sleep?" (nobody has touched the Mac for a while): yes - or it waits thirty seconds for the answer.
+    assert macos.sleep_message_action(macos.MESSAGE_CAN_SLEEP) == (False, True)
+    # Waking up, and whatever else: nothing to stop, nothing to answer.
+    for message in (0xE0000300, 0xE0000320, 0xE0000290, 0):
+        assert macos.sleep_message_action(message) == (False, False)
+
+
+@pytest.mark.skipif(sys.platform == "darwin", reason="what happens off a Mac")
+def test_off_a_mac_nothing_watches_for_sleep():
+    watcher = macos.SleepWatcher(lambda: None)
+    assert watcher.start() is False and "macOS" in watcher.error and not watcher.active
+    watcher.stop()
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="asks a real Mac")
+def test_a_real_mac_lets_the_program_watch_for_sleep():
+    """The Mac is not put to sleep here - but it has taken the request to be
+    told, the watching thread runs, and it ends when asked to."""
+    calls: list[int] = []
+    watcher = macos.SleepWatcher(lambda: calls.append(1))
+    assert watcher.start() is True, watcher.error
+    assert watcher.active and watcher.error == ""
+    thread = watcher._thread
+    watcher.stop()
+    assert thread is not None and not thread.is_alive()
+    assert not watcher.active and calls == []
+    # ... and once more: nothing of the first is left in the way.
+    again = macos.SleepWatcher(lambda: None)
+    assert again.start() is True, again.error
+    again.stop()

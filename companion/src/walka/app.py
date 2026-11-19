@@ -21,13 +21,14 @@ from typing import Any
 
 from . import __version__, addon_sync
 from . import config as config_module
+from . import guard as guard_module
 from . import hotkey as hotkey_module
 from .config import TERMS_VERSION, Config
 from .governor import ABANDONED_AFTER_S, Action, Belt, Command, Governor, Reading
 from .hotkey import GlobalHotkey
 from .journey import attach as attach_journeys
 from .metrics import Profile
-from .protocol import Flags
+from .protocol import LEGACY_FLAGS, Flags
 from .road import RoadBook
 from .session import SessionRecord, SessionRecorder, SessionStore
 from .sources import BeaconSource, ManualSource
@@ -36,6 +37,10 @@ from .treadmill import KMH_PER_MPH, BeltState, Treadmill, TreadmillError, Treadm
 log = logging.getLogger(__name__)
 
 TICK_S = 0.2
+# The control loop sleeps for a fraction of a second between two looks at
+# the belt. If it wakes up this much later, the computer slept or the
+# program was frozen: see App._stop_after_gap.
+LOOP_GAP_S = 20.0
 CHECKPOINT_EVERY_S = 30.0
 FREE_WALK_GRACE_S = 60.0  # a remote-controlled walk ends after this long stopped
 # (ABANDONED_AFTER_S, from the governor: a session with no signal and no
@@ -81,6 +86,7 @@ class App:
         treadmill: Treadmill,
         beacon: BeaconSource | None = None,
         heart_rate: Any = None,
+        guard: Any = None,
         wall_clock: Callable[[], float] = time.time,
         mono_clock: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -101,6 +107,9 @@ class App:
         # treadmill has no belt, and the demo runs on it.
         self._terms_apply = getattr(treadmill, "kind", "") != "simulated"
         self.heart_rate = heart_rate
+        # The helper process that stops the belt should this one be killed
+        # (guard.GuardLink), or None: the simulated treadmill has no belt.
+        self.guard = guard
         # The numbers behind the Share page's picture. They arrive in stat frames,
         # which never reach the governor (stat_route.py, journey.py).
         self.journeys = attach_journeys(self.data_dir, beacon, wall=wall_clock, mono=mono_clock)
@@ -303,13 +312,14 @@ class App:
             target_kmh=status.target_kmh,
         )
 
-    async def _execute(self, command: Command) -> None:
+    async def _execute(self, command: Command) -> bool:
+        """Send one command to the treadmill; returns whether it went out."""
         treadmill = self.treadmill
         if command.action in (Action.START, Action.SET_SPEED):
             if self._stopping.is_set():
-                return  # the companion is closing: nothing that moves the belt goes out any more
+                return False  # the companion is closing: nothing that moves the belt goes out any more
             if not self.terms_accepted():
-                return  # (the governor is given no session to ask this for: a second lock on the same door)
+                return False  # (the governor is given no session to ask this for: a second lock on the same door)
         try:
             if command.action is Action.PAUSE:
                 # A pause or stop never queues behind another command: the
@@ -331,6 +341,8 @@ class App:
                 # The belt is still set to the speed before this one: the
                 # governor tries again from there.
                 self.governor.speed_command_failed()
+            return False
+        return True
 
     async def tick(self) -> None:
         """One control step: read the source, run the governor, record."""
@@ -592,6 +604,44 @@ class App:
         """Stop the belt now and keep it stopped until explicitly resumed."""
         await self._stop_now("STOP pressed - belt stopped.")
 
+    def _session_open(self) -> bool:
+        """Is there a session that could move the belt, or a belt of ours
+        that may be moving? (Not: a walk with the remote. That belt is the
+        walker's, with or without this computer.)"""
+        return self.manual.active or self.governor.driving or self.governor.belt_ours
+
+    async def stop_for_sleep(self) -> bool:
+        """The computer is about to sleep. Asleep, the companion cannot
+        watch the game or the belt, and the treadmill would keep the speed
+        it was last given - so the belt is stopped, exactly as by STOP: it
+        stays stopped until somebody resumes. Returns whether there was
+        anything to stop."""
+        if not self._session_open():
+            return False
+        await self._stop_now("The computer is going to sleep - belt stopped. Press Resume to carry on.")
+        return True
+
+    async def _stop_after_gap(self, seconds: float) -> None:
+        """The control loop has just found that it did not run for
+        ``seconds``: the computer slept (not every computer says so
+        beforehand), or the program was frozen. Whatever the belt did
+        meanwhile, nobody was watching: stop it, and wait to be resumed."""
+        if not self._session_open():
+            return
+        if self.governor.user_stopped and not self.manual.active:
+            return  # already stopped, and waiting to be resumed (the stop before the computer slept)
+        await self._stop_now(
+            f"Walka was not running for {seconds:.0f} seconds - the computer was asleep, or frozen - "
+            "and could not watch the belt. Belt stopped. Press Resume to carry on."
+        )
+
+    def _guarded_address(self) -> str | None:
+        """The treadmill the guard should stop if this program vanished
+        now: one with a belt of ours that may be turning."""
+        if not self.config.treadmill.stop_on_exit or not self.governor.belt_ours:
+            return None
+        return self.treadmill.status.address or self.config.treadmill.address or None
+
     async def _stop_now(self, text: str) -> bool:
         """Latch the stop, then send it. Returns whether it could be sent."""
         ended_manual_session = self.manual.active
@@ -849,7 +899,7 @@ class App:
                     "paused": frame.paused,
                     "target_kmh": round(frame.target_kmh, 2),
                     "char_speed_yps": round(frame.char_speed_yps, 2),
-                    "flags": [flag.name for flag in Flags if flag in frame.flags],
+                    "flags": [flag.name for flag in Flags if flag in frame.flags and flag not in LEGACY_FLAGS],
                 },
                 "manual": {
                     "active": self.manual.active,
@@ -880,13 +930,23 @@ class App:
 
     # ---- lifecycle ---------------------------------------------------------------
     async def _control_loop(self) -> None:
+        asleep_from: tuple[float, float] | None = None  # the clocks, when the loop last went to sleep
         while not self._stopping.is_set():
             started = self.mono()
             try:
+                if asleep_from is not None:
+                    # Both clocks: the one that counts steadily stands still
+                    # on a Mac that sleeps, and the time of day does not.
+                    gap = max(started - asleep_from[0], self.wall() - asleep_from[1])
+                    if gap >= LOOP_GAP_S:
+                        await self._stop_after_gap(gap)
                 await self.tick()
+                if self.guard is not None:
+                    self.guard.watch(self._guarded_address())
             except Exception:
                 log.exception("control tick failed")
-            await asyncio.sleep(max(0.02, TICK_S - (self.mono() - started)))
+            asleep_from = (self.mono(), self.wall())
+            await asyncio.sleep(max(0.02, TICK_S - (asleep_from[0] - started)))
 
     async def _connect_loop(self) -> None:
         backoff = 5.0
@@ -925,6 +985,7 @@ class App:
     async def start(self) -> None:
         """Start the background loops."""
         self._loop = asyncio.get_running_loop()
+        self._start_guard()
         self.register_hotkey()
         if hotkey_module.NEEDS_PUMP:
             self._tasks.append(asyncio.create_task(self._hotkey_pump(), name="walka-hotkey"))
@@ -937,16 +998,40 @@ class App:
         self._tasks.append(asyncio.create_task(self.journeys.run(), name="walka-journey"))
         self.sync_addon()
 
+    def _start_guard(self) -> None:
+        """Say what the guard of the last run had to do, if anything, and
+        start this run's."""
+        report = guard_module.take_report(self.data_dir)
+        if report is not None:
+            level, text = guard_module.REPORT_TEXT[report["result"]]
+            self.log_event(text, level)
+        if self.guard is None:
+            return
+        if not self.guard.start():
+            self.log_event(
+                f"No guard ({self.guard.error}): if Walka is killed while the belt runs, nothing stops the belt.",
+                "warning",
+            )
+
     async def stop(self) -> None:
         """Leave everything safe: stop a belt we drive, save the walk, sync."""
         self._stopping.set()
         self._connect_now.set()
         # The belt first. When the console window is closed the system gives
         # the process only a few seconds: they go to the stop, not to tidying up.
+        # A belt of ours that cannot be stopped from here - out of reach, or
+        # the stop fails - is left to the guard, which goes on trying.
+        guarded = self._guarded_address()
+        owed = guarded is not None and not self.treadmill.status.connected
         if self.config.treadmill.stop_on_exit and self.treadmill.status.connected:
             mono = self.mono()
             for command in self.governor.shutdown(mono, self._belt(mono)):
-                await self._execute(command)
+                if not await self._execute(command):
+                    owed = guarded is not None
+        if self.guard is not None:
+            if owed:
+                self.guard.watch(guarded)
+            self.guard.release(handover=owed)
         for task in self._tasks:
             task.cancel()
         await asyncio.gather(*self._tasks, return_exceptions=True)

@@ -175,10 +175,14 @@ def _coerce(current: Any, value: Any) -> Any:
     return value
 
 
+# Walka is for adults (DISCLAIMER.md): the profile does not take a child's age.
+MIN_AGE = 18
+
+
 def _valid_age(value: Any) -> int:
     age = int(value)
-    if isinstance(value, bool) or not 5 <= age <= 110:
-        raise ValueError(f"implausible age: {value!r}")
+    if isinstance(value, bool) or not MIN_AGE <= age <= 110:
+        raise ValueError(f"not an age Walka is for: {value!r}")
     return age
 
 

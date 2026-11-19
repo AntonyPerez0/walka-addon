@@ -122,9 +122,22 @@ simulated treadmill, not a real one.
    closing its window; on a Mac also logging out or shutting down, which
    reach it as a signal) - before anything else is tidied up, and including a
    belt whose earlier stop had not been confirmed. *Disconnect* on the
-   dashboard does the same: a belt in use is stopped first. A crash or a
-   killed process cannot do that: the belt then keeps its current speed
-   until you stop it at the treadmill.
+   dashboard does the same: a belt in use is stopped first.
+
+   **A companion that is killed cannot do that** - a crash, *End task* in
+   Task Manager. For that there is the *guard*: a second, small process
+   that the companion starts and keeps informed of whether a belt of its
+   own may be turning. When the companion vanishes without saying goodbye
+   while one is, the guard connects to that treadmill itself and stops the
+   belt (and nothing else: a stop is the only command it has). It keeps
+   trying for three minutes, and the next time Walka starts the dashboard
+   says what happened. The same guard takes over a stop that the companion
+   could not deliver when it was closed (the treadmill out of Bluetooth
+   reach). It is a net, not a promise: reaching the pad takes several
+   seconds at best, and nothing stops the belt if the guard goes down with
+   the companion (*End process tree*, a power cut, a computer that
+   freezes). Then the belt keeps its speed until you stop it at the
+   treadmill.
 
 9. **STOP latches.** The dashboard's STOP button and the hotkey stop the
    belt immediately, and nothing - not a session still running in the game,
@@ -154,6 +167,16 @@ simulated treadmill, not a real one.
     start; Walka waits about ten seconds (you will see "waiting for the
     treadmill to finish its previous workout").
 
+14. **A sleeping computer does not drive a belt.** Asleep, the companion can
+    watch neither the game nor the belt, and the treadmill would keep the
+    speed it was last given. So when the computer is about to sleep
+    (Windows and macOS say so), the belt is stopped first, exactly as by
+    STOP: it stays stopped until you resume. Not every computer says so in
+    time - a laptop with "Modern Standby" may not - so the companion also
+    notices on waking that it has not been running (20 seconds or more
+    without a look at the belt, which is also what a frozen program looks
+    like), and stops the belt then, again until you resume.
+
 ## What the addon does
 
 * *Start* in the HUD is the only thing that arms the system from the game
@@ -165,6 +188,12 @@ simulated treadmill, not a real one.
   that is being carried along anyway (a flight path never counts; with
   auto-run or /follow, stop and go again, or press Resume). You can turn
   the automatic pause off.
+* **That only holds for ten minutes.** After a longer break nobody can say
+  who is at the keyboard or what stands on the belt by now - a chair rolled
+  onto the pad, a child, a pet. The pause then becomes one that only
+  *Resume* ends (the play button on the HUD, or `/walka resume`): the HUD
+  says "Paused" instead of "Paused (AFK)", and moving the character does
+  nothing to the belt.
 * Inside dungeons, raids and battlegrounds the game hides its AFK flag from
   addons. There Walka keeps its own clock: five minutes without your
   character moving or fighting count as away, and the first movement
@@ -212,7 +241,11 @@ calories, steps and heart rate are estimates, for interest only.
 * Use the *Steady* feel preset if the speed changes distract you.
 * Keep the top-left corner of the game window uncovered, and run the game
   windowed or borderless.
-* Mute the pad's buzzer with its remote if speed-change beeps bother you.
+* Leave the pad's buzzer on. Its beeps at a speed change can be a
+  nuisance, but on most pads the same buzzer is the countdown before the
+  belt starts - the one warning that it is about to move, for you and for
+  whoever else is in the room. If the beeps bother you, use the *Steady*
+  preset: fewer speed changes, fewer beeps.
 * Do not leave a session running when you walk away: stop it (or let the
   AFK pause do it).
 * Children and pets: a belt that starts when someone touches the keyboard

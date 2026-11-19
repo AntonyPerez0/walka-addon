@@ -119,7 +119,7 @@ async def _demo_character(beacon, stop: asyncio.Event) -> None:
         elif phase < 95:
             yps, flags = 14.0, Flags.MOVING | Flags.MOUNTED
         elif phase < 105:
-            yps, flags = 0.0, Flags.COMBAT | Flags.ESTIMATED
+            yps, flags = 0.0, Flags.ESTIMATED
         else:
             yps, flags = 2.5, Flags.MOVING  # walking
         # The same default curve the addon uses.
@@ -293,12 +293,36 @@ def _stop_on_signals(loop: asyncio.AbstractEventLoop, stop: asyncio.Event) -> No
             log.debug("not listening for %s: %s", name, exc)
 
 
-def _watch_for_session_end(loop: asyncio.AbstractEventLoop, stop: asyncio.Event, stopped: threading.Event):
+# How long the answer to "the computer is going to sleep" is held back for
+# the belt's stop to go out. Windows allows a program about two seconds.
+SLEEP_STOP_WAIT_S = 1.5
+
+
+def _stop_belt_for_sleep(loop: asyncio.AbstractEventLoop, app, wait_s: float = SLEEP_STOP_WAIT_S) -> None:
+    """The computer is about to sleep, and says so on one of its own
+    threads: have the event loop stop the belt (``App.stop_for_sleep``) and
+    hold the answer back until that is done, or the time allowed is up. The
+    companion itself carries on: it is still there when the computer wakes."""
+    if loop.is_closed():
+        return
+    try:
+        done = asyncio.run_coroutine_threadsafe(app.stop_for_sleep(), loop)
+    except RuntimeError:  # the loop was closed meanwhile
+        return
+    try:
+        done.result(wait_s)
+    except Exception as exc:  # too slow, or failed: the stop stays latched and is asked for again
+        log.debug("the stop before sleeping was not seen to finish: %s", exc)
+
+
+def _watch_for_session_end(loop: asyncio.AbstractEventLoop, stop: asyncio.Event, stopped: threading.Event, app=None):
     """Stop the belt when Windows logs off or shuts down, the same way as
-    when the console window is closed. Returns the watcher (to be stopped)."""
+    when the console window is closed - and when the computer is about to
+    sleep (the program then stays). Returns the watcher (to be stopped)."""
     from .hotkey import SessionEndWatcher
 
-    watcher = SessionEndWatcher(lambda: _stop_and_wait(loop, stop, stopped))
+    on_suspend = None if app is None else (lambda: _stop_belt_for_sleep(loop, app))
+    watcher = SessionEndWatcher(lambda: _stop_and_wait(loop, stop, stopped), on_suspend)
     try:
         watcher.start()  # does nothing off Windows
     except Exception as exc:  # the companion runs without it
@@ -306,9 +330,26 @@ def _watch_for_session_end(loop: asyncio.AbstractEventLoop, stop: asyncio.Event,
     return watcher
 
 
+def _watch_for_mac_sleep(loop: asyncio.AbstractEventLoop, app):
+    """The same for a Mac that is about to sleep. Returns the watcher (to
+    be stopped), or None off macOS."""
+    if sys.platform != "darwin":
+        return None
+    from .macos import SleepWatcher
+
+    watcher = SleepWatcher(lambda: _stop_belt_for_sleep(loop, app, wait_s=5.0))
+    try:
+        if not watcher.start():
+            log.debug("not watching for the Mac going to sleep: %s", watcher.error)
+    except Exception as exc:  # the companion runs without it
+        log.debug("not watching for the Mac going to sleep: %s", exc)
+    return watcher
+
+
 async def _run(args: argparse.Namespace) -> int:
     from . import web
     from .app import App
+    from .guard import GuardLink
     from .hr import HeartRateMonitor
 
     capture.enable_dpi_awareness()
@@ -326,7 +367,12 @@ async def _run(args: argparse.Namespace) -> int:
     else:
         beacon = _build_beacon(cfg)
     heart_rate = None if simulate else HeartRateMonitor(enabled=cfg.heart_rate.enabled, address=cfg.heart_rate.address)
-    app = App(cfg, data_dir, treadmill=treadmill, beacon=beacon, heart_rate=heart_rate)
+    # The helper that stops the belt if this program is killed. A simulated
+    # treadmill has no belt, and "do not stop the belt on exit" means that.
+    guard = None
+    if getattr(treadmill, "kind", "") != "simulated" and cfg.treadmill.stop_on_exit:
+        guard = GuardLink(data_dir)
+    app = App(cfg, data_dir, treadmill=treadmill, beacon=beacon, heart_rate=heart_rate, guard=guard)
     if args.demo:
         # The demo's made-up character must not turn up among the real ones later.
         app.journeys.use_memory_only(demo=True)
@@ -337,7 +383,8 @@ async def _run(args: argparse.Namespace) -> int:
     loop = asyncio.get_running_loop()
     _install_console_close_handler(loop, stop, stopped)
     _stop_on_signals(loop, stop)
-    session_end = _watch_for_session_end(loop, stop, stopped)
+    session_end = _watch_for_session_end(loop, stop, stopped, app)
+    mac_sleep = _watch_for_mac_sleep(loop, app)
 
     runner = None
     demo_task = None
@@ -387,6 +434,8 @@ async def _run(args: argparse.Namespace) -> int:
             stopped.set()
             listen_to_interrupts()
             session_end.stop()
+            if mac_sleep is not None:
+                mac_sleep.stop()
             if runner is not None:
                 await runner.cleanup()
     return 0
@@ -431,6 +480,10 @@ async def _probe(args: argparse.Namespace) -> int:
         return 2
     path = probe.save_report(lines, Path(args.out) if args.out else Path.cwd())
     print(f"\nReport saved to {path}")
+    print(
+        "The saved report is made to be posted: it lists fitness machines only, cuts Bluetooth addresses short\n"
+        "and leaves out the treadmill's serial number. (What you see above is the whole of it.)"
+    )
     return 0
 
 
@@ -562,6 +615,7 @@ RUNTIME_MODULES: tuple[str, ...] = (
     "mss",
     "walka.web",
     "walka.probe",
+    "walka.guard",
     "walka.treadmill.bleak_backend",
 )
 WINDOWS_RUNTIME_MODULES: tuple[str, ...] = (
@@ -619,6 +673,62 @@ def missing_page_files(static: Path) -> list[str]:
     return sorted(missing)
 
 
+# The licences of the libraries packed into the program: written by the
+# build (companion/third_party.py), so only a packaged program has them.
+LICENCES_FILE = Path(__file__).parent / "THIRD-PARTY-LICENSES.txt"
+
+
+def _licenses() -> int:
+    """Print the licences of what is packed into this program."""
+    try:
+        text = LICENCES_FILE.read_text("utf-8")
+    except OSError:
+        print(
+            "This is Walka run from its source code, so nothing is packed with it: the libraries it uses are\n"
+            "the ones installed on this computer, each with its own licence ('pip show <name>' says which).\n"
+            "Walka's own licence is in LICENSE, and what it owes to other projects in THIRD-PARTY-NOTICES.md.\n"
+            "The packaged program (Walka.exe, Walka on a Mac) prints the licences of everything in it here."
+        )
+        return 0
+    try:
+        sys.stdout.write(text)
+    except UnicodeEncodeError:  # a console that cannot show an author's name as it is written
+        sys.stdout.write(text.encode("ascii", "replace").decode("ascii"))
+    return 0
+
+
+def _guard_problem(wait_s: float = 60.0) -> str:
+    """Can this program start itself as the guard (walka.guard) - the way
+    it does when it runs, pipe and all - and does that guard leave when it
+    is told to? "" if so. (For the packaged program above all: the guard is
+    a second copy of it, unpacked on its own.)"""
+    import subprocess
+    import tempfile
+
+    from .guard import LOG_FILE, GuardLink
+
+    with tempfile.TemporaryDirectory(prefix="walka-selfcheck-") as folder:
+        link = GuardLink(Path(folder))
+        if not link.start():
+            return link.error
+        process = link._process
+        link.watch(None)
+        link.release()
+        try:
+            code = process.wait(timeout=wait_s) if process is not None else 1
+        except subprocess.TimeoutExpired:
+            if process is not None:
+                process.kill()
+            return "the guard did not leave when it was told to"
+        if code != 0:
+            return f"the guard ended with exit code {code}"
+        try:
+            watched = "watching" in (Path(folder) / LOG_FILE).read_text("utf-8")
+        except OSError:
+            watched = False
+        return "" if watched else "the guard started but never got as far as watching"
+
+
 def _selfcheck() -> int:
     """Hidden command: is everything this build needs at run time there?
     Prints one line; exits 0 if so."""
@@ -635,6 +745,12 @@ def _selfcheck() -> int:
         problems.append(f"the dashboard page is missing files ({', '.join(absent)} in {static})")
     if addon_sync.bundled_addon_dir() is None:
         problems.append("the addon folder is missing")
+    if getattr(sys, "frozen", False):
+        if not LICENCES_FILE.is_file():
+            problems.append("the licences of the packed libraries are missing")
+        guard_problem = _guard_problem()
+        if guard_problem:
+            problems.append(guard_problem)
     if problems:
         print("selfcheck FAILED: " + "; ".join(problems))
         return 1
@@ -647,8 +763,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"walka {__version__}")
     parser.add_argument("--data-dir", help="folder for config and recorded walks")
     parser.add_argument("-v", "--verbose", action="store_true", help="debug logging")
-    # (The metavar lists the commands meant for people; "selfcheck" is for the build.)
-    sub = parser.add_subparsers(dest="command", metavar="{run,scan,probe,beacon,install-addon}")
+    # (The metavar lists the commands meant for people; "selfcheck" is for the build, "guard" for Walka itself.)
+    sub = parser.add_subparsers(dest="command", metavar="{run,scan,probe,beacon,install-addon,licenses}")
 
     run = sub.add_parser("run", help="run the companion and its dashboard (default)")
     for target in (parser, run):
@@ -677,7 +793,10 @@ def build_parser() -> argparse.ArgumentParser:
     install = sub.add_parser("install-addon", help="copy the Walka addon into the game's AddOns folder")
     install.add_argument("--dir", help="the Interface\\AddOns folder to install into")
 
+    sub.add_parser("licenses", help="the licences of the libraries packed into this program")
+
     sub.add_parser("selfcheck")
+    sub.add_parser("guard")  # (started by the companion itself: see guard.py)
     return parser
 
 
@@ -702,8 +821,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _beacon(args)
         if command == "install-addon":
             return _install_addon(args)
+        if command == "licenses":
+            return _licenses()
         if command == "selfcheck":
             return _selfcheck()
+        if command == "guard":
+            from .guard import run_guard
+
+            return run_guard(_data_dir(args))
     except KeyboardInterrupt:
         return 130
     finally:

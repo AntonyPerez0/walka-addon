@@ -6,6 +6,9 @@ CoreFoundation, libproc) by way of ``ctypes`` - the same way ``capture.py``
 asks Windows - so nothing needs to be installed for it. The module can be
 imported anywhere; the functions that ask the system only work on a Mac.
 
+It is also where the companion is told that the Mac is about to sleep
+(``SleepWatcher``), so that it can stop the belt first.
+
 Positions are in points, the unit macOS measures the screen in, with the
 origin at the top-left corner of the main display: the units python-mss
 takes its capture rectangles in.
@@ -17,6 +20,7 @@ import ctypes
 import logging
 import os
 import sys
+import threading
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
@@ -314,3 +318,147 @@ def request_screen_recording() -> None:
         cg.CGRequestScreenCaptureAccess()
     except (AttributeError, OSError) as exc:
         log.debug("cannot ask for the screen recording permission: %s", exc)
+
+
+# ---- going to sleep ---------------------------------------------------------------------
+
+# What the system's power management says to a program that asked to be told
+# (IOKit/IOMessage.h).
+MESSAGE_CAN_SLEEP = 0xE0000270  # "may I sleep?" (an idle Mac): must be answered
+MESSAGE_WILL_SLEEP = 0xE0000280  # "I am going to sleep": must be acknowledged
+
+
+def sleep_message_action(message: int) -> tuple[bool, bool]:
+    """What to do with a power message: ``(stop the belt?, answer it?)``.
+
+    Both sleep messages have to be answered, or the Mac waits thirty seconds
+    for the answer before it sleeps anyway. Only the second means that it is
+    really happening."""
+    if message == MESSAGE_WILL_SLEEP:
+        return True, True
+    if message == MESSAGE_CAN_SLEEP:
+        return False, True
+    return False, False
+
+
+class SleepWatcher:
+    """Calls ``callback`` when the Mac is about to sleep.
+
+    A sleeping computer cannot watch the game or the belt, and the treadmill
+    would keep the speed it was last given: the companion stops the belt
+    first. macOS tells a program that asks, on a thread that runs a "run
+    loop" for the purpose - this class keeps that thread. ``callback`` runs
+    on it and should return once the belt has been told to stop; the Mac
+    waits for it (up to thirty seconds).
+
+    Everything goes through IOKit and CoreFoundation by way of ``ctypes``.
+    """
+
+    def __init__(self, callback: Callable[[], None]) -> None:
+        self.callback = callback
+        self.error = ""
+        self.active = False
+        self._thread: threading.Thread | None = None
+        self._ready = threading.Event()
+        self._run_loop: int | None = None
+        self._cf: ctypes.CDLL | None = None
+
+    def start(self) -> bool:
+        """Ask to be told. Returns ``False`` (see ``error``) if that is not
+        possible; the companion works without it."""
+        if sys.platform != "darwin":
+            self.error = "only on macOS"
+            return False
+        self._ready.clear()
+        self._thread = threading.Thread(target=self._run, name="walka-sleep-watch", daemon=True)
+        self._thread.start()
+        self._ready.wait(timeout=3.0)
+        return self.active
+
+    def _run(self) -> None:
+        try:
+            self._serve()
+        except Exception as exc:  # whatever macOS objects to: carry on without
+            self.error = f"could not watch for the Mac going to sleep: {exc}"
+            log.debug(self.error)
+        finally:
+            self.active = False
+            self._run_loop = None
+            self._ready.set()
+
+    def _serve(self) -> None:
+        iokit = ctypes.CDLL("/System/Library/Frameworks/IOKit.framework/IOKit")
+        cf = ctypes.CDLL("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")
+        # void callback(void *refcon, io_service_t service, natural_t messageType, void *messageArgument)
+        handler_type = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_void_p)
+        iokit.IORegisterForSystemPower.argtypes = [
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_void_p),
+            handler_type,
+            ctypes.POINTER(ctypes.c_uint32),
+        ]
+        iokit.IORegisterForSystemPower.restype = ctypes.c_uint32
+        iokit.IODeregisterForSystemPower.argtypes = [ctypes.POINTER(ctypes.c_uint32)]
+        iokit.IODeregisterForSystemPower.restype = ctypes.c_int
+        iokit.IOAllowPowerChange.argtypes = [ctypes.c_uint32, ctypes.c_long]
+        iokit.IOAllowPowerChange.restype = ctypes.c_int
+        iokit.IONotificationPortGetRunLoopSource.argtypes = [ctypes.c_void_p]
+        iokit.IONotificationPortGetRunLoopSource.restype = ctypes.c_void_p
+        iokit.IONotificationPortDestroy.argtypes = [ctypes.c_void_p]
+        iokit.IONotificationPortDestroy.restype = None
+        iokit.IOServiceClose.argtypes = [ctypes.c_uint32]
+        iokit.IOServiceClose.restype = ctypes.c_int
+        cf.CFRunLoopGetCurrent.argtypes = []
+        cf.CFRunLoopGetCurrent.restype = ctypes.c_void_p
+        cf.CFRunLoopAddSource.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
+        cf.CFRunLoopAddSource.restype = None
+        cf.CFRunLoopRemoveSource.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
+        cf.CFRunLoopRemoveSource.restype = None
+        cf.CFRunLoopRun.argtypes = []
+        cf.CFRunLoopRun.restype = None
+        cf.CFRunLoopStop.argtypes = [ctypes.c_void_p]
+        cf.CFRunLoopStop.restype = None
+        default_mode = ctypes.c_void_p.in_dll(cf, "kCFRunLoopDefaultMode")
+
+        root_port = ctypes.c_uint32(0)
+
+        def on_power(_refcon: int | None, _service: int, message: int, argument: int | None) -> None:
+            stop, answer = sleep_message_action(message)
+            if stop:
+                try:
+                    self.callback()
+                except Exception:
+                    log.exception("stopping the belt before the Mac sleeps failed")
+            if answer:
+                iokit.IOAllowPowerChange(root_port.value, argument or 0)
+
+        handler = handler_type(on_power)  # (kept alive by this frame for as long as the run loop runs)
+        port = ctypes.c_void_p()
+        notifier = ctypes.c_uint32(0)
+        root_port.value = iokit.IORegisterForSystemPower(None, ctypes.byref(port), handler, ctypes.byref(notifier))
+        if not root_port.value:
+            raise OSError("macOS did not register the program for power messages")
+        source = iokit.IONotificationPortGetRunLoopSource(port)
+        run_loop = cf.CFRunLoopGetCurrent()
+        cf.CFRunLoopAddSource(run_loop, source, default_mode)
+        self._cf = cf
+        self._run_loop = run_loop
+        self.active = True
+        self._ready.set()
+        try:
+            cf.CFRunLoopRun()  # until stop()
+        finally:
+            self.active = False
+            cf.CFRunLoopRemoveSource(run_loop, source, default_mode)
+            iokit.IODeregisterForSystemPower(ctypes.byref(notifier))
+            iokit.IOServiceClose(root_port.value)
+            iokit.IONotificationPortDestroy(port)
+
+    def stop(self) -> None:
+        thread, self._thread = self._thread, None
+        run_loop, cf = self._run_loop, self._cf
+        if thread is None:
+            return
+        if run_loop is not None and cf is not None:
+            cf.CFRunLoopStop(run_loop)
+        thread.join(timeout=2.0)

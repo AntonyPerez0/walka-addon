@@ -481,7 +481,7 @@ const FORMS = {
         type: "number",
         kind: "years",
         path: "profile.age",
-        min: 5,
+        min: 18,
         max: 110,
         optional: true,
         label: "Age",

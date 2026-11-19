@@ -14,7 +14,7 @@ from test_app import MPH, Rig, commands_sent, drop_link, restore_link, run, sess
 from test_app_ftms import PadRig
 from test_app_ftms import run as run_pad
 from test_web import post, serve
-from walka.app import CHECKPOINT_EVERY_S, TICK_S
+from walka.app import CHECKPOINT_EVERY_S, LOOP_GAP_S, TICK_S
 from walka.governor import HALT_GIVE_UP_S, Action, Command, Phase
 from walka.session import SessionStore
 from walka.treadmill import BeltState
@@ -596,3 +596,154 @@ def test_walk_that_cannot_be_written_is_recovered_by_the_next_start(rig: Rig):
     assert rig.treadmill.status.state is BeltState.STOPPED
     recovered = SessionStore(rig.app.data_dir).records
     assert len(recovered) == 1 and recovered[0].seconds > 100
+
+
+# ---- the computer goes to sleep -------------------------------------------------------------
+#
+# Asleep, the companion can watch neither the game nor the belt, and the
+# treadmill keeps the speed it was last given.
+
+
+def test_going_to_sleep_stops_the_belt_and_it_stays_stopped(rig: Rig):
+    async def scenario():
+        await session_running(rig, 3.2, seconds=60)
+        sent = commands_sent(rig)
+        assert await rig.app.stop_for_sleep() is True
+        assert sent == ["stop"]
+        assert "going to sleep" in events(rig)
+        # Awake again, the game still running, the character still walking.
+        await rig.run(60, target=3.2)
+        assert rig.treadmill.status.speed_kmh == 0
+        assert rig.app.governor.phase is Phase.USER_STOPPED
+        assert sent == ["stop"], "nothing restarts it"
+        rig.app.resume()
+        await rig.run(40, target=3.2)
+        assert rig.treadmill.status.speed_kmh > 0
+
+    run(scenario())
+
+
+def test_going_to_sleep_ends_a_dashboard_session(rig: Rig):
+    async def scenario():
+        await rig.connect()
+        rig.app.manual_start(3.0)
+        await rig.run(30, active=False)
+        assert rig.treadmill.status.speed_kmh > 0
+        assert await rig.app.stop_for_sleep() is True
+        await rig.run(30, active=False)
+        assert rig.treadmill.status.speed_kmh == 0 and not rig.app.manual.active
+
+    run(scenario())
+
+
+def test_going_to_sleep_leaves_a_walk_with_the_remote_alone(rig: Rig):
+    async def scenario():
+        await rig.connect()
+        rig.treadmill.press_start()
+        await rig.run(30, active=False)
+        sent = commands_sent(rig)
+        before = len(rig.app.events)
+        assert await rig.app.stop_for_sleep() is False
+        assert sent == [] and len(rig.app.events) == before
+        assert rig.treadmill.status.speed_kmh > 0
+
+    run(scenario())
+
+
+def test_going_to_sleep_with_nothing_running_does_and_says_nothing(rig: Rig):
+    async def scenario():
+        await rig.connect()
+        await rig.run(5, active=False)
+        before = len(rig.app.events)
+        assert await rig.app.stop_for_sleep() is False
+        assert len(rig.app.events) == before and not rig.app.governor.user_stopped
+
+    run(scenario())
+
+
+async def loop_over_a_gap(rig: Rig, *, mono: float = 0.0, wall: float = 0.0) -> None:
+    """Run the app's real control loop, and have the clocks jump while it
+    sleeps between two ticks: the computer was asleep, or the program frozen."""
+    task = asyncio.create_task(rig.app._control_loop())
+    await asyncio.sleep(0.3)
+    rig.clock.mono += mono
+    rig.clock.wall += wall
+    await asyncio.sleep(0.5)
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.parametrize("clock", ["mono", "wall"])
+def test_waking_up_after_a_sleep_nobody_announced_stops_the_belt(rig: Rig, clock: str):
+    """Windows counts time through a sleep on its steady clock, a Mac only
+    on the time of day: either is enough."""
+
+    async def scenario():
+        await session_running(rig, 3.2, seconds=60)
+        sent = commands_sent(rig)
+        await loop_over_a_gap(rig, **{clock: 600.0})
+        assert sent == ["stop"]
+        assert "not running for 600 seconds" in events(rig)
+        assert rig.app.governor.user_stopped
+
+    run(scenario())
+
+
+def test_a_short_hitch_is_left_to_the_ordinary_rules(rig: Rig):
+    async def scenario():
+        await session_running(rig, 3.2, seconds=60)
+        sent = commands_sent(rig)
+        await loop_over_a_gap(rig, mono=LOOP_GAP_S - 5, wall=LOOP_GAP_S - 5)
+        assert "stop" not in sent and "not running" not in events(rig)
+        assert not rig.app.governor.user_stopped
+
+    run(scenario())
+
+
+def test_waking_up_says_nothing_twice_after_a_sleep_that_was_announced(rig: Rig):
+    async def scenario():
+        await session_running(rig, 3.2, seconds=60)
+        await rig.app.stop_for_sleep()
+        sent = commands_sent(rig)
+        await loop_over_a_gap(rig, mono=3600.0, wall=3600.0)
+        assert "not running" not in events(rig)
+        assert "start" not in sent and not any(c.startswith("set_speed") for c in sent)
+
+    run(scenario())
+
+
+def test_waking_up_with_no_session_stops_nothing(rig: Rig):
+    async def scenario():
+        await rig.connect()
+        rig.treadmill.press_start()  # a walk with the remote
+        await rig.run(30, active=False)
+        sent = commands_sent(rig)
+        await loop_over_a_gap(rig, mono=3600.0, wall=3600.0)
+        assert sent == [] and "not running" not in events(rig)
+
+    run(scenario())
+
+
+def test_flags_of_an_older_addon_that_are_no_longer_sent_are_shown_nowhere(rig: Rig):
+    """An addon before 0.6 also said dead, in combat, falling and resting.
+    Its strip is still read - and those four are kept off the dashboard."""
+    from walka.protocol import Flags, Frame, kmh_to_raw
+
+    async def scenario():
+        await rig.connect()
+        await rig.run(2, target=3.2)
+        rig.clock.advance(TICK_S)
+        rig.beacon.inject(
+            Frame(
+                seq=(rig.seq + 1) % 256,
+                session=1,
+                flags=Flags.ACTIVE | Flags.MOVING | Flags.MOUNTED | Flags.COMBAT | Flags.RESTING | Flags.DEAD,
+                target_raw=kmh_to_raw(3.2),
+                char_speed_raw=350,
+            )
+        )
+        await rig.app.tick()
+        shown = rig.app.snapshot()["source"]["frame"]["flags"]
+        assert shown == ["ACTIVE", "MOVING", "MOUNTED"]
+
+    run(scenario())

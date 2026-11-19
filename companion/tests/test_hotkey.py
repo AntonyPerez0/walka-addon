@@ -16,8 +16,10 @@ from walka.hotkey import (
     MOD_CONTROL,
     MOD_SHIFT,
     MOD_WIN,
+    PBT_APMSUSPEND,
     WM_CLOSE,
     WM_ENDSESSION,
+    WM_POWERBROADCAST,
     WM_QUERYENDSESSION,
     GlobalHotkey,
     SessionEndWatcher,
@@ -451,6 +453,31 @@ def test_the_watcher_stops_the_belt_only_when_the_session_really_ends():
 
     # A failing callback must not escape into Windows' message dispatch.
     assert SessionEndWatcher(failing).handle(WM_ENDSESSION, 1) == 0
+
+
+def test_the_watcher_stops_the_belt_before_the_computer_sleeps():
+    """Asleep, the companion watches nothing, and the belt would keep its
+    speed. The program itself is not closed: it is there again on waking."""
+    ended: list[int] = []
+    slept: list[int] = []
+    watcher = SessionEndWatcher(lambda: ended.append(1), lambda: slept.append(1))
+    assert hotkey.is_suspend(WM_POWERBROADCAST, PBT_APMSUSPEND)
+    assert watcher.handle(WM_POWERBROADCAST, PBT_APMSUSPEND) == 1
+    assert slept == [1] and ended == []
+    # The other power messages (waking up, the battery, a setting) are Windows' business.
+    for other in (0x0007, 0x0012, 0x000A, 0x8013):
+        assert not hotkey.is_suspend(WM_POWERBROADCAST, other)
+        assert watcher.handle(WM_POWERBROADCAST, other) is None
+    assert not hotkey.is_suspend(WM_ENDSESSION, PBT_APMSUSPEND)
+    assert slept == [1] and ended == []
+
+    def failing() -> None:
+        raise RuntimeError("the event loop has gone")
+
+    # A failing callback must not escape into Windows' message dispatch ...
+    assert SessionEndWatcher(lambda: None, failing).handle(WM_POWERBROADCAST, PBT_APMSUSPEND) == 1
+    # ... and a watcher that was given nothing to do about sleep still answers.
+    assert SessionEndWatcher(lambda: None).handle(WM_POWERBROADCAST, PBT_APMSUSPEND) == 1
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="non-Windows behaviour")

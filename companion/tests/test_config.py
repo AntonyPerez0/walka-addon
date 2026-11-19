@@ -212,8 +212,8 @@ def test_age_and_sex_can_be_set_and_cleared():
     assert config.profile.age is None and config.profile.sex is None
 
 
-@pytest.mark.parametrize("age", [0, 4, 111, 1000, -30, "old", [40], float("nan"), float("inf")])
-def test_implausible_ages_are_refused(age):
+@pytest.mark.parametrize("age", [0, 4, 12, 17, 111, 1000, -30, "old", [40], float("nan"), float("inf")])
+def test_implausible_ages_and_those_of_children_are_refused(age):
     config = apply_update(Config(), {"profile": {"age": age}})
     assert config.profile.age is None
     config = apply_update(Config(), {"profile": {"age": 40}})
@@ -399,3 +399,9 @@ def test_loopback_hosts_are_kept(host):
     config = Config()
     apply_update(config, {"web": {"host": host}})
     assert config.web.host == host
+
+
+def test_eighteen_is_the_youngest_age_the_profile_takes():
+    """Walka is for adults: the disclaimer says so, and the profile agrees."""
+    assert apply_update(Config(), {"profile": {"age": 18}}).profile.age == 18
+    assert apply_update(Config(), {"profile": {"age": 17}}).profile.age is None

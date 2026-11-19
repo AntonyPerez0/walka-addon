@@ -116,9 +116,11 @@ def radio(monkeypatch) -> Radio:
     return radio
 
 
-def run_probe(**kwargs) -> list[str]:
+def run_probe(screen: list[str] | None = None, **kwargs) -> list[str]:
+    """The saved report (``screen``, if given, collects what is printed)."""
     kwargs.setdefault("listen_s", 0.0)
-    return asyncio.run(asyncio.wait_for(probe.probe(emit=lambda line: None, **kwargs), 10))
+    emit = (lambda line: None) if screen is None else screen.append
+    return asyncio.run(asyncio.wait_for(probe.probe(emit=emit, **kwargs), 10))
 
 
 def test_only_the_standard_characteristics_are_listened_to(radio: Radio):
@@ -177,14 +179,92 @@ def test_the_named_pad_is_probed_rather_than_the_nearest_fitness_machine(radio: 
     radio.add("11:11:11:11:11:11", "KICKR BIKE", fitness_machine=True, rssi=-30)
     radio.add("F4:12:FA:00:30:AB", "URTM030", fitness_machine=True, rssi=-80)
     radio.add("22:22:22:22:22:22", "TV", rssi=-20)
-    report = run_probe()
+    screen: list[str] = []
+    run_probe(screen)
     assert radio.connected_to == ["F4:12:FA:00:30:AB"]
-    listed = [line for line in report if line.startswith((" * ", "   ")) and "rssi=" in line]
+    listed = [line for line in screen if line.startswith((" * ", "   ")) and "rssi=" in line]
     assert [line.split()[1] if line.startswith(" *") else line.split()[0] for line in listed] == [
         "F4:12:FA:00:30:AB",
         "11:11:11:11:11:11",
         "22:22:22:22:22:22",
     ]
+
+
+# ---- the saved report is going to be posted in public ---------------------------------------
+
+SERIAL = "00002a25-0000-1000-8000-00805f9b34fb"
+
+
+def test_the_saved_report_names_no_device_that_is_not_a_fitness_machine(radio: Radio):
+    """The report goes into a public bug report. The neighbours' television
+    and somebody's headphones - by name and address - have no place in it."""
+    radio.add("F4:12:FA:00:30:AB", "URTM030", fitness_machine=True, rssi=-70)
+    radio.add("11:11:11:11:11:11", "KICKR BIKE", fitness_machine=True, kind=bytes.fromhex("012000"))
+    radio.add("22:22:22:22:22:22", "Sam's AirPods", rssi=-40)
+    radio.add("33:33:33:33:33:33", "[TV] Living room next door", rssi=-85)
+    radio.add("44:44:44:44:44:44", None, rssi=-90)
+    screen: list[str] = []
+    report = "\n".join(run_probe(screen))
+    shown = "\n".join(screen)
+
+    for private in ("AirPods", "Living room", "22:22:22", "33:33:33", "44:44:44"):
+        assert private not in report
+        assert private in shown, "the screen is the user's own: everything is on it"
+    assert "3 other Bluetooth device(s) in range are left out of this report" in report
+    assert "--address" in shown, "how to probe a treadmill that was not recognised"
+    # The fitness machines are what the report is for - with their addresses cut short.
+    assert "URTM030" in report and "KICKR BIKE" in report and "kind=indoor bike" in report
+    assert "F4:12:FA:..:..:.." in report and "11:11:11:..:..:.." in report
+    for whole in ("F4:12:FA:00:30:AB", "11:11:11:11:11:11"):
+        assert whole not in report and whole in shown
+    assert "Connecting to F4:12:FA:..:..:.. (URTM030)" in report
+    assert "Connecting to F4:12:FA:00:30:AB (URTM030)" in shown
+
+
+def test_with_nothing_else_in_range_the_report_does_not_mention_it(radio: Radio):
+    radio.add("F4:12:FA:00:30:AB", "URTM030", fitness_machine=True)
+    screen: list[str] = []
+    report = "\n".join(run_probe(screen))
+    assert "left out" not in report and "--address" not in "\n".join(screen)
+
+
+def test_a_device_picked_by_address_is_in_the_report_whatever_it_advertises(radio: Radio):
+    """A treadmill Walka does not recognise is probed with --address: it is
+    then the one thing the report is about."""
+    radio.add("55:66:77:88:99:AA", "KS-ST-A1P")
+    radio.add("22:22:22:22:22:22", "TV")
+    report = "\n".join(run_probe(address="55:66:77:88:99:aa"))
+    assert radio.connected_to == ["55:66:77:88:99:AA"]
+    assert "55:66:77:..:..:.." in report and "KS-ST-A1P" in report
+    assert "TV" not in report and "1 other Bluetooth device(s)" in report
+
+
+def test_the_serial_number_is_read_but_not_put_in_the_report(radio: Radio, monkeypatch):
+    services = [
+        service(ftms.DEVICE_INFORMATION_SERVICE, characteristic(MODEL_NUMBER, "read"), characteristic(SERIAL, "read")),
+        *PAD_SERVICES[1:],
+    ]
+    monkeypatch.setattr(bleak.BleakClient, "services", services)
+    monkeypatch.setitem(READS, SERIAL, b"SN20260114000731")
+    radio.add("F4:12:FA:00:30:AB", "URTM030", fitness_machine=True)
+    screen: list[str] = []
+    report = "\n".join(run_probe(screen))
+    assert "SN20260114000731" not in report and b"SN20260114000731".hex(" ") not in report
+    assert "Serial Number" in report and "(16 bytes, left out of this report" in report
+    assert "SN20260114000731" in "\n".join(screen)
+    assert "'URTM030'" in report, "the model is what the report is for"
+
+
+@pytest.mark.parametrize(
+    "address,short",
+    [
+        ("F4:12:FA:00:30:AB", "F4:12:FA:..:..:.."),
+        ("6F0E7C1A-98A3-4C2B-B7A6-0C7A2C3D4E5F", "6F0E7C1A..."),  # what a Mac calls a device
+        ("SIM", "SIM"),
+    ],
+)
+def test_addresses_are_cut_short(address: str, short: str):
+    assert probe.short_address(address) == short
 
 
 def test_an_address_picks_the_device_and_nothing_found_is_explained(radio: Radio):
