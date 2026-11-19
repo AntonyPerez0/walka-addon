@@ -78,14 +78,6 @@ jobs:
           # The licences of the libraries packed into the program go with it.
           $licences = (& $exe licenses | Out-String)
           if ($licences -notmatch "THIRD-PARTY SOFTWARE IN WALKA" -or $licences -notmatch "Apache License" -or $licences -notmatch "aiohttp" -or $licences -notmatch "winrt-runtime") { throw "Walka.exe does not carry the licences of what is packed into it" }
-          # The guard - the second process, which stops the belt if Walka is
-          # killed - is this same program started once more. It must start
-          # from the packaged file, load the Bluetooth driver, and go when
-          # told to.
-          $guardData = Join-Path $env:RUNNER_TEMP "walka-guard"
-          "bye" | & $exe --data-dir $guardData guard
-          if ($LASTEXITCODE -ne 0) { throw "the guard did not start from Walka.exe" }
-          if (-not (Select-String -Path (Join-Path $guardData "guard.log") -Pattern "watching" -Quiet)) { throw "the guard did not get as far as watching" }
           # The Bluetooth stack must load inside the frozen app. The runner
           # has no Bluetooth adapter, so the scan itself is expected to say
           # so - what must not happen is an import error.
@@ -104,10 +96,13 @@ jobs:
               try { $state = Invoke-RestMethod "http://127.0.0.1:8791/api/state"; if ($state.treadmill.speed_kmh -gt 0) { break } } catch { }
             }
             if (-not $state) { throw "the dashboard API did not come up" }
-            if ($state.treadmill.speed_kmh -le 0) { throw "the simulated belt never moved" }
+            # (The demo has a made-up walker who presses start on the
+            # simulated pad's remote: the companion itself cannot.)
+            if ($state.treadmill.speed_kmh -le 0) { throw "the demo's walker never got the simulated belt moving" }
+            if (-not $state.session) { throw "the walk on the simulated pad is not being recorded" }
             $page = Invoke-WebRequest "http://127.0.0.1:8791/" -UseBasicParsing
             if ($page.StatusCode -ne 200) { throw "dashboard page missing from the bundle" }
-            Write-Host "belt speed $($state.treadmill.speed_kmh) km/h, phase $($state.governor.phase)"
+            Write-Host "belt speed $($state.treadmill.speed_kmh) km/h, recording a walk filed under: $($state.session.source)"
           } finally {
             Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
           }
@@ -168,12 +163,6 @@ jobs:
           for wanted in "THIRD-PARTY SOFTWARE IN WALKA" "Apache License" "aiohttp" "pyobjc-core"; do
             grep -q "$wanted" "$RUNNER_TEMP/licences.txt" || fail "the licences packed into Walka do not mention: $wanted"
           done
-          # The guard - the second process, which stops the belt if Walka is
-          # killed - is this same program started once more. It must start
-          # from the packaged file, load the Bluetooth driver, and go when
-          # told to.
-          echo bye | "$exe" --data-dir "$RUNNER_TEMP/walka-guard" guard || fail "the guard did not start from Walka"
-          grep -q watching "$RUNNER_TEMP/walka-guard/guard.log" || fail "the guard did not get as far as watching"
           # The Bluetooth stack must load inside the frozen app. Whether
           # this machine lets it scan is another matter - what must not
           # happen is an import error.
@@ -193,11 +182,13 @@ jobs:
             if python3 -c "import sys; sys.exit(0 if float('$speed') > 0 else 1)"; then break; fi
           done
           [ -n "$state" ] || { kill -9 $pid; fail "the dashboard API did not come up"; }
-          python3 -c "import sys; sys.exit(0 if float('$speed') > 0 else 1)" || { kill -9 $pid; fail "the simulated belt never moved"; }
+          # (The demo has a made-up walker who presses start on the
+          # simulated pad's remote: the companion itself cannot.)
+          python3 -c "import sys; sys.exit(0 if float('$speed') > 0 else 1)" || { kill -9 $pid; fail "the demo's walker never got the simulated belt moving"; }
           curl -fsS -o /dev/null http://127.0.0.1:8791/ || { kill -9 $pid; fail "dashboard page missing from the bundle"; }
-          echo "$state" | python3 -c 'import json, sys; s = json.load(sys.stdin); print("belt speed", s["treadmill"]["speed_kmh"], "km/h, phase", s["governor"]["phase"], "- STOP hotkey:", s["hotkey"])'
+          echo "$state" | python3 -c 'import json, sys; s = json.load(sys.stdin); print("belt speed", s["treadmill"]["speed_kmh"], "km/h, recording a walk filed under:", s["session"]["source"])' || { kill -9 $pid; fail "the walk on the simulated pad is not being recorded"; }
           # Closing the Terminal window it runs in is how Walka is closed on
-          # a Mac, and that arrives as this signal: the belt must be stopped
+          # a Mac, and that arrives as this signal: the walk must be saved
           # and the program must end by itself, not be killed.
           kill -HUP $pid
           code=0
@@ -376,9 +367,9 @@ jobs:
 
           **On a Mac:** click **Walka-mac-apple-silicon.zip** (Macs from late 2020 on) or **Walka-mac-intel.zip** (older ones), open the zip, then open **Walka**. The first time, macOS will not open it until you allow it under *System Settings > Privacy & Security > Open Anyway*: see [On a Mac](https://github.com/$GH_REPO#on-a-mac) in the README. The Mac version is new and has not been tried with the game on a real Mac yet.
 
-          **Early version:** not yet tried on a real walking pad. Read *Before your first walk* in the README, and keep the pad's remote in your hand the first time.
+          **Early version:** not yet tried on a real walking pad. Read *Before your first walk* in the README.
 
-          **At your own risk:** Walka moves a motorised belt while you stand on it. It comes with no warranty, and it is not a safety device or a medical device. Read the [disclaimer](https://github.com/$GH_REPO/blob/$TAG/DISCLAIMER.md) before your first walk.
+          **Walka only listens to your treadmill:** it cannot start, stop or change the speed of the belt - you set the speed on the treadmill itself. Walking while you play is at your own risk; Walka comes with no warranty and is not a medical device. Read the [disclaimer](https://github.com/$GH_REPO/blob/$TAG/DISCLAIMER.md) before your first walk.
 
           **Virus scan:** before this was published, Microsoft Defender scanned Walka.exe, the Mac programs and the addon's files, and found nothing. *virus-scan.json* under Assets says when, and with which virus definitions. A scan that finds nothing is not proof that a file is harmless: see [Is the download safe?](https://github.com/$GH_REPO#is-the-download-safe)
 

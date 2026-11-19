@@ -4,7 +4,7 @@
 
 <p align="center">
   <b>Walk on your walking pad while you play World of Warcraft.</b><br>
-  The belt follows your character: faster when it runs, slower when it stands still.
+  Walka counts your steps, miles and calories, and draws your character's road on the map.
 </p>
 
 <p align="center">
@@ -20,7 +20,8 @@
 </p>
 
 <p align="center">
-  <sub><b>Experimental, and at your own risk:</b> not yet tried on a real walking pad. Read the <a href="DISCLAIMER.md">disclaimer</a> before you download.<br>
+  <sub><b>Walka only listens to your treadmill.</b> It cannot start, stop or change the speed of the belt: you do that at the treadmill itself.<br>
+  <b>Experimental:</b> not yet tried on a real walking pad. Walking while you play is at your own risk - read the <a href="DISCLAIMER.md">disclaimer</a> before you download.<br>
   <b>Free.</b> Nothing to install: on Windows it is one file, <code>Walka.exe</code>, and you just open it.<br>
   <b>Mac:</b> the button is for an Apple chip (M1 or later) - for an older Mac with an Intel processor, <a href="https://github.com/AntonyPerez0/walka-addon/releases/latest/download/Walka-mac-intel.zip">download this one</a>.
   The Mac version is new and has not been tried with the game on a real Mac yet: see <a href="#on-a-mac">On a Mac</a>.<br>
@@ -35,7 +36,7 @@
 <p align="center">
   <a href="#get-started">Get started</a> ·
   <a href="#what-you-get">What you get</a> ·
-  <a href="#stopping-the-belt">Stopping the belt</a> ·
+  <a href="#walka-only-listens">Walka only listens</a> ·
   <a href="#safety">Safety</a> ·
   <a href="#troubleshooting">Troubleshooting</a>
 </p>
@@ -43,33 +44,39 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/dashboard-dark.png">
-    <img src="docs/images/dashboard-light.png" width="880" alt="The Walka dashboard: the belt's speed, this session's time, distance, steps, calories and heart rate (with an optional Bluetooth heart-rate sensor), and a red STOP button">
+    <img src="docs/images/dashboard-light.png" width="880" alt="The Walka dashboard: the belt's speed as the treadmill reports it, and this walk's time, distance, steps, calories and heart rate (with an optional Bluetooth heart-rate sensor)">
   </picture>
 </p>
 
 This is the program - for Windows and for Mac - that goes with the
-**Walka addon** in the game. You need both: the addon watches your
-character, and this program talks to your walking pad.
+**Walka addon** in the game. You need both: the addon knows which character
+you are playing, and this program listens to your walking pad.
 
 **You need:** a Windows 10 or 11 PC or a Mac (Apple silicon or Intel), with
-Bluetooth, a walking pad or treadmill that apps can control over Bluetooth
-(a UREVO Strol 2E, a WELLFIT TM029 Pro, or another Bluetooth FTMS
+Bluetooth, a walking pad or treadmill that shows its numbers to apps over
+Bluetooth (a UREVO Strol 2E, a WELLFIT TM029 Pro, or another Bluetooth FTMS
 treadmill - see [which treadmills work](#which-treadmills-work)), and
 World of Warcraft: Forever.
 
 ## Get started
 
+> [!NOTE]
+> **Walka only listens to your treadmill.** It reads the speed, distance
+> and steps the treadmill reports, and writes your walks down. It cannot
+> start or stop the belt or change its speed - nothing in it can. You set
+> the speed at the treadmill, with its own remote and buttons.
+> (Versions up to 0.6 did drive the belt. They have been withdrawn.)
+
 > [!WARNING]
 > **Early version - not yet tried on a real walking pad.** Read
-> [Before your first walk](#before-your-first-walk) and keep the pad's
-> remote in your hand the first time.
+> [Before your first walk](#before-your-first-walk).
 
 > [!CAUTION]
-> **You use Walka at your own risk.** It moves a motorised belt while you
-> stand on it. It comes with no warranty, and it is not a safety device or
-> a medical device. If you have a health condition, are pregnant or are in
-> any doubt, ask a doctor first - and stop if you feel dizzy or unwell.
-> The whole of it: [DISCLAIMER.md](DISCLAIMER.md).
+> **Walking while you play is at your own risk.** Your eyes are on a game,
+> not on your feet. Walka comes with no warranty, and it is not a safety
+> device or a medical device. If you have a health condition, are pregnant
+> or are in any doubt, ask a doctor first - and stop if you feel dizzy or
+> unwell. The whole of it: [DISCLAIMER.md](DISCLAIMER.md).
 
 *These steps are for Windows. On a Mac, steps 1 and 2 are different - they
 are under [On a Mac](#on-a-mac) - and the rest is the same.*
@@ -79,8 +86,9 @@ are under [On a Mac](#on-a-mac) - and the rest is the same.*
    choose **Keep** (in Edge: **...** → **Keep** → **Show more** → **Keep
    anyway**).
 2. **Double-click it.** A black window opens: that is Walka. **Leave it
-   open while you walk** - closing it stops Walka. The *dashboard* page
-   opens in your browser (if not, go to `127.0.0.1:8787`).
+   open while you walk** - closing it ends the recording (the belt is not
+   touched). The *dashboard* page opens in your browser (if not, go to
+   `127.0.0.1:8787`).
 
    The first time, Windows may say *"Windows protected your PC"*. Click
    **More info**, then **Run anyway**. (Walka is not signed by a company,
@@ -88,9 +96,6 @@ are under [On a Mac](#on-a-mac) - and the rest is the same.*
    was found: see [Is the download safe?](#is-the-download-safe))
 3. **Follow "Getting started" on the dashboard.** It ticks each step off as
    you do it:
-   * **Accept the disclaimer:** the dashboard shows it the first time.
-     Until you tick the box and press *I accept*, Walka does not start or
-     steer the belt.
    * **Connect the treadmill:** switch it on and close its own phone app
      (UREVO, WELLFIT Fitness, ...). Don't pair it in Windows Bluetooth
      settings - Walka finds it by itself.
@@ -102,22 +107,25 @@ are under [On a Mac](#on-a-mac) - and the rest is the same.*
      *Windowed (Fullscreen)* mode and keep the top-left corner of the game
      uncovered.
    * **Enter your weight and height:** for the calorie count.
-4. **Walk.** Step onto the pad and, in the game, click the ▶ button on the
-   small Walka box (or type `/walka start`).
+4. **Walk.** In the game, click the ▶ button on the small Walka box (or
+   type `/walka start`): that says "this walk is for this character".
+   Then step onto the pad and start the belt **with the treadmill's own
+   remote**, at the speed you like.
 
-**To stop the belt at any time:** the pad's own remote, **Ctrl+Alt+X** on
-the keyboard (**Control+Option+X** on a Mac), or the red **STOP** on the
-dashboard.
+**The belt is yours.** Start it, stop it and change its speed at the
+treadmill - its remote, its buttons, its safety key. Walka has no button
+for any of that.
 
 ## What you get
 
-- 🏃 **Follows your character.** Run in the game and the belt speeds up;
-  stand still and it eases off. You choose every speed.
-- 🛑 **Built around stopping.** A hard speed cap, a STOP key that works
-  from inside the game, and rules written so that a lost signal slows the
-  belt down and does not speed it up.
+- 👂 **Only listens.** Walka reads what your treadmill reports. It sends
+  it no commands: the belt does what you tell it at the treadmill, and
+  nothing else.
 - 📊 **Counts every walk.** Time, distance, steps and calories - live on
-  the dashboard, and in the game while you play.
+  the dashboard, and in the game while you play. A walk is recorded
+  whenever the belt moves, with a game or without.
+- 🧙 **Your walks, per character.** Start a session in the game and the
+  walk counts for the character you are playing.
 - 🗺️ **Your road on the map.** The path your character has travelled,
   drawn on the game's world map - brightest where you really walked.
 - 🖼️ **A picture to share.** Your journey so far as a picture, made on
@@ -145,7 +153,7 @@ Everything below is the long version, for when you want it.
 [Using it](#using-it)
 
 **Walking** ·
-[Stopping the belt](#stopping-the-belt) ·
+[Walka only listens](#walka-only-listens) ·
 [Heart rate](#heart-rate-optional) ·
 [Garmin Connect, Strava and others](#garmin-connect-strava-and-others) ·
 [Your journey, and a picture to share](#your-journey-and-a-picture-to-share) ·
@@ -165,34 +173,39 @@ Everything below is the long version, for when you want it.
 
 ## What Walka is
 
-Walka links an under-desk walking pad to **World of Warcraft: Forever**:
-the belt speeds up when your character runs, eases off when it stands, and
-an in-game HUD counts your speed, steps, distance and calories - for this
-session and every one before it.
+Walka is a walking log for people who walk on an under-desk pad while they
+play **World of Warcraft: Forever**. You walk at the speed you set on the
+pad; Walka counts your time, steps, distance and calories - for this walk
+and every one before it - shows them in an in-game HUD, and keeps them per
+character.
 
 It is two pieces:
 
-* **the addon** (`Walka/`) - reads your character's movement, decides how
-  fast the belt should go, and shows the HUD, history and settings in game;
+* **the addon** (`Walka/`) - marks your walking sessions, knows which
+  character they belong to, and shows the HUD, history, journey and road
+  map in game;
 * **the companion** (`companion/`, the `Walka.exe` you download above, or
   `Walka` on a Mac) - a small app that reads the addon's signal off the
-  screen, drives
-  the treadmill over Bluetooth with a set of safety rules, records your
-  walks, and shows a live dashboard in your browser.
+  screen, listens to the treadmill over Bluetooth, records your walks, and
+  shows a live dashboard in your browser.
 
-Built around the **UREVO Strol 2E (URTM030)**, and made to drive any
-treadmill that speaks standard Bluetooth FTMS with speed control - see
+Neither of them moves the belt. Until version 0.6 the companion did: the
+belt followed your character. That was taken out - a motorised belt under
+someone who is looking at a game was not worth the risk of a program
+getting it wrong - and those versions have been withdrawn. See
+[Walka only listens](#walka-only-listens).
+
+Built around the **UREVO Strol 2E (URTM030)**, and made to read any
+treadmill that reports its data over standard Bluetooth FTMS - see
 [which treadmills work](#which-treadmills-work). The companion also works
-without any game (manual sessions), and logs walks you do with just the
-remote.
+without any game: a walk is recorded whenever the belt moves.
 
 ## How it works
 
 ```mermaid
 flowchart TB
   addon["Walka addon<br/>in the game"] -- "draws a strip of squares;<br/>Walka reads it off the screen" --> exe["Walka.exe (Walka on a Mac)<br/>on your computer"]
-  exe -- "Bluetooth: belt speed" --> pad["Walking pad"]
-  pad -- "speed, distance" --> exe
+  pad["Walking pad"] -- "Bluetooth: speed, distance, steps<br/>(one way: Walka only listens)" --> exe
   exe -. "a file the game loads at login" .-> addon
   classDef box fill:#256abf,stroke:#256abf,color:#ffffff
   class addon,exe,pad box
@@ -224,14 +237,14 @@ key presses, no mouse input, no memory reading.
   how fast the character is going and how (on foot, mounted, swimming,
   flying, on a flight path), whether you are AFK, and the numbers of the
   [journey](#your-journey-and-a-picture-to-share). Not whether your
-  character is fighting, dead or resting - the belt does not need to know,
-  so the addon does not say.
+  character is fighting, dead or resting - the companion does not need to
+  know, so the addon does not say.
 
 An addon also cannot receive live data, so the in-game HUD shows the
-addon's own estimate of the belt (it knows the speed it asked for and how
-the companion ramps), and the companion's *measured* numbers are written to
-a file the game loads at login or on `/reload`. The dashboard always shows
-the measured numbers live.
+addon's own estimate (counted from the pace you tell it: see
+[Using it](#using-it)), and the companion's *measured* numbers are written
+to a file the game loads at login or on `/reload`. The dashboard always
+shows the measured numbers live.
 
 Details: [docs/PROTOCOL.md](docs/PROTOCOL.md).
 
@@ -248,37 +261,39 @@ Details: [docs/PROTOCOL.md](docs/PROTOCOL.md).
 
 ## Which treadmills work
 
-Walka speaks **Bluetooth FTMS**, the standard that fitness apps use to
-control a treadmill. If an app other than the maker's own can *set the
-speed* of your treadmill, Walka very likely can too.
+Walka reads **Bluetooth FTMS**, the standard that fitness apps use to show
+a treadmill's speed and distance. If an app other than the maker's own can
+*show the speed* of your treadmill, Walka very likely can too. The
+treadmill does not have to be one that apps can control: Walka controls
+nothing.
 
 | Treadmill | How Walka finds it | What is known |
 |---|---|---|
-| **UREVO Strol 2E** and other UREVO pads | By name (`URTM...`), at once | Other open-source projects drive it with the same commands. |
-| **WELLFIT TM029 Pro** and other WELLFIT treadmills | By name (`WELLFIT TM Linker`), at once | Another open-source project drives a WELLFIT this way; Walka copies what it needed. |
-| **Any other FTMS treadmill** | By what it advertises, after a 15-second scan - or pick it yourself: dashboard → *Treadmill → Scan* | Depends on the treadmill. Try it as in [Before your first walk](#before-your-first-walk). |
+| **UREVO Strol 2E** and other UREVO pads | By name (`URTM...`), at once | Other open-source projects read it the same way. |
+| **WELLFIT TM029 Pro** and other WELLFIT treadmills | By name (`WELLFIT TM Linker`), at once | Another open-source project works with a WELLFIT over FTMS. |
+| **Any other FTMS treadmill** | By what it advertises, after a 15-second scan - or pick it yourself: dashboard → *Treadmill → Scan* | Depends on the treadmill. Check its numbers as in [Before your first walk](#before-your-first-walk). |
 
 None of these has been tried by Walka's author on the real machine yet -
 the warning at the top of this page is for all of them. Details and
 sources: [docs/HARDWARE.md](docs/HARDWARE.md).
 
-Things to know with a treadmill that is not a walking pad:
+Things to know:
 
-* **Walka stays at walking pace.** Whatever the treadmill can do, the speed
-  cap cannot be set above 6.5 km/h (4.0 mph), and starts at 3.0 mph.
-* **Incline is left alone.** Set it on the treadmill.
-* **The safety key and the treadmill's own buttons come first.** Walka is
-  built to treat a stop at the treadmill as final until you resume.
-* If the dashboard says the treadmill *does not take speed commands*, it
-  shows its numbers to apps but cannot be driven by them. Walka then still
-  counts your walk, with you setting the speed on the treadmill.
+* **The speed is yours.** Walka sets none and limits none. How fast you
+  walk is between you and the treadmill.
+* **One connection at a time.** Most treadmills talk to one app. While
+  Walka is connected, the maker's phone app cannot be - and the other way
+  round.
+* **Walka remembers your treadmill.** After the first connection it only
+  reconnects to that one, so that a neighbour's walk is never counted as
+  yours. *Forget this treadmill* on the dashboard lets you move to another.
 
 **What will not work:** treadmills that only talk to their maker's app in
 a private language (many NordicTrack / iFIT machines, the older KingSmith
-WalkingPads), and bikes or rowers - Walka only connects to treadmills.
+WalkingPads), and bikes or rowers - Walka only reads treadmills.
 
 **Is yours not listed, or not behaving?** Run `Walka.exe probe` (on a Mac:
-[`Walka probe`](#on-a-mac)) with the treadmill on. It only listens - it sends the treadmill no commands - and saves a
+[`Walka probe`](#on-a-mac)) with the treadmill on. Like Walka itself it only listens - it sends the treadmill no commands - and saves a
 small text report.
 [Open an issue](https://github.com/AntonyPerez0/walka-addon/issues) with
 that report and the treadmill's make and model, and it can be added.
@@ -327,9 +342,9 @@ of the window.)
 
 > [!WARNING]
 > **The Mac version is new.** GitHub's Macs build it, run its tests and
-> check that the finished program starts, drives the simulated belt and
-> stops it when it is closed. Nobody has yet tried it with the game and a
-> walking pad on a real Mac. Do everything under
+> check that the finished program starts, records a walk on a simulated
+> pad and saves it when it is closed. Nobody has yet tried it with the game
+> and a walking pad on a real Mac. Do everything under
 > [Before your first walk](#before-your-first-walk) - and if you do,
 > [say how it went](https://github.com/AntonyPerez0/walka-addon/issues).
 
@@ -349,13 +364,13 @@ of the window.)
    mean that anything was found: see
    [Is the download safe?](#is-the-download-safe)
 4. **A Terminal window opens: that is Walka.** Leave it open while you
-   walk. Closing it stops the belt and Walka. The dashboard opens in your
+   walk. Closing it ends the recording (the belt is not touched). The dashboard opens in your
    browser, and from there it is step 3 of [Get started](#get-started).
 
 macOS asks before a program may use Bluetooth or look at the screen. Walka
 runs inside Terminal, so it asks about **Terminal**:
 
-* **Bluetooth** - to talk to the walking pad. Click **Allow**.
+* **Bluetooth** - to listen to the walking pad. Click **Allow**.
 * **Screen Recording** - to see the strip the addon draws. The dashboard
   says when this is what is missing. Open **System Settings → Privacy &
   Security → Screen & System Audio Recording**, switch on **Terminal**, then
@@ -369,9 +384,6 @@ for the first time, searches the screen for it: see
 
 What is different from Windows:
 
-* **The STOP key is Control+Option+X** - the same setting as Ctrl+Alt+X,
-  under the names a Mac keyboard has for those keys (in the setting,
-  `cmd` is the Command key). Walka needs no permission for it.
 * **The game** is looked for in `/Applications/World of Warcraft`. If
   yours is somewhere else, choose the addon folder yourself under
   *Settings → Game addon*.
@@ -385,44 +397,39 @@ What is different from Windows:
 
 ## Using it
 
-In game, step onto the pad and press the ▶ button on the HUD (or type
-`/walka start`). `/walka` shows or hides the HUD. The treadmill counts down
-and the belt starts slowly; from then on it follows your character:
+In game, press the ▶ button on the HUD (or type `/walka start`): a walking
+session starts for the character you are playing. Step onto the pad and
+start the belt with the treadmill's remote, at whatever speed you like.
+`/walka` shows or hides the HUD.
 
-| Your character is…          | Belt (defaults)  |
-|-----------------------------|------------------|
-| standing still              | 0.8 mph          |
-| walking                     | 1.2 mph          |
-| running                     | 1.6 mph          |
-| on a fast mount             | 2.0 mph          |
-| on a flight path            | running pace     |
-| anything faster/slower      | in between - Sprint really does speed you up |
+The companion records the walk from what the treadmill reports. A walk is
+whatever the belt does:
 
-A real run speed (14 mph!) is not something to match under a desk, so every
-one of those numbers is yours to set in `/walka options`. The defaults sit
-where people settle on treadmill desks (1-2 mph); raise them as you get
-used to it. Also there:
+* it is counted while the belt moves, and not while it stands still;
+* with a session running in the game it is filed under that session, and
+  so under your character;
+* with no session - another game, no game at all - it is recorded all the
+  same, as a walk of its own (*No game session* in the dashboard's
+  history).
 
-* how quickly the belt reacts (*Steady*, *Balanced*, *Responsive*);
-* a maximum (2.5 mph by default; the companion has its own hard cap,
-  3.0 mph by default);
-* **Keep walking when my character stands still** - the belt holds your
-  walking pace through stops (looting, casting, reading a quest), so they
-  cost no steps. Also on the HUD's right-click menu and as
-  `/walka keepwalking`;
-* or the opposite: stop the belt outright when you stand still.
+**Tell the addon your pace.** An addon cannot be told what the treadmill is
+doing while the game runs, so the HUD counts with the speed you say the
+belt is set to: `/walka pace 1.5`, the − and + buttons on the HUD, or
+*Your pace* in `/walka options`. It starts at 1.5 mph - people settle at
+1-2 mph on a treadmill desk. It only feeds the HUD's estimate; it changes
+nothing at the treadmill, and the measured numbers replace the estimate
+later (below).
 
-**Pause** / **Stop** are on the HUD too. Going AFK pauses automatically;
-the session resumes when your character next moves - if that is within ten
-minutes. After a longer break the session stays paused until you press the
-play button (or type `/walka resume`): by then nobody can say what stands
-on the belt.
+**Pause** / **Stop** are on the HUD too. They pause and end the *session* -
+the addon's count - and nothing else: stop the belt yourself, at the
+treadmill, when you step off. Going AFK pauses the session automatically
+(you can turn that off); it carries on when your character next moves.
 
 | Command | What it does |
 |---|---|
 | `/walka` | show or hide the HUD |
-| `/walka start` · `pause` · `resume` · `stop` | control the session |
-| `/walka keepwalking on` \| `off` | hold the walking pace when your character stops |
+| `/walka start` · `pause` · `resume` · `stop` | mark the walking session |
+| `/walka pace 1.5` | the speed your treadmill is set to, for the HUD's estimate |
 | `/walka history` | past sessions, totals, 7-day chart |
 | `/walka journey` | your character's journey so far (see [below](#your-journey-and-a-picture-to-share)) |
 | `/walka options` | settings |
@@ -438,15 +445,16 @@ a walk, press **Sync** in the history window (it reloads the interface; a
 session in progress carries on) or just log in next time, and the history
 switches that session to what the treadmill measured. The dashboard shows
 measured values the whole time - put it on a second monitor. (It is only
-reachable from the PC itself: it can start and stop the belt, so it is not
-offered to other devices on your network.)
+reachable from the PC itself: it shows your walks, weight and height and
+has no password, so it is not offered to other devices on your network.)
 
 ### In combat
 
 WoW: Forever hides your character's exact speed from addons during combat.
 Walka does not work around that. While it is hidden the addon estimates:
-moving or not, at your last known run speed. The HUD tooltip tells you when
-this is happening.
+moving or not, at your last known run speed. That only matters for the road
+and the journey's "character steps" - your own walk is counted from the
+treadmill, not from the character.
 
 ### Calories and steps
 
@@ -461,17 +469,33 @@ this is happening.
 * A **wrist watch will not count these steps** - with your hands on the
   keyboard your arm does not swing. Walka's count is the record.
 
-## Stopping the belt
+## Walka only listens
 
-Fastest first:
+Walka does not start, stop, pause or steer the belt. Not from the game,
+not from the dashboard, not when something goes wrong.
 
-1. the treadmill's **remote**, stop button or safety key - Walka then
-   leaves the belt stopped;
-2. **Ctrl+Alt+X** anywhere on the computer, even inside the game
-   (**Control+Option+X** on a Mac; change it under *Settings → Safety
-   limits*);
-3. the red **STOP** on the dashboard;
-4. *Stop* on the HUD, or `/walka stop`.
+* **You start the belt** with the treadmill's remote or buttons, and **you
+  stop it** the same way - or with its safety key. Keep the remote where
+  your hand finds it without looking.
+* **The speed is the one you set** at the treadmill. Walka reads it; it
+  cannot change it.
+* **Closing Walka, or pressing *Disconnect*,** ends the recording and lets
+  go of the treadmill. The belt goes on doing what it was doing.
+* **When you step off, stop the belt.** Nothing else will.
+
+What Walka does to a treadmill is this, and no more: it connects, reads
+the speed range the treadmill says it has, and switches on the
+notifications through which the treadmill reports its speed, distance and
+status. The channel through which an app could control the belt (the
+*Fitness Machine Control Point*) is never written to, and the code that
+once did has been deleted - there is no setting that brings it back. How
+that is checked: [docs/SAFETY.md](docs/SAFETY.md).
+
+**If you have a version up to 0.6.1:** it could move the belt. Those
+downloads have been removed; replace it with the current one and delete
+the old `Walka.exe`. Your walks and settings are kept (the settings that
+were about steering the belt are simply no longer read), and the addon is
+updated with *Install* on the dashboard.
 
 ## Heart rate (optional)
 
@@ -549,9 +573,9 @@ the picture over a small map of the continent - not the game's map, but a
 low-poly drawing of Walka's own: the shape of the land in facets, in the
 picture's colours.
 
-* The stretches you walked **on the treadmill** are a bright line; what the
-  character travelled while the belt stood still is the same line in a
-  quieter colour; flight paths are fine dashes. A key under the map shows a
+* The stretches you walked **on the treadmill** - a walking session was
+  running in the game - are a bright line; what the character travelled
+  without one is the same line in a quieter colour; flight paths are fine dashes. A key under the map shows a
   piece of each kind of line with what it means - and how much of the road
   you walked for real.
 * *START* marks where the road begins, a gem marked *NOW* with the
@@ -635,8 +659,9 @@ Zephras Isle is on the isle's own map, and wherever else the game shows
 the isle.
 
 * the road is coloured by level, a colour for every ten levels;
-* the stretches you walked **on the treadmill** are bright, with a soft
-  glow; what your character travelled while the belt stood still is dimmer;
+* the stretches you walked **on the treadmill** - a walking session was
+  running - are bright, with a soft glow; what your character travelled
+  without one is dimmer;
 * flight paths are thin and pale;
 * the road runs right up to your character and grows as you walk, with the
   map open;
@@ -695,39 +720,30 @@ there.
 
 ## Other games, or no game
 
-The dashboard has a **manual session**: start, pause, stop and speed
-buttons. Use it with any game, or for a plain walk. And if you just walk
-with the treadmill's remote while the companion is running, that walk is
-recorded too.
+Nothing to set up: the companion records a walk whenever the belt moves.
+Start the belt with the treadmill's remote and play anything, or nothing.
+Such a walk is in the dashboard's history as *No game session*, and in
+your totals.
 
 ## Safety
 
-Short version - the long one is [docs/SAFETY.md](docs/SAFETY.md). Walka is
-built so that:
+Short version - the long one is [docs/SAFETY.md](docs/SAFETY.md):
 
-* nothing moves until you have accepted the [disclaimer](DISCLAIMER.md) on
-  the dashboard and pressed Start;
-* a hard speed cap (3.0 mph until you raise it, at most 4.0 mph) limits
-  what any game state can ask for, and speed changes are gentle and
-  rate-limited;
-* if the companion loses sight of the game it holds, then slows, then
-  pauses the belt - it does not speed up on a lost signal;
-* a belt you stop at the treadmill is left stopped;
-* after any pause it did not watch you start, the belt waits for your
-  character to move - and after ten minutes away, for you to press Resume;
-* the belt is stopped before the computer goes to sleep, and stays stopped
-  until you resume;
-* if Walka itself is killed or crashes while the belt runs, a small second
-  process (the *guard*) reaches for the treadmill and stops the belt.
+* **Walka cannot move the belt.** It only listens to the treadmill. There
+  is no command in it to send, no interface in it to send one through, and
+  nothing the game or the dashboard does reaches the treadmill. The tests
+  check that an emulated treadmill has been sent nothing after long runs of
+  everything Walka can be made to do.
+* **So the belt is entirely yours** - and so is stopping it. Walka is not a
+  safety device and cannot stop a belt: the treadmill's own stop button,
+  remote and safety key are what does.
+* **You are walking while you look at a game.** Start slow, keep the remote
+  within reach, stop the belt when you step off, and keep children and
+  pets away from it.
 
-Bluetooth is not an emergency stop: keep the remote within reach.
+Found a way to make Walka send a treadmill anything at all? Please report
+it in private: [SECURITY.md](SECURITY.md).
 
-Found a way to make Walka move a belt that its user did not ask for?
-Please report it in private: [SECURITY.md](SECURITY.md).
-
-These rules are what Walka is designed to do, and what its tests check
-against a simulated treadmill. They are not a guarantee, and Walka is not a
-safety device: the treadmill's own stop button, remote and safety key are.
 You use Walka at your own risk, with no warranty - see
 [DISCLAIMER.md](DISCLAIMER.md), which also says when to ask a doctor first.
 
@@ -819,50 +835,52 @@ permission.
 
 ## Before your first walk
 
-The pad and the game have not been tested against this code. Do these, in
-order:
+The pad and the game have not been tested against this code. Nothing here
+can move the belt, so what there is to check is whether your walk is
+*counted right*:
 
 1. **`Walka.exe probe`** (or `py -m walka probe`; on a Mac see
-   [On a Mac](#on-a-mac) for how to type a command). Read-only: it lists what
-   the pad exposes and listens while you operate it with the remote. It
-   sends the treadmill no commands. Keep the report - it settles the open questions in
+   [On a Mac](#on-a-mac) for how to type a command). It lists what the pad
+   exposes and listens while you operate it with the remote. It sends the
+   treadmill no commands. Keep the report - it settles the open questions in
    [docs/HARDWARE.md](docs/HARDWARE.md).
-2. **A manual session from the dashboard while standing next to the pad**,
-   not on it. Start, change speed, pause, stop, press STOP, press
-   Ctrl+Alt+X (Control+Option+X on a Mac). Stop it with the remote and
-   check Walka leaves it stopped.
+2. **Walk for a few minutes with the dashboard open** and compare it with
+   the treadmill's own display: the speed, and after the walk the distance
+   and the steps. If they disagree, please
+   [open an issue](https://github.com/AntonyPerez0/walka-addon/issues)
+   with the probe report.
 3. **`Walka.exe beacon`** with the game running: checks that the strip can
    be read from your screen.
 4. **In game**, the checks in
    [docs/IN-GAME-CHECKLIST.md](docs/IN-GAME-CHECKLIST.md).
-5. Then walk - slowly at first.
+
+And for you, not for Walka: start slow, and know where the remote is.
 
 ## Troubleshooting
 
 | Symptom | Try |
 |---|---|
+| The belt does not start, stop or change speed from Walka | It is not meant to: Walka only listens. Use the treadmill's remote or buttons. See [Walka only listens](#walka-only-listens). |
 | Treadmill not found | Is it on? Close the treadmill's own phone app (force-quit it). Remove the treadmill from Windows *Bluetooth & devices* if you paired it there. A USB Bluetooth 5 adapter helps with weak built-in radios. |
 | Treadmill not found, on a Mac | *System Settings → Privacy & Security → Bluetooth*: is **Terminal** switched on? Then close Walka and open it again. |
 | Treadmill not found, and it is not a UREVO or WELLFIT | Give it the whole scan (15 seconds), or press *Scan* on the dashboard and pick it. If it is not in the list either, it does not speak Bluetooth FTMS - see [which treadmills work](#which-treadmills-work). |
-| It connects, but the belt does not start or change speed | The treadmill may only *show* its numbers to apps. Look for "does not take speed commands" under *Activity* on the dashboard, and send a `Walka.exe probe` report. |
-| Dashboard says *no game signal* | Run the game windowed or borderless; keep the top-left corner uncovered; `/walka beacon on`; try `/walka beacon size 6`; run `Walka.exe beacon`. |
+| It connects, but the dashboard shows no speed while the belt moves | The treadmill may not send standard treadmill data. Send a `Walka.exe probe` report. |
+| The treadmill's own phone app no longer connects | Most treadmills accept one connection at a time, and Walka has it. Press *Disconnect* on the dashboard (or close Walka) first. |
+| Dashboard says *no game signal* | Run the game windowed or borderless; keep the top-left corner uncovered; `/walka beacon on`; try `/walka beacon size 6`; run `Walka.exe beacon`. (Your walk is recorded all the same - it is only not filed under a character.) |
 | On a Mac: the dashboard says macOS has not allowed recording the screen, or *no game signal* although the game is there | *System Settings → Privacy & Security → Screen & System Audio Recording*: switch on **Terminal**, then close Walka and open it again. See [On a Mac](#on-a-mac). |
-| On a Mac: Control+Option+X does nothing | Does the dashboard show the key next to STOP? If not, *Activity* says why it could not be set up. Use the remote or the STOP button, and [open an issue](https://github.com/AntonyPerez0/walka-addon/issues). |
-| Belt does not follow | Have you accepted the disclaimer on the dashboard (it says *Waiting for you to accept the disclaimer* until you have)? Is a session started (`/walka status`)? Does the dashboard say *waiting for you to move your character* or *stopped at the treadmill*? Press Resume. |
-| "Waiting for the treadmill to finish its previous workout" | Normal for about ten seconds after a stop: the pad ignores a start until then. |
-| Speed is one step off | Set *Settings → Treadmill → Firmware speed grid* to mph (or km/h) instead of auto. |
+| A walk is not counted for my character | Was a session running in the game (`/walka status`) while you walked? Without one the walk is recorded as *No game session*. |
+| The HUD's numbers are off | They are an estimate from the pace you told the addon: set it with `/walka pace` to what the treadmill shows. The measured numbers arrive with *Sync*. |
 | History shows `~` numbers | Press *Sync* in the history window after the companion has saved the walk; check *Settings → Game addon* shows the right folder. |
 | Addon marked out of date after a game patch | Tick *Load out of date AddOns*, and update the `## Interface:` line in `Walka/Walka.toc`. |
-| The belt does not restart after a break | After more than ten minutes AFK the session stays paused until you press the play button on the HUD (or type `/walka resume`): see [Using it](#using-it). After the computer has slept, press *Resume* on the dashboard. |
-| There are two "Walka" entries in Task Manager | One is the *guard*: a small second copy that stops the belt if Walka itself is killed or crashes. It ends when you close Walka. See [Safety](#safety). |
+| Walks are no longer recorded after the pad was switched off and on | The companion reconnects when a session starts in the game, or when you press *Connect* on the dashboard. |
 | The pad keeps waking up | The companion only reconnects when a session starts or you press Connect; closing the companion releases the pad entirely. |
 
 ## Ideas for later
 
 * A foot pod or other Bluetooth cadence sensor for true step counts.
 * Goals and streak rewards in game; milestones announced in chat.
-* Per-game plugins for other games (the companion's manual mode already
-  works with anything).
+* Per-game plugins for other games (walks are already recorded with any
+  game, or none; a plugin would say which character they are for).
 * Reading daily totals back from Garmin's personal API.
 
 ## Development
@@ -882,14 +900,13 @@ companion/requirements-dev.lock`, and no install of Walka itself.)
 
 * `Walka/` - the addon. `Core/` is pure Lua (no game API) and is unit
   tested; `Game.lua` is the only file that touches values the game may hide.
-* `companion/src/walka/` - `governor.py` (the safety rules), `guard.py`
-  (the second process that stops the belt if the companion is killed),
-  `treadmill/`
-  (Bluetooth FTMS driver and a simulator), `capture.py` + `beacon.py`
-  (reading the strip), `session.py`, `addon_sync.py`, `web.py` + `static/`
+* `companion/src/walka/` - `treadmill/` (the Bluetooth FTMS reader, which
+  has no way to write to a treadmill, and a simulator), `ftms.py` (decoding
+  what a treadmill says), `capture.py` + `beacon.py`
+  (reading the strip), `session.py` (recording walks), `addon_sync.py`, `web.py` + `static/`
   (dashboard), `app.py` (wiring), `cli.py`, `macos.py` (what the companion
   asks macOS: where the game window is, whether it may see the screen),
-  `hotkey.py` (the STOP key, on Windows and on a Mac); `journey.py` (each character's
+  `winsession.py` (hearing that Windows is shutting down, to save the walk); `journey.py` (each character's
   journey, put together from the strip), `savedvars.py` + `road.py` (the
   road, read from the game's saved file), `sketch.py` (the ground of a land
   there is no map of, drawn from the road) and `static/share.js`, `card.js`,
@@ -898,8 +915,11 @@ companion/requirements-dev.lock`, and no install of Walka itself.)
 * `tests/addon/` - loads the real addon files into a mock of the game's
   API that is checked against Blizzard's published API documentation for
   this client build (`tools/gen_api_snapshot.py` regenerates the snapshot).
-* `py -m walka --demo` runs everything against a simulated treadmill and a
-  scripted character.
+* `py -m walka --demo` runs everything against a simulated treadmill, a
+  made-up walker who works its remote, and a scripted character.
+* **The one rule for changes:** the companion listens to the treadmill and
+  never writes to it. `companion/tests/test_ftms_ble.py` and `test_app.py`
+  fail if a way to do so comes back.
 * **Publishing a version:** put the same number in
   `companion/pyproject.toml`, `companion/src/walka/__init__.py` and
   `Walka/Walka.toc`, commit and push. Then, on GitHub, open **Actions** →
