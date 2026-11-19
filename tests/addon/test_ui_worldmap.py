@@ -205,6 +205,80 @@ def test_both_continents_are_on_the_map_of_the_world(map_rt):
     assert len(lines) == 1 and ends(lines[0])[0] == pytest.approx(on_map(rt, ELWYNN, -9000, 200), abs=2.5)
 
 
+# Zephras Isle in the mock: map 2500, a zone under no continent of Azeroth,
+# with a continent id of its own.
+ISLE_MAP, ISLE = 2500, 2600
+
+
+def to_the_isle(rt, start=(100, 300), legs=((400, 0),)):
+    """A loading screen puts the character on the isle, and it walks."""
+    rt.set(continent=ISLE, worldX=start[0], worldY=start[1], speed=0.0)
+    rt.fire_event("PLAYER_ENTERING_WORLD", False, False)
+    rt.advance(0.5)
+    return travel(rt, list(legs), start=start, continent=ISLE)
+
+
+def test_the_starting_isle_of_the_skyborne_has_its_road_on_its_own_map(map_rt):
+    """Zephras Isle is no continent of Azeroth: its road is on its own map,
+    and on no other."""
+    rt = map_rt
+    travel(rt, [(1200, 0)], start=(-600, -4200))
+    end = to_the_isle(rt)
+    stop_recording_here(rt)
+    show(rt, ISLE_MAP)
+    lines = cores(road(rt))
+    assert len(lines) == 1
+    assert ends(lines[0])[0] == pytest.approx(on_map(rt, ISLE_MAP, 100, 300), abs=2.5)
+    assert ends(lines[0])[1] == pytest.approx(on_map(rt, ISLE_MAP, *end), abs=2.5)
+    # The game does not put the isle on its map of Azeroth: only Kalimdor's road is there.
+    show(rt, AZEROTH)
+    lines = cores(road(rt))
+    assert len(lines) == 1 and passes_through(lines, on_world(rt, KALIMDOR, 600, -4200))
+    show(rt, KALIMDOR)
+    assert len(cores(road(rt))) == 1
+    show(rt)
+    assert rt.M.world_map_info().mapId == ISLE_MAP and len(cores(road(rt))) == 1, "the map opens on the isle"
+
+
+def test_an_isle_the_game_puts_on_the_map_of_the_world_has_its_road_there(map_rt):
+    """Where the game says a land lies on the map of the world, its road is
+    drawn there - whether or not the game calls the land a continent. The
+    isle's map is not known until the character has stood on it: the map of
+    the world, looked at before, is asked about again."""
+    rt = map_rt
+    rt.run("local maps = ... ; maps[2500].place = { 0.46, 0.54, 0.02, 0.10 }", rt.M.maps)
+    travel(rt, [(1200, 0)], start=(-600, -4200))
+    show(rt, AZEROTH)
+    assert len(cores(road(rt))) == 1
+    end = to_the_isle(rt)
+    stop_recording_here(rt)
+    rt.advance(0.5)
+    lines = cores(road(rt))
+    assert len(lines) == 2
+
+    def on_azeroth(x, y):
+        u, v = (y - 1800) / -3600, (x - 1200) / -2400
+        return (0.46 + u * 0.08) * ART_W, (0.02 + v * 0.08) * ART_H
+
+    assert passes_through(lines, on_azeroth(100, 300), slack=0.5)
+    assert passes_through(lines, on_azeroth(*end), slack=0.5)
+    assert passes_through(lines, on_world(rt, KALIMDOR, 600, -4200))
+
+
+def test_the_isles_road_is_on_the_map_again_after_a_reload(map_rt):
+    rt = map_rt
+    to_the_isle(rt)
+    rt.set(continent=1, worldX=-600, worldY=-4200, speed=0.0)
+    rt.fire_event("PLAYER_ENTERING_WORLD", False, False)
+    rt.reload()
+    rt.advance(1)
+    show(rt, ISLE_MAP)
+    assert len(cores(road(rt))) == 1
+    rt.clear_printed()
+    rt.slash("/walka mapcheck")
+    assert any("continent 2600 is drawn on map 2500 (Zephras Isle)" in line for line in rt.printed)
+
+
 def test_a_road_that_leaves_the_zone_is_drawn_to_its_edge(map_rt):
     """Durotar's map ends at 2000 yards north; the road goes on to 2600."""
     rt = map_rt

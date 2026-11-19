@@ -1071,6 +1071,18 @@ Walka:On("SETTINGS", function()
     end
 end)
 
+-- The road has reached a land whose map was not known (one the game does
+-- not list among its continents): where the lands lie on a map of the
+-- world is asked afresh.
+Walka:On("ROAD_MAPS", function()
+    continents = nil
+    for mapId in pairs(plainPlaces) do
+        plainPlaces[mapId] = nil
+    end
+    placesFor = nil
+    redraw = true
+end)
+
 -- The world map, and OpenMap, may come after Walka; and nothing of the map
 -- is touched in combat.
 local events = CreateFrame("Frame")

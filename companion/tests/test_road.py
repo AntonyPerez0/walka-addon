@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from walka import road, savedvars
+from walka import road, savedvars, sketch
 from walka.journey import DEMO_KEY, DemoJourney
 from walka.protocol import Stat, djb2
 from walka.road import RoadBook, Stretch, character_id, decode, demo_road, simplify
@@ -276,6 +276,109 @@ def test_an_unknown_continent_has_no_name_and_the_longest_comes_first():
     assert [(entry["id"], entry["name"]) for entry in got.to_api(NOW)["continents"]] == [(571, ""), (530, "")]
 
 
+# The Skyborne begin on Zephras Isle, an island in Skywall that is no
+# continent of Azeroth; 2600 stands for whatever id the game gives it, and
+# 2500 for its map. The addon saves what the game calls the map.
+ISLE = 2600
+
+
+def isle_database(**changes: Any) -> dict[str, Any]:
+    db = database(
+        segment(100, 300, [(400, 0), (0, -500)], c=ISLE, b=1, level=1),
+        segment(500, -200, [(900, 400)], c=ISLE, m="t", level=3),
+        segment(-600, -4200, [(300, 0)], c=1, level=12),
+    )
+    # (As the game writes a table with numbers for keys.)
+    db["maps"] = {2600: {"id": 2500, "name": "Zephras Isle"}, 1: {"id": 1414, "name": "Kalimdor"}}
+    db.update(changes)
+    return db
+
+
+def saved_isle(db: dict[str, Any]) -> bytes:
+    text = lua(db)
+    for key in db["maps"]:
+        text = text.replace(f'["{key}"] = {{', f"[{key}] = {{")
+    return f"\r\nWalkaCharDB = {text}\r\n".encode()
+
+
+def test_a_land_that_is_no_continent_has_the_name_the_game_gives_it():
+    got = decode(savedvars.parse(saved_isle(isle_database())).get("WalkaCharDB"))
+    assert got is not None and got.names == {ISLE: "Zephras Isle", 1: "Kalimdor"}
+    api = got.to_api(NOW)
+    assert [(entry["id"], entry["name"]) for entry in api["continents"]] == [(ISLE, "Zephras Isle"), (1, "Kalimdor")]
+    assert api["start"]["c"] == ISLE and api["end"]["c"] == 1
+    # The airship from the isle is a passage like the boat between the continents.
+    assert api["crossings"] == [{"from": {"c": ISLE, "x": 1400, "y": 200}, "to": {"c": 1, "x": -600, "y": -4200}}]
+
+
+def test_the_two_continents_keep_their_own_names_whatever_the_file_says():
+    """Their maps are the page's own, and so are their names (the game's
+    are in the player's language)."""
+    db = isle_database()
+    db["maps"][1]["name"] = "Kalimdor (enUS)"
+    got = decode(savedvars.parse(saved_isle(db)).get("WalkaCharDB"))
+    assert [entry["name"] for entry in got.to_api(NOW)["continents"]] == ["Zephras Isle", "Kalimdor"]
+
+
+@pytest.mark.parametrize(
+    ("name", "kept"),
+    [
+        ("Zephras Isle", "Zephras Isle"),
+        ("  Zephras\tIsle \n", "Zephras Isle"),  # one line of plain text
+        ("Île de Zéphras", "Île de Zéphras"),  # in the player's language
+        ("泽菲拉斯岛", "泽菲拉斯岛"),
+        ("", ""),
+        ("x" * 41, ""),  # not a name
+        ("|cffff0000Zephras Isle|r", ""),  # the game's colour codes are not a name
+        ("Zephras \ufffd Isle", ""),  # damaged
+        (12, ""),
+        (None, ""),
+        ({"name": "Zephras Isle"}, ""),
+    ],
+)
+def test_a_lands_name_is_plain_text_or_nothing(name: Any, kept: str):
+    assert road.land_name(name) == kept
+
+
+@pytest.mark.parametrize(
+    "maps",
+    [
+        None,
+        "none",
+        [],
+        {"2600": {"id": 2500, "name": "Zephras Isle"}},  # a key that is no number
+        {2600.5: {"id": 2500, "name": "Zephras Isle"}},
+        {2600: "Zephras Isle"},
+        {2600: {"id": 2500}},
+        {2600: {"id": 2500, "name": 7}},
+    ],
+)
+def test_names_that_are_not_what_the_addon_writes_are_left_out(maps: Any):
+    table = savedvars.parse(saved(database(segment(0, 0, [(10, 0)], c=ISLE))))["WalkaCharDB"]
+    table["maps"] = maps
+    got = decode(table)
+    assert got is not None and got.names == {}
+    assert got.to_api(NOW)["continents"][0]["name"] == ""
+
+
+def test_a_land_the_page_has_no_map_of_comes_with_a_sketch_of_its_ground():
+    """Zephras Isle is in no map the page ships: its ground is drawn from
+    the road (sketch.py), and sent with it."""
+    got = decode(savedvars.parse(saved_isle(isle_database())).get("WalkaCharDB"))
+    isle, kalimdor = got.to_api(NOW)["continents"]
+    assert "land" not in kalimdor, "the page has its own map of Kalimdor"
+    land = isle["land"]
+    assert set(land) == {"bounds", "points", "coast", "faces"}
+    min_x, min_y, max_x, max_y = land["bounds"]
+    # The ground walked - not what the flight went over.
+    assert min_x < 100 and max_x > 500 and min_y < -200 and max_y > 300
+    assert max_x < 900 and min_y > -600, "a flight says nothing about what lies under it"
+    assert land == sketch.land([[(100, 300), (500, 300), (500, -200)]])
+    # A land the character has only flown over is charted by the flight: better than nothing.
+    flown = read(database(segment(0, 0, [(900, 400)], c=ISLE, m="t")))
+    assert flown.to_api(NOW)["continents"][0]["land"] == sketch.land([[(0, 0), (900, 400)]])
+
+
 def spiral(turns: int, points: int) -> list[tuple[int, int]]:
     return [
         (round(40 * t * math.cos(t)), round(40 * t * math.sin(t)))
@@ -425,6 +528,16 @@ def test_the_road_of_a_character_is_found_in_its_saved_file(game: Game):
     assert answer["road"]["as_of"] == pytest.approx(NOW - 100, abs=1)  # when the game wrote it
     # Another character: nothing, but there was somewhere to look.
     assert game.ask("Other-Azeroth") == {"road": None, "game_found": True, "files": 1, "demo": False}
+
+
+def test_the_sketch_is_made_once_per_reading_of_the_file(game: Game, monkeypatch):
+    calls = []
+    real = sketch.land
+    monkeypatch.setattr(sketch, "land", lambda lines: calls.append(1) or real(lines))
+    game.save(saved_isle(isle_database()))
+    first = game.ask()["road"]
+    assert first["continents"][0]["land"] and len(calls) == 1
+    assert game.ask()["road"] is first and len(calls) == 1
 
 
 def test_without_a_game_there_is_nowhere_to_look(game: Game):

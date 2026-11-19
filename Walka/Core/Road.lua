@@ -8,7 +8,13 @@
 --   { version = 1, guid = "...", key = "Name-Realm",
 --     yards = n,         -- length of the road recorded so far
 --     beltYards = n,     -- ... of which with the treadmill belt moving
+--     maps = { [continent id] = { id = map id, name = "its name" }, ... },
 --     segments = { segment, ... } }
+--
+-- `maps` says which of the game's maps shows each land the road is on, and
+-- what the game calls it. The two old continents are found without it; a
+-- land the game does not list among its continents (an island in the sky
+-- that is a world of its own) is found again by what is remembered here.
 --
 -- A segment is one unbroken stretch travelled the same way:
 --
@@ -50,6 +56,7 @@ Road.MIN_YARDS = 3              -- but never closer together than this
 Road.JUMP_YARDS = 300           -- further than this between two looks is not travel
 Road.MAX_HELD = 120             -- samples remembered since the last stored point
 Road.MAX_SEGMENT_POINTS = 2000  -- a longer stretch is carried on in a new segment
+Road.MAX_NAME_BYTES = 96        -- a map's name longer than this is not kept
 
 Road.MODES = { w = true, r = true, t = true, g = true }
 
@@ -68,6 +75,7 @@ function Road.database(saved, guid, key)
     if db.version ~= Road.VERSION or type(db.segments) ~= "table" or not sameCharacter then
         db.segments = {}
         db.yards, db.beltYards = 0, 0
+        db.maps = nil
     end
     db.version = Road.VERSION
     db.guid = guid or db.guid
@@ -83,7 +91,40 @@ function Road.database(saved, guid, key)
         end
     end
     db.segments = kept
+    local maps = {}
+    if type(db.maps) == "table" then
+        for continent, map in pairs(db.maps) do
+            if isNumber(continent) and type(map) == "table" and isNumber(map.id) then
+                maps[continent] = { id = map.id, name = Road.mapName(map.name) }
+            end
+        end
+    end
+    db.maps = maps
     return db
+end
+
+--- A map's name as it is kept: text of a sensible length, or nil.
+function Road.mapName(name)
+    if type(name) == "string" and name ~= "" and #name <= Road.MAX_NAME_BYTES then
+        return name
+    end
+    return nil
+end
+
+--- Remember that the road on `continent` is drawn on the game's map
+-- `mapId`, which the game calls `name`. Returns true if that is news.
+function Road.rememberMap(db, continent, mapId, name)
+    if type(db) ~= "table" or not isNumber(continent) or not isNumber(mapId) then
+        return false
+    end
+    db.maps = type(db.maps) == "table" and db.maps or {}
+    name = Road.mapName(name)
+    local known = db.maps[continent]
+    if type(known) == "table" and known.id == mapId and (name == nil or known.name == name) then
+        return false
+    end
+    db.maps[continent] = { id = mapId, name = name or (type(known) == "table" and known.id == mapId and known.name or nil) }
+    return true
 end
 
 ----------------------------------------------------------------------------

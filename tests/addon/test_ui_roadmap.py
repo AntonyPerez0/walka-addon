@@ -206,7 +206,7 @@ def test_the_other_continent_and_a_place_with_no_road(ui_rt):
     rt.click(ui.button(rt, frame, ">"))
     rt.advance(0.3)
     texts = ui.texts(rt, frame)
-    assert "road - Eastern Kingdoms" in texts and "No road on this continent yet." in texts
+    assert "road - Eastern Kingdoms" in texts and "No road here yet." in texts
     assert lines(rt, frame) == []
     assert sorted(tile["texture"] for tile in tiles(rt, frame))[0] == 141501
     rt.click(ui.button(rt, frame, "<"))
@@ -241,6 +241,125 @@ def test_you_are_here(ui_rt):
         if rt.inspect(widget).get("texture") == "Interface\\WorldMap\\WorldMapArrow"
     )
     assert not arrow["visible"]
+
+
+# ---- a land that is no continent of Azeroth ----------------------------------------------------
+
+# Zephras Isle in the mock: map 2500, a zone under no continent, with a
+# continent id of its own (2600): world x 1200 .. -1200 top to bottom,
+# world y 1800 .. -1800 left to right.
+ISLE_MAP, ISLE = 2500, 2600
+
+
+def on_the_isle(x: float, y: float) -> tuple[float, float]:
+    return (y - 1800) / -3600 * ART_W, (x - 1200) / -2400 * ART_H
+
+
+def arrive(rt, continent: int, x: float, y: float):
+    """A loading screen, and the character stands somewhere else."""
+    rt.set(continent=continent, worldX=x, worldY=y, speed=0.0)
+    rt.fire_event("PLAYER_ENTERING_WORLD", False, False)
+    rt.advance(0.5)
+
+
+def test_the_starting_isle_of_the_skyborne_has_its_map_and_its_road(ui_rt):
+    """Zephras Isle lies in Skywall: the game lists it under no continent of
+    Azeroth. Its map is found from where the character stands."""
+    rt = ui_rt
+    arrive(rt, ISLE, 100, 300)
+    end = travel(rt, [(400, 0), (0, -500)], start=(100, 300), continent=ISLE)
+    db = rt.global_("WalkaCharDB")
+    assert db.maps[ISLE].id == ISLE_MAP and db.maps[ISLE].name == "Zephras Isle"
+    frame = open_map(rt)
+    assert "road - Zephras Isle" in ui.texts(rt, frame), "it opens on the land the character is on"
+    assert sorted(tile["texture"] for tile in tiles(rt, frame)) == [250000 + index for index in range(1, 13)]
+    drawn = lines(rt, frame)
+    assert drawn
+    fit = content_scale(rt, frame)
+    points = [(line[f"{end_}X"], -line[f"{end_}Y"]) for line in drawn for end_ in ("start", "end")]
+    for place in ((100, 300), (500, 300), end):
+        want = on_the_isle(*place)
+        assert any(math.dist(point, want) < 4 for point in points), (place, fit)
+    # The two continents are still there to turn to.
+    seen = []
+    for _ in range(3):
+        rt.click(ui.button(rt, frame, ">"))
+        rt.advance(0.3)
+        seen.append(next(text for text in ui.texts(rt, frame) if text.startswith("road - ")))
+    assert seen == ["road - Kalimdor", "road - Eastern Kingdoms", "road - Zephras Isle"]
+
+
+def test_the_isle_is_still_there_after_the_character_has_left_it(ui_rt):
+    rt = ui_rt
+    arrive(rt, ISLE, 100, 300)
+    travel(rt, [(400, 0)], start=(100, 300), continent=ISLE)
+    arrive(rt, 1, -600, -4200)      # the airship to Mulgore
+    travel(rt, [(300, 0)], continent=1)
+    rt.reload()
+    rt.advance(1)
+    frame = open_map(rt)
+    assert "road - Kalimdor" in ui.texts(rt, frame)
+    rt.click(ui.button(rt, frame, "<"))
+    rt.advance(0.3)
+    assert "road - Zephras Isle" in ui.texts(rt, frame) and lines(rt, frame)
+    rt.clear_printed()
+    rt.slash("/walka mapcheck")
+    text = "\n".join(rt.printed)
+    assert "3 continent map(s) found" in text
+    assert "Zephras Isle (map 2500, continent 2600): art 1002x668 in 256x256 tiles, 12 picture file(s)." in text
+    assert "continent 2600 is drawn on map 2500 (Zephras Isle)" in text
+
+
+def test_an_isle_that_has_a_continents_map_of_its_own_is_shown_on_that(make_rt):
+    """Should the game give Skywall a map above the isle's, the road is
+    drawn on that one: it shows all of the land."""
+    rt = make_rt(load=False)
+    rt.run(
+        """
+        local maps = ...
+        maps[2501] = { name = "Skywall", type = "Continent", parent = 946, continent = 2600,
+                       top = 4000, bottom = -4000, left = 6000, right = -6000 }
+        maps[2500].parent = 2501
+        """,
+        rt.M.maps,
+    )
+    rt.load_addon()
+    arrive(rt, ISLE, 100, 300)
+    travel(rt, [(400, 0)], start=(100, 300), continent=ISLE)
+    db = rt.global_("WalkaCharDB")
+    assert db.maps[ISLE].id == 2501 and db.maps[ISLE].name == "Skywall"
+    frame = open_map(rt)
+    assert "road - Skywall" in ui.texts(rt, frame) and lines(rt, frame)
+
+
+def test_the_window_learns_of_a_new_land_while_it_is_open(ui_rt):
+    rt = ui_rt
+    travel(rt, [(400, 0)])
+    frame = open_map(rt)
+    assert "road - Kalimdor" in ui.texts(rt, frame)
+    arrive(rt, ISLE, 100, 300)
+    travel(rt, [(400, 0)], start=(100, 300), continent=ISLE)
+    assert "road - Kalimdor" in ui.texts(rt, frame), "what is on show stays on show"
+    rt.click(ui.button(rt, frame, "<"))
+    rt.advance(0.3)
+    assert "road - Zephras Isle" in ui.texts(rt, frame) and lines(rt, frame)
+
+
+def test_a_game_that_will_not_name_the_isles_map_still_records_the_road(ui_rt):
+    """Whatever the game answers about its maps, the road is recorded - and
+    the map is asked about again later."""
+    rt = ui_rt
+    rt.run("local maps = ... ; maps[2500].hidden = true", rt.M.maps)
+    arrive(rt, ISLE, 100, 300)
+    travel(rt, [(400, 0)], start=(100, 300), continent=ISLE)
+    rt.ns.RoadRecorder.Flush()
+    db = rt.global_("WalkaCharDB")
+    assert [segment.c for segment in lua_list(db.segments)] == [ISLE]
+    assert db.maps[ISLE] is None and rt.ns.RoadRecorder.problem is None
+    rt.run("local maps = ... ; maps[2500].hidden = nil", rt.M.maps)
+    travel(rt, [(0, 200)], start=(500, 300), continent=ISLE)
+    rt.advance(11)
+    assert db.maps[ISLE].id == ISLE_MAP
 
 
 # ---- when things are not as expected -----------------------------------------------------------

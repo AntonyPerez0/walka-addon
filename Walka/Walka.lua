@@ -97,7 +97,7 @@ end
 ----------------------------------------------------------------------------
 -- Events: "TICK" (live numbers changed), "SESSION" (started/paused/resumed/
 -- stopped), "SETTINGS" (a setting changed), "HISTORY" (the session list
--- changed).
+-- changed), "ROAD_MAPS" (the road is on a land whose map was not known).
 
 local callbacks = {}
 

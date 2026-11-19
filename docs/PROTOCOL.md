@@ -367,8 +367,12 @@ WalkaCharDB = {
     guid = "Player-...",        -- a new character with an old one's name starts afresh
     key = "Name-Realm",         -- what CHAR_KEY is the djb2 hash of
     yards = 12345, beltYards = 6789,
+    maps = {                    -- per continent id: the game's map that shows that land
+        [1] = { id = 1414, name = "Kalimdor" },
+        [2600] = { id = 2500, name = "Zephras Isle" },  -- (whatever ids the game gives the isle)
+    },
     segments = {                -- unbroken stretches travelled the same way
-        { c = 1,                -- continent (world map id)
+        { c = 1,                -- continent id (the game's, of the world position)
           m = "w",              -- on foot; "r" mounted, "t" flight path, "g" ghost
           b = 1,                -- the treadmill belt was moving (absent otherwise)
           l = 17,               -- character level
@@ -381,6 +385,15 @@ WalkaCharDB = {
     },
 }
 ```
+
+`maps` is how a land that is no continent of Azeroth is found again. The
+game lists Kalimdor and the Eastern Kingdoms as the continents of its
+world; the Skyborne's Zephras Isle lies in Skywall and is listed under
+neither. So the first time the character stands on a land, the addon goes
+up from the map the game shows it on to the largest map that still shows
+that land alone (its continent's map, where it has one; never a map of a
+whole world) and keeps that map's id and name. The addon's own road window
+draws the land on that map; the companion uses the name.
 
 How the companion reads it (`savedvars.py`, `road.py`):
 
@@ -413,4 +426,12 @@ How the companion reads it (`savedvars.py`, `road.py`):
   to three between the continents it shows). The page draws all this over
   its own low-poly map of each continent (`static/lands.js`), which is in
   the same coordinates: world yards, x to the north and y to the west.
+* **A land without a map.** `lands.js` has Kalimdor and the Eastern
+  Kingdoms. Any other continent id in the road - Zephras Isle - is given
+  the name saved in `maps` (one line of plain text, at most 40 characters,
+  else none) and a `land` of the same form as an entry of `lands.js`
+  (`bounds`, `points`, `coast`, `faces`), made from the road itself
+  (`sketch.py`): every triangle of a fixed honeycomb whose middle is within
+  reach of where the character went on foot or mounted, plus whatever that
+  encloses. The page draws it in place of a map, on a plate of its own.
 

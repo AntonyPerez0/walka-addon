@@ -535,8 +535,19 @@ picture's colours.
 The coasts are generalised - straight edges, small inlets filled in - but
 the towns, harbours and quest areas lie on the land (all but a few tiny
 islets, which are left off the map), so a line across the water means you
-really were at sea. A continent the companion has no map of (should the
-game ever have one) still gets its road, on an empty chart.
+really were at sea.
+
+**A land that is neither of the two continents** - the Skyborne begin on
+Zephras Isle, an island in Skywall - is on the picture too, under the name
+the game gives it. The companion has no map of such a land, so it draws
+the ground the way a traveller charts it: **as far as your road has
+reached** - a little to either side of where you went, and whatever you
+walked around. It is a sketch that grows with your road, not the island's
+true coast. On its own it fills the map; once your road is on the
+continents as well, the isle has a smaller plate of its own beside the map
+of the world (it is no part of that world, so it is not drawn to its
+scale), with the passage from it - the airship - as a dashed arc. The
+picture shows the three lands with the most road.
 
 The road is far too much for the strip on the screen, so it takes the slow
 way: **the game saves it when you log out or type `/reload`**, and the
@@ -556,7 +567,8 @@ Private by default:
   your PC. Nothing is uploaded and nothing is posted for you.
 * The road is read from a file on your PC and goes no further than the
   page that draws it. On the picture it is a line on a simplified map and
-  the names of the continents - no zones, no place names, no coordinates.
+  the names of the continents (or of another land your road is on, such as
+  Zephras Isle) - no zones, no place names, no coordinates.
 * Your character's name, and the small line with your weight and average
   pace, are **off** until you tick them. The realm never leaves the game:
   the companion is only sent a number that tells your characters apart.
@@ -576,7 +588,10 @@ travels - install it before you start a character and the road begins at
 level 1. It is drawn **on the game's own world map**: open the map as you
 always do (or type `/walka map`, or pick *Road map* in the HUD's
 right-click menu) and the road is on it, on every map of the world - all
-of Azeroth, a continent, or a zone in the game's full detail.
+of Azeroth, a continent, or a zone in the game's full detail. That goes for
+a land that is no continent of Azeroth as well: a Skyborne's road on
+Zephras Isle is on the isle's own map, and wherever else the game shows
+the isle.
 
 * the road is coloured by level, a colour for every ten levels;
 * the stretches you walked **on the treadmill** are bright, with a soft
@@ -611,7 +626,10 @@ continent at a time, the mouse wheel zooms, dragging moves the map, *Me*
 centres it on your character, *Fit* shows the whole continent, `<` and `>`
 change continent, and *Screenshot* saves a picture of the screen. It is
 also what `/walka map` opens in combat, and should the game's world map not
-be found.
+be found. A land the game does not count among its continents - Zephras
+Isle - is one of the maps `<` and `>` go through from the moment your
+character has stood on it (Walka remembers which map shows it), also after
+you have left.
 
 What is recorded: a point every twenty yards (fewer on flight paths, more
 where the road bends), nothing while you stand still, nothing inside
@@ -788,7 +806,8 @@ py -m pytest          # companion tests + addon tests (the addon runs under a mo
   asks macOS: where the game window is, whether it may see the screen),
   `hotkey.py` (the STOP key, on Windows and on a Mac); `journey.py` (each character's
   journey, put together from the strip), `savedvars.py` + `road.py` (the
-  road, read from the game's saved file) and `static/share.js`, `card.js`,
+  road, read from the game's saved file), `sketch.py` (the ground of a land
+  there is no map of, drawn from the road) and `static/share.js`, `card.js`,
   `cardmodel.js` (the Share page and the picture it draws), `lands.js` (the
   low-poly continents behind the road; made by `tools/gen_lands.py`).
 * `tests/addon/` - loads the real addon files into a mock of the game's

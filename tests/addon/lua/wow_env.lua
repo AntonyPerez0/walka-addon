@@ -839,8 +839,16 @@ end
 -- inside the Eastern Kingdoms. `place` is where a continent's map lies on
 -- the world map (minX, maxX, minY, maxY of it). Map art comes in 256-pixel
 -- tiles, as file ids.
+--
+-- And one land that is no continent of that world: Zephras Isle (2500), an
+-- island in the sky with a continent id of its own (2600). The game lists
+-- it under no continent, and it is not on the map of Azeroth - unless a
+-- test gives it a `place` there, or makes it a "Continent".
 local MAPS = {
-    [947] = { name = "Azeroth", type = "World" },
+    [946] = { name = "Cosmic", type = "Cosmic" },
+    [947] = { name = "Azeroth", type = "World", parent = 946 },
+    [2500] = { name = "Zephras Isle", type = "Zone", parent = 946, continent = 2600,
+               top = 1200, bottom = -1200, left = 1800, right = -1800 },
     [1414] = { name = "Kalimdor", type = "Continent", parent = 947, continent = 1,
                top = 12000, bottom = -12000, left = 4000, right = -12000,
                place = { 0.05, 0.45, 0.10, 0.90 } },
@@ -902,6 +910,13 @@ function C_Map.GetBestMapForUnit(unit)
             return mapId
         end
     end
+    -- A land without a continent's map: the zone the character is in.
+    for mapId, map in pairs(MAPS) do
+        if map.type == "Zone" and map.continent == state.continent and state.worldX <= map.top
+            and state.worldX >= map.bottom and state.worldY <= map.left and state.worldY >= map.right then
+            return mapId
+        end
+    end
     return nil
 end
 function C_Map.GetPlayerMapPosition(mapId, unit)
@@ -937,7 +952,14 @@ function C_Map.GetWorldPosFromMapPos(mapId, position)
     )
 end
 function C_Map.GetMapInfo(mapId)
-    return mapArgument("C_Map.GetMapInfo", mapId) and mapInfo(mapId) or nil
+    local map = mapArgument("C_Map.GetMapInfo", mapId)
+    if not map then
+        return nil
+    end
+    if map.hidden then      -- (a test's: a map the game will say nothing about)
+        fail("C_Map.GetMapInfo(): the game has nothing to say about map " .. mapId, 2)
+    end
+    return mapInfo(mapId)
 end
 -- Where a map lies on another: minX, maxX, minY, maxY of that other map
 -- (0..1, x to the right, y down). A map that is not on the other one has
@@ -959,6 +981,9 @@ function C_Map.GetMapRectOnMap(mapId, topMapId)
     end
     if map.continent and top.continent == map.continent then
         return within(map, top)
+    end
+    if top.type == "World" and map.continent and map.place and map.type ~= "Continent" then
+        return map.place[1], map.place[2], map.place[3], map.place[4]
     end
     if top.type == "World" and map.continent then
         for _, continent in pairs(MAPS) do

@@ -205,10 +205,15 @@ LONG_WORDS = {
 }
 
 
-def road_of(*stretches: Stretch, owner: str = "0badcafe") -> dict[str, Any]:
+def road_of(*stretches: Stretch, owner: str = "0badcafe", names: dict[int, str] | None = None) -> dict[str, Any]:
     """What /api/road gives as `road` (made by the companion's own code),
-    for the character with the id ``owner``."""
-    road = Road("Somebody-Somewhere", tuple(stretches)) if stretches else demo_road("Somebody-Somewhere")
+    for the character with the id ``owner``. ``names``: what the game calls
+    the lands that are not one of the two continents."""
+    road = (
+        Road("Somebody-Somewhere", tuple(stretches), names=names or {})
+        if stretches
+        else demo_road("Somebody-Somewhere")
+    )
     return {**road.to_api(float(SEEN)), "id": owner}
 
 
@@ -228,7 +233,26 @@ ONE_LAND = road_of(
 # A character that has only just set out: a few yards, all on one line.
 FIRST_STEPS = road_of(stretch(1, 100, 100, (3, 0)))
 STANDING = road_of(stretch(1, 100, 100, (0, 0)))
-# Continents this client's maps have no names for here, and a third one.
+# The Skyborne begin on Zephras Isle, an island in Skywall that is no
+# continent of Azeroth (2600 stands for whatever id the game gives it). The
+# page has no map of it: its ground is sketched from the road.
+ISLE = 2600
+ISLE_ROAD = (
+    stretch(ISLE, 600, 200, (-150, 40), (-120, -90), (-200, 30), level=1),
+    stretch(ISLE, 130, 180, (-260, -300), (-90, 240), (-300, 60), belt=False, level=5),
+    stretch(ISLE, -520, 180, (-380, -40), (-190, 20), level=11),
+)
+# A Skyborne's first evenings: nothing but the isle.
+SKYBORNE = road_of(*ISLE_ROAD, names={ISLE: "Zephras Isle"})
+# ... and later: the airship to Mulgore, Kalimdor, the boat, the Eastern Kingdoms.
+SKYBORNE_ABROAD = road_of(
+    *ISLE_ROAD,
+    stretch(1, -2300, -400, (900, -300), (1500, -2100), (800, -900), level=12),
+    stretch(1, 900, -3700, (-1500, -500), (-2400, 300), belt=False, level=17),
+    stretch(0, -3700, -700, (-900, -1500), (-1200, 300), (-3100, 1500), level=21),
+    names={ISLE: "Zephras Isle"},
+)
+# Lands this client's maps have no names for here, and a third and a fourth one.
 ELSEWHERE = road_of(
     stretch(530, 0, 0, (900, 100), (-200, 800), level=58),
     stretch(571, 0, 0, (300, -2000), (4000, 0), belt=False, level=59),
@@ -514,12 +538,29 @@ def test_the_road_lies_on_a_map_of_its_continent():
     for land in route["continents"]:
         own = lands[str(land["id"])]
         assert land["land"] == {key: own[key] for key in ("bounds", "points", "coast", "faces")}
-    # A continent this client's maps know nothing of: its road is drawn all the same.
-    assert [land["land"] for land in tiles_of(build(road=ELSEWHERE))["route"]["route"]["continents"]] == [None, None]
+    assert all(not land["charted"] for land in route["continents"])
+    # A land the page has no map of: its ground, as far as the road has charted it.
+    sketched = {land["id"]: land["land"] for land in ELSEWHERE["continents"] if "land" in land}
+    assert set(sketched) == {530, 571} and all(sketched.values())
+    elsewhere = tiles_of(build(road=ELSEWHERE))["route"]["route"]["continents"]
+    assert [(land["id"], land["charted"]) for land in elsewhere] == [(571, True), (530, True), (0, False)]
+    assert [land["land"] for land in elsewhere[:2]] == [sketched[571], sketched[530]]
     mixed = tiles_of(build(road=MIXED))["route"]["route"]["continents"]
-    assert [(land["id"], land["land"] is not None) for land in mixed] == [(1, True), (530, False)]
+    assert [(land["id"], land["land"] is not None, land["charted"]) for land in mixed] == [
+        (1, True, False),
+        (530, True, True),
+    ]
+    # A road answered by a companion that sketches no land (or a sketch that is no map): an empty chart.
+    bare = {**MIXED, "continents": [{k: v for k, v in land.items() if k != "land"} for land in MIXED["continents"]]}
+    assert [land["land"] is not None for land in tiles_of(build(road=bare))["route"]["route"]["continents"]] == [True, False]
+    broken = {**MIXED, "continents": [{**land, "land": {"points": [1, 2]}} for land in MIXED["continents"]]}
+    assert [
+        (land["land"] is not None, land["charted"]) for land in tiles_of(build(road=broken))["route"]["route"]["continents"]
+    ] == [(True, False), (False, False)]
     # No maps handed over at all.
-    assert all(land["land"] is None for land in tiles_of(build(road=ROAD, lands=False))["route"]["route"]["continents"])
+    for road in (ROAD, MIXED, SKYBORNE):
+        continents = tiles_of(build(road=road, lands=False))["route"]["route"]["continents"]
+        assert all(land["land"] is None and not land["charted"] for land in continents)
 
 
 @needs_node
@@ -588,7 +629,7 @@ def test_no_road_no_tile():
 
 
 @needs_node
-def test_the_road_is_laid_out_west_to_east_and_never_more_than_two_lands():
+def test_the_road_is_laid_out_west_to_east_and_never_more_than_three_lands():
     def lands(road: dict[str, Any]) -> list[int]:
         return [land["id"] for land in tiles_of(build(road=road))["route"]["route"]["continents"]]
 
@@ -597,11 +638,20 @@ def test_the_road_is_laid_out_west_to_east_and_never_more_than_two_lands():
     assert lands(east_first) == [1, 0]  # Kalimdor lies to the west
     assert lands(ROAD) == [1, 0]
     assert lands(ONE_LAND) == [0]
-    assert lands(ELSEWHERE) == [571, 530]  # the two with the most road; the flight and the short walk are left out
+    assert lands(MIXED) == [1, 530]
+    # The three with the most road (the flight is left out): a land that is
+    # neither of the two continents to their left.
+    assert lands(ELSEWHERE) == [571, 530, 0]
+    assert [land["id"] for land in SKYBORNE_ABROAD["continents"]] == [1, 0, ISLE]  # as they come: the longest road first
+    assert lands(SKYBORNE_ABROAD) == [ISLE, 1, 0]
+    assert lands(SKYBORNE) == [ISLE]
 
-    tile = tiles_of(build(road=ELSEWHERE))["route"]
-    assert tile["plain"].startswith("My road: ")  # no names to give
+    assert tiles_of(build(road=MIXED))["route"]["plain"].startswith("My road on Kalimdor: ")  # the other has no name
     assert tiles_of(build(road=ONE_LAND))["route"]["plain"].startswith("My road on Eastern Kingdoms: ")
+    assert tiles_of(build(road=SKYBORNE))["route"]["plain"].startswith("My road on Zephras Isle: ")
+    assert tiles_of(build(road=SKYBORNE_ABROAD))["route"]["plain"].startswith(
+        "My road on Zephras Isle, Kalimdor and Eastern Kingdoms: "
+    )
 
 
 @needs_node
@@ -711,6 +761,8 @@ CASES = {
     "road, first steps": {"character": EMPTY, "road": FIRST_STEPS},
     "road, standing": {"character": character(), "road": STANDING},
     "road, elsewhere": {"character": character(), "road": ELSEWHERE},
+    "road, skyborne": {"character": character(level=11), "road": SKYBORNE},
+    "road, skyborne abroad": {"character": character(level=21), "road": SKYBORNE_ABROAD},
     "road, tall": {"character": character(), "road": TALL},
     "road and hero": {
         "character": character(),
@@ -856,7 +908,7 @@ def test_the_road_is_drawn_inside_its_panel(about, char_width: float):
         # A plate for each continent: inside the panel, side by side, under
         # the label and over the words below.
         plates = reach["plates"]
-        assert 1 <= len(plates) <= 2, where
+        assert 1 <= len(plates) <= 3, where
         for plate in plates:
             sea = box_of(plate)
             assert inside(sea, reach["box"]), (where, plate["id"])
@@ -869,10 +921,22 @@ def test_the_road_is_drawn_inside_its_panel(about, char_width: float):
             if name_text:
                 assert sea["bottom"] <= name_text["top"] + 0.01, where
                 assert name_text["bottom"] <= texts["route.sub"]["top"] + 0.01, where
-                # ... under its own continent.
-                assert sea["left"] - 0.01 <= name_text["left"] and name_text["right"] <= sea["right"] + 0.01, where
+                # ... under its own land. (Beside a land with a plate of its
+                # own, a continent's name may reach under the other continent
+                # on their sea - never under the land that is apart.)
+                room = sea
+                if len(plates) == 3 and plate["shared"]:
+                    on_sea = [box_of(other) for other in plates if other["shared"]]
+                    room = {
+                        "left": min(other["left"] for other in on_sea),
+                        "right": max(other["right"] for other in on_sea),
+                    }
+                assert room["left"] - 0.01 <= name_text["left"] and name_text["right"] <= room["right"] + 0.01, where
         for a, b in itertools.combinations(plates, 2):
             assert a["x"] + a["w"] <= b["x"] + 0.01, (where, "plates overlap")
+        names = [texts[f"route.land{plate['id']}"] for plate in plates if f"route.land{plate['id']}" in texts]
+        for a, b in itertools.pairwise(names):
+            assert a["right"] < b["left"], (where, "names overlap", a["text"], b["text"])
         # The words on the map - the start, the level at the gem, the tens -
         # are on a plate and never on top of one another.
         marks = [
@@ -1054,7 +1118,8 @@ def test_roads_without_a_map_are_drawn_on_an_empty_chart(about):
             ), size
         assert "route.start" in texts and "route.now" in texts, size
     # A map for one continent and none for the other: each plate as it can be.
-    for size, reach, _texts in draw_road(about, MIXED):
+    bare = {**MIXED, "continents": [{k: v for k, v in land.items() if k != "land"} for land in MIXED["continents"]]}
+    for size, reach, _texts in draw_road(about, bare):
         assert [(plate["id"], plate["mapped"], plate["shared"]) for plate in reach["plates"]] == [
             (1, True, False),
             (530, False, False),
@@ -1063,6 +1128,64 @@ def test_roads_without_a_map_are_drawn_on_an_empty_chart(about):
     for size, reach, _texts in draw_road(about, FIRST_STEPS, lands=False):
         road = reach["plates"][0]["road"]
         assert road["right"] - road["left"] < 12 and road["bottom"] - road["top"] < 12, size
+
+
+def land_box(plate: dict[str, Any]) -> dict[str, float]:
+    land = plate["land"]
+    return {"x": land["left"], "y": land["top"], "w": land["right"] - land["left"], "h": land["bottom"] - land["top"]}
+
+
+@needs_node
+def test_the_starting_isle_of_the_skyborne_is_charted_by_its_road(about):
+    """Zephras Isle is no continent of Azeroth and the page has no map of
+    it: the land is drawn as far as the road has charted it, under the name
+    the game gives it."""
+    for size, reach, texts in draw_road(about, SKYBORNE, character=character(level=11)):
+        (plate,) = reach["plates"]
+        assert plate["id"] == ISLE and plate["mapped"] and plate["charted"], size
+        assert not plate["shared"] and not plate["zoomed"] and plate["inset"] is None, size
+        # All of the land that is known is on the plate, and the road runs on it.
+        assert plate["land"]["faces"] >= 20 and inside(plate["land"], plate), (size, plate["land"])
+        assert inside(plate["road"], land_box(plate), slack=1), size
+        # It fills the plate, as a continent does.
+        land = land_box(plate)
+        assert max(land["w"] / plate["w"], land["h"] / plate["h"]) > 0.78, size
+        assert texts["route.land2600"]["text"] == "ZEPHRAS ISLE", size
+        assert texts["route.start"]["text"] == "START", size
+        assert texts["route.now"]["text"] in (f"NOW {MIDDOT} LV 11", "LV 11"), size
+        assert "route.level10" in texts, size
+
+
+@needs_node
+def test_the_isle_has_a_plate_of_its_own_beside_the_map_of_the_world(about):
+    """A Skyborne that has left the isle: the two continents share their sea
+    and their scale as ever; the isle, which is no part of that world, is
+    beside them at a scale of its own - with the START of the road on it."""
+    for size, reach, texts in draw_road(about, SKYBORNE_ABROAD, character=character(level=21)):
+        isle, kalimdor, east = reach["plates"]
+        assert (isle["id"], kalimdor["id"], east["id"]) == (ISLE, 1, 0), size
+        assert isle["charted"] and not isle["shared"], size
+        assert kalimdor["shared"] and east["shared"] and not kalimdor["charted"] and not east["charted"], size
+        assert isle["x"] + isle["w"] < kalimdor["x"], size  # a gap: a sea of its own
+        assert kalimdor["x"] + kalimdor["w"] == pytest.approx(east["x"]), size  # no gap: one sheet of sea
+        assert isle["w"] < kalimdor["w"] + east["w"], size  # the map of the world is the larger
+        assert isle["w"] > 60 and isle["h"] == kalimdor["h"] == east["h"], size
+        # The continents are whole and to one scale, as without the isle.
+        tall = lambda plate: plate["land"]["bottom"] - plate["land"]["top"]  # noqa: E731
+        assert tall(kalimdor) / tall(east) == pytest.approx((11240 + 10670) / (3680 + 15210), rel=0.02), size
+        for plate in (kalimdor, east):
+            assert inside(plate["land"], plate), (size, plate["id"])
+        # The isle: all that is charted of it, larger than it would be at the continents' scale.
+        assert inside(isle["land"], isle) and inside(isle["road"], land_box(isle), slack=1), size
+        assert tall(isle) > 0.5 * isle["h"] or land_box(isle)["w"] > 0.5 * isle["w"], size
+        # The road begins on the isle, and the airship from it is an arc to Kalimdor.
+        assert inside(texts["route.start"], isle, slack=40), (size, texts["route.start"])
+        assert any(
+            isle["x"] <= arc["from"][0] <= isle["x"] + isle["w"] and kalimdor["x"] <= arc["to"][0] for arc in reach["arcs"]
+        ), (size, reach["arcs"])
+        names = [texts[f"route.land{land}"] for land in (ISLE, 1, 0)]
+        assert [name["text"] for name in names] == ["ZEPHRAS ISLE", "KALIMDOR", "EASTERN KINGDOMS"], size
+        assert names[0]["right"] <= names[1]["left"] and names[1]["right"] <= names[2]["left"], size
 
 
 @needs_node

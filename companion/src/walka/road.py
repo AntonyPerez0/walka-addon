@@ -9,7 +9,9 @@ the game's folder, which holds one table, ``WalkaCharDB``.
 
 * ``decode`` - that table, checked, as a ``Road``.
 * ``Road.to_api`` - the road thinned to a few thousand points and grouped
-  the way the picture draws it.
+  the way the picture draws it. A land the page has no map of (the
+  Skyborne's Zephras Isle, in Skywall) gets the name the game gives its
+  map, and a sketch of its ground made from the road (``sketch.py``).
 * ``RoadBook`` - finds the files, reads each one again only when the game
   has rewritten it, and answers "the road of this character".
 
@@ -33,7 +35,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import savedvars
+from . import savedvars, sketch
 from .protocol import djb2
 
 log = logging.getLogger(__name__)
@@ -55,8 +57,12 @@ RESCAN_S = 3.0  # how often the folders are looked at, at most
 GAME_DIRS_S = 60.0  # ... and how often the game is looked for
 
 MODES = frozenset("wrtg")  # on foot, mounted, flight path, ghost
-# The two continents every character starts on (world map ids of this client).
+# The two continents the page has a map of (static/lands.js), by the game's
+# continent ids. Any other land is named by the game (the addon saves the
+# name of its map with the road) and drawn as far as the road has charted it.
 CONTINENT_NAMES = {0: "Eastern Kingdoms", 1: "Kalimdor"}
+MAX_NAME_CHARS = 40  # of a land's name, as the game gave it
+MAX_LANDS = 64  # lands whose names are taken from one file
 
 _STEP = re.compile(r"-?\d+,(-?\d+),(-?\d+)")
 
@@ -102,6 +108,7 @@ class Road:
     key: str  # "Name-Realm": used for the id only, never passed on
     stretches: tuple[Stretch, ...]
     truncated: bool = False  # more points than this reader takes
+    names: dict[int, str] = field(default_factory=dict)  # continent id -> what the game calls that land
 
     @property
     def id(self) -> str:
@@ -128,7 +135,7 @@ class Road:
             if entry is None:
                 entry = continents[continent] = {
                     "id": continent,
-                    "name": CONTINENT_NAMES.get(continent, ""),
+                    "name": CONTINENT_NAMES.get(continent) or self.names.get(continent, ""),
                     "yards": round(per_continent.get(continent, 0.0)),
                     "bounds": [math.inf, math.inf, -math.inf, -math.inf],
                     "paths": [],
@@ -140,6 +147,17 @@ class Road:
                 bounds[0], bounds[1] = min(bounds[0], x), min(bounds[1], y)
                 bounds[2], bounds[3] = max(bounds[2], x), max(bounds[3], y)
             entry["paths"].append({"style": style, "p": flat})
+        for continent, entry in continents.items():
+            if continent in CONTINENT_NAMES:
+                continue
+            # A land the page has no map of: its ground as far as the road
+            # has charted it (where the character went on foot or mounted;
+            # a flight says nothing about what lies under it).
+            walked = [points for land, style, points in paths if land == continent and style != "flight"]
+            flown = [points for land, style, points in paths if land == continent]
+            drawn = sketch.land(walked or flown)
+            if drawn:
+                entry["land"] = drawn
 
         first, last = self.stretches[0], self.stretches[-1]
         return {
@@ -212,6 +230,32 @@ def _crossings(stretches: tuple[Stretch, ...], most: int = 12) -> list[dict[str,
     return [{"from": start, "to": end} for _times, start, end in found[:most]]
 
 
+def land_name(value: Any) -> str:
+    """A land's name as the game gave it, fit to print: one line of plain
+    text, not too long; "" if it is not a name."""
+    if not isinstance(value, str):
+        return ""
+    text = " ".join("".join(char if char.isprintable() else " " for char in value).split())
+    if "\ufffd" in text or "|" in text:  # damaged, or the game's colour codes
+        return ""
+    return text if len(text) <= MAX_NAME_CHARS else ""
+
+
+def _names(maps: Any) -> dict[int, str]:
+    """``WalkaCharDB.maps`` -> what the game calls each land (by continent id)."""
+    names: dict[int, str] = {}
+    if not isinstance(maps, dict):
+        return names
+    for key, entry in maps.items():
+        continent = _whole(key, 10**6)
+        if continent is None or continent != key or not isinstance(entry, dict):
+            continue
+        name = land_name(entry.get("name"))
+        if name and len(names) < MAX_LANDS:
+            names[continent] = name
+    return names
+
+
 def decode(table: Any) -> Road | None:
     """``WalkaCharDB`` as the game saved it -> a ``Road``; None if it holds
     no road (or is not what the addon writes). Whatever is wrong with one
@@ -248,7 +292,7 @@ def decode(table: Any) -> Road | None:
         stretches.append(Stretch(continent, mode, segment.get("b") == 1, max(0, level), tuple(points)))
     if not stretches:
         return None
-    return Road(key, tuple(stretches), truncated)
+    return Road(key, tuple(stretches), truncated, _names(table.get("maps")))
 
 
 # ---- fewer points -------------------------------------------------------------------------------

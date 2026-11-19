@@ -45,7 +45,8 @@ local CANVAS_WIDTH, CANVAS_HEIGHT = WIDTH - 2 * MARGIN, HEIGHT - HEADER - FOOTER
 
 local WORLD_MAP = 947
 -- If the game does not list its continents, these are tried (Kalimdor and
--- the Eastern Kingdoms in this client).
+-- the Eastern Kingdoms in this client). A land that is not a continent of
+-- that world has its map remembered with the road (see findMaps).
 local KNOWN_CONTINENT_MAPS = { 1414, 1415 }
 
 local ZOOM_STEP = 1.4
@@ -182,6 +183,35 @@ local function findMaps()
     for _, mapId in ipairs(KNOWN_CONTINENT_MAPS) do
         local okInfo, info = pcall(C_Map.GetMapInfo, mapId)
         add(mapId, okInfo and type(info) == "table" and info.name or nil)
+    end
+    -- Lands the game does not list among the continents of its world (the
+    -- Skyborne's Zephras Isle, in Skywall): the recorder remembers, for
+    -- every land the character has stood on, which map shows it.
+    local db = RoadRecorder.GetDatabase()
+    local remembered = db and db.maps
+    if type(remembered) == "table" then
+        local covered, lands = {}, {}
+        for _, map in ipairs(found) do
+            covered[map.continent] = true
+        end
+        for continent, kept in pairs(remembered) do
+            if not covered[continent] and type(continent) == "number" and type(kept) == "table" then
+                lands[#lands + 1] = continent
+            end
+        end
+        table.sort(lands)
+        for _, continent in ipairs(lands) do
+            local kept = remembered[continent]
+            local okInfo, info = pcall(C_Map.GetMapInfo, kept.id)
+            local name = okInfo and type(info) == "table" and not isSecret(info.name) and info.name or nil
+            local before = #found
+            add(kept.id, type(name) == "string" and name or kept.name)
+            -- (A map that now shows another land - the game's maps were
+            -- numbered anew - is not this land's map any more.)
+            if #found > before and found[#found].continent ~= continent then
+                found[#found] = nil
+            end
+        end
     end
     return found
 end
@@ -414,7 +444,7 @@ local function refreshText()
         message = "The game did not say where its continents are, so there is no map to draw on.\n"
             .. "Your road is still being recorded. (/walka mapcheck prints what the game answered.)"
     elseif cache and cache.shown == 0 then
-        message = "No road on this continent yet."
+        message = "No road here yet."
     end
     parts.message:SetText(message or "")
     parts.message:SetShown(message ~= nil)
@@ -577,7 +607,7 @@ local function create()
                 Screenshot()
             end)
     end
-    parts.fit = button("Fit", 44, "Show the whole continent.", function()
+    parts.fit = button("Fit", 44, "Show the whole map.", function()
         fit()
         rebuildAt = GetTime()
     end)
@@ -587,10 +617,10 @@ local function create()
             centreOn(px, py)
         end
     end)
-    parts.next = button(">", 26, "The next continent.", function()
+    parts.next = button(">", 26, "The next continent, or other land your road is on.", function()
         showMap(shown + 1)
     end)
-    parts.previous = button("<", 26, "The previous continent.", function()
+    parts.previous = button("<", 26, "The previous continent, or other land your road is on.", function()
         showMap(shown - 1)
     end)
 
@@ -625,7 +655,7 @@ local function create()
     parts.message:SetPoint("CENTER", overlay, "CENTER", 0, 0)
     parts.message:SetWidth(CANVAS_WIDTH - 80)
     parts.noArt = Widgets.Text(overlay, "GameFontDisableSmall",
-        "The game gave no map picture for this continent; the road is drawn without it.", "LEFT")
+        "The game gave no map picture for this land; the road is drawn without it.", "LEFT")
     parts.noArt:SetPoint("BOTTOMLEFT", overlay, "BOTTOMLEFT", 6, 6)
     parts.noArt:Hide()
 
@@ -717,14 +747,28 @@ function RoadMap.Check(print)
             ok and type(textures) == "table" and tostring(#textures) or "no"
         ))
     end
-    local continent, x, y = RoadRecorder.WhereAmI()
+    local continent, x, y, mapId = RoadRecorder.WhereAmI()
     if continent then
-        print(string.format("  you are on continent %d at %d, %d (world yards).", continent, x, y))
+        print(string.format("  you are on continent %d at %d, %d (world yards), on map %s.",
+            continent, x, y, tostring(mapId)))
     else
         print("  the game does not say where you are right now (an instance, or a loading screen).")
     end
     RoadRecorder.Flush()
-    local summary = Road.summary(RoadRecorder.GetDatabase())
+    local db = RoadRecorder.GetDatabase()
+    local summary = Road.summary(db)
+    -- Which map each land the character has stood on is drawn on (a land
+    -- the game lists under no continent is found by this alone).
+    local lands = {}
+    for land in pairs(db and db.maps or {}) do
+        lands[#lands + 1] = land
+    end
+    table.sort(lands)
+    for _, land in ipairs(lands) do
+        local kept = db.maps[land]
+        print(string.format("  continent %d is drawn on map %d (%s); %d point(s) of road there.",
+            land, kept.id, kept.name or "no name", summary.continents[land] or 0))
+    end
     print(string.format("  road: %d stretches, %d points, %s; recording is %s.",
         summary.segments, summary.points, Walka:FormatDistance(summary.yards * 0.9144),
         RoadRecorder.IsEnabled() and "on" or "off"))
@@ -738,6 +782,23 @@ Walka:On("SETTINGS", function()
         applyPosition()
         refreshText()
     end
+end)
+
+-- The road has reached a land whose map was not known: it joins the maps
+-- the window goes through. What is on show stays as it is.
+Walka:On("ROAD_MAPS", function()
+    if not (frame and frame:IsShown() and maps) then
+        return
+    end
+    local showing = maps[shown] and maps[shown].mapId
+    maps = findMaps()
+    for index, map in ipairs(maps) do
+        if map.mapId == showing then
+            shown = index
+            return
+        end
+    end
+    showMap(#maps > 0 and bestMap() or 1)
 end)
 
 return RoadMap

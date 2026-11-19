@@ -878,13 +878,15 @@ function tile(ctx, report, theme, box, item, unit, hero, slots) {
 // ---- the road, on a map ------------------------------------------------------------------------
 //
 // The road tile: the character's path on a low-poly map of each continent
-// (lands.js, handed in by the page; a continent without one gets an empty
-// chart). The world's yards run north (x) and west (y); on the picture north
-// is up and west is left.
+// (lands.js, handed in by the page). A land there is no map of - one that is
+// no continent of Azeroth, like the Skyborne's Zephras Isle - comes with its
+// ground as far as the road has charted it (`charted`; see sketch.py), drawn
+// the same way; a land with neither gets an empty chart. The world's yards
+// run north (x) and west (y); on the picture north is up and west is left.
 //
 // * Two continents with maps share one sea and one scale; a single
 //   continent with a short road is shown close up, with the whole continent
-//   small in a corner.
+//   small in a corner. A charted land has a plate and a scale of its own.
 // * Three kinds of line: walked on the treadmill (bright), travelled with
 //   the belt still (the same line, faded), flights and passages between
 //   continents (fine dashes). A key under the map says which is which.
@@ -1262,32 +1264,48 @@ function routeTile(ctx, report, theme, box, item, unit) {
   };
   if (area.h < 24 * s || area.w < 40 * s) return;
 
-  // A plate for each continent, side by side: Kalimdor to the west. Two
+  // A plate for each land, side by side: Kalimdor to the west. Two
   // continents that both have a map share one sea, as on a map of the
   // world: each gets the width its land needs, and both are drawn to one
-  // scale.
+  // scale. A land without a map of that kind - one charted by the road
+  // alone (an island that is no part of that world), or not drawn at all -
+  // has a plate and a sea to itself, at a scale of its own; beside a map of
+  // the world it is the smaller of the two.
   const pad = 12 * s; // room inside a plate, so that no mark hangs over its edge
-  const world = lands.length > 1 && lands.every((land) => land.land);
-  const gapX = world ? 0 : 12 * s;
+  const onWorld = (land) => !!land.land && !land.charted;
+  const world = lands.filter(onWorld).length > 1;
+  const shared = (land) => world && onWorld(land);
+  const apart = lands.filter((land) => !shared(land)).length; // plates with a sea of their own
+  const gapX = 12 * s;
+  const gaps = gapX * (apart + (world ? 1 : 0) - 1);
+  // Of the width: a plate of its own counts as one, a map of the world beside one as three.
+  const worldW = world ? ((area.w - gaps) * (apart ? 3 : 1)) / (apart + (apart ? 3 : 1)) : 0;
+  const ownW = apart ? (area.w - gaps - worldW) / apart : 0;
   const wide = lands.map((land) => {
-    if (!world) return 1;
+    if (!shared(land)) return 0;
     const road = land.bounds;
     const map = land.land.bounds;
     return Math.max(road[3], map[3]) - Math.min(road[1], map[1]);
   });
   const shares = wide.reduce((sum, value) => sum + value, 0);
   let left = area.x;
+  let worldSea = null;
   const plates = lands.map((land, i) => {
-    const plate = { x: left, y: area.y, w: ((area.w - gapX * (lands.length - 1)) * wide[i]) / shares, h: area.h };
-    left += plate.w + gapX;
-    return { land, plate, view: mapView(land, plate.w - 2 * pad, plate.h - 2 * pad, s, lands.length === 1) };
+    const joined = shared(land);
+    // (A plate of its own stands off its neighbour; two on one sea do not.)
+    if (i > 0 && !(joined && shared(lands[i - 1]))) left += gapX;
+    const plate = { x: left, y: area.y, w: joined ? (worldW * wide[i]) / shares : ownW, h: area.h };
+    left += plate.w;
+    if (joined) worldSea = worldSea ? { ...worldSea, w: plate.x + plate.w - worldSea.x } : { ...plate };
+    return { land, plate, joined, view: mapView(land, plate.w - 2 * pad, plate.h - 2 * pad, s, lands.length === 1) };
   });
   if (world) {
-    const scale = Math.min(...plates.map((entry) => entry.view.scale));
-    for (const entry of plates) entry.view.scale = scale;
+    const on = plates.filter((entry) => entry.joined);
+    const scale = Math.min(...on.map((entry) => entry.view.scale));
+    for (const entry of on) entry.view.scale = scale;
   }
-  // The sea: one sheet of it under a map of the world, else one under each plate.
-  const seas = world ? [area] : plates.map((entry) => entry.plate);
+  // The sea: one sheet of it under a map of the world, and one under each plate apart from that.
+  const seas = [...(worldSea ? [worldSea] : []), ...plates.filter((entry) => !entry.joined).map((entry) => entry.plate)];
   const place = {};
   for (const entry of plates) {
     const { plate, view } = entry;
@@ -1359,8 +1377,17 @@ function routeTile(ctx, report, theme, box, item, unit) {
     reach.marks.push({ kind, left: b.l, top: b.t, right: b.r, bottom: b.b });
   };
   for (const entry of plates) {
-    const { land, plate, view, at } = entry;
-    const seen = { id: land.id, ...plate, zoomed: view.zoomed, mapped: !!land.land, shared: world, land: null, inset: null };
+    const { land, plate, view, at, joined } = entry;
+    const seen = {
+      id: land.id,
+      ...plate,
+      zoomed: view.zoomed,
+      mapped: !!land.land,
+      charted: !!land.charted,
+      shared: joined,
+      land: null,
+      inset: null,
+    };
     const road = { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity, points: 0 };
     const dots = [];
     for (const path of land.paths) {
@@ -1386,7 +1413,7 @@ function routeTile(ctx, report, theme, box, item, unit) {
     reach.plates.push(seen);
 
     // Nothing of a continent is drawn outside its sea.
-    const sea = world ? area : plate;
+    const sea = joined ? worldSea : plate;
     ctx.save();
     outline(ctx, "round", sea.x, sea.y, sea.w, sea.h, radius);
     ctx.clip();
@@ -1561,17 +1588,48 @@ function routeTile(ctx, report, theme, box, item, unit) {
   }
   if (end) gem(ctx, theme, end[0], end[1], gemR);
 
-  // Which continent is which: its name under each plate.
+  // Which land is which: its name under each plate.
   if (named) {
-    for (const { land, plate } of plates) {
-      if (!land.name) continue;
+    const slots = plates
+      .filter((entry) => entry.land.name)
+      .map(({ land, plate, joined }) => {
+        const text = land.name.toUpperCase();
+        return {
+          id: land.id,
+          text,
+          joined,
+          x: plate.x + plate.w / 2,
+          width: plate.w - 8 * s,
+          wants: textWidth(ctx, text, LABEL, nameSize, 0.14) + 1,
+        };
+      });
+    // Beside a land with a plate of its own, the continents on the map of
+    // the world have less room each. There a name too long for its plate
+    // may reach under its neighbour's on the same sea, as far as that
+    // one's name leaves it room.
+    if (worldSea && lands.length > 2) {
+      const gap = 10 * s;
+      slots.forEach((slot, i) => {
+        if (!slot.joined || slot.wants <= slot.width) return;
+        const before = slots[i - 1];
+        const after = slots[i + 1];
+        const from = before && before.joined ? before.x + Math.min(before.wants, before.width) / 2 + gap : worldSea.x + 4 * s;
+        const to =
+          after && after.joined ? after.x - Math.min(after.wants, after.width) / 2 - gap : worldSea.x + worldSea.w - 4 * s;
+        const width = Math.min(slot.wants, to - from);
+        if (width <= slot.width) return;
+        slot.x = clamp(slot.x, from + width / 2, to - width / 2);
+        slot.width = width;
+      });
+    }
+    for (const slot of slots) {
       line(
         ctx,
         report,
-        `route.land${land.id}`,
-        land.name.toUpperCase(),
+        `route.land${slot.id}`,
+        slot.text,
         LABEL,
-        { x: plate.x + plate.w / 2, y: namesY, size: nameSize, min: nameSize * 0.7, width: plate.w - 8 * s, tracking: 0.14 },
+        { x: slot.x, y: namesY, size: nameSize, min: nameSize * 0.7, width: slot.width, tracking: 0.14 },
         (c) => (c.fillStyle = theme.muted),
         inner,
       );

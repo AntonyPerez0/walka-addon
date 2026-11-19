@@ -13,6 +13,12 @@
 -- this client (see Core/Road.lua): ask whether we are in an instance
 -- first (positions there are nil or cannot be placed), then the best map
 -- for the player, the position on it, and the world position from that.
+--
+-- It also remembers, per land, which of the game's maps the road there is
+-- drawn on (Road.rememberMap): the game lists Kalimdor and the Eastern
+-- Kingdoms as the continents of its world, but not every land is one of
+-- those - the Skyborne's Zephras Isle lies in Skywall. Such a land's map is
+-- found from where the character stands, the first time it stands there.
 
 local ADDON_NAME, ns = ...
 
@@ -27,6 +33,8 @@ local floor = math.floor
 
 RoadRecorder.LOOK_SECONDS = 0.25
 RoadRecorder.FLUSH_SECONDS = 60     -- the game cannot be relied on to say when it logs out
+RoadRecorder.MAP_RETRY_SECONDS = 10 -- how often a land whose map the game did not name is asked about again
+RoadRecorder.MAX_CLIMB = 12         -- maps looked at above the one the character is on
 
 local core              -- the addon's core (Walka); nil until Load
 local db                -- WalkaCharDB, made sound
@@ -36,6 +44,8 @@ local lastLook = 0      -- GetTime() of the last look that ran to its end
 local lastFlush = 0
 local enabled = true
 local named = false     -- the saved road carries this character's "Name-Realm"
+local mapNoted = {}     -- continent id -> true once this session knows its map
+local mapAskedAt = {}   -- continent id -> GetTime() of the last look for it that found none
 
 local function isSecret(value)
     return issecretvalue ~= nil and issecretvalue(value)
@@ -49,7 +59,8 @@ local function plainNumber(value)
 end
 
 --- Where the character is: continent id and world yards (whole numbers),
--- or nil if the game cannot say (an instance, a loading screen).
+-- and the map the game shows it on - or nil if the game cannot say (an
+-- instance, a loading screen).
 local function whereAmI()
     local inInstance = IsInInstance and IsInInstance()
     if isSecret(inInstance) or inInstance then
@@ -71,7 +82,67 @@ local function whereAmI()
     if not x or not y then
         return nil
     end
-    return continent, floor(x + 0.5), floor(y + 0.5)
+    return continent, floor(x + 0.5), floor(y + 0.5), mapId
+end
+
+-- The continent id of the land a map shows (asked of its middle), or nil.
+local function landOf(mapId)
+    local middle = CreateVector2D and CreateVector2D(0.5, 0.5) or { x = 0.5, y = 0.5 }
+    local continent, world = C_Map.GetWorldPosFromMapPos(mapId, middle)
+    if isSecret(world) or not world then
+        return nil
+    end
+    return plainNumber(continent)
+end
+
+-- The map to draw the road of the land `continent` on, going up from the
+-- map `mapId` the character is on: the largest map that still shows this
+-- land and no other - its continent's map, where it has one. Above that are
+-- the maps of a whole world, which are not a picture of one land. Returns
+-- the map id, its name and whether it is a continent's map; or nil.
+local function landMap(mapId, continent)
+    local kinds = Enum and Enum.UIMapType
+    local best, bestName, whole
+    for _ = 1, RoadRecorder.MAX_CLIMB do
+        local info = C_Map.GetMapInfo(mapId)
+        if isSecret(info) or type(info) ~= "table" then
+            break
+        end
+        local kind = info.mapType
+        if isSecret(kind) or (kinds and (kind == kinds.World or kind == kinds.Cosmic)) then
+            break
+        end
+        local isContinent = kinds ~= nil and kind ~= nil and kind == kinds.Continent
+        if landOf(mapId) == continent then
+            local name = info.name
+            best, whole = mapId, isContinent
+            bestName = not isSecret(name) and type(name) == "string" and name or nil
+        end
+        local parent = plainNumber(info.parentMapID)
+        if isContinent or not parent or parent <= 0 or parent == mapId then
+            break
+        end
+        mapId = parent
+    end
+    return best, bestName, whole
+end
+
+-- Remember the map of the land the character is on. True once it is known.
+local function noteMap(continent, mapId)
+    local found, name, whole = landMap(mapId, continent)
+    if not found then
+        return false
+    end
+    local known = db.maps and db.maps[continent]
+    -- A land with no map of its own but several zones keeps the map found
+    -- first, as long as the game still shows the land on it.
+    if type(known) == "table" and known.id ~= found and not whole and landOf(known.id) == continent then
+        return true
+    end
+    if Road.rememberMap(db, continent, found, name) and core and core.Fire then
+        core:Fire("ROAD_MAPS")
+    end
+    return true
 end
 
 -- "Name-Realm" of the character, or nil while the game will not say. The
@@ -119,11 +190,19 @@ local function look()
         end
     end
     local now = Game.Now()
-    local continent, x, y = whereAmI()
+    local continent, x, y, mapId = whereAmI()
     local state = core:GetGameState()
     local level = plainNumber(UnitLevel and UnitLevel("player")) or 0
     recorder:sample(now, continent, x, y, travelMode(state), beltMoving(), level)
     local clock = GetTime()
+    if continent ~= nil and not mapNoted[continent]
+        and clock - (mapAskedAt[continent] or -math.huge) >= RoadRecorder.MAP_RETRY_SECONDS then
+        -- (After the road, and guarded apart from it: whatever the game
+        -- answers about its maps, the road is recorded.)
+        mapAskedAt[continent] = clock
+        local ok, known = pcall(noteMap, continent, mapId)
+        mapNoted[continent] = ok and known or nil
+    end
     if clock - lastFlush >= RoadRecorder.FLUSH_SECONDS then
         lastFlush = clock
         recorder:flush()
@@ -155,6 +234,7 @@ function RoadRecorder.Load(walka)
     db = WalkaCharDB
     named = key ~= nil
     recorder = Road.Recorder.new(db)
+    mapNoted, mapAskedAt = {}, {}
     enabled = walka.db.settings.recordRoad ~= false
     lastFlush = GetTime()
     startTicker()
@@ -200,11 +280,12 @@ function RoadRecorder.Tail()
         segment.m, segment.b == 1, segment.l, segment
 end
 
---- Where the character is right now (continent, x, y in world yards), or nil.
+--- Where the character is right now (continent, x, y in world yards, and
+-- the map the game shows it on), or nil.
 function RoadRecorder.WhereAmI()
-    local ok, continent, x, y = pcall(whereAmI)
+    local ok, continent, x, y, mapId = pcall(whereAmI)
     if ok then
-        return continent, x, y
+        return continent, x, y, mapId
     end
     return nil
 end

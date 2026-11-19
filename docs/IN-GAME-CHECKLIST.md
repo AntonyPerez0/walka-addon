@@ -245,6 +245,33 @@ On either map:
       no Lua error.
 - [ ] `/reload`: the road is still there and carries on.
 
+And on a **Skyborne**, on Zephras Isle (the isle is no continent of
+Azeroth, and how the game files it could not be looked up - this is the
+part of the maps I know least about):
+
+- [ ] Run around on the isle for a minute, then `/walka mapcheck`. It
+      should say "you are on continent N at ..., on map M" and, further
+      down, "continent N is drawn on map M' (Zephras Isle)" - or another
+      name the game has for it, such as Skywall. Copy those lines for me
+      whatever they say; if it says "the game does not say where you are
+      right now" while you stand outdoors on the isle, the game treats the
+      isle as an instance and no road can be recorded there.
+- [ ] Open the world map: the road is on the isle's map, ending at your
+      arrow. Zoom out as far as the map goes: is the isle shown on a larger
+      map, and is the road on it there, in the right place?
+- [ ] `/walka map window`: it opens on the isle's map (the real picture)
+      with your road; `<` and `>` go to Kalimdor and the Eastern Kingdoms
+      and back to the isle.
+- [ ] Take the airship to Dalaran or Mulgore, `/reload`, and open
+      `/walka map window` again: the isle is still one of the maps, with
+      the road you walked there.
+- [ ] On the *Share* page (after a `/reload`): while you have only been on
+      the isle, the *My road* panel shows a piece of land around your road
+      with ZEPHRAS ISLE under it - the land is a sketch of where you have
+      been, so it will not have the isle's real shape. Once you have been
+      on a continent too, the isle is a narrow plate on the left with
+      *START* on it, and a dashed arc leads from it to the continent.
+
 And the road on the picture (the companion reads it from the file the game
 writes at a `/reload` or logout):
 

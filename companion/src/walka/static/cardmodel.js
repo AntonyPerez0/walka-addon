@@ -286,17 +286,41 @@ function usableLand(land) {
   return { bounds, points: land.points, coast: land.coast, faces: land.faces };
 }
 
+/** "A", "A and B", "A, B and C". */
+function listed(names) {
+  return names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}` : names.join("");
+}
+
 /**
- * The road as a tile: up to two continents (the ones with the most road),
- * placed west to east as on the world map. `lands`: the continents' maps by
- * id (lands.js), drawn behind the road where there is one.
+ * The road as a tile: up to three lands (the ones with the most road).
+ * `lands`: the continents' maps by id (lands.js), drawn behind the road
+ * where there is one. A land the page has no map of - the Skyborne's
+ * Zephras Isle, which is no continent of Azeroth - comes with a sketch of
+ * its ground, made from the road itself (`land` of the continent: see
+ * sketch.py); it is drawn in place of a map, and marked `charted`.
+ *
+ * The two continents are placed west to east as on the world map, and a
+ * land that is neither of them to their left.
  */
 function routeTile(road, km, lands, character) {
-  const shown = road.continents.filter((continent) => continent.paths.length > 0).slice(0, 2);
+  const maps = (continent) => {
+    const mapped = usableLand(lands ? lands[continent.id] : null);
+    // (No maps at all, and the road is drawn on an empty panel.)
+    const charted = mapped || !lands ? null : usableLand(continent.land);
+    return { land: mapped || charted, charted: !!charted };
+  };
+  const shown = road.continents
+    .filter((continent) => continent.paths.length > 0)
+    .slice(0, 3)
+    .map((continent) => ({ continent, ...maps(continent) }));
   // Kalimdor (continent 1) lies west of the Eastern Kingdoms (0).
-  if (shown.length === 2 && shown[1].id === 1) shown.reverse();
-  const names = shown.map((continent) => continent.name).filter(Boolean);
-  const where = names.length ? ` on ${names.join(" and ")}` : "";
+  if (shown.length === 2 && shown[1].continent.id === 1) shown.reverse();
+  if (shown.length === 3) {
+    const rank = (entry) => (entry.land && !entry.charted ? (entry.continent.id === 1 ? 1 : 2) : 0);
+    shown.sort((a, b) => rank(a) - rank(b));
+  }
+  const names = shown.map((entry) => entry.continent.name).filter(Boolean);
+  const where = names.length ? ` on ${listed(names)}` : "";
   const yards = known(road.yards) ? road.yards : 0;
   const distance = km ? (yards * M_PER_YARD) / 1000 : yards / YARDS_PER_MILE;
   const unit = km ? "km" : "miles";
@@ -312,12 +336,12 @@ function routeTile(road, km, lands, character) {
   const share = yards >= 100 && known(road.belt_yards) ? Math.min(100, Math.round((road.belt_yards / yards) * 100)) : 0;
   // Passages from one continent to another, drawn as arcs: the ones
   // between the continents that are on the picture.
-  const ids = new Set(shown.map((continent) => continent.id));
+  const ids = new Set(shown.map((entry) => entry.continent.id));
   const crossings = (Array.isArray(road.crossings) ? road.crossings : [])
     .filter((crossing) => crossing && spot(crossing.from) && spot(crossing.to))
     .filter((crossing) => ids.has(crossing.from.c) && ids.has(crossing.to.c))
     .slice(0, 3);
-  const drawn = (style) => shown.some((continent) => continent.paths.some((path) => path.style === style));
+  const drawn = (style) => shown.some((entry) => entry.continent.paths.some((path) => path.style === style));
   // A character that has only flown so far has a road too: the flight.
   const flown = drawn("flight") && known(road.flight_yards) && road.flight_yards >= 100;
   const length = measured
@@ -344,12 +368,13 @@ function routeTile(road, km, lands, character) {
     wide: true,
     label: ["My road"],
     route: {
-      continents: shown.map((continent) => ({
+      continents: shown.map(({ continent, land, charted }) => ({
         id: continent.id,
         name: continent.name || "",
         bounds: continent.bounds,
         paths: continent.paths,
-        land: usableLand(lands ? lands[continent.id] : null),
+        land,
+        charted,
       })),
       start: spot(road.start),
       end: spot(road.end),

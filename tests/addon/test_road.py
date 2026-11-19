@@ -256,7 +256,10 @@ def test_a_damaged_segment_text_yields_the_points_before_the_damage(rt):
 def test_database_is_made_sound(rt):
     road = rt.ns.Road
     fresh = lua_plain(road.database(None, "Player-1-AAAA", "Tester-Azeroth"))
-    assert fresh == {"version": 1, "guid": "Player-1-AAAA", "key": "Tester-Azeroth", "yards": 0, "beltYards": 0, "segments": {}}
+    assert fresh == {
+        "version": 1, "guid": "Player-1-AAAA", "key": "Tester-Azeroth", "yards": 0, "beltYards": 0,
+        "segments": {}, "maps": {},
+    }
     damaged = rt.run(
         """
         return { version = 1, guid = "Player-1-AAAA", yards = "far", beltYards = 0/0, segments = {
@@ -269,6 +272,36 @@ def test_database_is_made_sound(rt):
     db = lua_plain(road.database(damaged, "Player-1-AAAA", "Tester-Azeroth"))
     assert db["yards"] == 0 and db["beltYards"] == 0
     assert len(db["segments"]) == 1
+
+
+def test_the_map_of_each_land_is_remembered(rt):
+    """Which of the game's maps a land's road is drawn on, and its name: how
+    a land the game lists under no continent is found again."""
+    road = rt.ns.Road
+    db = road.database(None, "Player-1-AAAA", "Tester-Azeroth")
+    assert road.rememberMap(db, 2600, 2500, "Zephras Isle") is True
+    assert road.rememberMap(db, 2600, 2500, "Zephras Isle") is False, "known already"
+    assert road.rememberMap(db, 2600, 2500, None) is False and db.maps[2600].name == "Zephras Isle"
+    assert road.rememberMap(db, 1, 1414, "x" * 500) is True and db.maps[1].name is None, "no name is better than a strange one"
+    assert road.rememberMap(db, 2600, 2501, "Skywall") is True and db.maps[2600].id == 2501
+    assert road.rememberMap(db, None, 2501, "Skywall") is False and road.rememberMap(db, 3, "map", "Skywall") is False
+    # Kept over a reload, and made sound should the file be damaged.
+    again = lua_plain(road.database(db, "Player-1-AAAA", "Tester-Azeroth"))
+    assert again["maps"] == {2600: {"id": 2501, "name": "Skywall"}, 1: {"id": 1414}}
+    damaged = rt.run(
+        """
+        return { version = 1, guid = "Player-1-AAAA", segments = {}, maps = {
+            [2600] = { id = 2500, name = "Zephras Isle" }, [7] = "junk", [8] = { id = "nine" },
+            somewhere = { id = 4 }, [9] = { id = 5, name = { "a table" } },
+        } }
+        """
+    )
+    kept = lua_plain(road.database(damaged, "Player-1-AAAA", "Tester-Azeroth"))["maps"]
+    assert kept == {2600: {"id": 2500, "name": "Zephras Isle"}, 9: {"id": 5}}
+    assert lua_plain(road.database(rt.run("return { version = 1, segments = {}, maps = 'none' }"), None, None))["maps"] == {}
+    # Another character with this one's name does not inherit its lands.
+    other = lua_plain(road.database(db, "Player-1-BBBB", "Tester-Azeroth"))
+    assert other["maps"] == {}
 
 
 def test_a_new_character_with_an_old_name_starts_afresh(rt):
@@ -811,3 +844,33 @@ def test_the_companion_reads_the_road_out_of_the_saved_file(rt):
     assert api["start"]["c"] == 1 and api["end"]["c"] == 1
     assert api["end"]["x"] == pytest.approx(rt.north, abs=20)
     assert {path["style"] for entry in api["continents"] for path in entry["paths"]} == {"road", "flight", "walked"}
+
+
+def test_the_starting_isle_of_the_skyborne_reaches_the_companion_with_its_name(rt):
+    """Zephras Isle is no continent of Azeroth. From the game to the
+    picture: the recorder notes which map shows the isle and what the game
+    calls it, the game writes that with the road, and the companion gives
+    the land its name and a sketch of the ground the road has charted."""
+    rt.set(continent=2600, worldX=100, worldY=300, speed=0.0)
+    rt.fire_event("PLAYER_ENTERING_WORLD", False, False)
+    rt.advance(0.5)
+    run_north(rt, 400, 57, start=100)
+    rt.set(continent=1, worldX=-600, worldY=-4200, speed=0.0)   # the airship to Mulgore
+    rt.fire_event("PLAYER_ENTERING_WORLD", False, False)
+    rt.advance(0.5)
+    run_north(rt, 300, 43, start=-600)
+    db = char_db(rt)
+    assert db["maps"] == {2600: {"id": 2500, "name": "Zephras Isle"}, 1: {"id": 1414, "name": "Kalimdor"}}
+    assert [segment["c"] for segment in db["segments"]] == [2600, 1]
+
+    file = b"\r\nWalkaCharDB = " + rt.M.serialize("WalkaCharDB").encode("utf-8") + b"\r\n"
+    road = companion_road.decode(savedvars.parse(file)["WalkaCharDB"])
+    assert road is not None and road.names == {2600: "Zephras Isle", 1: "Kalimdor"}
+    api = road.to_api(1_800_000_000.0)
+    by_id = {entry["id"]: entry for entry in api["continents"]}
+    assert by_id[2600]["name"] == "Zephras Isle" and by_id[1]["name"] == "Kalimdor"
+    assert api["start"]["c"] == 2600 and api["end"]["c"] == 1 and len(api["crossings"]) == 1
+    # The page has a map of Kalimdor; of the isle, the ground along the road.
+    assert "land" not in by_id[1]
+    min_x, min_y, max_x, max_y = by_id[2600]["land"]["bounds"]
+    assert min_x < 100 and max_x > 500 and min_y < 300 < max_y
