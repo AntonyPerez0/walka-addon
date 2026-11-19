@@ -309,6 +309,8 @@ jobs:
 
           **Early version:** not yet tried on a real walking pad. Read *Before your first walk* in the README, and keep the pad's remote in your hand the first time.
 
+          **At your own risk:** Walka moves a motorised belt while you stand on it. It comes with no warranty, and it is not a safety device or a medical device. Read the [disclaimer](https://github.com/$GH_REPO/blob/$TAG/DISCLAIMER.md) before your first walk.
+
           **Virus scan:** before this was published, Microsoft Defender scanned Walka.exe, the Mac programs and the addon's files, and found nothing. *virus-scan.json* under Assets says when, and with which virus definitions.
 
           **Walka-addon.zip** is the game addon on its own. Walka.exe can put it in the game for you; to do it by hand, unzip it into the game's Interface\\AddOns folder. The Source code files are for developers."
