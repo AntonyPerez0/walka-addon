@@ -1,5 +1,9 @@
 # Third-party notices
 
+This page is about what Walka's own code and pictures owe to other
+projects. The packaged program (`Walka.exe`, `Walka` on a Mac) also
+*contains* other software - see the end of this page.
+
 ## Road to Sixty
 
 Walka's road recorder and maps (`Walka/Core/Road.lua`,
@@ -71,3 +75,31 @@ which are facts about the game that any database of it lists alike.)
 World of Warcraft, Kalimdor and the
 Eastern Kingdoms are Blizzard Entertainment's; Walka is a fan-made tool and
 is not affiliated with or endorsed by Blizzard.
+
+## What is packed into Walka.exe (and Walka on a Mac)
+
+The program you download is Walka's code together with Python and the
+libraries it runs on, in one file:
+
+* **Python** (Python Software Foundation License) - <https://www.python.org>
+* **aiohttp** and the libraries it brings along - aiohappyeyeballs,
+  aiosignal, attrs, frozenlist, idna, multidict, propcache, yarl (Apache
+  License 2.0, MIT, BSD, PSF) - the dashboard's web server
+* **bleak** (MIT) - Bluetooth; on Windows with the **PyWinRT** packages
+  (`winrt-*`, MIT), on a Mac with **PyObjC** (MIT)
+* **python-mss** (MIT) - the screenshot of the game window's corner
+* the bootloader of **PyInstaller** (GPL 2.0 or later, with an exception
+  that allows distributing programs built with it under any licence) - the
+  small program that unpacks and starts the rest
+
+Their licences ask that the copyright notice and the licence text go with
+every copy. They do: the build collects them from the very packages it
+packs (`companion/third_party.py`) and puts them into the program, where
+
+    Walka.exe licenses
+
+prints all of them, with the exact version of each. The versions
+themselves are fixed in `companion/requirements-build.lock`. Run from
+source, Walka packs nothing: the libraries are the ones you installed.
+
+The game addon (`Walka-addon.zip`) contains no third-party code.

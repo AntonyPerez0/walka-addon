@@ -1,7 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="480" height="84" viewBox="0 0 480 84" role="img" aria-label="No viruses found. Every release is scanned with Microsoft Defender.">
+<svg xmlns="http://www.w3.org/2000/svg" width="480" height="84" viewBox="0 0 480 84" role="img" aria-label="Scanned for viruses by Microsoft Defender, before every release.">
   <rect x="1.5" y="1.5" width="477" height="81" rx="14" fill="#e8f6ec" stroke="#1a7f37" stroke-width="3"/>
   <path d="M48 16l22 8v17c0 13.5-9 23.5-22 28-13-4.5-22-14.5-22-28V24z" fill="#1a7f37"/>
   <path d="M37.5 42.5l7.5 7.5 14-15.5" fill="none" stroke="#ffffff" stroke-width="4.6" stroke-linecap="round" stroke-linejoin="round"/>
-  <text x="90" y="38" fill="#116329" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="25" font-weight="700" textLength="208" lengthAdjust="spacingAndGlyphs">No viruses found</text>
-  <text x="90" y="63" fill="#1a5c2c" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="15.5" textLength="356" lengthAdjust="spacingAndGlyphs">Every release is scanned with Microsoft Defender</text>
+  <text x="90" y="38" fill="#116329" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="25" font-weight="700" textLength="246" lengthAdjust="spacingAndGlyphs">Scanned for viruses</text>
+  <text x="90" y="63" fill="#1a5c2c" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif" font-size="15.5" textLength="322" lengthAdjust="spacingAndGlyphs">by Microsoft Defender, before every release</text>
 </svg>

@@ -28,7 +28,7 @@
 </p>
 
 <p align="center">
-  <a href="#is-the-download-safe"><img src="docs/images/virus-free.svg" width="300" alt="No viruses found. Every release is scanned with Microsoft Defender."></a><br>
+  <a href="#is-the-download-safe"><img src="docs/images/virus-scan.svg" width="300" alt="Scanned for viruses by Microsoft Defender, before every release."></a><br>
   <a href="https://github.com/AntonyPerez0/walka-addon/releases/latest"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fgithub.com%2FAntonyPerez0%2Fwalka-addon%2Freleases%2Flatest%2Fdownload%2Fvirus-scan.json&amp;query=%24.badge&amp;label=latest%20scan&amp;color=1a7f37" alt="The virus scan of the latest release: what Microsoft Defender found, and when"></a>
 </p>
 
@@ -123,8 +123,8 @@ dashboard.
 - 🖼️ **A picture to share.** Your journey so far as a picture, made on
   your own computer. You choose what is on it and where it goes.
 - 🔒 **Stays on your computer.** Nothing is uploaded. Walka never presses keys,
-  moves the mouse or reads the game's memory - it only looks at one corner
-  of the screen.
+  moves the mouse or reads the game's memory - it looks at the top-left
+  corner of the game window ([what it looks at, exactly](#what-walka-looks-at)).
 
 <p align="center">
   <img src="docs/images/share-card.jpg" width="360" alt="A Share picture: real-world steps and miles walked, the character's level, time played, and the road it travelled on a map of the world">
@@ -155,6 +155,7 @@ Everything below is the long version, for when you want it.
 **Safety and help** ·
 [Safety](#safety) ·
 [Disclaimer](DISCLAIMER.md) ·
+[Report a security problem](SECURITY.md) ·
 [Is the download safe?](#is-the-download-safe) ·
 [Is this allowed?](#is-this-allowed) ·
 [Before your first walk](#before-your-first-walk) ·
@@ -202,6 +203,29 @@ as a thin strip of black and white squares in the top-left corner of the
 game window, ten times a second. The companion takes a tiny screenshot of
 that corner and decodes it. **Walka never sends input to the game** - no
 key presses, no mouse input, no memory reading.
+
+### What Walka looks at
+
+* **The top-left corner of the game window** - a picture about 700 pixels
+  wide and 12 high, some fifteen times a second. On Windows and on a Mac
+  Walka asks the system where the game window is, and once it has found
+  the game it looks nowhere else.
+* **From when Walka is started until it first finds the game window** -
+  that is, while the game is not running yet - it also looks at the
+  top-left corner of each monitor and, every five seconds, takes one
+  picture of the whole screen to search it for the strip. (So does a
+  system that cannot say where a window is, all the time.) `Walka.exe
+  beacon`, the command that checks whether the strip can be read, does the
+  same once.
+* **What happens to a picture:** it is searched for the strip, in the
+  computer's memory, and then dropped. No picture is saved or sent
+  anywhere, and of what is on it nothing is kept but the strip's ten bytes.
+* **What the strip says:** whether a walking session is running or paused,
+  how fast the character is going and how (on foot, mounted, swimming,
+  flying, on a flight path), whether you are AFK, and the numbers of the
+  [journey](#your-journey-and-a-picture-to-share). Not whether your
+  character is fighting, dead or resting - the belt does not need to know,
+  so the addon does not say.
 
 An addon also cannot receive live data, so the in-game HUD shows the
 addon's own estimate of the belt (it knows the speed it asked for and how
@@ -258,6 +282,13 @@ WalkingPads), and bikes or rowers - Walka only connects to treadmills.
 small text report.
 [Open an issue](https://github.com/AntonyPerez0/walka-addon/issues) with
 that report and the treadmill's make and model, and it can be added.
+
+The saved report is made to be posted in public. It lists fitness machines
+only - not the headphones, watches and televisions that are also in
+Bluetooth range, yours or a neighbour's - with their addresses cut short,
+and without the treadmill's serial number. (The window the probe runs in
+shows everything: that is for your eyes. Post the file, not a screenshot
+of the window.)
 
 ## Install, step by step
 
@@ -331,9 +362,10 @@ runs inside Terminal, so it asks about **Terminal**:
   close Walka and open it again. Recent versions of macOS ask again every
   few weeks whether Terminal may still do this: choose **Allow**.
 
-Both can be changed later in the same place in System Settings. Walka only
-reads the top-left corner of the game window, and nothing leaves your
-computer.
+Both can be changed later in the same place in System Settings. Walka reads
+the top-left corner of the game window - and, until it has found the game
+for the first time, searches the screen for it: see
+[What Walka looks at](#what-walka-looks-at). Nothing leaves your computer.
 
 What is different from Windows:
 
@@ -381,7 +413,10 @@ used to it. Also there:
 * or the opposite: stop the belt outright when you stand still.
 
 **Pause** / **Stop** are on the HUD too. Going AFK pauses automatically;
-the session resumes when your character next moves.
+the session resumes when your character next moves - if that is within ten
+minutes. After a longer break the session stays paused until you press the
+play button (or type `/walka resume`): by then nobody can say what stands
+on the belt.
 
 | Command | What it does |
 |---|---|
@@ -679,9 +714,16 @@ built so that:
   pauses the belt - it does not speed up on a lost signal;
 * a belt you stop at the treadmill is left stopped;
 * after any pause it did not watch you start, the belt waits for your
-  character to move.
+  character to move - and after ten minutes away, for you to press Resume;
+* the belt is stopped before the computer goes to sleep, and stays stopped
+  until you resume;
+* if Walka itself is killed or crashes while the belt runs, a small second
+  process (the *guard*) reaches for the treadmill and stops the belt.
 
 Bluetooth is not an emergency stop: keep the remote within reach.
+
+Found a way to make Walka move a belt that its user did not ask for?
+Please report it in private: [SECURITY.md](SECURITY.md).
 
 These rules are what Walka is designed to do, and what its tests check
 against a simulated treadmill. They are not a guarantee, and Walka is not a
@@ -702,7 +744,9 @@ there is to go on:
   published. The badge under the download buttons is the result for the
   latest release; `virus-scan.json` on the
   [release page](https://github.com/AntonyPerez0/walka-addon/releases/latest)
-  has the details.
+  has the details. A scan that finds nothing is not proof that a file is
+  harmless - no scanner can give that - which is why the rest of this
+  list is here.
 * **You can check it yourself.** Drop the file you downloaded on
   [virustotal.com](https://www.virustotal.com/gui/home/upload) - no
   account needed. It runs the file past the scanners of about 70
@@ -711,6 +755,20 @@ there is to go on:
   programs on their own computer:
   GitHub [builds it](https://github.com/AntonyPerez0/walka-addon/actions/workflows/ci.yml)
   from the code on this page, and all of that code is here to read.
+* **What else is in it is fixed and listed.** The program also carries
+  Python and a handful of libraries. The build takes exact versions of
+  them, checked against checksums that are part of this repository
+  (`companion/requirements-build.lock`), so a library that is tampered
+  with tomorrow does not get into Walka by being the newest. `Walka.exe
+  licenses` lists them, with their licences.
+* **You can check that your download is the file that was built.**
+  `SHA256SUMS.txt` on the release page has the checksum of every download
+  (on Windows: `Get-FileHash Walka.exe` in PowerShell; on a Mac: `shasum
+  -a 256` and the file). GitHub also keeps a signed, public record that
+  these files were built by this repository's workflow from this version
+  of the code; with GitHub's `gh` tool, `gh attestation verify Walka.exe
+  --repo AntonyPerez0/walka-addon` checks a download against it. And the
+  files of a published release are never replaced: a fix is a new version.
 
 **If a scanner or two on VirusTotal flag it:** `Walka.exe` is a Python
 program packed into one file, and it is not signed by a company. A few
@@ -741,8 +799,12 @@ What Walka does and does not do:
   touches only Walka's own: the addon folder (it installs the addon and
   writes `CompanionData.lua` there) and the addon's saved file
   `WTF\Account\...\SavedVariables\Walka.lua`, which it only reads. It
-  looks at one corner of your screen, the way a screenshot tool does, and
-  what it reads is your own character's movement state.
+  looks at the corner of the game window, the way a screenshot tool does
+  ([exactly what](#what-walka-looks-at)), and what it reads there is your
+  own character's movement state - not whether it is fighting, dead or
+  resting, which the addon does not put on the strip.
+* Walka is free, and stays free: no paid version, no advertising and no
+  asking for money - in the game or outside it.
 * When the game hides a value from addons (speed in combat), Walka does not
   relay it; it estimates instead.
 
@@ -791,6 +853,8 @@ order:
 | Speed is one step off | Set *Settings → Treadmill → Firmware speed grid* to mph (or km/h) instead of auto. |
 | History shows `~` numbers | Press *Sync* in the history window after the companion has saved the walk; check *Settings → Game addon* shows the right folder. |
 | Addon marked out of date after a game patch | Tick *Load out of date AddOns*, and update the `## Interface:` line in `Walka/Walka.toc`. |
+| The belt does not restart after a break | After more than ten minutes AFK the session stays paused until you press the play button on the HUD (or type `/walka resume`): see [Using it](#using-it). After the computer has slept, press *Resume* on the dashboard. |
+| There are two "Walka" entries in Task Manager | One is the *guard*: a small second copy that stops the belt if Walka itself is killed or crashes. It ends when you close Walka. See [Safety](#safety). |
 | The pad keeps waking up | The companion only reconnects when a session starts or you press Connect; closing the companion releases the pad entirely. |
 
 ## Ideas for later
@@ -810,11 +874,17 @@ py -m pip install -e "companion[dev]"
 py -m pytest          # companion tests + addon tests (the addon runs under a mocked game client)
 ```
 
+(That takes the newest versions of the libraries. The build and its tests
+take pinned ones: `py -m pip install --require-hashes -r
+companion/requirements-dev.lock`, and no install of Walka itself.)
+
 (`python3` in place of `py` on a Mac or Linux.)
 
 * `Walka/` - the addon. `Core/` is pure Lua (no game API) and is unit
   tested; `Game.lua` is the only file that touches values the game may hide.
-* `companion/src/walka/` - `governor.py` (the safety rules), `treadmill/`
+* `companion/src/walka/` - `governor.py` (the safety rules), `guard.py`
+  (the second process that stops the belt if the companion is killed),
+  `treadmill/`
   (Bluetooth FTMS driver and a simulator), `capture.py` + `beacon.py`
   (reading the strip), `session.py`, `addon_sync.py`, `web.py` + `static/`
   (dashboard), `app.py` (wiring), `cli.py`, `macos.py` (what the companion
@@ -840,15 +910,27 @@ py -m pytest          # companion tests + addon tests (the addon runs under a mo
   latest ones) and `Walka-addon.zip`, which you upload to CurseForge
   yourself. If the run
   fails nothing is published: fix it and run it again.
+* **What a release is built from** is fixed in the repository: the
+  packages in `companion/requirements-build.lock` and
+  `requirements-dev.lock` (exact versions with checksums; the top of each
+  file says how to write them again after changing `pyproject.toml`, and a
+  test fails if they fall behind it), and the GitHub actions in
+  `.github/workflows/ci.yml` by commit (Dependabot proposes newer ones).
+  `companion/third_party.py` writes the licences of the packed libraries
+  into the program at build time. A release publishes `SHA256SUMS.txt`
+  and a build attestation with the files, and a release that is already
+  published is refused, not overwritten. On GitHub, *Settings → General →
+  Releases → Enable release immutability* makes GitHub enforce that too.
 * **The virus scan** is a job of the build
   (`.github/workflows/ci.yml`), on a Windows machine: Microsoft Defender
   scans the files of the release - `Walka.exe`, the Mac programs, the
   addon - after showing that it catches the standard test file. A
   release needs that job, and it writes `virus-scan.json`, which is
   published next to `Walka.exe` and is what the badge at the top of this
-  page shows. Nothing to set up. The green *No viruses found* picture
-  above the badge is a fixed picture (`docs/images/virus-free.svg`): it
-  holds because a release that fails the scan is never published.
+  page shows. Nothing to set up. The green *Scanned for viruses* picture
+  above the badge is a fixed picture (`docs/images/virus-scan.svg`). It
+  says what is done, not what a scan can never prove: that a file is
+  harmless.
 
 More: [docs/PROTOCOL.md](docs/PROTOCOL.md) ·
 [docs/SAFETY.md](docs/SAFETY.md) · [docs/HARDWARE.md](docs/HARDWARE.md)
