@@ -21,9 +21,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from walka.capture import BeaconReader, GameWindow, ReadResult
-from walka.governor import Reading
 from walka.protocol import STAT_CYCLE, STAT_EVERY, Flags, Frame, StatFrame
-from walka.sources import BeaconSource
+from walka.sources import BeaconSource, Reading
 from walka_fakes import FakeScreen
 
 TICK_S = 0.1  # Walka.TICK_SECONDS

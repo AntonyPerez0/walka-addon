@@ -117,10 +117,6 @@ export const U = {
   speed(kmh) {
     return this.mph ? kmh / KMH_PER_MPH : kmh;
   },
-  /** display speed -> km/h. */
-  toKmh(value) {
-    return this.mph ? value * KMH_PER_MPH : value;
-  },
   /** metres -> display distance (number). */
   dist(m) {
     return this.mph ? m / M_PER_MILE : m / 1000;
@@ -201,7 +197,7 @@ export const fmt = {
   },
 };
 
-export function capitalise(text) {
+function capitalise(text) {
   const value = String(text || "").trim();
   return value ? value[0].toUpperCase() + value.slice(1) : "";
 }
@@ -295,14 +291,14 @@ export function toast(message, kind = "info", { sticky = false } = {}) {
   const remove = () => item.remove();
   dismiss.addEventListener("click", remove);
   // Keep the stack short: the newest three are enough. One that stays until dismissed
-  // (a failed STOP) is the last to make room.
+  // (an error from the companion) is the last to make room.
   while (host.children.length >= 3) {
     const passing = [...host.children].find((child) => child.dataset.sticky !== "1");
     (passing || host.firstElementChild).remove();
   }
   host.append(item);
   // If the stack is taller than its room: keep in view the one that stays until dismissed
-  // (a failed STOP), else the newest.
+  // (an error from the companion), else the newest.
   const pinned = host.querySelector('[data-sticky="1"]');
   host.scrollTop = pinned ? pinned.offsetTop - host.firstElementChild.offsetTop : host.scrollHeight;
   if (!sticky) setTimeout(remove, kind === "error" ? 9000 : 4500);
@@ -329,9 +325,9 @@ export const tooltip = {
     el.hidden = false;
     const box = el.getBoundingClientRect();
     const left = Math.min(Math.max(8, x + 14), window.innerWidth - box.width - 8);
-    // Above the pointer, unless that is off the window or over STOP and the belt's state
-    // (fixed top right; a bar at the bottom on a phone): those are never covered.
-    const dockEl = document.querySelector(".stopdock");
+    // Above the pointer, unless that is off the window or over the belt's state
+    // (fixed top right): that is never covered.
+    const dockEl = document.querySelector(".dock");
     const dock = dockEl ? dockEl.getBoundingClientRect() : null;
     const covers = (t) =>
       !!dock && left < dock.right && left + box.width > dock.left && t < dock.bottom && t + box.height > dock.top;

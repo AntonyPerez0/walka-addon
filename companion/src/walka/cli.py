@@ -7,7 +7,6 @@ import asyncio
 import importlib
 import logging
 import logging.handlers
-import math
 import queue
 import re
 import signal
@@ -21,7 +20,7 @@ from pathlib import Path
 from . import __version__, addon_sync, capture
 from . import config as config_module
 from .journey import DEMO_KEY, DemoJourney
-from .protocol import Flags, Frame, kmh_to_raw, yps_to_raw
+from .protocol import Flags, Frame, yps_to_raw
 from .road import demo_road
 
 log = logging.getLogger("walka")
@@ -29,10 +28,10 @@ log = logging.getLogger("walka")
 DISCLAIMER_URL = "https://github.com/AntonyPerez0/walka-addon/blob/HEAD/DISCLAIMER.md"
 
 # Shown every time the companion starts: most people get Walka from the
-# download button and never see the repository's DISCLAIMER.md.
-AT_YOUR_OWN_RISK = (
-    "\nWalka moves a motorised belt. You use it at your own risk, and it comes with no warranty.\n"
-    "It is not a safety device: keep the treadmill's remote within reach, and stop if you feel unwell.\n"
+# download button and never see the repository's README or DISCLAIMER.md.
+LISTENS_ONLY = (
+    "\nWalka only listens to your treadmill: it cannot start, stop or change the speed of the belt.\n"
+    "You set the speed on the treadmill itself. Walking while you play is at your own risk.\n"
     f"  disclaimer: {DISCLAIMER_URL}\n"
 )
 
@@ -87,9 +86,8 @@ async def _demo_character(beacon, stop: asyncio.Event) -> None:
     """--demo: feed the beacon source a scripted character so the whole
     pipeline can be watched without the game.
 
-    Like a real player it first stands there with no session, then starts
-    one: a session that is already running when the companion first sees it
-    would (rightly) not start the belt until the character starts moving.
+    Like a real player it first stands there with no session, then marks
+    one in the game.
 
     And like the addon it shows, every few redraws, one number of the
     character's journey in place of its live state: the Share page gets a
@@ -110,8 +108,7 @@ async def _demo_character(beacon, stop: asyncio.Event) -> None:
             beacon.inject(Frame(seq=seq, session=0, flags=Flags(0)))
             await asyncio.sleep(DEMO_REDRAW_S)
             continue
-        t -= DEMO_SESSION_STARTS_AFTER_S
-        phase = t % 120
+        phase = (t - DEMO_SESSION_STARTS_AFTER_S) % 120
         if phase < 50:
             yps, flags = 7.0, Flags.MOVING  # running
         elif phase < 60:
@@ -122,24 +119,29 @@ async def _demo_character(beacon, stop: asyncio.Event) -> None:
             yps, flags = 0.0, Flags.ESTIMATED
         else:
             yps, flags = 2.5, Flags.MOVING  # walking
-        # The same default curve the addon uses.
-        if yps <= 0:
-            target = 1.6
-        elif yps < 7:
-            target = 2.4 + (3.2 - 2.4) * max(0.0, (yps - 2.5) / 4.5)
-        else:
-            target = 3.2 + (4.0 - 3.2) * min(1.0, (yps - 7.0) / 7.0)
-        target += 0.05 * math.sin(t / 7.0)
-        beacon.inject(
-            Frame(
-                seq=seq,
-                session=1,
-                flags=flags | Flags.ACTIVE,
-                target_raw=kmh_to_raw(target),
-                char_speed_raw=yps_to_raw(yps),
-            )
-        )
+        beacon.inject(Frame(seq=seq, session=1, flags=flags | Flags.ACTIVE, char_speed_raw=yps_to_raw(yps)))
         await asyncio.sleep(DEMO_REDRAW_S)
+
+
+DEMO_WALK_STARTS_AFTER_S = 3.0
+DEMO_SPEEDS_KMH = (3.2, 2.4, 3.7, 2.9)  # what the made-up walker sets on the remote, one after the other
+DEMO_SPEED_FOR_S = 45.0
+
+
+async def _demo_walker(treadmill, stop: asyncio.Event) -> None:
+    """--demo: somebody to walk on the simulated pad. They press start on
+    its remote - the companion could not - and change the speed now and
+    then, the way a walker does. The companion sees none of this but what
+    the pad reports, exactly as with a real one."""
+    await asyncio.sleep(DEMO_WALK_STARTS_AFTER_S)
+    treadmill.press_start()
+    step = 0
+    while not stop.is_set():
+        # (Does nothing to a belt that was stopped with the simulator's
+        # buttons on the dashboard: that remote is the user's too.)
+        treadmill.press_speed(DEMO_SPEEDS_KMH[step % len(DEMO_SPEEDS_KMH)])
+        step += 1
+        await asyncio.sleep(DEMO_SPEED_FOR_S)
 
 
 # ---- the console, and being closed from outside --------------------------------------
@@ -203,8 +205,8 @@ def _start_logging(verbose: bool, stream=None) -> Callable[[], None]:
 
     The console is written to on a thread of its own. A console that is
     slow or stuck - a text selection, a paused scroll, a pipe nobody reads -
-    can then hold up that thread only, never the event loop that is watching
-    the belt (and whose STOP handling logs a line too).
+    can then hold up that thread only, never the event loop that is
+    recording the walk.
     """
     console = logging.StreamHandler(stream)
     console.setFormatter(logging.Formatter("%(asctime)s %(levelname)-7s %(message)s", datefmt="%H:%M:%S"))
@@ -244,8 +246,8 @@ def _stop_and_wait(
     """Windows is about to kill the process (console closed, log-off,
     shutdown) and is waiting for our answer on one of its own threads: ask
     the event loop for an orderly stop, and hold the answer back until the
-    belt has been stopped and the walk saved - or the few seconds Windows
-    allows are nearly up."""
+    walk has been saved - or the few seconds Windows allows are nearly
+    up."""
     try:
         loop.call_soon_threadsafe(stop.set)
     except RuntimeError:  # the loop is already closed: everything is stopped
@@ -257,7 +259,7 @@ def _install_console_close_handler(
     loop: asyncio.AbstractEventLoop, stop: asyncio.Event, stopped: threading.Event
 ) -> None:
     """On Windows, closing the console window kills the process within
-    seconds. Catch that so the belt is stopped first."""
+    seconds. Catch that so the walk is saved first."""
     if sys.platform != "win32":
         return
     import ctypes
@@ -280,9 +282,9 @@ def _stop_on_signals(loop: asyncio.AbstractEventLoop, stop: asyncio.Event) -> No
     """Off Windows a program is closed from outside with a signal: SIGHUP
     when its terminal window is closed - which is how Walka is closed on a
     Mac - and SIGTERM at log-out, at shutdown and from ``kill``. Left alone,
-    either ends the process on the spot, with the belt running. Here they
-    ask for the same orderly stop as Ctrl+C: belt first, then the walk is
-    saved. (The handlers go when the event loop is closed.)"""
+    either ends the process on the spot, with the walk unsaved. Here they
+    ask for the same orderly stop as Ctrl+C. (The handlers go when the
+    event loop is closed.)"""
     if sys.platform == "win32":
         return
     for name in ("SIGTERM", "SIGHUP"):
@@ -293,36 +295,13 @@ def _stop_on_signals(loop: asyncio.AbstractEventLoop, stop: asyncio.Event) -> No
             log.debug("not listening for %s: %s", name, exc)
 
 
-# How long the answer to "the computer is going to sleep" is held back for
-# the belt's stop to go out. Windows allows a program about two seconds.
-SLEEP_STOP_WAIT_S = 1.5
+def _watch_for_session_end(loop: asyncio.AbstractEventLoop, stop: asyncio.Event, stopped: threading.Event):
+    """Save the walk when Windows logs off or shuts down, the same way as
+    when the console window is closed. Returns the watcher (to be
+    stopped)."""
+    from .winsession import SessionEndWatcher
 
-
-def _stop_belt_for_sleep(loop: asyncio.AbstractEventLoop, app, wait_s: float = SLEEP_STOP_WAIT_S) -> None:
-    """The computer is about to sleep, and says so on one of its own
-    threads: have the event loop stop the belt (``App.stop_for_sleep``) and
-    hold the answer back until that is done, or the time allowed is up. The
-    companion itself carries on: it is still there when the computer wakes."""
-    if loop.is_closed():
-        return
-    try:
-        done = asyncio.run_coroutine_threadsafe(app.stop_for_sleep(), loop)
-    except RuntimeError:  # the loop was closed meanwhile
-        return
-    try:
-        done.result(wait_s)
-    except Exception as exc:  # too slow, or failed: the stop stays latched and is asked for again
-        log.debug("the stop before sleeping was not seen to finish: %s", exc)
-
-
-def _watch_for_session_end(loop: asyncio.AbstractEventLoop, stop: asyncio.Event, stopped: threading.Event, app=None):
-    """Stop the belt when Windows logs off or shuts down, the same way as
-    when the console window is closed - and when the computer is about to
-    sleep (the program then stays). Returns the watcher (to be stopped)."""
-    from .hotkey import SessionEndWatcher
-
-    on_suspend = None if app is None else (lambda: _stop_belt_for_sleep(loop, app))
-    watcher = SessionEndWatcher(lambda: _stop_and_wait(loop, stop, stopped), on_suspend)
+    watcher = SessionEndWatcher(lambda: _stop_and_wait(loop, stop, stopped))
     try:
         watcher.start()  # does nothing off Windows
     except Exception as exc:  # the companion runs without it
@@ -330,26 +309,9 @@ def _watch_for_session_end(loop: asyncio.AbstractEventLoop, stop: asyncio.Event,
     return watcher
 
 
-def _watch_for_mac_sleep(loop: asyncio.AbstractEventLoop, app):
-    """The same for a Mac that is about to sleep. Returns the watcher (to
-    be stopped), or None off macOS."""
-    if sys.platform != "darwin":
-        return None
-    from .macos import SleepWatcher
-
-    watcher = SleepWatcher(lambda: _stop_belt_for_sleep(loop, app, wait_s=5.0))
-    try:
-        if not watcher.start():
-            log.debug("not watching for the Mac going to sleep: %s", watcher.error)
-    except Exception as exc:  # the companion runs without it
-        log.debug("not watching for the Mac going to sleep: %s", exc)
-    return watcher
-
-
 async def _run(args: argparse.Namespace) -> int:
     from . import web
     from .app import App
-    from .guard import GuardLink
     from .hr import HeartRateMonitor
 
     capture.enable_dpi_awareness()
@@ -367,30 +329,25 @@ async def _run(args: argparse.Namespace) -> int:
     else:
         beacon = _build_beacon(cfg)
     heart_rate = None if simulate else HeartRateMonitor(enabled=cfg.heart_rate.enabled, address=cfg.heart_rate.address)
-    # The helper that stops the belt if this program is killed. A simulated
-    # treadmill has no belt, and "do not stop the belt on exit" means that.
-    guard = None
-    if getattr(treadmill, "kind", "") != "simulated" and cfg.treadmill.stop_on_exit:
-        guard = GuardLink(data_dir)
-    app = App(cfg, data_dir, treadmill=treadmill, beacon=beacon, heart_rate=heart_rate, guard=guard)
+    app = App(cfg, data_dir, treadmill=treadmill, beacon=beacon, heart_rate=heart_rate)
     if args.demo:
         # The demo's made-up character must not turn up among the real ones later.
         app.journeys.use_memory_only(demo=True)
         app.roads.use_demo(demo_road(DEMO_KEY))
 
     stop = asyncio.Event()
-    stopped = threading.Event()  # set once app.stop() has run: belt stopped, walk saved
+    stopped = threading.Event()  # set once app.stop() has run: the walk is saved
     loop = asyncio.get_running_loop()
     _install_console_close_handler(loop, stop, stopped)
     _stop_on_signals(loop, stop)
-    session_end = _watch_for_session_end(loop, stop, stopped, app)
-    mac_sleep = _watch_for_mac_sleep(loop, app)
+    session_end = _watch_for_session_end(loop, stop, stopped)
 
     runner = None
-    demo_task = None
+    demo_tasks: list[asyncio.Task] = []
     try:
         if args.demo and beacon is not None:
-            demo_task = asyncio.create_task(_demo_character(beacon, stop))
+            demo_tasks.append(asyncio.create_task(_demo_character(beacon, stop)))
+            demo_tasks.append(asyncio.create_task(_demo_walker(treadmill, stop)))
         await app.start()
         port = cfg.web.port
         for attempt in range(10):
@@ -410,10 +367,8 @@ async def _run(args: argparse.Namespace) -> int:
         print(f"  data:      {data_dir}")
         if simulate:
             print("  treadmill: SIMULATED (no Bluetooth)")
-        print("Press Ctrl+C to quit (the belt is stopped first).")
-        print(AT_YOUR_OWN_RISK)
-        if not app.terms_accepted():
-            print("Before Walka starts or steers the belt, accept the disclaimer on the dashboard.\n")
+        print("Press Ctrl+C to quit (the walk being recorded is saved first).")
+        print(LISTENS_ONLY)
         if cfg.web.open_browser and not args.no_browser:
             # On its own thread: launching a browser can initialise COM on
             # the calling thread in a mode the Bluetooth stack cannot use.
@@ -422,20 +377,18 @@ async def _run(args: argparse.Namespace) -> int:
     except asyncio.CancelledError:
         pass
     finally:
-        # Shutdown has begun, and it ends with the belt being stopped. A
-        # second Ctrl+C (a double tap, key repeat) would abort it half way
-        # and leave the belt running, so it is ignored until that is done.
+        # Shutdown has begun, and it ends with the walk being saved. A
+        # second Ctrl+C (a double tap, key repeat) would abort it half way,
+        # so it is ignored until that is done.
         listen_to_interrupts = _ignore_interrupts()
-        if demo_task is not None:
-            demo_task.cancel()
+        for task in demo_tasks:
+            task.cancel()
         try:
             await app.stop()
         finally:
             stopped.set()
             listen_to_interrupts()
             session_end.stop()
-            if mac_sleep is not None:
-                mac_sleep.stop()
             if runner is not None:
                 await runner.cleanup()
     return 0
@@ -497,10 +450,7 @@ def _frame_text(decoded) -> str:
         return f"seq={stat.seq} journey {name}={stat.value}"
     frame = decoded.frame
     flags = ",".join(flag.name for flag in Flags if flag in frame.flags) or "-"
-    return (
-        f"seq={frame.seq} session={frame.session} "
-        f"target={frame.target_kmh:.2f} km/h char={frame.char_speed_yps:.2f} yd/s [{flags}]"
-    )
+    return f"seq={frame.seq} session={frame.session} char={frame.char_speed_yps:.2f} yd/s [{flags}]"
 
 
 def _beacon(args: argparse.Namespace) -> int:
@@ -549,7 +499,7 @@ def _beacon(args: argparse.Namespace) -> int:
     print(f"{seen} frame(s) decoded.")
     if seen and len(counters) < 3:
         print(
-            "The strip was read, but its counter did not move: the companion only follows a strip that ticks. "
+            "The strip was read, but its counter did not move: the companion only believes a strip that ticks. "
             "Is the game frozen, or on a loading screen?"
         )
     if not seen and window is not None:
@@ -575,7 +525,7 @@ def _beacon_elsewhere(window: capture.GameWindow) -> None:
     else:
         print(
             f"A strip was found on screen at {result.origin}, but the game window's corner is at "
-            f"({window.left}, {window.top}). Walka only reads that corner, so it will not follow this strip. "
+            f"({window.left}, {window.top}). Walka only reads that corner, so it will not see this strip. "
             "Please report these two positions, your display scaling and whether the game is windowed."
             + (" (On a Mac these positions are in points, not pixels.)" if sys.platform == "darwin" else "")
         )
@@ -615,7 +565,6 @@ RUNTIME_MODULES: tuple[str, ...] = (
     "mss",
     "walka.web",
     "walka.probe",
-    "walka.guard",
     "walka.treadmill.bleak_backend",
 )
 WINDOWS_RUNTIME_MODULES: tuple[str, ...] = (
@@ -697,38 +646,6 @@ def _licenses() -> int:
     return 0
 
 
-def _guard_problem(wait_s: float = 60.0) -> str:
-    """Can this program start itself as the guard (walka.guard) - the way
-    it does when it runs, pipe and all - and does that guard leave when it
-    is told to? "" if so. (For the packaged program above all: the guard is
-    a second copy of it, unpacked on its own.)"""
-    import subprocess
-    import tempfile
-
-    from .guard import LOG_FILE, GuardLink
-
-    with tempfile.TemporaryDirectory(prefix="walka-selfcheck-") as folder:
-        link = GuardLink(Path(folder))
-        if not link.start():
-            return link.error
-        process = link._process
-        link.watch(None)
-        link.release()
-        try:
-            code = process.wait(timeout=wait_s) if process is not None else 1
-        except subprocess.TimeoutExpired:
-            if process is not None:
-                process.kill()
-            return "the guard did not leave when it was told to"
-        if code != 0:
-            return f"the guard ended with exit code {code}"
-        try:
-            watched = "watching" in (Path(folder) / LOG_FILE).read_text("utf-8")
-        except OSError:
-            watched = False
-        return "" if watched else "the guard started but never got as far as watching"
-
-
 def _selfcheck() -> int:
     """Hidden command: is everything this build needs at run time there?
     Prints one line; exits 0 if so."""
@@ -745,12 +662,8 @@ def _selfcheck() -> int:
         problems.append(f"the dashboard page is missing files ({', '.join(absent)} in {static})")
     if addon_sync.bundled_addon_dir() is None:
         problems.append("the addon folder is missing")
-    if getattr(sys, "frozen", False):
-        if not LICENCES_FILE.is_file():
-            problems.append("the licences of the packed libraries are missing")
-        guard_problem = _guard_problem()
-        if guard_problem:
-            problems.append(guard_problem)
+    if getattr(sys, "frozen", False) and not LICENCES_FILE.is_file():
+        problems.append("the licences of the packed libraries are missing")
     if problems:
         print("selfcheck FAILED: " + "; ".join(problems))
         return 1
@@ -759,25 +672,28 @@ def _selfcheck() -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="walka", description="Walka companion: links a walking pad to your game.")
+    parser = argparse.ArgumentParser(
+        prog="walka",
+        description="Walka companion: records your walks on a walking pad while you play. It only listens to the pad.",
+    )
     parser.add_argument("--version", action="version", version=f"walka {__version__}")
     parser.add_argument("--data-dir", help="folder for config and recorded walks")
     parser.add_argument("-v", "--verbose", action="store_true", help="debug logging")
-    # (The metavar lists the commands meant for people; "selfcheck" is for the build, "guard" for Walka itself.)
+    # (The metavar lists the commands meant for people; "selfcheck" is for the build.)
     sub = parser.add_subparsers(dest="command", metavar="{run,scan,probe,beacon,install-addon,licenses}")
 
     run = sub.add_parser("run", help="run the companion and its dashboard (default)")
     for target in (parser, run):
         target.add_argument("--simulate", action="store_true", help="use a simulated treadmill (no Bluetooth)")
-        target.add_argument("--demo", action="store_true", help="simulated treadmill AND a scripted game character")
-        target.add_argument("--no-capture", action="store_true", help="do not read the screen (manual mode only)")
+        target.add_argument("--demo", action="store_true", help="simulated treadmill, walker AND game character")
+        target.add_argument("--no-capture", action="store_true", help="do not read the screen (walks are still recorded)")
         target.add_argument("--no-browser", action="store_true", help="do not open the dashboard in a browser")
         target.add_argument("--port", type=int, help="dashboard port (default 8787)")
 
     scan = sub.add_parser("scan", help="list nearby Bluetooth treadmills")
     scan.add_argument("--seconds", type=float, default=8.0)
 
-    probe = sub.add_parser("probe", help="read-only dump of what the treadmill exposes (never moves the belt)")
+    probe = sub.add_parser("probe", help="report of what the treadmill exposes, for a treadmill that is not read right")
     probe.add_argument("--address", help="Bluetooth address (default: first treadmill found)")
     probe.add_argument("--seconds", type=float, default=30.0, help="how long to listen for notifications")
     probe.add_argument("--out", help="folder for the report (default: current folder)")
@@ -796,7 +712,6 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("licenses", help="the licences of the libraries packed into this program")
 
     sub.add_parser("selfcheck")
-    sub.add_parser("guard")  # (started by the companion itself: see guard.py)
     return parser
 
 
@@ -825,10 +740,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _licenses()
         if command == "selfcheck":
             return _selfcheck()
-        if command == "guard":
-            from .guard import run_guard
-
-            return run_guard(_data_dir(args))
     except KeyboardInterrupt:
         return 130
     finally:

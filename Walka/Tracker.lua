@@ -308,8 +308,8 @@ end
 ----------------------------------------------------------------------------
 -- Every fifth redraw of the beacon carries one number of the journey in
 -- place of the live frame (docs/PROTOCOL.md, section 4): never two in a
--- row, so the belt still hears from the game four times out of five. The
--- numbers go round in the order of Protocol.STAT_CYCLE, about 8 seconds a
+-- row, so the companion still hears of the session four times out of five.
+-- The numbers go round in the order of Protocol.STAT_CYCLE, about 8 seconds a
 -- round.
 
 local EVERY = Protocol.STAT_EVERY

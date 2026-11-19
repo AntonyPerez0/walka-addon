@@ -2,14 +2,17 @@
 --
 -- This file is the addon's core: saved settings, the walking session
 -- (start / pause / resume / stop), and the ten-times-a-second tick that
--- reads the character's state, runs the speed model and paints the beacon
--- for the companion app. The windows live in UI/; the character's journey
--- is kept by Tracker.lua, which this file drives.
+-- reads the character's state, counts the walk and paints the beacon for
+-- the companion app. The windows live in UI/; the character's journey is
+-- kept by Tracker.lua, which this file drives.
+--
+-- Walka only counts. The walker sets the belt's speed at the treadmill;
+-- nothing here - and nothing in the companion app - starts, stops or
+-- steers a belt.
 
 local ADDON_NAME, ns = ...
 
 local Protocol = ns.Protocol
-local SpeedModel = ns.SpeedModel
 local Metrics = ns.Metrics
 local SessionLog = ns.SessionLog
 local Game = ns.Game
@@ -25,19 +28,10 @@ local FLAG = Protocol.FLAG
 local KMH_PER_MPH = Metrics.KMH_PER_MPH
 
 Walka.PREFIX = "|cff4fc3f7Walka|r: "
--- Said in chat the first time a session is started (see StartSession).
-Walka.RISK_NOTICE = "this moves a real treadmill belt, and you use it at your own risk - no warranty. "
-    .. "Keep the treadmill's remote within reach, start slowly, and stop if you feel dizzy or unwell. "
-    .. "(Said once. The whole of it is in DISCLAIMER.md, with Walka.)"
 Walka.TICK_SECONDS = 0.1      -- game state sampling + beacon refresh
 Walka.UI_SECONDS = 0.25       -- how often the windows are told to redraw
 Walka.MIN_SESSION_SECONDS = 20 -- shorter sessions are not kept
 Walka.RESUME_WINDOW_SECONDS = 180 -- a session survives a /reload this long
--- An automatic (AFK) pause ends by itself, when the character next starts
--- moving - but only for this long. After that nobody can say who is at the
--- keyboard or what stands on the belt by now (a chair rolled onto the pad,
--- a child, a pet), so the pause becomes one that only Resume ends.
-Walka.AFK_RESUME_SECONDS = 600
 Walka.MAX_SESSIONS = 400
 
 ----------------------------------------------------------------------------
@@ -51,14 +45,11 @@ end
 
 --- Defaults for WalkaDB.settings. Speeds are km/h whatever the display unit.
 local function buildDefaults()
-    local units = defaultUnits()
-    local speed = {}
-    for key, value in pairs(SpeedModel.DEFAULTS) do
-        speed[key] = value
-    end
     return {
-        units = units,
-        speed = speed,
+        units = defaultUnits(),
+        -- The speed the walker says the belt is set to: what the live
+        -- estimate counts with (see Metrics.walk).
+        paceKmh = Metrics.DEFAULT_PACE_KMH,
         profile = {
             weightKg = Metrics.DEFAULT_PROFILE.weightKg,
             heightCm = Metrics.DEFAULT_PROFILE.heightCm,
@@ -87,18 +78,6 @@ local function applyDefaults(target, defaults)
         end
     end
     return target
-end
-
-local function copyTable(source)
-    local copy = {}
-    for key, value in pairs(source) do
-        if type(value) == "table" then
-            copy[key] = copyTable(value)
-        else
-            copy[key] = value
-        end
-    end
-    return copy
 end
 
 ----------------------------------------------------------------------------
@@ -138,8 +117,8 @@ end
 ----------------------------------------------------------------------------
 
 -- The data file is written by another program, so its numbers are checked
--- before they are used: a height of 0 or a speed step of 0 would otherwise
--- turn into inf/NaN in the estimates, the beacon and the saved variables.
+-- before they are used: a height of 0 would otherwise turn into inf/NaN
+-- in the estimates and the saved variables.
 
 -- `value` as a number within low..high, or nil. (NaN fails both tests.)
 local function numberWithin(value, low, high)
@@ -148,11 +127,6 @@ local function numberWithin(value, low, high)
         return value
     end
     return nil
-end
-
--- `value` as a positive, finite number, or nil.
-local function positiveNumber(value)
-    return numberWithin(value, 1e-9, 1e9)
 end
 
 --- The table the companion wrote, or nil.
@@ -201,31 +175,6 @@ function Walka:GetProfile()
     return own
 end
 
---- What the treadmill can do, in km/h: { minKmh, maxKmh, stepKmh, ... }.
--- Taken from the companion when it has talked to the treadmill, otherwise
--- assumed from the display unit (UREVO US pads: 0.6-4.0 mph in 0.1 mph).
-function Walka:GetBeltLimits()
-    local data = self:GetCompanionData()
-    local limits = data and data.limits
-    if type(limits) == "table" then
-        local minKmh, maxKmh = positiveNumber(limits.minKmh), positiveNumber(limits.maxKmh)
-        if minKmh and maxKmh and maxKmh >= minKmh then
-            return {
-                minKmh = minKmh,
-                maxKmh = maxKmh,
-                stepKmh = positiveNumber(limits.stepKmh) or 0.1,
-                accelKmhPerS = positiveNumber(limits.accelKmhPerS),
-                decelKmhPerS = positiveNumber(limits.decelKmhPerS),
-                fromCompanion = true,
-            }
-        end
-    end
-    if self.db.settings.units == "mph" then
-        return { minKmh = 0.6 * KMH_PER_MPH, maxKmh = 4.0 * KMH_PER_MPH, stepKmh = 0.1 * KMH_PER_MPH }
-    end
-    return { minKmh = 1.0, maxKmh = 6.0, stepKmh = 0.1 }
-end
-
 ----------------------------------------------------------------------------
 -- Derived settings
 ----------------------------------------------------------------------------
@@ -233,34 +182,13 @@ end
 --- Rebuild everything that depends on settings. Call after changing any.
 function Walka:ApplySettings()
     local settings = self.db.settings
-    local limits = self:GetBeltLimits()
-
-    -- The speed model reads this table live.
-    local model = self.modelSettings
-    for key in pairs(model) do
-        model[key] = nil
-    end
-    for key, value in pairs(settings.speed) do
-        model[key] = value
-    end
-    model.minBeltKmh = limits.minKmh
-    model.stepKmh = limits.stepKmh
-    if model.maxKmh > limits.maxKmh then
-        model.maxKmh = limits.maxKmh
-    end
-
-    local estimator = self.estimatorLimits
-    estimator.minBeltKmh = limits.minKmh
-    estimator.accelKmhPerS = limits.accelKmhPerS
-    estimator.decelKmhPerS = limits.decelKmhPerS
-
     Beacon.SetCellSize(settings.beacon.cellPx)
     settings.beacon.cellPx = Beacon.GetCellSize()
     Beacon.SetVisible(settings.beacon.enabled)
     self:Fire("SETTINGS")
 end
 
---- Change one setting by dotted path, e.g. Walka:Set("speed.runKmh", 3.2).
+--- Change one setting by dotted path, e.g. Walka:Set("hud.scale", 1.2).
 function Walka:Set(path, value)
     local node = self.db.settings
     local last
@@ -289,25 +217,28 @@ function Walka:Get(path)
     return node
 end
 
---- Turn "keep walking" on or off: with it on, the belt holds the walking
--- pace whenever the character stands still, instead of slowing down.
-function Walka:SetKeepWalking(enabled)
-    enabled = enabled and true or false
-    self:Set("speed.keepWalking", enabled)
-    if self.db.settings.announce then
-        if enabled then
-            self:Print("keep walking is on - the belt holds your walking pace ("
-                .. self:FormatSpeed(self.db.settings.speed.walkKmh) .. ") when your character stops.")
-        else
-            self:Print("keep walking is off - the belt slows down when your character stops.")
-        end
-    end
+--- The pace the live estimate counts with, in km/h: the speed the walker
+-- says the belt is set to. (Checked on the way out as well as on the way
+-- in: Walka:Set can put anything into the settings, and the tick does
+-- arithmetic with this.)
+function Walka:GetPace()
+    return numberWithin(self.db.settings.paceKmh, Metrics.MIN_PACE_KMH, Metrics.MAX_PACE_KMH)
+        or Metrics.DEFAULT_PACE_KMH
 end
 
---- Restore every speed setting to its default.
-function Walka:ResetSpeedSettings()
-    self.db.settings.speed = copyTable(SpeedModel.DEFAULTS)
-    self:ApplySettings()
+--- Set the pace, in km/h. It is kept within what Metrics takes for a
+-- walking pace and stored to a thousandth, so that "1.5 mph" comes back as
+-- 1.5 mph. Returns the pace as it now is - unchanged, if `kmh` is no speed
+-- at all.
+function Walka:SetPace(kmh)
+    kmh = tonumber(kmh)
+    if not kmh or kmh ~= kmh then
+        return self:GetPace()
+    end
+    kmh = math.min(Metrics.MAX_PACE_KMH, math.max(Metrics.MIN_PACE_KMH, kmh))
+    kmh = math.floor(kmh * 1000 + 0.5) / 1000
+    self:Set("paceKmh", kmh)
+    return kmh
 end
 
 ----------------------------------------------------------------------------
@@ -378,7 +309,7 @@ end
 ----------------------------------------------------------------------------
 
 --- The session in progress, or nil. Fields: id, start, seconds, distanceM,
--- steps, kcal, yards, maxKmh, paused, pauseReason, pausedAt, character.
+-- steps, kcal, yards, maxKmh, paused, pauseReason, character.
 function Walka:GetSession()
     return self.session
 end
@@ -391,22 +322,19 @@ function Walka:IsPaused()
     return self.session ~= nil and self.session.paused == true
 end
 
---- Estimated belt speed right now (km/h) and the target the addon is asking for.
+--- The belt speed the estimate is counting with right now, in km/h: the
+-- pace while a session is running, 0 while it is paused or there is none.
 function Walka:GetLiveSpeed()
-    return self.estimator.beltKmh, self.targetKmh
+    local session = self.session
+    if session and not session.paused then
+        return self:GetPace()
+    end
+    return 0
 end
 
 --- The character state sampled on the last tick (see Game.Read).
 function Walka:GetGameState()
     return self.gameState
-end
-
--- The windows redraw on the "SESSION" event, which comes before the next
--- tick. Work out now what that tick is going to ask for, so that they do
--- not show a stopped belt ("waiting") for a moment after every start and
--- resume. A model update over zero seconds does exactly that.
-local function primeTarget(self)
-    self.targetKmh = self.model:update(0, self.gameState)
 end
 
 function Walka:StartSession()
@@ -432,18 +360,12 @@ function Walka:StartSession()
         -- the walk is this character's either way.)
         character = Tracker.CharacterName(),
     }
-    self.model:reset(nil)
-    self.estimator:reset(0)
-    primeTarget(self)
-    if not db.riskNoticeShown then
-        -- Once per account, and whatever "announce" says: this is not a
-        -- session message. Someone who got the addon on its own has never
-        -- seen the README or DISCLAIMER.md.
-        db.riskNoticeShown = true
-        self:Print(Walka.RISK_NOTICE)
-    end
     if db.settings.announce then
-        self:Print("session started - the belt follows your character. /walka stop to finish.")
+        self:Print(string.format(
+            "session started - Walka counts this walk at %s. Set the speed on your treadmill; "
+                .. "/walka pace tells Walka what it is. /walka stop to finish.",
+            self:FormatSpeed(self:GetPace())
+        ))
     end
     self:Fire("SESSION", "start")
 end
@@ -455,7 +377,7 @@ function Walka:PauseSession(reason)
     end
     if session.paused then
         -- Pausing by hand during an AFK pause makes the pause the player's
-        -- own: the belt must not restart by itself when AFK ends.
+        -- own: it must not end by itself when AFK does.
         if (reason or "user") == "user" and session.pauseReason ~= "user" then
             session.pauseReason = "user"
             self:Fire("SESSION", "pause")
@@ -464,8 +386,6 @@ function Walka:PauseSession(reason)
     end
     session.paused = true
     session.pauseReason = reason or "user"
-    session.pausedAt = Game.Now()
-    self.targetKmh = 0
     if self.db.settings.announce then
         if reason == "afk" then
             self:Print("you are AFK - session paused. It resumes when your character moves.")
@@ -483,33 +403,10 @@ function Walka:ResumeSession()
     end
     session.paused = false
     session.pauseReason = nil
-    session.pausedAt = nil
-    session.afkStill = nil
-    -- The belt restarts at its minimum speed.
-    self.model:reset(nil)
-    primeTarget(self)
     if self.db.settings.announce then
         self:Print("session resumed.")
     end
     self:Fire("SESSION", "resume")
-end
-
---- An automatic pause that has lasted too long is no longer ended by the
--- character moving (see AFK_RESUME_SECONDS): it becomes the player's own
--- pause, which only Resume ends. On the strip it then no longer carries the
--- AFK flag, so that pressing Resume counts with the companion as a resume
--- somebody asked for.
-local function keepAfkPause(self, session)
-    session.pauseReason = "user"
-    session.afkStill = nil
-    if self.db.settings.announce then
-        self:Print(string.format(
-            "you have been away for more than %d minutes - the session stays paused until you press Resume "
-                .. "(the play button on the HUD, or /walka resume).",
-            math.floor(Walka.AFK_RESUME_SECONDS / 60)
-        ))
-    end
-    self:Fire("SESSION", "pause")
 end
 
 function Walka:TogglePause()
@@ -545,8 +442,6 @@ function Walka:StopSession(endTime)
         return nil
     end
     self.session = nil
-    self.targetKmh = 0
-    self.estimator:reset(0)
     local record
     if session.seconds >= Walka.MIN_SESSION_SECONDS then
         record = finishRecord(session, endTime or Game.Now())
@@ -604,11 +499,13 @@ end
 -- The tick
 ----------------------------------------------------------------------------
 
+-- (`target`: the strip's frame still has the field in which the addon once
+-- asked for a belt speed. Since 0.7 nothing asks: it is always 0.)
 local beaconFrame = { seq = 0, session = 0, flags = 0, target = 0, charSpeed = 0 }
 
 -- What of the character's state goes onto the strip: what the companion
--- needs for the belt and its dashboard - how the character is moving, and
--- whether anyone is there. Nothing else leaves the game: not whether it is
+-- shows on its dashboard - how the character is moving, and whether anyone
+-- is there. Nothing else leaves the game: not whether it is
 -- fighting, dead, falling or resting (the addon knows, and keeps it).
 local function stateFlags(state)
     local flags = 0
@@ -631,25 +528,14 @@ function Walka:Tick(dt)
     RoadRecorder.Watchdog()
     local session = self.session
     local flags = stateFlags(state)
-    local target = 0
 
     if session then
         if session.paused and session.pauseReason == "afk" then
-            -- Back from AFK: the session resumes when the character *starts*
-            -- moving - it stood still on the tick before, and moves now -
-            -- not on the first key press: typing a chat line should not
-            -- start a belt. A character that is being carried along anyway
-            -- (a flight path, auto-run, /follow) pressed no key for anyone:
-            -- it has to stand first, and a flight path never counts. (Also
-            -- when the automatic pause has been switched off meanwhile: this
-            -- pause was automatic, so is its end.) And only for so long:
-            -- after AFK_RESUME_SECONDS the pause is ended by Resume alone.
-            if Game.Now() - session.pausedAt >= Walka.AFK_RESUME_SECONDS then
-                keepAfkPause(self, session)
-            elseif not state.afk and state.moving and session.afkStill and not state.taxi then
+            -- Back from AFK: the session carries on when the character
+            -- moves again. (Also when the automatic pause has been switched
+            -- off meanwhile: this pause was automatic, so is its end.)
+            if not state.afk and state.moving then
                 self:ResumeSession()
-            else
-                session.afkStill = not state.moving
             end
         elseif self.db.settings.autoPauseAFK and state.afk and not session.paused then
             self:PauseSession("afk")
@@ -659,9 +545,7 @@ function Walka:Tick(dt)
         if session.paused then
             flags = flags + FLAG.PAUSED
             -- On a paused frame the AFK flag says *why* it is paused: set
-            -- for the automatic pause and only for it. The companion takes
-            -- a pause without it for one the player asked for (which
-            -- acknowledges a stop made at the treadmill) - also when the
+            -- for the automatic pause and only for it - also when the
             -- player pauses by hand while the game still shows them AFK.
             local automatic = session.pauseReason == "afk"
             if automatic and not state.afk then
@@ -670,12 +554,10 @@ function Walka:Tick(dt)
                 flags = flags - FLAG.AFK
             end
         else
-            target = self.model:update(dt, state)
             session.yards = session.yards + state.speed * dt
+            Metrics.walk(session, dt, self:GetPace(), self:GetProfile())
         end
-        self.estimator:update(dt, target, session, self:GetProfile())
     end
-    self.targetKmh = target
 
     beaconFrame.seq = (beaconFrame.seq + 1) % 256
     -- Every fifth redraw shows one number of the character's journey in
@@ -686,7 +568,6 @@ function Walka:Tick(dt)
     end
     beaconFrame.session = session and session.id or 0
     beaconFrame.flags = flags
-    beaconFrame.target = Protocol.kmhToRaw(target)
     beaconFrame.charSpeed = Protocol.ypsToRaw(state.speed)
     Beacon.Send(beaconFrame)
 end
@@ -724,6 +605,12 @@ local function initDatabase()
     local db = WalkaDB
     db.version = 1
     db.settings = applyDefaults(type(db.settings) == "table" and db.settings or {}, buildDefaults())
+    -- Until 0.7 the addon asked the companion for belt speeds and kept a
+    -- page of settings for that. Nothing reads them any more.
+    db.settings.speed = nil
+    db.riskNoticeShown = nil
+    db.settings.paceKmh = numberWithin(db.settings.paceKmh, Metrics.MIN_PACE_KMH, Metrics.MAX_PACE_KMH)
+        or Metrics.DEFAULT_PACE_KMH
     -- The body profile feeds every step and calorie: a height of zero from a
     -- damaged or hand-edited file would put inf into the saved sessions,
     -- and the game cannot read such a file back.
@@ -734,7 +621,6 @@ local function initDatabase()
         db.sessions = {}
     end
     db.sessionCounter = tonumber(db.sessionCounter) or 0
-    db.riskNoticeShown = db.riskNoticeShown == true or nil
     return db
 end
 
@@ -761,14 +647,11 @@ local function restoreSession(self)
     if session.pauseReason ~= "afk" and session.pauseReason ~= "user" then
         session.pauseReason = session.paused and "user" or nil
     end
-    session.afkStill = nil  -- (who was standing before the reload proves nothing now)
-    -- When the pause began (a file from before this was kept: now).
-    session.pausedAt = session.paused and (tonumber(session.pausedAt) or Game.Now()) or nil
+    -- (Kept by older versions for a rule about restarting the belt.)
+    session.afkStill, session.pausedAt = nil, nil
     local savedAt = tonumber(saved.savedAt) or 0
     if Game.Now() - savedAt <= Walka.RESUME_WINDOW_SECONDS then
         self.session = session
-        self.model:reset(tonumber(saved.targetKmh))
-        self.estimator:reset(tonumber(saved.beltKmh) or 0)
         self:Fire("SESSION", "restore")
     else
         self.session = session
@@ -784,18 +667,11 @@ local function saveSession(self)
     self.db.active = {
         savedAt = Game.Now(),
         session = self.session,
-        beltKmh = self.estimator.beltKmh,
-        targetKmh = self.targetKmh,
     }
 end
 
 function Walka:OnLoad()
     self.db = initDatabase()
-    self.modelSettings = {}
-    self.estimatorLimits = {}
-    self.model = SpeedModel.new(self.modelSettings)
-    self.estimator = Metrics.Estimator.new(self.estimatorLimits)
-    self.targetKmh = 0
     self.gameState = Game.Read()
     -- Before a saved session is restored: closing an old one files it in
     -- the history, which the tracker has to hear about.
@@ -853,7 +729,8 @@ end
 
 local HELP = {
     "/walka - show or hide the HUD",
-    "/walka start | pause | resume | stop - control the walking session",
+    "/walka start | pause | resume | stop - the walking session: when Walka counts your walk",
+    "/walka pace 1.5 - the speed your treadmill is set to, for the live estimate",
     "/walka history - past sessions and totals",
     "/walka journey - your character's journey so far: level, time played, your steps and its steps",
     "/walka map - open the world map with the road your character has travelled on it",
@@ -863,7 +740,6 @@ local HELP = {
     "/walka status - what the addon is doing right now",
     "/walka weight 180lb (or 82kg) - your weight, for calorie estimates",
     "/walka height 5'11 (or 180cm) - your height, for step estimates",
-    "/walka keepwalking on | off - hold the walking pace when your character stops",
     "/walka units mph | kmh",
     "/walka beacon on | off | size <2-8>",
 }
@@ -952,14 +828,13 @@ local function slash(message)
         end
     elseif command == "status" then
         local state = self.gameState
-        local belt, target = self:GetLiveSpeed()
         self:Print(string.format(
-            "session %s | character %.1f yd/s%s | target %s | belt (est.) %s",
+            "session %s | character %.1f yd/s%s | counting at %s (your pace: %s)",
             self.session and (self.session.paused and "paused" or "active") or "off",
             state.speed,
             state.estimated and " (estimated: hidden in combat)" or "",
-            self:FormatSpeed(target),
-            self:FormatSpeed(belt)
+            self:FormatSpeed(self:GetLiveSpeed()),
+            self:FormatSpeed(self:GetPace())
         ))
         local synced = self:GetSyncTime()
         if synced then
@@ -1016,15 +891,34 @@ local function slash(message)
             self:Print("note: your body profile comes from the companion app (Settings -> Body profile), "
                 .. "so this value is only used when the companion's file is not there.")
         end
-    elseif command == "keepwalking" or command == "keep" then
-        local arg = string.lower(rest)
-        if arg == "" then
-            self:SetKeepWalking(not self:Get("speed.keepWalking"))
-        elseif arg == "on" or arg == "off" then
-            self:SetKeepWalking(arg == "on")
-        else
-            self:Print("usage: /walka keepwalking on  or  /walka keepwalking off")
+    elseif command == "pace" then
+        if rest == "" then
+            self:Print("your pace is " .. self:FormatSpeed(self:GetPace())
+                .. " - what Walka counts your walk with. Change it with /walka pace <speed>, "
+                .. "to what your treadmill is set to.")
+            return
         end
+        local value, unit = parseMeasure(rest, self:IsMph() and "mph" or "kmh")
+        local kmh
+        if value and unit == "mph" then
+            kmh = value * KMH_PER_MPH
+        elseif value and (unit == "kmh" or unit == "km") then    -- ("km/h" is read up to the slash)
+            kmh = value
+        end
+        if not kmh then
+            self:Print("usage: /walka pace 1.5  (in " .. self:SpeedUnit() .. "), or /walka pace 1.5mph, /walka pace 2.4kmh")
+            return
+        end
+        if kmh < Metrics.MIN_PACE_KMH or kmh > Metrics.MAX_PACE_KMH then
+            self:Print(string.format(
+                "that pace looks wrong - Walka counts with %s to %s.",
+                self:FormatSpeed(Metrics.MIN_PACE_KMH),
+                self:FormatSpeed(Metrics.MAX_PACE_KMH)
+            ))
+            return
+        end
+        self:Print("pace set to " .. self:FormatSpeed(self:SetPace(kmh))
+            .. ". (This is what Walka counts with; the belt's speed is set at the treadmill.)")
     elseif command == "units" then
         rest = string.lower(rest)
         if rest == "mph" or rest == "kmh" or rest == "km/h" then

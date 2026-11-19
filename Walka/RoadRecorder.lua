@@ -7,7 +7,7 @@
 --
 -- It runs on a timer of its own, apart from the tick that feeds the
 -- beacon, and every look is wrapped in pcall: whatever a client build may
--- do to these calls, an error here can never reach the belt control.
+-- do to these calls, an error here can never reach the session's count.
 --
 -- The calls and their order are the ones Road to Sixty's recorder uses in
 -- this client (see Core/Road.lua): ask whether we are in an instance
@@ -168,14 +168,11 @@ local function travelMode(state)
     return "w"
 end
 
--- Is the treadmill belt moving, as far as the addon can tell? A session is
--- running, not paused, and the belt estimate is above zero.
+-- Is the walker on the treadmill, as far as the addon can tell? It cannot
+-- see the belt: a walking session that is running and not paused is the
+-- walker saying so.
 local function beltMoving()
-    if not core or not core:IsActive() or core:IsPaused() then
-        return false
-    end
-    local belt = core:GetLiveSpeed()
-    return type(belt) == "number" and belt > 0
+    return core ~= nil and core:IsActive() and not core:IsPaused()
 end
 
 local function look()
@@ -267,8 +264,8 @@ end
 
 --- The end of the road that is not stored yet: from the last stored point
 -- of the stretch being recorded to where the character was at the last
--- look. Returns continent, fromX, fromY, toX, toY, mode, belt (true if the
--- treadmill belt is moving), level and the segment being recorded (to
+-- look. Returns continent, fromX, fromY, toX, toY, mode, belt (true if a
+-- walking session is counting), level and the segment being recorded (to
 -- tell one stretch from the next) - or nil when no stretch is being
 -- recorded (standing in a dungeon, recording switched off).
 function RoadRecorder.Tail()

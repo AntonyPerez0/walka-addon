@@ -1,28 +1,11 @@
-// The live view: belt state and speed, the session's numbers, manual control,
+// The live view: what the belt is doing and its speed, the walk's numbers,
 // the treadmill, the other links, the first-run checklist and the event log.
 
-import {
-  $,
-  U,
-  fmt,
-  h,
-  post,
-  run,
-  setAttr,
-  setDisabled,
-  setShown,
-  setText,
-  setTone,
-  setTransform,
-  toast,
-} from "./util.js";
-import { setupSteps, sourceLabel, termsPending } from "./status.js";
+import { $, U, fmt, h, post, run, setAttr, setShown, setText, setTone, setTransform, toast } from "./util.js";
+import { SOURCE_LABEL, setupSteps, sourceLabel } from "./status.js";
 
-const EPS = 1e-6;
 const SETUP_KEY = "walka.setup.hidden";
 
-let heroAction = null; // what the hero button does right now
-let manualOverride = null; // {kmh, until}: an optimistic speed while the server catches up
 let last = null; // last snapshot, for click handlers
 
 function remember(key, value) {
@@ -55,15 +38,11 @@ function updateHero(s, view, online) {
   setText($("hero-title"), view.title);
   setText($("hero-detail"), view.detail);
 
+  // The one thing to press: have the companion look for the treadmill.
   const action = online ? view.action : null;
-  heroAction = action ? action.kind : null;
   const button = $("hero-action");
   setShown(button, !!action);
-  setShown($("hero-action-note"), !!(action && action.note));
-  if (action) {
-    setText(button, action.label);
-    setText($("hero-action-note"), action.note || "");
-  }
+  if (action) setText(button, action.label);
 
   setText($("speed-unit"), U.speedUnit);
   if (!online || !s) {
@@ -72,111 +51,46 @@ function updateHero(s, view, online) {
     setAttr($("speed-num"), "data-void", "1");
     setAttr($("speed-num"), "data-wide", null);
     setText($("hero-meta"), "");
-    for (const id of ["ro-target", "ro-ask", "ro-char"]) setText($(id), "-");
+    for (const id of ["ro-set", "ro-game", "ro-char"]) setText($(id), "-");
     setText($("ro-belt"), s ? "unknown" : "-");
     setTransform($("meter-fill"), "scaleX(0)");
-    setShown($("meter-target"), false);
-    setShown($("key-target"), false);
-    setShown($("key-fill"), false);
+    setText($("meter-max"), "");
     return;
   }
-  setShown($("key-fill"), true);
 
   const t = s.treadmill;
-  const g = s.governor;
   const frame = s.source.frame;
-  const manual = s.source.manual;
   const speedText = t.connected ? fmt.speed(t.speed_kmh) : NO_SPEED;
   setText($("speed-num"), speedText);
   setAttr($("speed-num"), "data-void", t.connected ? null : "1");
   setAttr($("speed-num"), "data-wide", t.connected && speedText.length > 3 ? "1" : null); // "12.0": shrink to fit
   setText($("hero-meta"), sourceLabel(s));
 
-  // Readout.
-  const steering = t.connected && g.driving && g.wanted_kmh > 0;
-  setText($("ro-target"), steering ? fmt.speedU(g.wanted_kmh) : "-");
-  let askLabel = "Asked for";
-  let ask = "-";
-  if (manual.active) {
-    askLabel = "You set";
-    ask = fmt.speedU(manual.speed_kmh);
-  } else if (s.source.kind === "wow" && frame) {
-    askLabel = "Game asks";
-    ask = fmt.speedU(frame.target_kmh);
-  }
-  setText($("ro-ask-k"), askLabel);
-  setText($("ro-ask"), ask);
+  // Readout: what the pad says it is set to, and what the game says.
+  setText($("ro-set"), t.connected && t.target_kmh != null ? fmt.speedU(t.target_kmh) : "-");
   const beaconLive = s.source.beacon && s.source.beacon.state === "ok" && frame;
+  let game = "-";
+  if (beaconLive) game = !frame.active ? "none" : frame.paused ? "paused in game" : "marked";
+  setText($("ro-game"), game);
   setText($("ro-char"), beaconLive ? `${frame.char_speed_yps.toFixed(1)} yd/s` : "-");
   setText($("ro-belt"), t.connected ? BELT_WORDS[t.state] || t.state : "not connected");
 
-  // Meter: 0 .. the pad's top speed. The tinted span is what you may use
-  // (pad minimum .. your max speed), the fill is the belt, the tick the target.
+  // Meter: the belt's speed between nothing and the pad's own top speed.
   const scale = t.max_kmh > 0 ? t.max_kmh : 6;
-  const top = Math.min(t.cap_kmh, scale);
-  const minAt = Math.min(1, t.min_kmh / scale);
-  const capAt = Math.min(1, top / scale);
   const speedAt = t.connected ? Math.max(0, Math.min(1, t.speed_kmh / scale)) : 0;
-  setTransform(
-    $("meter-range"),
-    `translateX(${(minAt * 100).toFixed(2)}%) scaleX(${Math.max(0, capAt - minAt).toFixed(4)})`,
-  );
   setTransform($("meter-fill"), `scaleX(${speedAt.toFixed(4)})`);
-  const target = $("meter-target");
-  setShown(target, steering);
-  if (steering) setTransform(target, `translateX(${(Math.min(1, g.wanted_kmh / scale) * 100).toFixed(2)}%)`);
-  // The legend names only what is drawn.
-  const hasRange = capAt > minAt;
-  setShown($("key-range"), hasRange);
-  setShown($("key-target"), steering);
-  // Where the allowed range begins: a tick, so its ends do not rest on a faint tint alone.
-  const minLine = $("meter-min-line");
-  setShown(minLine, hasRange && minAt > 0.005);
-  setTransform(minLine, `translateX(${(minAt * 100).toFixed(2)}%)`);
-
-  const capLine = $("meter-cap-line");
-  setShown(capLine, capAt < 0.995);
-  setTransform(capLine, `translateX(${(capAt * 100).toFixed(2)}%)`);
-  // Labels under the bar. The maximum's label hangs from its line: centred in the middle
-  // of the bar, starting at the line near the left end, ending at it further right. Close
-  // to the pad's top speed there is no room for two labels, so the end label names both.
-  const capIsEnd = capAt > 0.995;
-  const capNearEnd = !capIsEnd && capAt > 0.78;
-  setShown($("meter-min-at"), capIsEnd || capAt - minAt > 0.14);
-  setTransform($("meter-min-at"), `translateX(${(minAt * 100).toFixed(2)}%)`);
-  setText($("meter-min"), fmt.speed(t.min_kmh));
-  setShown($("meter-cap-at"), !capIsEnd && !capNearEnd);
-  setTransform($("meter-cap-at"), `translateX(${(capAt * 100).toFixed(2)}%)`);
-  setAttr($("meter-cap-at"), "data-edge", capAt < 0.2 ? "start" : capAt > 0.6 ? "end" : null);
-  setText($("meter-cap"), `${fmt.speed(top)} max`);
   const padTop = `${fmt.speed(scale)} ${U.speedUnit}`;
-  const both = `${fmt.speed(top)} max \u00b7 ${padTop}`;
-  setText($("meter-max"), capIsEnd ? `${padTop} max` : capNearEnd ? both : padTop);
-  // The thresholds above are for a usual bar. On a narrow one (a small phone, long km/h
-  // labels) measure: labels that would touch are merged or dropped instead.
-  const width = $("meter").clientWidth;
-  if (width > 0) {
-    if (!capIsEnd && !capNearEnd) {
-      const capBox = $("meter-cap").getBoundingClientRect();
-      const maxBox = $("meter-max").getBoundingClientRect();
-      if (capBox.right > maxBox.left - 12) {
-        setShown($("meter-cap-at"), false);
-        setText($("meter-max"), both);
-      }
-    }
-    if (minAt * width < 40) setShown($("meter-min-at"), false); // the "0" beside it marks the start
-  }
+  setText($("meter-max"), t.name ? `${padTop} - the pad's top speed` : "");
   setAttr(
     $("meter"),
     "aria-label",
-    `Belt at ${fmt.speedU(t.connected ? t.speed_kmh : 0)}; your maximum is ${fmt.speedU(top)}` +
-      (steering ? `; heading for ${fmt.speedU(g.wanted_kmh)}` : ""),
+    t.connected ? `Belt at ${fmt.speedU(t.speed_kmh)}; the pad's top speed is ${padTop}` : "No reading from the belt",
   );
 }
 
 // ---- session ------------------------------------------------------------------------------
 
-const SESSION_TITLE = { wow: "World of Warcraft session", manual: "Manual session", free: "Free walk" };
+const WALK_TITLE = { wow: "This walk - World of Warcraft", free: "This walk" };
 
 function tile(n, label, value, unit, source) {
   setText($(`t${n}-k`), label);
@@ -190,7 +104,7 @@ function updateSession(s, online) {
   const live = s.session;
   setShown($("howto"), !live);
   if (live) {
-    setText($("session-title"), SESSION_TITLE[live.source] || "Session");
+    setText($("session-title"), WALK_TITLE[live.source] || SOURCE_LABEL[live.source] || "This walk");
     // Without the companion these are the last numbers heard, not a running clock.
     setText($("session-sub"), online ? `since ${fmt.timeOfDay(live.started_at)}` : "last known");
     tile(1, "Time", fmt.clock(live.seconds), "", online ? "belt moving" : "when the companion was last heard");
@@ -229,7 +143,7 @@ function updateSession(s, online) {
   }
   const today = s.totals.today;
   setText($("session-title"), "Today");
-  setText($("session-sub"), online ? "no session running" : "last known");
+  setText($("session-sub"), online ? "no walk being recorded" : "last known");
   tile(1, "Time", fmt.clock(today.seconds), "", "");
   tile(2, "Distance", fmt.dist(today.distance_m), U.distUnit, "");
   tile(3, "Steps", fmt.int(today.steps), "", "");
@@ -244,76 +158,6 @@ function updateSession(s, online) {
       `Last walk: ${fmt.span(lastWalk.seconds)}, ${fmt.distU(lastWalk.distance_m)}, ${fmt.int(lastWalk.steps)} steps, ${fmt.int(lastWalk.kcal)} kcal.`,
     );
   }
-}
-
-// ---- manual control ---------------------------------------------------------------------------
-
-function manualBounds(t) {
-  const hi = Math.min(t.cap_kmh, t.max_kmh);
-  return { lo: Math.min(t.min_kmh, hi), hi };
-}
-
-function manualSpeed(s) {
-  const { lo, hi } = manualBounds(s.treadmill);
-  const now = performance.now();
-  if (manualOverride && now > manualOverride.until) manualOverride = null;
-  const kmh = manualOverride ? manualOverride.kmh : s.source.manual.speed_kmh;
-  return Math.max(lo, Math.min(hi, kmh));
-}
-
-function updateManual(s) {
-  const m = s.source.manual;
-  const t = s.treadmill;
-  const { lo, hi } = manualBounds(t);
-  const kmh = manualSpeed(s);
-  const unit = U.speedUnit;
-
-  setAttr($("manual"), "data-active", m.active ? "true" : "false");
-  setShown($("manual-badge"), m.active);
-  setText(
-    $("manual-intro"),
-    m.active
-      ? "Manual mode is on: the belt holds this speed, and the game signal is ignored until you end the session."
-      : "For any other game, or no game at all: you set the speed here.",
-  );
-  setText($("manual-speed-num"), fmt.speed(kmh));
-  setText($("manual-speed-unit"), unit);
-  setDisabled($("manual-minus"), kmh <= lo + EPS);
-  setDisabled($("manual-plus"), kmh >= hi - EPS);
-  setAttr($("manual-minus"), "aria-label", `Slower by 0.1 ${unit}`);
-  setAttr($("manual-plus"), "aria-label", `Faster by 0.1 ${unit}`);
-
-  let note;
-  if (termsPending(s)) note = "Accept the disclaimer at the top of this page to start a manual session.";
-  else if (!t.connected) note = "Connect the treadmill to start a manual session.";
-  else if (!m.active)
-    note = `Starts the belt after the pad's 3-2-1 countdown, then holds ${fmt.speedU(kmh)}. Overrides the game while it runs.`;
-  else if (m.paused) note = "Paused. Resume to carry on, or end the session.";
-  else note = `Allowed range ${fmt.speed(lo)}-${fmt.speedU(hi)}. End session, or STOP, stops the belt.`;
-  setText($("manual-note"), note);
-
-  setShown($("manual-start"), !m.active);
-  setDisabled($("manual-start"), !t.connected || termsPending(s));
-  setShown($("manual-pause"), m.active && !m.paused);
-  setShown($("manual-resume"), m.active && m.paused);
-  setShown($("manual-stop"), m.active);
-}
-
-function nudgeManual(direction) {
-  if (!last) return;
-  const { lo, hi } = manualBounds(last.treadmill);
-  const current = manualSpeed(last);
-  // Step on the display grid (0.1 mph or 0.1 km/h); the governor then snaps
-  // to whatever grid the pad's firmware really has.
-  const shown = Math.round(U.speed(current) * 10) / 10;
-  const next = Math.max(lo, Math.min(hi, U.toKmh(shown + direction * 0.1)));
-  if (Math.abs(next - current) < EPS) return;
-  manualOverride = { kmh: next, until: performance.now() + 1500 };
-  updateManual(last);
-  post("/api/manual", { action: "speed", speed_kmh: +next.toFixed(6) }).catch((error) => {
-    manualOverride = null;
-    toast(error.message, "error");
-  });
 }
 
 // ---- treadmill ----------------------------------------------------------------------------------
@@ -343,8 +187,8 @@ function updateTreadmill(s, link) {
   setShown(disconnect, t.connected || searching);
   setText(disconnect, t.connected ? "Disconnect" : "Stop searching");
   // Walka is tied to the first treadmill it connected to (so that a second
-  // pad in range can never be driven by mistake). Offer the way out.
-  setShown($("tm-forget"), !!t.pinned && !t.in_use);
+  // pad in range is never listened to by mistake). Offer the way out.
+  setShown($("tm-forget"), !!t.pinned);
   setShown($("tm-sim"), t.kind === "simulated");
 }
 
@@ -407,7 +251,7 @@ function scanTreadmills() {
 // ---- other links ------------------------------------------------------------------------------------
 
 const FLAG_HELP = {
-  ACTIVE: "A walking session is running in game",
+  ACTIVE: "A walking session is marked in game",
   PAUSED: "The session is paused in game",
   MOVING: "The character is moving",
   MOUNTED: "On a mount",
@@ -425,13 +269,13 @@ function updateLinks(s, links, online) {
   const game = links.game;
   const beacon = online ? s.source.beacon : null;
   const frame = online ? s.source.frame : null;
-  setTone($("link-game"), game.ignored && game.tone === "ok" ? "idle" : game.tone);
-  setText($("game-state"), game.ignored ? `${game.pill}, ignored` : game.state);
+  setTone($("link-game"), game.tone);
+  setText($("game-state"), game.state);
   let detail = game.detail;
-  if (beacon && beacon.state === "ok" && frame && !game.ignored) {
+  if (beacon && beacon.state === "ok" && frame) {
     detail = frame.active
-      ? `Session ${frame.session}${frame.paused ? " (paused)" : ""}: character at ${frame.char_speed_yps.toFixed(1)} yd/s, asking the belt for ${fmt.speedU(frame.target_kmh)}.`
-      : "The addon is visible. No session is running in game - type /walka start there.";
+      ? `Session ${frame.session}${frame.paused ? " (paused in game)" : ""}: character at ${frame.char_speed_yps.toFixed(1)} yd/s. Walks are filed under this session.`
+      : "The addon is visible. No session is marked in game - type /walka start there to count your walk for your character.";
   }
   setText($("game-detail"), detail);
   const showFlags = beacon && frame && (beacon.state === "ok" || beacon.state === "frozen");
@@ -494,8 +338,8 @@ function updateLog(s) {
   const key = events.length ? `${events.length}|${events[0].time}` : "";
   if (key === logKey) return;
   logKey = key;
-  // An error that happened while you were looking elsewhere (a stop command
-  // that failed, say) must not sit quietly in a list: raise it.
+  // An error that happened while you were looking elsewhere (a walk that
+  // could not be saved, say) must not sit quietly in a list: raise it.
   if (newestEvent !== null) {
     for (const event of events) {
       if (event.time <= newestEvent) break;
@@ -532,75 +376,29 @@ function updateSetup(s) {
   setTransform($("setup-bar"), `scaleX(${done / names.length})`);
 }
 
-// ---- the disclaimer --------------------------------------------------------------------------------
-
-function updateTerms(s) {
-  const pending = termsPending(s);
-  setShown($("terms"), pending);
-  if (pending) setDisabled($("terms-accept"), !$("terms-check").checked);
-}
-
 // ---- wiring ----------------------------------------------------------------------------------------------
 
 export function initLive() {
-  const manual = (action, extra) => post("/api/manual", { action, ...extra });
-
-  $("terms-check").addEventListener("change", (event) => {
-    setDisabled($("terms-accept"), !event.currentTarget.checked);
-  });
-  $("terms-accept").addEventListener("click", (event) => {
-    if (!$("terms-check").checked) return;
-    // The version of the text that is on this page: the companion refuses another.
-    const version = Number($("terms").dataset.version);
-    run(event.currentTarget, () => post("/api/terms/accept", { version }), {
-      success: "Accepted. Walka can now start and steer the belt.",
-    });
-  });
-
-  $("hero-action").addEventListener("click", (event) => {
-    const button = event.currentTarget;
-    if (heroAction === "resume") run(button, () => post("/api/resume"));
-    else if (heroAction === "manual-resume") run(button, () => manual("resume"));
-    else if (heroAction === "connect") run(button, () => post("/api/treadmill/connect", {}));
-    else if (heroAction === "limits") location.hash = "#settings/set-limits";
-  });
-
-  $("manual-minus").addEventListener("click", () => nudgeManual(-1));
-  $("manual-plus").addEventListener("click", () => nudgeManual(1));
-  $("manual-start").addEventListener("click", (event) =>
-    run(event.currentTarget, () => manual("start", last ? { speed_kmh: +manualSpeed(last).toFixed(6) } : {})),
+  $("hero-action").addEventListener("click", (event) =>
+    run(event.currentTarget, () => post("/api/treadmill/connect", {})),
   );
-  $("manual-pause").addEventListener("click", (event) => run(event.currentTarget, () => manual("pause")));
-  $("manual-resume").addEventListener("click", (event) => run(event.currentTarget, () => manual("resume")));
-  $("manual-stop").addEventListener("click", (event) => run(event.currentTarget, () => manual("stop")));
 
   $("tm-scan").addEventListener("click", scanTreadmills);
   $("tm-connect").addEventListener("click", (event) =>
     run(event.currentTarget, () => post("/api/treadmill/connect", {})),
   );
-  $("tm-disconnect").addEventListener("click", (event) => {
-    // Cutting the link to a belt in use would leave it running with nobody
-    // steering, so Walka stops the belt first (and says so in the activity log).
-    if (last && last.treadmill.connected && last.treadmill.in_use) {
-      toast("The belt is in use: Walka stops it first, then disconnects.", "warn");
-    }
-    run(event.currentTarget, () => post("/api/treadmill/disconnect"));
-  });
+  $("tm-disconnect").addEventListener("click", (event) =>
+    run(event.currentTarget, () => post("/api/treadmill/disconnect")),
+  );
   $("tm-forget").addEventListener("click", (event) =>
     run(event.currentTarget, () => post("/api/treadmill/forget")),
   );
-  $("sim-slower").addEventListener("click", (event) =>
-    run(event.currentTarget, () => post("/api/treadmill/press", { button: "slower" })),
-  );
-  $("sim-faster").addEventListener("click", (event) =>
-    run(event.currentTarget, () => post("/api/treadmill/press", { button: "faster" })),
-  );
-  $("sim-start").addEventListener("click", (event) =>
-    run(event.currentTarget, () => post("/api/treadmill/press", { button: "start" })),
-  );
-  $("sim-stop").addEventListener("click", (event) =>
-    run(event.currentTarget, () => post("/api/treadmill/press", { button: "stop" })),
-  );
+  // The simulated pad's remote (the fieldset is hidden for a real treadmill).
+  for (const button of document.querySelectorAll("#tm-sim [data-press]")) {
+    button.addEventListener("click", () =>
+      run(button, () => post("/api/treadmill/press", { button: button.dataset.press })),
+    );
+  }
 
   $("addon-sync").addEventListener("click", (event) => syncAddon(event.currentTarget));
   $("addon-install").addEventListener("click", (event) => installAddon(event.currentTarget));
@@ -617,10 +415,8 @@ export function updateLive(s, view, links, online) {
   updateHero(s, view, online);
   if (!s) return;
   updateSession(s, online);
-  updateManual(s);
   updateTreadmill(s, links.treadmill);
   updateLinks(s, links, online);
   updateLog(s);
   updateSetup(s);
-  updateTerms(s);
 }

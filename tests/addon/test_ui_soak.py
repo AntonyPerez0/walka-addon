@@ -62,7 +62,7 @@ class Play:
         walka = rt.walka
         # What the companion would read off the screen right now. Every
         # fifth redraw it is one number of the character's journey (a stat
-        # frame); the belt goes by the live frame a tenth of a second later.
+        # frame); the live frame follows a tenth of a second later.
         frame = None
         if rt.db.settings.beacon.enabled:
             decoded = beacon.decode_row(rt.render_beacon_row(0))
@@ -75,14 +75,16 @@ class Play:
                 decoded = beacon.decode_row(rt.render_beacon_row(0))
             frame = decoded.frame
             assert frame is not None, "two stat frames in a row"
-        belt, target = walka.GetLiveSpeed(walka)
-        limits = lua_dict(walka.GetBeltLimits(walka))
-        assert target == 0 or limits["minKmh"] - 1e-6 <= target <= limits["maxKmh"] + 1e-6
-        assert 0 <= belt <= limits["maxKmh"] + 1e-6
+        # The session counts with the walker's pace, or not at all.
+        metrics = rt.ns.Metrics
+        pace = walka.GetPace(walka)
+        assert metrics.MIN_PACE_KMH <= pace <= metrics.MAX_PACE_KMH
+        counting = walka.IsActive(walka) and not walka.IsPaused(walka)
+        assert walka.GetLiveSpeed(walka) == (pace if counting else 0)
         if frame is not None:
             assert frame.has(Flags.ACTIVE) == bool(walka.IsActive(walka))
             assert frame.has(Flags.PAUSED) == bool(walka.IsPaused(walka))
-            assert frame.target_kmh == pytest.approx(target, abs=0.006)
+            assert frame.target_raw == 0, "nothing on the strip asks for a belt speed"
             # AFK: the game's own state (hidden during a chat lockdown), or
             # a session still in its automatic AFK pause.
             current = walka.GetSession(walka)
@@ -176,11 +178,10 @@ def test_ten_minutes_of_mixed_play(full_rt):
     # -- the options, with a session running ----------------------------------------------------
     panel = ui.options(rt)
     play.run(5)
-    ui.slide(rt, ui.slider(rt, panel, "running"), 2.4)
-    ui.slide(rt, ui.slider(rt, panel, "mounted"), 2.8)
+    ui.slide(rt, ui.slider(rt, panel, "My treadmill is set to"), 2.4)
     play.run(10)
-    rt.click(ui.button(rt, panel, "Responsive"))
-    rt.click(ui.checkbox(rt, panel, "In combat, never drop below running pace"))
+    rt.click(ui.checkbox(rt, panel, "Show session messages in chat"))
+    rt.click(ui.checkbox(rt, panel, "Show session messages in chat"))
     ui.type_into(rt, ui.edit_box(rt, panel, "Daily step goal"), "8000")
     ui.slide(rt, ui.slider(rt, panel, "Size"), 1.2)
     ui.slide(rt, ui.slider(rt, panel, "Opacity"), 0.7)
@@ -194,9 +195,9 @@ def test_ten_minutes_of_mixed_play(full_rt):
     # -- a flight path ---------------------------------------------------------------------------
     rt.set(taxi=True, flying=True, speed=32.0)
     play.run(40)
-    rt.click(ui.button(rt, panel, "Follow real speed"))
+    rt.click(ui.button_by_tooltip(rt, hud, "My treadmill is faster"))
     play.run(10)
-    rt.click(ui.button(rt, panel, "Running pace"))
+    rt.click(ui.button_by_tooltip(rt, hud, "My treadmill is slower"))
     rt.set(taxi=False, flying=False, speed=7.0)
     play.run(10)
     rt.M.settings_close()
@@ -207,7 +208,7 @@ def test_ten_minutes_of_mixed_play(full_rt):
     assert walka.IsPaused(walka) and "Paused (AFK)" in ui.texts(rt, hud)
     rt.set(afk=False)                                             # back: a line typed in chat, standing
     play.run(5)
-    assert walka.IsPaused(walka) and "Paused (AFK)" in ui.texts(rt, hud), "the belt stays off until the character moves"
+    assert walka.IsPaused(walka) and "Paused (AFK)" in ui.texts(rt, hud), "the pause lasts until the character moves"
     rt.set(speed=7.0)
     play.run(10)
     assert not walka.IsPaused(walka)
@@ -230,11 +231,11 @@ def test_ten_minutes_of_mixed_play(full_rt):
     rt.set(afk=False)
     rt.M.settings_select(1)                                       # by hand: allowed in combat
     rt.check_errors()
-    ui.slide(rt, ui.slider(rt, panel, "Never faster than"), 2.6)
-    rt.click(ui.checkbox(rt, panel, "Stop the belt when my character stands still"))
+    ui.slide(rt, ui.slider(rt, panel, "My treadmill is set to"), 2.6)
+    rt.click(ui.checkbox(rt, panel, "Pause automatically when I go AFK"))
     rt.set(speed=0, mounted=False)
     play.run(15)
-    rt.click(ui.checkbox(rt, panel, "Stop the belt when my character stands still"))
+    rt.click(ui.checkbox(rt, panel, "Pause automatically when I go AFK"))
     rt.set(speed=7.0)
     play.run(10)
     rt.leave_combat()
@@ -291,7 +292,7 @@ def test_ten_minutes_of_mixed_play(full_rt):
     walka, hud = rt.walka, ui.hud(rt)
     assert walka.IsActive(walka), "the session survives the /reload"
     assert len(lua_list(rt.db.sessions)) == sessions_before
-    assert "Walking" in ui.texts(rt, hud) or "Starting" in ui.texts(rt, hud)
+    assert "Walking" in ui.texts(rt, hud)
     play.run(30)
 
     # -- the rest of the ten minutes: walk, with every window open ---------------------------------
@@ -317,7 +318,7 @@ def test_ten_minutes_of_mixed_play(full_rt):
         elif index % 4 == 3:
             rt.leave_combat()
         if index % 3 == 0:
-            ui.slide(rt, ui.slider(rt, panel, "walking"), 1.2 + (index % 5) / 10)
+            ui.slide(rt, ui.slider(rt, panel, "My treadmill is set to"), 1.2 + (index % 5) / 10)
             rt.M.scroll_wheel(rt.descendants(panel, "ScrollFrame")[0], -1 if index % 2 else 1)
         if index % 5 == 2:
             for widget in rt.descendants(history, "Button", visible=True) + rt.descendants(journey, visible=True):

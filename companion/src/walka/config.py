@@ -11,21 +11,12 @@ from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from pathlib import Path
 from typing import Any
 
-from .governor import Limits
-from .hotkey import parse_hotkey
-from .metrics import KMH_PER_MPH, STEP_CALIBRATION_RANGE, Profile
+from .metrics import STEP_CALIBRATION_RANGE, Profile
 from .treadmill.known import DEFAULT_NAME_PREFIXES, LEGACY_NAME_PREFIXES
 
 log = logging.getLogger(__name__)
 
 CONFIG_FILE = "config.json"
-
-# The disclaimer the dashboard asks to be accepted before the companion
-# starts or steers a real belt: DISCLAIMER.md, and the card that shows it
-# (static/index.html, which carries the same number). Raise it when what the
-# disclaimer says changes in substance - everyone is then asked again.
-TERMS_VERSION = 1
-
 
 def default_data_dir() -> Path:
     """Where config and recorded walks live.
@@ -60,7 +51,6 @@ class TreadmillConfig:
     name_prefixes: list[str] = field(default_factory=lambda: list(DEFAULT_NAME_PREFIXES))
     units: str = "auto"  # firmware speed grid: "auto" | "mph" | "kmh"
     auto_connect: bool = True
-    stop_on_exit: bool = True
 
 
 @dataclass
@@ -87,63 +77,29 @@ class WebConfig:
 
 
 @dataclass
-class ManualConfig:
-    """Dashboard-driven sessions (any game, or no game at all)."""
-
-    speed_kmh: float = 2.0 * KMH_PER_MPH
-
-
-@dataclass
-class TermsConfig:
-    """The walker's acceptance of the disclaimer (see TERMS_VERSION)."""
-
-    accepted_version: int = 0  # 0 = not accepted
-    accepted_at: str = ""  # when: UTC, ISO 8601
-
-
-@dataclass
 class Config:
+    """Everything the companion can be told. (A file written by a version
+    that could still drive a belt holds more - speed limits, a STOP hotkey,
+    the acceptance of that version's disclaimer. Those keys are not read:
+    there is nothing left for them to set.)"""
+
     units: str = "mph"  # dashboard display: "mph" | "kmh"
     profile: Profile = field(default_factory=Profile)
-    # 3.0 mph until the user raises it: a safe ceiling for desk walking.
-    limits: Limits = field(default_factory=lambda: Limits(max_speed_kmh=round(3.0 * KMH_PER_MPH, 2)))
     treadmill: TreadmillConfig = field(default_factory=TreadmillConfig)
     heart_rate: HeartRateConfig = field(default_factory=HeartRateConfig)
     wow: WowConfig = field(default_factory=WowConfig)
     web: WebConfig = field(default_factory=WebConfig)
-    manual: ManualConfig = field(default_factory=ManualConfig)
-    terms: TermsConfig = field(default_factory=TermsConfig)
-    # System-wide key combination that stops the belt from inside a game
-    # (Windows and macOS, where "alt" is the Option key). Empty = off.
-    stop_hotkey: str = "ctrl+alt+x"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
-# The highest speed cap that can be configured: a little over 4.0 mph, the
-# top of a walking pad's desk mode. Walka changes belt speed by itself, under
-# someone who is looking at a game - running speeds are not for that.
-MAX_SPEED_CAP_KMH = 6.5
-
 # Sanity bounds applied to anything loaded from disk or sent by the dashboard,
-# so a typo cannot configure a dangerous belt.
+# so that a typo cannot put nonsense into the numbers of a walk.
 _BOUNDS: dict[tuple[str, str], tuple[float, float]] = {
-    ("limits", "max_speed_kmh"): (0.8, MAX_SPEED_CAP_KMH),
-    ("limits", "accel_kmh_per_s"): (0.05, 1.0),
-    ("limits", "decel_kmh_per_s"): (0.1, 2.0),
-    ("limits", "command_interval_s"): (0.5, 5.0),
-    ("limits", "signal_timeout_s"): (1.0, 15.0),
-    ("limits", "hold_s"): (0.0, 60.0),
-    ("limits", "safe_speed_kmh"): (0.0, 4.0),
-    ("limits", "loss_pause_s"): (0.0, 3600.0),
-    ("limits", "start_grace_s"): (5.0, 60.0),
-    ("limits", "stall_s"): (2.0, 30.0),
-    ("limits", "restart_holdoff_s"): (0.0, 60.0),
     ("profile", "weight_kg"): (30.0, 250.0),
     ("profile", "height_cm"): (120.0, 230.0),
     ("profile", "step_calibration"): STEP_CALIBRATION_RANGE,
-    ("manual", "speed_kmh"): (0.5, MAX_SPEED_CAP_KMH),
     ("wow", "capture_fps"): (2.0, 60.0),
     ("web", "port"): (1.0, 65535.0),
 }
@@ -262,17 +218,14 @@ def is_loopback_host(host: object) -> bool:
 
 def apply_update(config: Config, data: dict[str, Any]) -> Config:
     """Merge a partial dict (from disk or the dashboard) into ``config``."""
-    previous_hotkey = config.stop_hotkey
     _update(config, data)
-    config.stop_hotkey = config.stop_hotkey.strip().lower()
-    if config.stop_hotkey and parse_hotkey(config.stop_hotkey) is None:
-        config.stop_hotkey = previous_hotkey  # not a usable combination: keep the old one
     if config.units not in ("mph", "kmh"):
         config.units = "mph"
     if not is_loopback_host(config.web.host):
-        # The dashboard can start and stop the belt and has no password. On
-        # this computer that is fine; reachable from the network it would hand the
-        # belt to every device on the Wi-Fi.
+        # The dashboard has no password. On this computer that is fine;
+        # reachable from the network it would show your walks, weight and
+        # height to every device on the Wi-Fi - and let any of them change
+        # the settings.
         log.warning("web.host %r is not this computer itself - using 127.0.0.1", config.web.host)
         config.web.host = "127.0.0.1"
     if config.treadmill.kind not in ("ftms", "simulated"):

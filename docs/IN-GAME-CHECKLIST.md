@@ -57,51 +57,61 @@ stats are restricted", which includes combat. Confirm it:
       `/console addonCombatRestrictionsForced 1` (and `0` to undo).
 - [ ] While it is `true`: no Lua errors, `/walka status` says
       *(estimated: hidden in combat)*, the dashboard shows an `ESTIMATED`
-      chip, and the belt target still follows whether you are moving.
+      chip, and the session goes on counting.
 
 If it prints `false` in combat, even better - the estimate is simply never
 used.
 
 ## 5. A session, without the treadmill
 
-- [ ] `/walka start`. The HUD shows *Walking*; run around: the big speed
-      rises towards your running pace over a few seconds, steps and
-      calories count up.
-- [ ] Stand still: after a few seconds the speed eases down to the standing
-      pace.
-- [ ] Pause, resume, stop from the HUD buttons. A chat line summarises the
-      session.
+A session is how you tell Walka "I am walking now". Walka does not start,
+stop or steer the belt: you set its speed at the treadmill, and tell Walka
+what it is (the *pace*) so that its live numbers fit.
+
+- [ ] `/walka start`. The HUD shows *Walking* at once, and a chat line says
+      at which pace the walk is counted (1.5 mph on a fresh install). Time,
+      steps, distance and calories count up, each with a `~`.
+- [ ] Stand still, run, mount up: the big speed on the HUD stays what it
+      is - it is your pace, not your character's - and the numbers keep
+      counting at the same rate.
+- [ ] `/walka pace 2.0`: a chat line confirms it, the HUD shows `2.0`, and
+      the distance now grows faster. `/walka pace` alone says what it is.
+      The small **-** and **+** beside the speed change it by 0.1; their
+      tooltip says that they do not change the belt's speed.
+- [ ] Pause, resume, stop from the HUD buttons: paused, nothing counts; a
+      chat line summarises the session when it is stopped.
 - [ ] `/reload` in the middle of a session: the session is still running
-      afterwards.
+      afterwards, at the same pace.
 - [ ] `/walka history` lists the session; `/walka options` opens the
-      settings page; sliders and checkboxes work.
+      settings page; the *My treadmill is set to* slider, the other sliders
+      and the checkboxes work.
 
 ## 6. The windows
 
-- [ ] HUD: it has a border and a dark fill; the play icon and the small
-      target arrow are triangles, not rectangles; no text is clipped
-      ("Paused (AFK)" fits beside the four buttons, in mph and in km/h).
-- [ ] Right-click the HUD: a menu with *Lock position*, *Keep walking when
-      standing*, *History*, *Journey*, *Road map*, *Options* and *Hide*. All of them
-      work, also in combat (there *Road map* opens Walka's own road window,
-      not the world map: section 8).
+- [ ] HUD: it has a border and a dark fill; the play icon is a triangle,
+      not a rectangle; the small **-** and **+** beside the speed are a bar
+      and a cross; no text is clipped ("Paused (AFK)" fits beside the four
+      buttons, and "10.0 km/h" beside the **-** and **+**).
+- [ ] Right-click the HUD: a menu with *Lock position*, *History*,
+      *Journey*, *Road map*, *Options* and *Hide*. All of them work, also
+      in combat (there *Road map* opens Walka's own road window, not the
+      world map: section 8).
 - [ ] Drag the HUD into a corner, then `/reload`: it is back in the same
       place.
-- [ ] *Keep walking*: tick it (menu, options or `/walka keepwalking on`),
-      run, then stand still - the target eases down to the walking pace and
-      stays there.
-- [ ] `/afk` during a session: "Paused (AFK)". Type something in chat: still
-      paused. Move your character: it resumes.
-- [ ] `/afk` again and leave it for more than ten minutes: a chat line says
-      that the session stays paused until you press Resume, and the HUD
-      says "Paused". Move your character: still paused. Press the play
-      button: it resumes.
+- [ ] `/afk` during a session: "Paused (AFK)", and the numbers stop.
+      Move your character (which also ends AFK): it carries on. Switch
+      *Pause automatically when I go AFK* off in the options and `/afk`
+      again: the session counts on.
+- [ ] `/afk`, then pause by hand (`/walka pause`): the HUD says "Paused",
+      and moving the character does not end that pause - the play button
+      does.
 - [ ] `/walka history`: opens centred; Escape and the X close it; the wheel
       scrolls the list. *Sync* reloads the interface and a running session
       is still running afterwards.
 - [ ] Esc → Options → AddOns → Walka exists; `/walka options` opens it on
       that page; it scrolls; sliders, checkboxes and edit boxes work; the
-      units switch converts every value.
+      units switch converts every value (the pace too: 1.5 mph is
+      2.4 km/h). Nothing on the page offers to set a belt speed.
 - [ ] In combat, `/walka options` prints a "cannot be opened in combat"
       line and nothing else. After Walka has opened the settings window,
       change a keybinding in that same window - if "Interface action failed
@@ -175,9 +185,8 @@ The window:
 And the companion:
 
 - [ ] With the Journey numbers on screen, the dashboard's *Share* page shows
-      the same character, level and steps within about ten seconds, and the
-      belt keeps following the character as before (the *Game signal* stays
-      green).
+      the same character, level and steps within about ten seconds (the
+      *Game signal* stays green).
 
 ## 8. The road map
 
@@ -300,15 +309,25 @@ writes at a `/reload` or logout):
 - [ ] Walk on, `/reload` again: within about a quarter of a minute the
       line on the Share page has grown.
 
-## 9. With the treadmill (after the checks in the README)
+## 9. With the treadmill
 
-- [ ] Stand on the pad, `/walka start`: countdown, belt starts at minimum
-      speed, then follows.
-- [ ] Alt-tab to another window that covers the game's top-left corner:
-      within about 8 seconds the belt slows to the safe speed. Alt-tab
-      back: it follows again.
-- [ ] Press stop on the remote: the belt stays stopped; the dashboard says
-      *stopped at the treadmill*. Pause then resume on the HUD restarts it.
-- [ ] `/walka stop`: the belt stops.
-- [ ] After the walk, `/reload`: the session in `/walka history` now shows
-      measured numbers (no `~`).
+Walka only listens to the treadmill. Start, stop and speed are yours, at
+the pad or with its remote - before, during and after a session.
+
+- [ ] With the companion running and the treadmill connected, start the
+      belt with the remote: the dashboard shows its speed and starts
+      recording a walk. Nothing in the game or on the dashboard changed
+      the belt.
+- [ ] Stand on the pad, `/walka start`, set `/walka pace` to the speed on
+      the treadmill's display: the dashboard's walk now belongs to the game
+      session, and the HUD's distance keeps up with the treadmill's.
+- [ ] `/walka pause`, `/walka resume`, `/walka stop`, going AFK, covering
+      the game's top-left corner with another window, closing the game:
+      **the belt does not react to any of them.** It runs at the speed you
+      set until you stop it at the treadmill.
+- [ ] Change the speed with the remote: the dashboard follows within a
+      second or two; the HUD keeps counting with the pace you gave it
+      until you change that as well.
+- [ ] After the walk, *Sync* in `/walka history` (or `/reload`): the
+      session now shows the treadmill's measured numbers (no `~`), also if
+      the pace you gave was off.

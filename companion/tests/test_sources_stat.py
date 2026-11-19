@@ -1,9 +1,10 @@
-"""Stat frames at the beacon source: handed to ``on_stat``, invisible to the belt.
+"""Stat frames at the beacon source: handed to ``on_stat``, invisible to the
+live reading.
 
 The rule (docs/PROTOCOL.md, "Stat frames"): only live frames feed the
-governor's reading. A stat frame does not make the reading fresh, does not
-count for the frozen-picture check and does not prove that the game is still
-running - to the belt it is as if nothing had been decoded at that moment.
+reading. A stat frame does not make the reading fresh, does not count for
+the frozen-picture check and does not prove that the game is still running
+- to the reading it is as if nothing had been decoded at that moment.
 """
 
 from __future__ import annotations
@@ -19,9 +20,8 @@ import pytest
 from walka import stat_route, trust
 from walka.beacon import Decoded
 from walka.capture import GameWindow, ReadResult
-from walka.governor import Reading
 from walka.protocol import STAT_CYCLE, STAT_EVERY, Flags, Frame, Stat, StatFrame
-from walka.sources import WINDOW_GONE_S, BeaconSource
+from walka.sources import WINDOW_GONE_S, BeaconSource, Reading
 
 WINDOW = GameWindow("World of Warcraft", 10, 20, 1280, 720, r"C:\WoW\_forever_\WowForever.exe")
 
@@ -152,7 +152,7 @@ def test_only_stat_frames_from_the_start_is_no_signal_at_all():
 def test_a_picture_frozen_on_a_stat_frame_is_a_lost_signal():
     """The game hangs (or a loading screen freezes the picture) just while a
     stat frame is on the strip. A valid frame is decoded on every read; the
-    belt must still see the signal age and go."""
+    reading must still age."""
     source = BeaconSource(None, clock=Clock())
     reader = Reader(WINDOW)
     t = 1000.0
@@ -231,7 +231,7 @@ def test_interleaved_stat_frames_do_not_disturb_the_live_reading():
             # One redraw without news: the reading is the previous live frame, 0.1 s old.
             assert reading.age_s == pytest.approx(0.1)
         assert source.frame == last_live
-        assert reading.target_kmh == pytest.approx(last_live.target_kmh)
+        assert reading.session == last_live.session
         assert reading.active and source.status.state == "ok"
     assert live_count == 480 and source.status.frames == 480
     # Every stat arrived, in the order sent, cycle after cycle.
@@ -263,7 +263,7 @@ def test_a_stat_frame_does_not_use_up_a_seq():
 
 
 @pytest.mark.parametrize("seed", range(8))
-def test_to_the_belt_a_stat_frame_is_as_if_nothing_was_decoded(seed: int):
+def test_to_the_reading_a_stat_frame_is_as_if_nothing_was_decoded(seed: int):
     """The whole rule in one property: feed two sources the same eventful
     minutes - live frames, frozen pictures, gaps, the game window coming and
     going - but give one of them stat frames where the other sees nothing.

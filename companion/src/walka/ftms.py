@@ -1,11 +1,18 @@
-"""Bluetooth Fitness Machine Service (FTMS) codec for treadmills.
+"""Bluetooth Fitness Machine Service (FTMS) decoder for treadmills.
 
-Pure data encoding/decoding - no Bluetooth I/O happens here, which keeps it
+Pure data decoding - no Bluetooth I/O happens here, which keeps it
 unit-testable. The BLE transport lives in ``walka.treadmill.ftms_ble``.
 
+Only what a treadmill *says* is here: its data, its status, its features
+and its speed range. The service also has a Fitness Machine Control Point,
+through which an app can start, stop and steer a belt. Walka does not use
+it, and this module has no way to put a command for it together: the
+characteristic is named below so that ``walka probe`` can label it in its
+report, and for nothing else.
+
 References: Bluetooth SIG "Fitness Machine Service 1.0" and the GATT
-Specification Supplement (Treadmill Data, Fitness Machine Control Point,
-Fitness Machine Status, Supported Speed Range, Training Status).
+Specification Supplement (Treadmill Data, Fitness Machine Status, Supported
+Speed Range, Training Status).
 """
 
 from __future__ import annotations
@@ -30,7 +37,7 @@ TREADMILL_DATA = uuid16(0x2ACD)
 TRAINING_STATUS = uuid16(0x2AD3)
 SUPPORTED_SPEED_RANGE = uuid16(0x2AD4)
 SUPPORTED_INCLINATION_RANGE = uuid16(0x2AD5)
-CONTROL_POINT = uuid16(0x2AD9)
+CONTROL_POINT = uuid16(0x2AD9)  # never written to, never listened to: see the top of this file
 FITNESS_MACHINE_STATUS = uuid16(0x2ADA)
 
 HEART_RATE_SERVICE = uuid16(0x180D)
@@ -323,11 +330,6 @@ class MachineFeatures:
     target_settings: int
 
     @property
-    def speed_target_supported(self) -> bool:
-        """Target Setting Features bit 0: Speed Target Setting Supported."""
-        return bool(self.target_settings & 0x0001)
-
-    @property
     def step_count_supported(self) -> bool:
         """Fitness Machine Features bit 6: Step Count Supported."""
         return bool(self.features & 0x0040)
@@ -340,86 +342,12 @@ def parse_features(data: bytes) -> MachineFeatures | None:
     return MachineFeatures(features, targets)
 
 
-# ---- Control Point (0x2AD9) ----------------------------------------------------
+# ---- Fitness Machine Status (0x2ADA) -------------------------------------------
 
 
-class Op(IntEnum):
-    REQUEST_CONTROL = 0x00
-    RESET = 0x01
-    SET_TARGET_SPEED = 0x02
-    SET_TARGET_INCLINATION = 0x03
-    START_OR_RESUME = 0x07
-    STOP_OR_PAUSE = 0x08
-    RESPONSE_CODE = 0x80
-
-
-class ResultCode(IntEnum):
-    SUCCESS = 0x01
-    OP_CODE_NOT_SUPPORTED = 0x02
-    INVALID_PARAMETER = 0x03
-    OPERATION_FAILED = 0x04
-    CONTROL_NOT_PERMITTED = 0x05
-
-
+# The parameter of "stopped or paused by the user": which of the two it was.
 STOP_PARAM = 0x01
 PAUSE_PARAM = 0x02
-
-
-def cmd_request_control() -> bytes:
-    return bytes([Op.REQUEST_CONTROL])
-
-
-def cmd_reset() -> bytes:
-    return bytes([Op.RESET])
-
-
-def cmd_start_or_resume() -> bytes:
-    return bytes([Op.START_OR_RESUME])
-
-
-def cmd_stop() -> bytes:
-    return bytes([Op.STOP_OR_PAUSE, STOP_PARAM])
-
-
-def cmd_pause() -> bytes:
-    return bytes([Op.STOP_OR_PAUSE, PAUSE_PARAM])
-
-
-def cmd_set_target_speed(kmh: float) -> bytes:
-    """Set Target Speed: opcode 0x02 + uint16 little-endian in 0.01 km/h."""
-    raw = max(0, min(0xFFFF, round(kmh * 100)))
-    return struct.pack("<BH", Op.SET_TARGET_SPEED, raw)
-
-
-@dataclass(frozen=True)
-class ControlResponse:
-    request_op: int
-    result: int
-
-    @property
-    def ok(self) -> bool:
-        return self.result == ResultCode.SUCCESS
-
-    def describe(self) -> str:
-        try:
-            op = Op(self.request_op).name
-        except ValueError:
-            op = f"0x{self.request_op:02X}"
-        try:
-            result = ResultCode(self.result).name
-        except ValueError:
-            result = f"0x{self.result:02X}"
-        return f"{op}: {result}"
-
-
-def parse_control_response(data: bytes) -> ControlResponse | None:
-    """Decode a Control Point indication: 0x80, request opcode, result code."""
-    if len(data) < 3 or data[0] != Op.RESPONSE_CODE:
-        return None
-    return ControlResponse(data[1], data[2])
-
-
-# ---- Fitness Machine Status (0x2ADA) -------------------------------------------
 
 
 class StatusOp(IntEnum):

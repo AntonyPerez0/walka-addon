@@ -199,12 +199,12 @@ def test_toc_metadata(rt, snapshot):
 
 
 def test_core_files_do_not_need_the_wow_api(addon_dir):
-    # Protocol, SpeedModel, Metrics, SessionLog and Journey promise to be
+    # Protocol, Metrics, SessionLog and Journey promise to be
     # pure Lua 5.1 so that other tools can run them: load each in a bare Lua
     # state.
     from lupa.lua51 import LuaRuntime
 
-    for name in ("Protocol", "SpeedModel", "Metrics", "SessionLog", "Journey"):
+    for name in ("Protocol", "Metrics", "SessionLog", "Journey"):
         lua = LuaRuntime(unpack_returned_tuples=True)
         lua.execute(
             "for _, name in ipairs({'CreateFrame', 'GetTime', 'date', 'time', 'print', 'wipe', 'tinsert', 'format'}) do _G[name] = nil end"

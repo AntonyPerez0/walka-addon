@@ -8,13 +8,14 @@
 -- settings - so while that happens (`refreshing`) the controls' own handlers
 -- must stay quiet, or a control would answer its own echo.
 --
--- Speeds are stored in km/h whatever the display unit; the sliders work in
+-- The pace is stored in km/h whatever the display unit; its slider works in
 -- the display unit, in steps of 0.1.
 
 local ADDON_NAME, ns = ...
 
 local Walka = ns.Walka
 local Widgets = ns.Widgets
+local Metrics = ns.Metrics
 local COLOR = Widgets.COLOR
 
 local Options = {}
@@ -32,28 +33,12 @@ local CONTROL_X = LEFT + LABEL_WIDTH + 8
 local SCROLL_TOP = -58                -- below the fixed title
 local WHEEL_STEP = 44
 
--- The belt speeds of the mapping, slowest movement first.
-local SPEED_KEYS = { "standKmh", "walkKmh", "runKmh", "mountKmh", "maxKmh" }
-
-local FEEL_PRESETS = {
-    steady = { riseSeconds = 8, fallSeconds = 14, stopHoldSeconds = 6 },
-    balanced = { riseSeconds = 4, fallSeconds = 8, stopHoldSeconds = 4 },
-    responsive = { riseSeconds = 2, fallSeconds = 4, stopHoldSeconds = 2 },
-}
-local FEEL_HELP = {
-    steady = "Slow, smooth changes; keeps your pace for a while when your character stops.",
-    balanced = "A middle course between smooth and quick.",
-    responsive = "Follows your character quickly, with more speed changes.",
-}
-
 local panel               -- the canvas frame
 local category            -- its Settings category
 local built = false
 local buildFailed = false
 local refreshing = false  -- controls are being set from the settings
-local batching = false    -- several settings are being written at once
 local controls = {}
-local rememberedStandKmh  -- last standing pace seen above zero
 
 ----------------------------------------------------------------------------
 -- Values
@@ -64,25 +49,12 @@ local function round(value, decimals)
     return floor(value * factor + 0.5) / factor
 end
 
-local function speedSetting(key)
-    return tonumber(Walka:Get("speed." .. key)) or 0
-end
-
---- Slider range in the display unit: the treadmill's range on the 0.1
--- grid, rounded inwards - a maximum set at the slider's lowest position must
--- not come out below what the belt can do, because then the belt would never
--- start (the maximum wins over the belt's minimum). A limit that misses a
--- grid value by a hair still counts as that value, so a 4.0 mph belt whose
--- limit arrives as 6.43 km/h (3.995 mph) keeps "4.0".
-local RANGE_SLACK = 0.02
-
-local function displayRange()
-    local limits = Walka:GetBeltLimits()
-    local low = math.ceil(Walka:FromKmh(limits.minKmh) * 10 - RANGE_SLACK * 10) / 10
-    local high = floor(Walka:FromKmh(limits.maxKmh) * 10 + RANGE_SLACK * 10) / 10
-    if high <= low then
-        high = low + 0.1
-    end
+--- The pace slider's range in the display unit: what Walka takes for a
+-- pace, on the 0.1 grid and rounded inwards, so that neither end of the
+-- slider is a value that would be refused.
+local function paceRange()
+    local low = math.ceil(Walka:FromKmh(Metrics.MIN_PACE_KMH) * 10 - 1e-6) / 10
+    local high = floor(Walka:FromKmh(Metrics.MAX_PACE_KMH) * 10 + 1e-6) / 10
     return low, high
 end
 
@@ -96,57 +68,6 @@ end
 
 local function formatPixels(value)
     return string.format("%d px", value)
-end
-
---- Pace to go back to when "stop the belt when standing" is unticked.
-local function restoreStandKmh()
-    local kmh = rememberedStandKmh or ns.SpeedModel.DEFAULTS.standKmh
-    return max(kmh, Walka:GetBeltLimits().minKmh)
-end
-
---- Which feel preset the current timings are, or nil for custom ones.
-local function currentFeel()
-    for name, preset in pairs(FEEL_PRESETS) do
-        local same = true
-        for key, value in pairs(preset) do
-            if tonumber(Walka:Get("speed." .. key)) ~= value then
-                same = false
-            end
-        end
-        if same then
-            return name
-        end
-    end
-    return nil
-end
-
---- A sentence about odd speed settings, or "" when all is well.
-local function speedWarning()
-    local stand, walk, run = speedSetting("standKmh"), speedSetting("walkKmh"), speedSetting("runKmh")
-    local mount, cap = speedSetting("mountKmh"), speedSetting("maxKmh")
-    local notes = {}
-    local slack = 0.0005
-    local slowest = Walka:GetBeltLimits().minKmh
-    if cap < slowest - ns.SpeedModel.CAP_TOLERANCE_KMH then
-        -- Possible when the treadmill's range arrives after the maximum was
-        -- chosen. The speed model then keeps the belt stopped.
-        notes[#notes + 1] = string.format(
-            "The maximum is below the slowest speed your treadmill can hold (%s), so the belt will not start.",
-            Walka:FormatSpeed(slowest)
-        )
-    elseif stand > cap + slack or walk > cap + slack or run > cap + slack or mount > cap + slack then
-        notes[#notes + 1] = string.format(
-            "Paces above the maximum are limited to it: the belt will not go faster than %s.",
-            Walka:FormatSpeed(cap)
-        )
-    end
-    if stand > walk + slack then
-        notes[#notes + 1] = "Standing is set faster than walking."
-    end
-    if walk > run + slack then
-        notes[#notes + 1] = "Walking is set faster than running."
-    end
-    return table.concat(notes, " ")
 end
 
 -- Weight and height, shown in lb and feet'inches with mph, kg and cm otherwise.
@@ -231,78 +152,24 @@ local function refreshLive()
     local text
     local session = Walka:GetSession()
     if not session then
-        text = "Start a session (/walka start) to try these settings live."
+        text = "No session is running: nothing is being counted. Start one with /walka start."
     elseif session.paused then
-        text = "The session is paused."
+        text = "The session is paused: nothing is being counted."
     else
-        local beltKmh, targetKmh = Walka:GetLiveSpeed()
-        text = string.format(
-            "Right now: target %s, belt about %s.",
-            Walka:FormatSpeed(targetKmh or 0),
-            Walka:FormatSpeed(beltKmh or 0)
-        )
+        text = string.format("Right now: counting your walk at %s.", Walka:FormatSpeed(Walka:GetLiveSpeed()))
     end
     controls.live:SetText(text)
-end
-
--- Grey out a checkbox (and its label) that currently has no effect.
-local function setCheckEnabled(box, enabled)
-    box:SetEnabled(enabled)
-    local color = enabled and COLOR.white or COLOR.grey
-    box.Text:SetTextColor(color[1], color[2], color[3])
 end
 
 local function refreshControls()
     local mph = Walka:IsMph()
     controls.units:SetValue(mph and "mph" or "kmh")
 
-    -- Speed mapping.
-    local low, high = displayRange()
-    local stand = speedSetting("standKmh")
-    if stand > 0 then
-        rememberedStandKmh = stand
-    end
-    local keepWalking = Walka:Get("speed.keepWalking") == true
-    for _, key in ipairs(SPEED_KEYS) do
-        local slider = controls[key]
-        slider:Setup(low, high, 0.1)
-        if key == "standKmh" and keepWalking then
-            -- Keep walking: standing still uses the walking pace.
-            slider:Display(Walka:FromKmh(speedSetting("walkKmh")))
-            slider:SetEnabled(false)
-        elseif key == "standKmh" and stand <= 0 then
-            -- The belt stops when standing: show what unticking would restore.
-            slider:Display(Walka:FromKmh(restoreStandKmh()))
-            slider:SetEnabled(false)
-        else
-            slider:Display(Walka:FromKmh(speedSetting(key)))
-            slider:SetEnabled(true)
-        end
-    end
-    controls.keepWalking:SetChecked(keepWalking)
-    -- "Stop the belt" is overridden while keep walking is on.
-    controls.stopStanding:SetChecked(stand <= 0 and not keepWalking)
-    setCheckEnabled(controls.stopStanding, not keepWalking)
-    controls.warning:SetText(speedWarning())
+    -- Pace.
+    local low, high = paceRange()
+    controls.pace:Setup(low, high, 0.1)
+    controls.pace:Display(Walka:FromKmh(Walka:GetPace()))
     refreshLive()
-
-    -- Feel.
-    local feel = currentFeel()
-    controls.feel:SetValue(feel)
-    if feel then
-        controls.feelNote:SetText(FEEL_HELP[feel])
-    else
-        controls.feelNote:SetText(string.format(
-            "Custom timings: %s s to speed up, %s s to slow down, %s s hold after a stop.",
-            tostring(Walka:Get("speed.riseSeconds")),
-            tostring(Walka:Get("speed.fallSeconds")),
-            tostring(Walka:Get("speed.stopHoldSeconds"))
-        ))
-    end
-
-    -- Flight paths and combat.
-    controls.taxi:SetValue(Walka:Get("speed.taxiMode"))
-    controls.combatHold:SetChecked(Walka:Get("speed.combatHold") == true)
 
     -- Session.
     controls.autoPause:SetChecked(Walka:Get("autoPauseAFK") ~= false)
@@ -348,17 +215,10 @@ local function refreshControls()
     else
         controls.companion:SetText("Not synced yet - run the companion app, then /reload.")
     end
-    local limits = Walka:GetBeltLimits()
-    controls.limits:SetText(string.format(
-        "Treadmill range: %s to %s (%s).",
-        Walka:FormatSpeed(limits.minKmh, true),
-        Walka:FormatSpeed(limits.maxKmh),
-        limits.fromCompanion and "reported by the companion app" or "assumed until the companion app has synced"
-    ))
 end
 
 local function refresh()
-    if not built or batching or refreshing then
+    if not built or refreshing then
         return
     end
     refreshing = true
@@ -374,21 +234,6 @@ end
 -- Writes: controls -> settings
 ----------------------------------------------------------------------------
 
---- Write several settings and refresh once at the end.
-local function setAll(values)
-    batching = true
-    local ok, err = pcall(function()
-        for path, value in pairs(values) do
-            Walka:Set(path, value)
-        end
-    end)
-    batching = false
-    refresh()
-    if not ok then
-        geterrorhandler()(err)
-    end
-end
-
 -- A handler for a control: ignores the control's own echo during a refresh.
 local function userChange(handler)
     return function(...)
@@ -396,18 +241,6 @@ local function userChange(handler)
             handler(...)
         end
     end
-end
-
-local function setSpeed(key, displayValue)
-    local kmh = round(Walka:ToKmh(displayValue), 3)
-    if key ~= "maxKmh" then
-        -- The maximum is the one hard limit: a pace cannot be set above it.
-        -- (Lowering the maximum leaves the paces alone and shows a note.)
-        kmh = math.min(kmh, speedSetting("maxKmh"))
-    end
-    -- Fires "SETTINGS"; the refresh that follows also puts the slider back
-    -- if it was dragged past the limit.
-    Walka:Set("speed." .. key, kmh)
 end
 
 ----------------------------------------------------------------------------
@@ -426,7 +259,7 @@ local function build()
     local subtitle = Widgets.Text(
         panel,
         "GameFontHighlightSmall",
-        "Your walking pad follows your character. All speeds on this page are belt speeds.",
+        "Walka counts your walk while you play. The belt's speed is set at the treadmill, not here.",
         "LEFT"
     )
     subtitle:SetPoint("TOPLEFT", panel, "TOPLEFT", LEFT, -36)
@@ -543,85 +376,17 @@ local function build()
         Walka:Set("units", value)
     end)
 
-    -- Speed mapping ---------------------------------------------------------
-    header("Speed mapping")
-    note("How fast should the belt go when your character is...")
-    controls.standKmh = sliderRow("standing still", function(value)
-        setSpeed("standKmh", value)
-    end, formatSpeed)
-    controls.keepWalking = checkRow("Keep walking when my character stands still", function(checked)
-        Walka:Set("speed.keepWalking", checked)
-    end, CONTROL_X)
-    y = y + 2
-    local keepNote = Widgets.Text(
-        content,
-        "GameFontHighlightSmall",
-        "Stops cost no steps: the belt holds your walking pace.",
-        "LEFT"
-    )
-    keepNote:SetTextColor(COLOR.grey[1], COLOR.grey[2], COLOR.grey[3])
-    place(keepNote, CONTROL_X + 26, 12, 8)
-    controls.stopStanding = checkRow("Stop the belt when my character stands still", function(checked)
-        Walka:Set("speed.standKmh", checked and 0 or restoreStandKmh())
-    end, CONTROL_X)
-    y = y + 2
-    local restartNote = Widgets.Text(
-        content,
-        "GameFontHighlightSmall",
-        "Every restart costs the treadmill's 3-second countdown.",
-        "LEFT"
-    )
-    restartNote:SetTextColor(COLOR.grey[1], COLOR.grey[2], COLOR.grey[3])
-    place(restartNote, CONTROL_X + 26, 12, 8)
-    controls.walkKmh = sliderRow("walking", function(value)
-        setSpeed("walkKmh", value)
-    end, formatSpeed)
-    controls.runKmh = sliderRow("running", function(value)
-        setSpeed("runKmh", value)
-    end, formatSpeed)
-    controls.mountKmh = sliderRow("mounted", function(value)
-        setSpeed("mountKmh", value)
-    end, formatSpeed)
-    y = y - 4
-    controls.maxKmh = sliderRow("Never faster than", function(value)
-        setSpeed("maxKmh", value)
-    end, formatSpeed)
-    controls.warning = note("", 2, COLOR.amber)
-    controls.live = note("")
-
-    -- Feel ------------------------------------------------------------------
-    header("Feel")
-    controls.feel = choiceRow("How the belt follows you", {
-        { value = "steady", text = "Steady", width = 92 },
-        { value = "balanced", text = "Balanced", width = 92 },
-        { value = "responsive", text = "Responsive", width = 92 },
-    }, function(value)
-        local values = {}
-        for key, seconds in pairs(FEEL_PRESETS[value]) do
-            values["speed." .. key] = seconds
-        end
-        setAll(values)
-    end)
-    controls.feelNote = note("")
-
-    -- Flight paths and combat -------------------------------------------------
-    header("Flight paths and combat")
-    controls.taxi = choiceRow("On flight paths", {
-        { value = "run", text = "Running pace", width = 100 },
-        { value = "stand", text = "Standing pace", width = 104 },
-        { value = "follow", text = "Follow real speed", width = 120,
-            tooltip = "Uses the flight's real speed, which usually means your maximum." },
-    }, function(value)
-        Walka:Set("speed.taxiMode", value)
-    end)
-    controls.combatHold = checkRow("In combat, never drop below running pace", function(checked)
-        Walka:Set("speed.combatHold", checked)
-    end)
+    -- Your pace ---------------------------------------------------------------
+    header("Your pace")
     note(
-        "The game hides your exact speed from addons while you are in combat, so Walka estimates it "
-            .. "from whether you are moving.",
+        "The speed your treadmill is set to. Walka cannot see the belt from inside the game, so its live "
+            .. "numbers are counted with this pace. What the treadmill measured replaces them after /reload.",
         2
     )
+    controls.pace = sliderRow("My treadmill is set to", function(value)
+        Walka:SetPace(Walka:ToKmh(value))
+    end, formatSpeed)
+    controls.live = note("")
 
     -- Session ---------------------------------------------------------------
     header("Session")
@@ -716,18 +481,6 @@ local function build()
     -- Companion app ---------------------------------------------------------------
     header("Companion app")
     controls.companion = note("")
-    controls.limits = note("")
-    y = y - 4
-    local reset = Widgets.Button(content, "Reset speed settings", 170, function()
-        Walka:ResetSpeedSettings()
-        Walka:Print("speed settings are back to their defaults.")
-    end)
-    place(reset, LEFT, 22, 0)
-    Widgets.Tooltip(
-        reset,
-        "Reset speed settings",
-        "Puts the speed mapping, feel, flight-path and combat settings back to their defaults."
-    )
 
     content:SetHeight(-y + 16)
     updateScroll()

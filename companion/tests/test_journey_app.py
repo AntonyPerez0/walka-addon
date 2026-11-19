@@ -1,6 +1,6 @@
 """The journey numbers in the running companion: wired to the beacon, served
 to the dashboard, saved with the companion's state, made up by the demo -
-and never part of what the belt is driven by."""
+and never part of the live reading that says which walk is which."""
 
 from __future__ import annotations
 
@@ -18,9 +18,8 @@ from test_journey import JAINA, NOW, THRALL, Clock, journey_of
 from walka import cli, journey, web
 from walka.app import TICK_S, App
 from walka.config import Config
-from walka.governor import Phase
 from walka.journey import DemoJourney, JourneyBook, JourneyCollector
-from walka.protocol import STAT_CYCLE, STAT_EVERY, Flags, Frame, Stat, StatFrame, kmh_to_raw
+from walka.protocol import STAT_CYCLE, STAT_EVERY, Flags, Frame, Stat, StatFrame
 from walka.sources import BeaconSource
 from walka.treadmill.simulated import SimulatedTreadmill
 
@@ -74,28 +73,29 @@ def test_an_app_without_a_beacon_still_has_a_book(tmp_path: Path):
 # ---- the guard: a stat frame is never part of the live reading ---------------------------------------
 
 
-def belt_view(rig: Rig) -> dict:
-    """Everything that decides, or shows, what the belt does."""
+def live_view(rig: Rig) -> dict:
+    """Everything that decides, or shows, which walk is being recorded."""
     snapshot = rig.app.snapshot()
     return {
         "reading": rig.app._last_reading,
         "frame": rig.beacon.frame,
         "beacon": rig.beacon.status.to_dict(),
-        "governor": snapshot["governor"],
         "source": snapshot["source"],
         "belt": (rig.treadmill.status.state, rig.treadmill.status.speed_kmh),
         "session": snapshot["session"],
-        "recorder": None if rig.app.recorder is None else rig.app.recorder.beacon_session,
+        "recorder": None if rig.app.recorder is None else (rig.app.recorder.source, rig.app.recorder.beacon_session),
+        "walks": [(record.source, record.beacon_session, record.seconds) for record in rig.app.store.records],
     }
 
 
-def test_stat_frames_never_change_what_the_belt_does(tmp_path: Path):
-    """Two companions get the same live frames. One of them also gets stat
-    frames - before, between and instead of the live ones. At every tick the
-    two must agree on everything about the belt."""
+def test_stat_frames_never_change_what_is_recorded(tmp_path: Path):
+    """Two companions get the same live frames, and the same walk on their
+    pads. One of them also gets stat frames - before, between and instead
+    of the live ones. At every tick the two must agree on everything about
+    the walk."""
     plain, mixed = Rig(tmp_path / "plain"), Rig(tmp_path / "mixed")
     rounds = [*THRALL.items(), *THRALL.items()]
-    phases: set[Phase] = set()
+    kinds: set[str | None] = set()
     sent = 0
 
     def stat_frame(seq: int) -> StatFrame:
@@ -118,12 +118,16 @@ def test_stat_frames_never_change_what_the_belt_does(tmp_path: Path):
         for rig in (plain, mixed):
             await rig.app.tick()
             rig.treadmill.advance(TICK_S)
-        assert belt_view(mixed) == belt_view(plain)
-        phases.add(mixed.app.governor.phase)
+        assert live_view(mixed) == live_view(plain)
+        kinds.add(None if mixed.app.recorder is None else mixed.app.recorder.source)
 
-    def live(seq: int, *, active: bool = True, target: float = 3.2, moving: bool = True) -> Frame:
+    def live(seq: int, *, active: bool = True, moving: bool = True) -> Frame:
         flags = (Flags.ACTIVE if active else Flags(0)) | (Flags.MOVING if moving else Flags(0))
-        return Frame(seq=seq % 256, session=1 if active else 0, flags=flags, target_raw=kmh_to_raw(target))
+        return Frame(seq=seq % 256, session=1 if active else 0, flags=flags)
+
+    def press(button: str, *args: float) -> None:
+        for rig in (plain, mixed):
+            getattr(rig.treadmill, f"press_{button}")(*args)
 
     async def scenario():
         await plain.connect()
@@ -132,23 +136,27 @@ def test_stat_frames_never_change_what_the_belt_does(tmp_path: Path):
         for _ in range(10):  # standing in the world, no session
             seq += 1
             await step(live(seq, active=False), stats_before=1, stats_after=1)
-        for i in range(300):  # a session: the belt starts and follows
+        press("start")
+        for i in range(300):  # a session, and a walk
             seq += 1
-            await step(live(seq, target=3.2 if i < 150 else 2.4), stats_before=i % 2, stats_after=1)
+            if i == 150:
+                press("speed", 3.2)
+            await step(live(seq), stats_before=i % 2, stats_after=1)
         assert mixed.treadmill.status.speed_kmh > 2.0
         # The live frames stop. One companion sees nothing at all, the other
-        # a healthy stream of stat frames: to the belt that is the same.
-        # (Long enough for the whole of it: hold, slow down, and at last pause.)
-        for _ in range(700):
+        # a healthy stream of stat frames: to the recording that is the same.
+        for i in range(700):
+            if i == 300:
+                press("stop")
             await step(None, stats_before=1, stats_after=2)
         assert mixed.treadmill.status.speed_kmh == 0.0
-        for i in range(100):  # the signal is back
+        for i in range(100):  # the signal is back, and the session ends
             seq += 1
-            await step(live(seq, moving=i > 20), stats_after=1)
+            await step(live(seq, active=i < 50, moving=i > 20), stats_after=1)
 
     asyncio.run(scenario())
-    # The run really went through a start and every stage of a lost signal ...
-    assert {Phase.IDLE, Phase.FOLLOWING, Phase.HOLDING, Phase.SAFE} <= phases and len(phases) >= 5
+    # The run really went through a walk in a session and its filing ...
+    assert kinds == {None, "wow"} and [r.source for r in mixed.app.store.records] == ["wow"]
     # ... and the stat frames really arrived, and were collected.
     assert sent > 1000
     assert [found.name for found in mixed.app.journeys.journeys()] == ["Thrall"]
@@ -156,13 +164,12 @@ def test_stat_frames_never_change_what_the_belt_does(tmp_path: Path):
     assert mixed.beacon.status.frames == plain.beacon.status.frames
 
 
-def test_a_stream_of_stat_frames_alone_starts_nothing(rig: Rig):
+def test_a_stream_of_stat_frames_alone_is_no_session(rig: Rig):
     async def scenario():
         await rig.connect()
         for _ in range(4):
             send_round(rig, THRALL)
             await rig.app.tick()
-        assert rig.app.governor.phase is Phase.IDLE
         assert rig.treadmill.status.speed_kmh == 0.0
         assert rig.app.recorder is None
         assert rig.beacon.frame is None and rig.app.source_kind() == "none"
@@ -171,11 +178,11 @@ def test_a_stream_of_stat_frames_alone_starts_nothing(rig: Rig):
     assert len(rig.app.journeys.journeys()) == 1
 
 
-def test_the_journey_code_has_no_way_to_the_belt():
-    """journey.py is given numbers and nothing else: it must not even import
-    the parts that drive the treadmill."""
+def test_the_journey_code_is_given_numbers_and_nothing_else():
+    """journey.py must not even import the parts that listen to the
+    treadmill or record the walk."""
     source = Path(journey.__file__).read_text("utf-8")
-    for module in ("governor", "treadmill", "sources", "app", "session", "ftms"):
+    for module in ("treadmill", "sources", "app", "session", "ftms"):
         assert f"from .{module}" not in source and f"import {module}" not in source, module
 
 

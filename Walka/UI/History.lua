@@ -481,7 +481,7 @@ local function funLine()
 end
 
 local EMPTY_TEXT = "No walks yet.\n\nStart one with /walka start or the play button on the HUD.\n"
-    .. "The belt then follows your character, and the session shows up here when you stop."
+    .. "Walka then counts your walk, and the session shows up here when you stop."
 local EMPTY_TEXT_WALKING = "Your first session is under way.\n\nIt shows up here when you stop it."
 
 local function showSessions()

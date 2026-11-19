@@ -12,11 +12,11 @@ import re
 import pytest
 
 from . import ui_driver as ui
-from .conftest import KMH_PER_MPH, MPH_STEP, nearest_step
+from .conftest import DEFAULT_PACE_KMH, KMH_PER_MPH
 from .harness import lua_list, lua_plain
 from .test_ui import COMPANION, NOW, SYNCED, history_saved
 
-STATES = {"Off", "Starting", "Waiting", "Walking", "Paused", "Paused (AFK)"}
+STATES = {"Off", "Walking", "Paused", "Paused (AFK)"}
 HUD_WIDTH = 224
 BAR_WIDTH = HUD_WIDTH - 18
 
@@ -37,12 +37,13 @@ def full_rt(ui_rt, make_rt):
     )
 
 
-def pace_shown(rt, key: str, unit: str = "mph") -> str:
-    """One of the default paces ("standKmh", "runKmh", ...) as the HUD
-    shows it once the belt is there: on the treadmill's 0.1 mph grid (the
-    belt assumed for an enUS client), in mph or in km/h."""
-    kmh = nearest_step(rt.ns.SpeedModel.DEFAULTS[key], MPH_STEP)
-    return f"{kmh / KMH_PER_MPH:.1f}" if unit == "mph" else f"{kmh:.1f}"
+def speed_colour(rt) -> tuple:
+    """The colour of the HUD's big number (the pace)."""
+    for font_string in ui.font_strings(rt, ui.hud(rt), visible=True):
+        info = rt.inspect(font_string)
+        if re.fullmatch(r"\d+\.\d", ui.plain(info.get("text") or "")):
+            return tuple(round(font_string.GetTextColor(font_string)[index], 2) for index in range(3))
+    raise AssertionError("the HUD shows no pace")
 
 
 def redraw(rt):
@@ -56,8 +57,8 @@ def view(rt) -> dict:
     shown = ui.texts(rt, ui.hud(rt))
     out: dict = {"all": shown, "estimate_mark": "~" in shown}
     numbers = [text for text in shown if re.fullmatch(r"\d+\.\d", text)]
-    out["speed"] = numbers[0] if numbers else None
-    out["heading_for"] = numbers[1] if len(numbers) > 1 else None
+    assert len(numbers) == 1, "one speed on the HUD: the pace - no second one that a belt would be heading for"
+    out["speed"] = numbers[0]
     for text in shown:
         if text in STATES:
             out["state"] = text
@@ -107,10 +108,9 @@ def goal_bar(rt) -> tuple[dict, dict]:
 def test_idle_hud_shows_todays_totals(rt):
     shown = view(rt)
     assert shown["state"] == "Off" and shown["caption"] == "Today"
-    assert shown["speed"] == "0.0" and shown["unit"] == "mph"
+    assert shown["speed"] == "1.5" and shown["unit"] == "mph", "the pace a session would count with"
     assert (shown["steps"], shown["kcal"], shown["distance"], shown["time"]) == ("0 steps", "0 kcal", "0.00 mi", "0:00")
-    assert not shown["estimate_mark"], "no belt estimate to mark without a session"
-    assert shown["heading_for"] is None
+    assert not shown["estimate_mark"], "nothing is being estimated without a session"
 
 
 def test_idle_hud_adds_up_todays_walks_from_both_sources(full_rt):
@@ -132,51 +132,57 @@ def test_measured_only_totals_are_not_marked_as_estimates(ui_rt, make_rt):
 
 def test_a_session_from_start_to_stop(rt):
     walka = rt.walka
+    idle_colour = speed_colour(rt)
     rt.set(speed=7.0)
     rt.slash("/walka start")
-    # Straight away - before any tick - the HUD knows the belt is about to
-    # start; it must not claim to be "waiting" for the character.
+    # Straight away - before any tick - the HUD shows a walk being counted:
+    # there is no belt to wait for.
     started = view(rt)
-    assert started["state"] == "Starting" and started["caption"] == "This session"
-    assert started["estimate_mark"] and started["speed"] == "0.0"
-    standing, running = pace_shown(rt, "standKmh"), pace_shown(rt, "runKmh")
-    assert 0.6 <= float(standing) < float(running)
-    assert started["heading_for"] == standing, "the pace the belt will start at is shown as the target"
+    assert started["state"] == "Walking" and started["caption"] == "This session"
+    assert started["estimate_mark"] and started["speed"] == "1.5"
     assert (started["steps"], started["time"]) == ("~0 steps", "0:00")
+    assert speed_colour(rt) != idle_colour, "the pace is no longer greyed out"
 
-    rt.tick(20)
-    assert view(rt)["state"] == "Starting", "still in the treadmill's 3-second countdown"
-
-    rt.tick(40)                 # 6 s in: the belt is moving and speeding up
-    moving = view(rt)
-    assert moving["state"] == "Walking"
-    assert 0.6 <= float(moving["speed"]) < float(running)
-    assert moving["heading_for"] is not None
-    assert float(moving["speed"]) < float(moving["heading_for"]) <= float(running)
-
-    rt.tick(600)                # a minute later it has settled at the running pace
+    rt.tick(600)                # a minute later: the same pace, a minute counted
     redraw(rt)
     settled = view(rt)
-    assert settled["state"] == "Walking" and settled["speed"] == running
-    assert settled["heading_for"] is None, "no target hint once the belt is where it should be"
+    assert settled["state"] == "Walking" and settled["speed"] == "1.5"
     assert {key: settled[key] for key in ("steps", "kcal", "distance", "time")} == session_texts(rt)
-    assert settled["time"] == "1:03"
+    assert settled["time"] == "1:00"
+    # A minute at 1.5 mph is a fortieth of a mile.
+    assert walka.GetSession(walka).distanceM == pytest.approx(1609.344 / 40, rel=0.0005)
 
     # It keeps counting on the UI tick.
     before = settled
     rt.tick(100)
     redraw(rt)
     after = view(rt)
-    assert after["time"] == "1:13"
+    assert after["time"] == "1:10"
     assert int(after["steps"][1:].split()[0]) > int(before["steps"][1:].split()[0])
     assert after == {**after, **session_texts(rt)}
 
     rt.slash("/walka stop")
     stopped = view(rt)
-    assert stopped["state"] == "Off" and stopped["caption"] == "Today" and stopped["speed"] == "0.0"
+    assert stopped["state"] == "Off" and stopped["caption"] == "Today" and stopped["speed"] == "1.5"
+    assert speed_colour(rt) == idle_colour
     record = lua_list(rt.db.sessions)[0]
     assert stopped["steps"] == "~" + walka.FormatNumber(walka, record.steps) + " steps", "today's total is the walk just finished"
     assert stopped["time"] == walka.FormatDuration(walka, record.seconds)
+
+
+def test_the_hud_never_shows_a_speed_the_character_decides(rt):
+    """Running, riding, flying or standing: the one speed on the HUD is the
+    pace the walker set."""
+    rt.slash("/walka start")
+    for state in ({"speed": 0}, {"speed": 7.0}, {"speed": 14.0, "mounted": True}, {"speed": 30.0, "taxi": True}):
+        rt.set(mounted=False, taxi=False)
+        rt.set(**state)
+        rt.tick(100)
+        redraw(rt)
+        shown = view(rt)
+        assert (shown["state"], shown["speed"]) == ("Walking", "1.5"), state
+    words = ui.page(rt, ui.hud(rt)).lower()
+    assert "target" not in words and "starting" not in words and "waiting" not in words
 
 
 def test_hud_redraws_on_the_ui_tick_not_only_on_events(rt):
@@ -194,30 +200,28 @@ def test_paused_by_hand(rt):
     rt.set(speed=7.0)
     rt.slash("/walka start")
     rt.tick(300)
+    walking_colour = speed_colour(rt)
     rt.slash("/walka pause")
     paused = view(rt)
     assert paused["state"] == "Paused" and paused["caption"] == "This session"
-    assert paused["heading_for"] is None
+    assert paused["speed"] == "1.5" and speed_colour(rt) != walking_colour, "the pace, in another colour"
+    # Nothing is counted from the moment of the pause.
     rt.tick(100)
     redraw(rt)
     later = view(rt)
-    assert later["state"] == "Paused" and later["speed"] == "0.0", "the belt estimate coasts to a stop"
-    # The belt coasted for a moment after the pause; then nothing moves.
+    assert later["state"] == "Paused"
+    assert {key: later[key] for key in ("steps", "kcal", "distance", "time")} == {
+        key: paused[key] for key in ("steps", "kcal", "distance", "time")
+    }
+    assert later["time"] == "0:30"
+    rt.slash("/walka resume")
+    assert view(rt)["state"] == "Walking" and speed_colour(rt) == walking_colour
     rt.tick(100)
     redraw(rt)
-    assert {key: view(rt)[key] for key in ("steps", "kcal", "distance", "time")} == {
-        key: later[key] for key in ("steps", "kcal", "distance", "time")
-    }
-    rt.slash("/walka resume")
-    assert view(rt)["state"] == "Starting"
-    rt.tick(60)
-    assert view(rt)["state"] == "Walking"
+    assert view(rt)["time"] == "0:40"
 
 
-AFK_HELP = (
-    "You went AFK, so the session is paused. It resumes when your character moves - "
-    "for ten minutes; after that, press the play button."
-)
+AFK_HELP = "You went AFK, so the session is paused. It carries on when your character moves."
 
 
 def test_paused_because_afk(rt):
@@ -232,10 +236,8 @@ def test_paused_because_afk(rt):
     assert view(rt)["state"] == "Paused (AFK)"
     rt.set(afk=False, speed=7.0)
     rt.tick(3)
-    assert view(rt)["state"] in ("Starting", "Walking")
-    assert AFK_HELP not in ui.tooltip(rt, ui.hud(rt))
-    rt.tick(60)
     assert view(rt)["state"] == "Walking"
+    assert AFK_HELP not in ui.tooltip(rt, ui.hud(rt))
 
 
 def test_still_paused_for_afk_until_the_character_moves(rt):
@@ -248,18 +250,15 @@ def test_still_paused_for_afk_until_the_character_moves(rt):
     rt.set(afk=False)               # back at the keyboard, the character still standing
     rt.tick(100)
     redraw(rt)
-    waiting = view(rt)
-    assert waiting["state"] == "Paused (AFK)" and waiting["speed"] == "0.0" and waiting["heading_for"] is None
+    assert view(rt)["state"] == "Paused (AFK)"
     assert ui.tooltip(rt, frame)[1] == AFK_HELP, "the HUD says what will resume the session"
     play = ui.button_by_tooltip(rt, frame, "Resume")
     assert ui.tooltip(rt, play)[0] == "Resume", "... and the button still offers to do it by hand"
 
     rt.set(speed=7.0)               # the character moves
     rt.tick(3)
-    assert view(rt)["state"] == "Starting"
-    assert AFK_HELP not in ui.tooltip(rt, frame)
-    rt.tick(60)
     assert view(rt)["state"] == "Walking"
+    assert AFK_HELP not in ui.tooltip(rt, frame)
 
 
 def test_a_pause_by_hand_during_an_afk_pause_shows_as_paused(rt):
@@ -279,50 +278,7 @@ def test_a_pause_by_hand_during_an_afk_pause_shows_as_paused(rt):
     redraw(rt)
     assert view(rt)["state"] == "Paused", "moving does not resume it"
     rt.click(ui.button_by_tooltip(rt, frame, "Resume"))
-    assert view(rt)["state"] == "Starting"
-
-
-def test_waiting_when_the_belt_stops_for_a_standing_character(rt):
-    rt.walka.Set(rt.walka, "speed.standKmh", 0)
-    rt.set(speed=0)
-    rt.slash("/walka start")
-    assert view(rt)["state"] == "Waiting"
-    rt.tick(100)
-    waiting = view(rt)
-    assert waiting["state"] == "Waiting" and waiting["speed"] == "0.0" and waiting["heading_for"] is None
-    assert any("standing still" in line for line in ui.tooltip(rt, ui.hud(rt)))
-    rt.set(speed=7.0)
-    rt.tick(10)
-    assert view(rt)["state"] == "Starting"
-    rt.tick(50)
     assert view(rt)["state"] == "Walking"
-    rt.set(speed=0)
-    rt.tick(600)
-    assert view(rt)["state"] == "Waiting"
-
-
-def test_waiting_because_of_the_settings_is_not_blamed_on_standing_still(ui_rt, make_rt):
-    # A maximum below what the treadmill can do keeps the belt stopped
-    # however fast the character runs.
-    rt = make_rt(files={"CompanionData.lua": COMPANION}, state={"clock": NOW})
-    rt.walka.Set(rt.walka, "speed.maxKmh", 0.8)
-    rt.set(speed=7.0)
-    rt.slash("/walka start")
-    rt.tick(100)
-    assert view(rt)["state"] == "Waiting"
-    explanation = ui.tooltip(rt, ui.hud(rt))[1]
-    assert "standing still" not in explanation and "speed settings" in explanation
-    # The same on a flight path ridden at a standing pace of zero.
-    rt.walka.Set(rt.walka, "speed.maxKmh", 4.8)
-    rt.walka.Set(rt.walka, "speed.standKmh", 0)
-    rt.walka.Set(rt.walka, "speed.taxiMode", "stand")
-    rt.set(taxi=True, speed=30.0)
-    rt.tick(600)
-    assert view(rt)["state"] == "Waiting"
-    assert "speed settings" in ui.tooltip(rt, ui.hud(rt))[1]
-    rt.set(taxi=False, speed=0)
-    rt.tick(30)
-    assert "standing still" in ui.tooltip(rt, ui.hud(rt))[1]
 
 
 def test_units(rt):
@@ -330,14 +286,96 @@ def test_units(rt):
     rt.slash("/walka start")
     rt.tick(700)
     redraw(rt)
-    assert (view(rt)["unit"], view(rt)["speed"]) == ("mph", pace_shown(rt, "runKmh"))
+    assert (view(rt)["unit"], view(rt)["speed"]) == ("mph", "1.5")
     assert view(rt)["distance"].endswith(" mi")
     rt.slash("/walka units kmh")
     metric = view(rt)       # at once: a settings change redraws the HUD
-    assert pace_shown(rt, "runKmh", "km/h") != pace_shown(rt, "runKmh"), "the same belt speed reads differently"
-    assert (metric["unit"], metric["speed"]) == ("km/h", pace_shown(rt, "runKmh", "km/h"))
+    assert (metric["unit"], metric["speed"]) == ("km/h", "2.4"), "the same pace reads differently"
     assert metric["distance"].endswith(" km")
     assert "mph" not in ui.page(rt, ui.hud(rt))
+
+
+# ---- the pace ----------------------------------------------------------------------------------
+# The two small buttons beside the speed say what the treadmill is set to.
+# They change what Walka counts with - never a belt.
+
+
+def pace_buttons(rt):
+    frame = ui.hud(rt)
+    return ui.button_by_tooltip(rt, frame, "My treadmill is slower"), ui.button_by_tooltip(rt, frame, "My treadmill is faster")
+
+
+def test_the_pace_buttons_change_the_pace_by_a_tenth(rt):
+    walka = rt.walka
+    slower, faster = pace_buttons(rt)
+    assert walka.GetPace(walka) == DEFAULT_PACE_KMH
+    rt.click(faster)
+    assert walka.GetPace(walka) == round(1.6 * KMH_PER_MPH, 3) and view(rt)["speed"] == "1.6", "shown at once"
+    rt.click(faster)
+    rt.click(faster)
+    assert view(rt)["speed"] == "1.8"
+    rt.click(slower)
+    assert walka.GetPace(walka) == round(1.7 * KMH_PER_MPH, 3) and view(rt)["speed"] == "1.7"
+    assert rt.reload().db.settings.paceKmh == round(1.7 * KMH_PER_MPH, 3)
+
+
+def test_the_pace_buttons_say_that_they_do_not_move_the_belt(rt):
+    for button in pace_buttons(rt):
+        title, body = ui.tooltip(rt, button)
+        assert title in ("My treadmill is slower", "My treadmill is faster")
+        assert body == (
+            "Tells Walka what your treadmill is set to, so that its estimate fits. "
+            "It does not change the belt's speed."
+        )
+
+
+def test_the_pace_buttons_change_what_a_running_session_counts_with(rt):
+    walka = rt.walka
+    slower, faster = pace_buttons(rt)
+    rt.set(speed=7.0)
+    rt.slash("/walka start")
+    rt.tick(100)
+    before = walka.GetSession(walka).distanceM
+    for _ in range(5):
+        rt.click(faster)                    # 2.0 mph
+    assert view(rt)["speed"] == "2.0" and view(rt)["state"] == "Walking"
+    rt.tick(100)
+    assert walka.GetSession(walka).distanceM - before == pytest.approx(2.0 * KMH_PER_MPH / 3.6 * 10, rel=0.001)
+    assert rt.live_frame().target_raw == 0, "the buttons send nothing to the companion"
+
+
+def test_the_pace_buttons_work_in_the_unit_on_display(rt):
+    walka = rt.walka
+    slower, faster = pace_buttons(rt)
+    rt.slash("/walka units kmh")
+    assert view(rt)["speed"] == "2.4"       # 2.414 km/h
+    rt.click(faster)
+    assert walka.GetPace(walka) == 2.5, "onto the grid of tenths in km/h, then along it"
+    rt.click(faster)
+    assert walka.GetPace(walka) == 2.6
+    rt.click(slower)
+    rt.click(slower)
+    rt.click(slower)
+    assert walka.GetPace(walka) == 2.3 and view(rt)["speed"] == "2.3"
+
+
+@pytest.mark.parametrize("units, lowest, highest", [("mph", "0.4", "6.2"), ("kmh", "0.5", "10.0")])
+def test_the_pace_buttons_stop_at_the_ends_of_a_walking_pace(rt, units, lowest, highest):
+    walka = rt.walka
+    metrics = rt.ns.Metrics
+    slower, faster = pace_buttons(rt)
+    rt.slash("/walka units " + units)
+    for _ in range(120):
+        rt.click(slower)
+    assert view(rt)["speed"] == lowest and walka.GetPace(walka) >= metrics.MIN_PACE_KMH
+    assert rt.inspect(slower)["disabled"] and not rt.inspect(faster)["disabled"]
+    assert rt.click(slower) is False
+    for _ in range(120):
+        rt.click(faster)
+    assert view(rt)["speed"] == highest and walka.GetPace(walka) <= metrics.MAX_PACE_KMH
+    assert rt.inspect(faster)["disabled"] and not rt.inspect(slower)["disabled"]
+    rt.click(slower)
+    assert not rt.inspect(faster)["disabled"]
 
 
 def test_live_today_figure_does_not_count_the_session_twice(full_rt):
@@ -359,7 +397,9 @@ def test_live_today_figure_does_not_count_the_session_twice(full_rt):
 def test_buttons_are_what_their_tooltips_say(rt):
     frame = ui.hud(rt)
     titles = [ui.tooltip(rt, button)[0] for button in rt.descendants(frame, "Button", visible=True)]
-    assert sorted(titles) == ["History", "Options", "Start walking", "Stop"]
+    assert sorted(titles) == [
+        "History", "My treadmill is faster", "My treadmill is slower", "Options", "Start walking", "Stop",
+    ]
     for button in rt.descendants(frame, "Button", visible=True):
         box, window = ui.rect(rt, button), ui.rect(rt, frame)
         assert ui.inside(box, window), "a HUD button sticks out of the HUD"
@@ -380,7 +420,7 @@ def test_play_pause_resume_and_stop_buttons(rt):
     play = ui.button_by_tooltip(rt, frame, "Start walking")
     rt.click(play)
     assert walka.IsActive(walka) and not walka.IsPaused(walka)
-    assert view(rt)["state"] == "Starting"
+    assert view(rt)["state"] == "Walking"
     assert not rt.inspect(stop)["disabled"]
     assert ui.tooltip(rt, play)[0] == "Pause", "the same button now pauses"
 
@@ -472,8 +512,44 @@ def test_tooltip_explains_the_state_and_the_data(full_rt):
     rt.slash("/walka start")
     rt.tick(100)
     lines = ui.tooltip(rt, ui.hud(rt))
-    assert "the belt follows your character" in lines[1]
-    assert any(line.startswith("Target speed: ") and line.endswith(" mph.") for line in lines)
+    assert lines[1] == "A session is running: Walka counts your walk at the pace shown."
+    assert lines[2] == (
+        "Your pace: 1.5 mph - what you have told Walka your treadmill is set to. "
+        "Walka does not set the belt's speed: you do."
+    )
+    assert not any("target" in line.lower() or "follows your character" in line for line in lines)
+
+
+def test_no_tooltip_of_the_hud_claims_to_move_the_belt(rt):
+    """Every tooltip of the HUD and its buttons, in every session state:
+    the one thing they may say about the belt's speed is that Walka does not
+    change it."""
+    frame = ui.hud(rt)
+
+    def read_all():
+        lines = list(ui.tooltip(rt, frame))
+        for button in rt.descendants(frame, "Button", visible=True):
+            lines += ui.tooltip(rt, button)
+        return lines
+
+    seen = read_all()
+    rt.set(speed=7.0)
+    rt.slash("/walka start")
+    rt.tick(50)
+    seen += read_all()
+    rt.slash("/walka pause")
+    seen += read_all()
+    rt.slash("/walka resume")
+    rt.set(afk=True, speed=0)
+    rt.tick(5)
+    seen += read_all()
+    for line in seen:
+        lowered = line.lower()
+        for claim in ("follows your character", "stops the belt", "belt is stopped", "belt restarts", "countdown",
+                      "target", "keep walking"):
+            assert claim not in lowered, line
+    assert any("does not change the belt's speed" in line for line in seen)
+    assert any("The belt is yours to start, at the treadmill." in line for line in seen)
 
 
 def test_tooltip_opens_towards_the_middle_of_the_screen(rt):
@@ -499,7 +575,7 @@ def test_right_click_menu(rt):
     frame = ui.hud(rt)
     walka = rt.walka
     assert ui.context_menu(rt, frame) == [
-        "title:Walka", "checkbox:Lock position:false", "checkbox:Keep walking when standing:false",
+        "title:Walka", "checkbox:Lock position:false",
         "button:History", "button:Journey", "button:Road map", "button:Options", "divider:", "button:Hide",
     ]
     ui.menu_click(rt, "Lock position")
@@ -855,6 +931,7 @@ def test_no_text_is_cut_off_at_the_hud_s_size(full_rt):
     rt.tick(5)
     session = walka.GetSession(walka)
     session.steps, session.kcal, session.distanceM, session.seconds = 123456, 12345, 99990, 86399
+    walka.SetPace(walka, 10)            # the widest pace there is: "10.0 km/h"
     redraw(rt)
     assert view(rt)["state"] == "Paused (AFK)"
     window = ui.rect(rt, frame)
@@ -868,3 +945,9 @@ def test_no_text_is_cut_off_at_the_hud_s_size(full_rt):
     steps = next(box for text, box in by_text.items() if text.endswith(" steps"))
     kcal = next(box for text, box in by_text.items() if text.endswith(" kcal"))
     assert not ui.overlap(steps, kcal)
+    # ... and the pace buttons stay clear of everything written on the HUD.
+    for button in pace_buttons(rt):
+        box = ui.rect(rt, button)
+        assert ui.inside(box, window)
+        for text, other in by_text.items():
+            assert other is None or not text or not ui.overlap(box, other), f"a pace button covers {text!r}"

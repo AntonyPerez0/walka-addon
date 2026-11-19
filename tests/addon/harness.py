@@ -529,13 +529,13 @@ class WowRuntime:
         return beacon.decode_cells(self.beacon_cells())
 
     def live_frame(self) -> Frame:
-        """The live frame on the strip, as the companion's belt control
-        reads it.
+        """The live frame on the strip, as the companion reads the state
+        of the session.
 
         Every fifth redraw carries one number of the character's journey
-        instead (a stat frame, docs/PROTOCOL.md section 4), which the belt
-        control ignores: it goes by the next live frame, a tenth of a second
-        later. So does this - if a stat frame is showing, one more tick is
+        instead (a stat frame, docs/PROTOCOL.md section 4), which says
+        nothing of the session: the companion goes by the next live frame, a
+        tenth of a second later. So does this - if a stat frame is showing, one more tick is
         let pass. (Two stat frames never follow each other.)"""
         frame = self.shown_frame()
         if isinstance(frame, StatFrame):

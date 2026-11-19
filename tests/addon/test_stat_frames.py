@@ -91,33 +91,31 @@ def test_stat_frames_are_sent_without_a_session_and_with_one(rt):
 
 def test_the_tick_does_all_its_work_on_a_stat_redraw_too(rt):
     """Only the picture differs on a stat redraw: the character is still
-    sampled, the session still counts, the target still follows."""
+    sampled and the session still counts."""
     walka = rt.walka
     rt.set(speed=7.0)
     rt.slash("/walka start")
-    rt.tick(100)                                    # the belt is moving and still speeding up
+    rt.tick(100)
     for _ in range(20):
-        before = walka.GetSession(walka).seconds
-        target_before = walka.GetLiveSpeed(walka)[1]
+        before = lua_plain(walka.GetSession(walka))
         rt.tick()
         frame = rt.shown_frame()
-        assert walka.GetSession(walka).seconds == pytest.approx(before + 0.1)
+        after = lua_plain(walka.GetSession(walka))
+        assert after["seconds"] == pytest.approx(before["seconds"] + 0.1)
+        assert after["yards"] == pytest.approx(before["yards"] + 0.7)
+        assert after["steps"] > before["steps"]
         if isinstance(frame, Frame):
-            # The live frame after a stat frame is up to date, not a repeat.
-            assert frame.target_raw == protocol.kmh_to_raw(walka.GetLiveSpeed(walka)[1])
             assert frame.has(Flags.ACTIVE | Flags.MOVING)
-        else:
-            assert walka.GetLiveSpeed(walka)[1] >= target_before
     # A pause that falls on a stat redraw is on the strip one redraw later.
     while not isinstance(rt.shown_frame(), StatFrame):
         rt.tick()
     rt.tick(4)
     rt.slash("/walka pause")
     rt.tick()
-    assert isinstance(rt.shown_frame(), StatFrame) and walka.GetLiveSpeed(walka)[1] == 0
+    assert isinstance(rt.shown_frame(), StatFrame) and walka.GetLiveSpeed(walka) == 0
     rt.tick()
     frame = rt.shown_frame()
-    assert isinstance(frame, Frame) and frame.paused and frame.target_raw == 0
+    assert isinstance(frame, Frame) and frame.paused
 
 
 def test_state_seen_only_on_a_stat_redraw_still_reaches_the_journey(rt):
@@ -319,10 +317,10 @@ def test_a_hidden_beacon_keeps_the_schedule(rt):
 
 
 @pytest.mark.parametrize("cell_px", [2, 4, 5])
-def test_the_companion_reads_a_round_off_the_screen_and_the_belt_reading_stays_live(make_rt, cell_px):
+def test_the_companion_reads_a_round_off_the_screen_and_the_session_reading_stays_live(make_rt, cell_px):
     """The rendered pixels go through the companion's decoder into its
-    BeaconSource: the stats come out of `on_stat`, in order, and the reading
-    the belt is driven by is only ever a live frame's."""
+    BeaconSource: the stats come out of `on_stat`, in order, and its reading
+    of the session is only ever a live frame's."""
     rt = make_rt(saved_variables=saved(own(NOW - 90000)), state={"physicalWidth": 2560, "physicalHeight": 1440})
     rt.walka.Set(rt.walka, "beacon.cellPx", cell_px)
     rt.set(speed=7.0)

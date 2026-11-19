@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from walka import beacon
 
-from .conftest import KMH_PER_MPH, MPH_STEP, nearest_step
+from .conftest import DEFAULT_PACE_KMH, KMH_PER_MPH
 from .harness import lua_plain
 
 LB = 0.45359237
@@ -153,32 +153,110 @@ def test_bad_units_are_refused(rt, text):
     assert "usage" in last(rt)
 
 
-def test_units_change_the_belt_grid(rt):
+def test_units_change_what_is_shown_not_what_is_counted(rt):
     walka = rt.walka
-    limits = lua_plain(walka.GetBeltLimits(walka))
-    assert limits["stepKmh"] == pytest.approx(MPH_STEP)
-    assert limits["minKmh"] == pytest.approx(0.6 * KMH_PER_MPH)
     rt.set(speed=7.0)
     rt.slash("/walka start")
-    rt.tick(400)
-    # The running pace in whole tenths of a mph ...
-    running = walka.Get(walka, "speed.runKmh")
-    in_mph, in_kmh = nearest_step(running, MPH_STEP), nearest_step(running, 0.1)
-    assert abs(in_mph - in_kmh) > 0.01, "the two grids give different targets for this pace"
-    assert walka.GetLiveSpeed(walka)[1] == pytest.approx(in_mph, abs=1e-6)
-    rt.slash("/walka units kmh")
-    limits = lua_plain(walka.GetBeltLimits(walka))
-    assert (limits["minKmh"], limits["maxKmh"], limits["stepKmh"]) == (1.0, 6.0, 0.1)
-    # ... and in whole tenths of a km/h; the setting itself is untouched.
     rt.tick(100)
-    assert walka.GetLiveSpeed(walka)[1] == pytest.approx(in_kmh, abs=1e-6)
-    assert walka.Get(walka, "speed.runKmh") == running
+    rt.slash("/walka units kmh")
+    assert walka.GetPace(walka) == walka.GetLiveSpeed(walka) == DEFAULT_PACE_KMH
+    rt.tick(100)
+    assert walka.GetSession(walka).distanceM == pytest.approx(DEFAULT_PACE_KMH / 3.6 * 20)
+    assert walka.GetBeltLimits is None, "no unit decides what a treadmill can do any more"
 
 
 def test_default_units_follow_the_client_language(make_rt):
     assert settings(make_rt(state={"locale": "enUS"}))["units"] == "mph"
     assert settings(make_rt(state={"locale": "deDE"}))["units"] == "kmh"
     assert settings(make_rt(state={"locale": "frFR"}))["units"] == "kmh"
+
+
+# ---- pace -----------------------------------------------------------------------------
+# The speed the walker's treadmill is set to. It is told to Walka; Walka
+# sets nothing.
+
+
+def test_pace_alone_says_what_it_is(rt):
+    rt.slash("/walka pace")
+    assert last(rt) == (
+        rt.walka.PREFIX + "your pace is 1.5 mph - what Walka counts your walk with. "
+        "Change it with /walka pace <speed>, to what your treadmill is set to."
+    )
+    assert settings(rt)["paceKmh"] == DEFAULT_PACE_KMH
+    rt.slash("/walka units kmh")
+    rt.slash("/walka pace")
+    assert "your pace is 2.4 km/h" in last(rt)
+
+
+@pytest.mark.parametrize(
+    "units, text, kmh, said",
+    [
+        ("mph", "2.0", 3.219, "2.0 mph"),
+        ("mph", "2", 3.219, "2.0 mph"),
+        ("mph", "1.8mph", 2.897, "1.8 mph"),
+        ("mph", "  2.5 MPH ", 4.023, "2.5 mph"),
+        ("mph", "3.5kmh", 3.5, "2.2 mph"),          # another unit than the display's, if it is said
+        ("mph", "3.5 km/h", 3.5, "2.2 mph"),
+        ("mph", "0.4", 0.644, "0.4 mph"),
+        ("mph", "6.2", 9.978, "6.2 mph"),
+        ("kmh", "3.5", 3.5, "3.5 km/h"),
+        ("kmh", "0.5", 0.5, "0.5 km/h"),
+        ("kmh", "10", 10, "10.0 km/h"),
+        ("kmh", "2 mph", 3.219, "3.2 km/h"),
+        ("kmh", "4.26 kmh", 4.26, "4.3 km/h"),
+    ],
+)
+def test_pace_sets_what_walka_counts_with(rt, units, text, kmh, said):
+    rt.slash("/walka units " + units)
+    rt.slash("/walka pace " + text)
+    assert settings(rt)["paceKmh"] == kmh
+    assert last(rt) == (
+        f"{rt.walka.PREFIX}pace set to {said}. (This is what Walka counts with; the belt's speed is set at the treadmill.)"
+    )
+    rt.slash("/walka start")
+    rt.tick(300)
+    assert rt.walka.GetSession(rt.walka).distanceM == pytest.approx(kmh / 3.6 * 30)
+    assert rt.live_frame().target_raw == 0, "the pace is not sent anywhere"
+
+
+@pytest.mark.parametrize(
+    "text",
+    ["fast", "-2", "1.2.3", "nan", "inf", "2 furlongs", "5'11", "2 knots", "1e999", "mph", "0x10"],
+)
+def test_bad_pace_is_refused_and_changes_nothing(rt, text):
+    rt.slash("/walka pace " + text)
+    assert settings(rt)["paceKmh"] == DEFAULT_PACE_KMH
+    assert "pace set" not in last(rt)
+    assert "usage: /walka pace" in last(rt)
+
+
+@pytest.mark.parametrize("text", ["0", "0.2", "0.3", "6.3", "12", "400", "0.4kmh", "11 km/h", "7mph"])
+def test_a_pace_that_is_no_walking_pace_is_refused(rt, text):
+    rt.slash("/walka pace " + text)
+    assert settings(rt)["paceKmh"] == DEFAULT_PACE_KMH
+    assert last(rt) == rt.walka.PREFIX + "that pace looks wrong - Walka counts with 0.3 mph to 6.2 mph."
+
+
+def test_pace_survives_a_reload(rt):
+    rt.slash("/walka pace 2.2")
+    fresh = rt.reload()
+    assert fresh.db.settings.paceKmh == pytest.approx(2.2 * KMH_PER_MPH, abs=0.0005)
+    fresh.slash("/walka pace")
+    assert "your pace is 2.2 mph" in last(fresh)
+
+
+def test_the_commands_that_set_belt_speeds_are_gone(rt):
+    """/walka keepwalking held the belt's pace when the character stopped.
+    There is no such thing to hold: the command is no longer known, and like
+    any unknown command it prints the help - in which nothing is said about
+    it."""
+    before = settings(rt)
+    for command in ("keepwalking on", "keepwalking", "keep off"):
+        rt.clear_printed()
+        rt.slash("/walka " + command)
+        assert len(rt.printed) >= 8 and all("/walka" in line for line in rt.printed), "the help"
+        assert not any("keepwalking" in line or "keep walking" in line for line in rt.printed)
+    assert settings(rt) == before
 
 
 # ---- beacon ---------------------------------------------------------------------------
@@ -223,7 +301,8 @@ def test_status_idle(rt):
     first, second = rt.printed
     assert "session off" in first
     assert "character 7.0 yd/s" in first and "estimated" not in first
-    assert "target 0.0 mph" in first and "belt (est.) 0.0 mph" in first
+    assert first.endswith("| counting at 0.0 mph (your pace: 1.5 mph)")
+    assert "target" not in first and "belt" not in first
     assert "no companion data yet" in second
 
 
@@ -233,9 +312,8 @@ def test_status_during_a_session_and_in_combat(rt):
     rt.tick(300)
     rt.clear_printed()
     rt.slash("/walka status")
-    running_mph = nearest_step(rt.ns.SpeedModel.DEFAULTS.runKmh, MPH_STEP) / KMH_PER_MPH
     assert "session active" in rt.printed[0]
-    assert f"target {running_mph:.1f} mph | belt (est.) {running_mph:.1f} mph" in rt.printed[0]
+    assert rt.printed[0].endswith("| counting at 1.5 mph (your pace: 1.5 mph)")
     rt.enter_combat()
     rt.tick()
     rt.slash("/walka pause")
@@ -243,6 +321,7 @@ def test_status_during_a_session_and_in_combat(rt):
     rt.slash("/walka status")
     assert "session paused" in rt.printed[0]
     assert "(estimated: hidden in combat)" in rt.printed[0]
+    assert rt.printed[0].endswith("| counting at 0.0 mph (your pace: 1.5 mph)")
 
 
 def test_status_before_the_first_tick(rt):
@@ -260,12 +339,13 @@ def test_unknown_command_prints_help(rt):
     rt.slash("/walka frobnicate")
     assert len(rt.printed) >= 8
     assert all(line.startswith("|cff4fc3f7Walka|r: /walka") for line in rt.printed)
-    for word in ("start", "history", "journey", "options", "status", "weight", "height", "units", "beacon"):
+    for word in ("start", "pace", "history", "journey", "options", "status", "weight", "height", "units", "beacon"):
         assert any(word in line for line in rt.printed), word
     assert (
         "|cff4fc3f7Walka|r: /walka journey - your character's journey so far: level, time played, "
         "your steps and its steps"
     ) in rt.printed
+    assert "|cff4fc3f7Walka|r: /walka pace 1.5 - the speed your treadmill is set to, for the live estimate" in rt.printed
 
 
 @pytest.mark.parametrize("command", ["help", "?"])

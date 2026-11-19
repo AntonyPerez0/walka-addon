@@ -3,8 +3,8 @@
 
 import { $, U, api, del, fmt, h, icon, run, setShown, setText, toast } from "./util.js";
 import { SessionChart, WeekChart } from "./charts.js";
+import { SOURCE_LABEL } from "./status.js";
 
-const SOURCE = { wow: "World of Warcraft", manual: "Manual", free: "Pad remote" };
 const FIRST_PAGE = 200;
 const ALL = 2000;
 
@@ -108,7 +108,7 @@ function cell(value, unit, unitClass = "unit") {
 function rowLabel(walk) {
   const parts = [
     fmt.dateTime(walk.start),
-    SOURCE[walk.source] || walk.source,
+    SOURCE_LABEL[walk.source] || walk.source,
     fmt.span(walk.seconds),
     fmt.distU(walk.distance_m),
     `${fmt.int(walk.steps)} steps`,
@@ -239,7 +239,7 @@ function renderList() {
           "aria-label": rowLabel(walk),
         },
         h("span", { class: "when", text: fmt.dateTime(walk.start) }),
-        h("span", { class: "src", text: SOURCE[walk.source] || walk.source }),
+        h("span", { class: "src", text: SOURCE_LABEL[walk.source] || walk.source }),
         cell(fmt.clock(walk.seconds)),
         cell(fmt.dist(walk.distance_m), U.distUnit),
         cell(fmt.int(walk.steps), "steps", "unit narrow-only"),

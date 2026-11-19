@@ -3,10 +3,9 @@
 A WoW addon cannot read files or receive anything from outside while the
 game runs. What it *can* do is load Lua files from its own folder at login
 and on ``/reload`` - the same trick TradeSkillMaster, WeakAuras Companion
-and Raider.IO use. So the companion writes its measured sessions, the body
-profile and the treadmill's limits to ``Walka/CompanionData.lua`` as one
-global table, and the addon merges it into its history next time the UI
-loads.
+and Raider.IO use. So the companion writes its measured sessions and the
+body profile to ``Walka/CompanionData.lua`` as one global table, and the
+addon merges it into its history next time the UI loads.
 
 This module also finds the game's AddOns folder and installs the addon.
 """
@@ -149,7 +148,6 @@ def build_payload(
     records: Iterable[SessionRecord],
     *,
     profile: dict[str, Any],
-    limits: dict[str, Any] | None,
     treadmill_name: str = "",
     now: float | None = None,
 ) -> dict[str, Any]:
@@ -165,7 +163,6 @@ def build_payload(
         "version": DATA_VERSION,
         "written": int(time.time() if now is None else now),
         "profile": profile,
-        "limits": limits,
         "treadmill": treadmill_name or None,
         "sessions": [_session_entry(r) for r in reversed(listed)],  # newest first
     }
@@ -222,11 +219,10 @@ def sync(
     store: SessionStore,
     *,
     profile: dict[str, Any],
-    limits: dict[str, Any] | None,
     treadmill_name: str = "",
 ) -> Path:
-    """Write the current history, profile and limits for the addon."""
-    payload = build_payload(store.records, profile=profile, limits=limits, treadmill_name=treadmill_name)
+    """Write the current history and profile for the addon."""
+    payload = build_payload(store.records, profile=profile, treadmill_name=treadmill_name)
     return write_data_file(addon_dir, payload)
 
 

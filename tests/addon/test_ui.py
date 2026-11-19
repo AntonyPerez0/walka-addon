@@ -17,7 +17,7 @@ from walka import beacon
 from walka.protocol import Flags
 
 from .conftest import KMH_PER_MPH, local_noon
-from .harness import lua_dict, lua_list, lua_plain
+from .harness import lua_list, lua_plain
 
 NOW = local_noon(2026, 11, 17)
 DAY = 86400
@@ -67,8 +67,8 @@ def visible(rt, name) -> bool:
 
 
 def settings_are_sane(rt) -> None:
-    """Every number in the saved settings is finite, and the speed model
-    still produces a target the belt can run."""
+    """Every number in the saved settings is finite, and the pace is still
+    one a session can count with."""
 
     def walk(value, path):
         if isinstance(value, float):
@@ -81,9 +81,10 @@ def settings_are_sane(rt) -> None:
                 walk(item, f"{path}[{index + 1}]")
 
     walk(lua_plain(rt.db.settings), "settings")
-    limits = lua_dict(rt.walka.GetBeltLimits(rt.walka))
-    target = rt.walka.GetLiveSpeed(rt.walka)[1]
-    assert target == 0 or limits["minKmh"] - 1e-6 <= target <= limits["maxKmh"] + 1e-6
+    metrics = rt.ns.Metrics
+    pace = rt.walka.GetPace(rt.walka)
+    assert metrics.MIN_PACE_KMH <= pace <= metrics.MAX_PACE_KMH
+    assert rt.walka.GetLiveSpeed(rt.walka) in (0, pace)
 
 
 def history_saved(count: int) -> str:
@@ -101,6 +102,8 @@ def history_saved(count: int) -> str:
 # for the treadmill's numbers (a session from *before* the companion's last
 # look that it has no walk for would count for nothing: see
 # SessionLog.unconfirmed, and test_ui_history.test_a_session_that_does_not_count).
+# (The file has a `limits` table, as one written by a companion older than
+# 0.7 does: no window may make anything of it.)
 SYNCED = NOW - 70 * 20000
 
 COMPANION = f"""
@@ -697,48 +700,33 @@ def test_random_use_never_breaks_anything(full_rt, seed):
     assert fresh.find_secrets() == []
 
 
-def test_the_cap_set_on_the_options_page_is_the_cap_the_belt_gets(ui_rt):
-    # The page shows mph, stores km/h, and the speed model works on the
-    # treadmill's 0.1 mph grid: "never faster than 1.0 mph" must mean 1.0.
+def test_the_pace_set_on_the_options_page_is_the_pace_the_session_counts_with(ui_rt):
+    # The page shows mph and stores km/h: "my treadmill is set to 2.0 mph"
+    # must count two miles to the hour, to the thousandth of a km/h.
     rt = ui_rt
     panel = open_options(rt)
     walka = rt.walka
-    cap_slider = None
+    pace_slider = None
     for slider in rt.descendants(panel, "Slider", visible=True):
-        before = walka.Get(walka, "speed.maxKmh")
+        before = walka.GetPace(walka)
         low, high = slider.GetMinMaxValues(slider)
         rt.M.slide(slider, low + (high - low) * 0.37)
         rt.check_errors()
-        if walka.Get(walka, "speed.maxKmh") != before:
-            cap_slider = slider
+        if walka.GetPace(walka) != before:
+            pace_slider = slider
             break
-    assert cap_slider is not None, "no slider on the options page changes the speed cap"
-    walka.ResetSpeedSettings(walka)         # undo what the search moved
-    rt.tick(3)
-    defaults = rt.ns.SpeedModel.DEFAULTS
-    default_cap_mph = round(defaults.maxKmh / KMH_PER_MPH, 1)       # what the page shows for it
-    assert cap_slider.GetValue(cap_slider) == pytest.approx(default_cap_mph)
+    assert pace_slider is not None, "no slider on the options page changes the pace"
+    low, high = pace_slider.GetMinMaxValues(pace_slider)
+    assert (low, high) == (pytest.approx(0.4), pytest.approx(6.2)), "0.5 to 10 km/h, in whole tenths of a mph"
 
-    # A mounted pace above every cap tried here, so that the cap decides.
-    walka.Set(walka, "speed.mountKmh", 6.0)
-    rt.set(speed=14.0, mounted=True)
     rt.slash("/walka start")
-    rt.tick(900)
-    target_mph = rt.walka.GetLiveSpeed(walka)[1] / KMH_PER_MPH
-    assert target_mph == pytest.approx(default_cap_mph, abs=0.005), "the default cap, as the page shows it"
-    for mph in (1.0, 1.5, 2.3, 0.8, 3.1):
-        rt.M.slide(cap_slider, mph)
+    for mph in (2.0, 1.0, 3.3, 0.4, 6.2):
+        rt.M.slide(pace_slider, mph)
         rt.check_errors()
-        rt.tick(900)
-        assert rt.walka.GetLiveSpeed(walka)[1] / KMH_PER_MPH == pytest.approx(mph, abs=0.005), f"cap {mph} mph"
-
-    # With the default paces the cap only matters once it is below one.
-    walka.ResetSpeedSettings(walka)
-    mounted_mph = round(defaults.mountKmh / KMH_PER_MPH, 1)
-    assert mounted_mph < default_cap_mph
-    rt.tick(900)
-    assert rt.walka.GetLiveSpeed(walka)[1] / KMH_PER_MPH == pytest.approx(mounted_mph, abs=0.005)
-    rt.M.slide(cap_slider, mounted_mph - 0.3)
-    rt.check_errors()
-    rt.tick(900)
-    assert rt.walka.GetLiveSpeed(walka)[1] / KMH_PER_MPH == pytest.approx(mounted_mph - 0.3, abs=0.005)
+        assert walka.GetPace(walka) == round(mph * KMH_PER_MPH, 3)
+        before = walka.GetSession(walka).distanceM
+        rt.tick(100)
+        walked = walka.GetSession(walka).distanceM - before
+        assert walked == pytest.approx(mph * KMH_PER_MPH / 3.6 * 10, rel=0.0005), f"{mph} mph"
+    # Nothing on the page sets a speed for a belt: the strip asks for none.
+    assert rt.live_frame().target_raw == 0

@@ -1,8 +1,9 @@
-"""Where stat frames leave the road to the belt.
+"""Where stat frames part from the live reading.
 
 The beacon shows two kinds of frame (see ``protocol``): live frames, which
-the belt follows, and now and then a stat frame, which carries one number of
-the character's journey for the picture the dashboard makes. ``BeaconSource``
+say what the character and its walking session are doing right now, and now
+and then a stat frame, which carries one number of the character's journey
+for the picture the dashboard makes. ``BeaconSource``
 sends everything it reads through here first, and this module keeps one
 rule (docs/PROTOCOL.md, "Stat frames"):
 
@@ -10,9 +11,9 @@ rule (docs/PROTOCOL.md, "Stat frames"):
 
 It does not make the reading fresh, it does not count as "a frame was seen"
 for the frozen-picture check, and it does not prove that the game is still
-running. To the belt, a moment in which the strip shows a stat frame is a
-moment without news - so a picture that froze on a stat frame is a lost
-signal like any other, and the belt slows and stops as it should.
+running. To the live reading, a moment in which the strip shows a stat
+frame is a moment without news - so a picture that froze on a stat frame is
+a lost signal like any other.
 
 The numbers themselves go to whoever asked for them (``BeaconSource.on_stat``)
 and to nobody else.
@@ -39,7 +40,7 @@ _complained = False  # a failing handler is reported once, not twice a second
 
 def live_only(result: Any, handler: StatHandler | None) -> Any:
     """What one read of the screen (a ``capture.ReadResult`` or None) means to
-    the belt.
+    the live reading.
 
     A read that decoded a live frame, or nothing, is returned as it is. A
     read that decoded a stat frame is handed to ``handler`` and replaced by
@@ -66,7 +67,7 @@ def deliver(stat: StatFrame | None, handler: StatHandler | None) -> None:
 
     Stats this build does not know are dropped: a newer addon may send some.
     Whatever the handler does wrong stays here - a fault in the journey
-    numbers must not stop the thread that the belt's signal comes from.
+    numbers must not stop the thread that reads the screen.
     """
     known = stat.stat if stat is not None else None
     if handler is None or stat is None or known is None:

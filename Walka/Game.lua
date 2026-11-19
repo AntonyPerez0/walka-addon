@@ -115,8 +115,8 @@ local state = {
 --
 -- The game's own flag is the best answer - but inside dungeons, raids and
 -- battlegrounds (and during encounters) this client hides it from addons.
--- "Hidden" must not be read as "not AFK": a belt would then run on with
--- nobody on it for the whole raid break. There the addon keeps its own
+-- "Hidden" must not be read as "not AFK": a session would then count on
+-- with nobody walking for the whole raid break. There the addon keeps its own
 -- clock instead: no movement and no fight for AFK_IDLE_SECONDS counts as
 -- away, and the first movement or fight after that as back.
 Game.AFK_IDLE_SECONDS = 300

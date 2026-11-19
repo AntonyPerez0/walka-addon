@@ -42,9 +42,8 @@ def lua():
 
 @pytest.fixture(autouse=True)
 def _no_bluetooth_pacing(monkeypatch):
-    """The driver leaves real-time gaps between Bluetooth requests for the
-    benefit of cheap radio modules; the emulated pad does not need them."""
+    """The reader leaves real-time gaps between Bluetooth subscriptions for
+    the benefit of cheap radio modules; the emulated pad does not need them."""
     from walka.treadmill import ftms_ble
 
     monkeypatch.setattr(ftms_ble, "SUBSCRIBE_GAP_S", 0.0)
-    monkeypatch.setattr(ftms_ble, "WRITE_GAP_S", 0.0)

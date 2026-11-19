@@ -1,10 +1,12 @@
 """The local dashboard: a small web server on 127.0.0.1.
 
 The page (``static/index.html``) shows live state over Server-Sent Events
-and drives the app through a JSON API.
+and talks to the app through a JSON API.
 
-Because this API can move a treadmill belt, it is defended against other
-web pages open in the same browser:
+Nothing here can move a treadmill belt - the companion has no way to. But
+the API shows the walker's walks, weight and height, and can change
+settings and delete walks, so it is defended against other web pages open
+in the same browser:
 
 * requests must carry a ``Host`` header naming localhost or an IP address
   (blocks DNS-rebinding);
@@ -28,8 +30,7 @@ from typing import Any
 from aiohttp import web
 
 from . import addon_sync
-from .app import TERMS_NEEDED, App
-from .config import TERMS_VERSION
+from .app import App
 from .export import record_to_tcx
 
 log = logging.getLogger(__name__)
@@ -37,10 +38,11 @@ log = logging.getLogger(__name__)
 STATIC_DIR = Path(__file__).parent / "static"
 PUSH_INTERVAL_S = 0.5
 SHUTDOWN_TIMEOUT_S = 1.0
+SIMULATOR_BUTTONS = ("start", "pause", "stop", "faster", "slower")
 
 # The dashboard is a self-contained page: it may load and talk to this server
 # only, and no other page may frame it (a framed dashboard could be used to
-# trick a click onto a button that moves the belt).
+# trick a click onto a button that deletes a walk).
 PAGE_HEADERS = {
     "Content-Security-Policy": (
         "default-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
@@ -96,7 +98,7 @@ async def guard(request: web.Request, handler: Handler) -> web.StreamResponse:
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     # On every response, not only on "/": the same page is also reachable
     # as /static/index.html, and a page that can be framed can be used to
-    # trick a click onto a button that moves the belt.
+    # trick a click onto one of its buttons.
     for name, value in PAGE_HEADERS.items():
         response.headers.setdefault(name, value)
     return response
@@ -114,25 +116,8 @@ async def _body(request: web.Request) -> dict[str, Any]:
     return data
 
 
-def _number(data: dict[str, Any], key: str) -> float | None:
-    value = data.get(key)
-    if value is None:
-        return None
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        raise web.HTTPBadRequest(text=f"{key} must be a number") from None
-    if number != number or number in (float("inf"), float("-inf")):
-        raise web.HTTPBadRequest(text=f"{key} must be finite")
-    return number
-
-
 def ok(**extra: Any) -> web.Response:
     return web.json_response({"ok": True, **extra})
-
-
-def terms_needed() -> web.Response:
-    return web.json_response({"ok": False, "error": TERMS_NEEDED}, status=403)
 
 
 def create_app(app: App) -> web.Application:
@@ -172,52 +157,6 @@ def create_app(app: App) -> web.Application:
             pass
         return response
 
-    # ---- session control -------------------------------------------------------
-    @routes.post("/api/manual")
-    async def manual(request: web.Request) -> web.Response:
-        data = await _body(request)
-        action = data.get("action")
-        speed = _number(data, "speed_kmh")
-        if action == "start":
-            if not app.manual_start(speed):
-                return terms_needed()
-        elif action == "pause":
-            app.manual_pause()
-        elif action == "resume":
-            if not app.manual_resume():
-                return terms_needed()
-        elif action == "stop":
-            app.manual_stop()
-        elif action == "speed":
-            if speed is None:
-                raise web.HTTPBadRequest(text="speed_kmh is required")
-            app.manual_set_speed(speed)
-        else:
-            raise web.HTTPBadRequest(text="unknown action")
-        return ok()
-
-    @routes.post("/api/resume")
-    async def resume(_request: web.Request) -> web.Response:
-        if not app.resume():
-            return terms_needed()
-        return ok()
-
-    @routes.post("/api/terms/accept")
-    async def accept_terms(request: web.Request) -> web.Response:
-        """The walker ticked the box under the disclaimer and pressed
-        "I accept". The page says which version of it was on the screen."""
-        data = await _body(request)
-        if data.get("version") != TERMS_VERSION or isinstance(data.get("version"), bool):
-            error = "The disclaimer on this page is not the current one. Reload the page and read it again."
-            return web.json_response({"ok": False, "error": error}, status=409)
-        app.accept_terms()
-        return ok()
-
-    @routes.post("/api/stop")
-    async def stop(_request: web.Request) -> web.Response:
-        await app.emergency_stop()
-        return ok()
-
     # ---- treadmill -------------------------------------------------------------
     @routes.post("/api/treadmill/scan")
     async def scan(_request: web.Request) -> web.Response:
@@ -239,35 +178,25 @@ def create_app(app: App) -> web.Application:
 
     @routes.post("/api/treadmill/disconnect")
     async def disconnect(_request: web.Request) -> web.Response:
-        # (A belt in use is stopped first - see App.disconnect.)
-        if not await app.disconnect():
-            error = "The belt could not be stopped, so Walka stays connected. Stop it at the treadmill itself."
-            return web.json_response({"ok": False, "error": error}, status=409)
+        await app.disconnect()
         return ok()
 
     @routes.post("/api/treadmill/forget")
     async def forget(_request: web.Request) -> web.Response:
-        if not app.forget_treadmill():
-            error = "Stop the belt first: Walka must not lose track of a treadmill that is in use."
-            return web.json_response({"ok": False, "error": error}, status=409)
+        app.forget_treadmill()
         return ok()
 
     @routes.post("/api/treadmill/press")
     async def press(request: web.Request) -> web.Response:
-        """Simulated treadmill only: press its start/stop button."""
+        """The simulated treadmill's remote (--simulate, --demo), and only
+        that: with a real treadmill this is refused before the reader is
+        so much as looked at - and the reader has nothing to press."""
         data = await _body(request)
         button = data.get("button")
         treadmill = app.treadmill
-        if button == "start" and hasattr(treadmill, "press_start"):
-            treadmill.press_start()
-        elif button == "stop" and hasattr(treadmill, "press_stop"):
-            treadmill.press_stop()
-        elif button == "faster" and hasattr(treadmill, "press_faster"):
-            treadmill.press_faster()
-        elif button == "slower" and hasattr(treadmill, "press_slower"):
-            treadmill.press_slower()
-        else:
+        if treadmill.kind != "simulated" or button not in SIMULATOR_BUTTONS:
             raise web.HTTPBadRequest(text="not available on this treadmill")
+        getattr(treadmill, f"press_{button}")()
         return ok()
 
     # ---- config ----------------------------------------------------------------
@@ -332,7 +261,7 @@ def create_app(app: App) -> web.Application:
         if not re.fullmatch(r"[0-9a-f]{1,16}", wanted):
             raise web.HTTPBadRequest(text="character: the id of a character from /api/journey")
         # Finding and reading the game's files can take a moment: never on
-        # the loop that drives the belt.
+        # the loop that records the walk.
         return web.json_response(await asyncio.to_thread(app.roads.for_character, wanted))
 
     @routes.get("/api/addon/locations")

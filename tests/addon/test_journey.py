@@ -241,7 +241,7 @@ def test_the_same_with_a_session_running(rt):
     rt.set(speed=7.0)
     rt.slash("/walka start")
     rt.advance(30)
-    rt.slash("/walka pause")                # the belt is off; the character runs on
+    rt.slash("/walka pause")                # nothing is counted; the character runs on
     rt.advance(10)
     rt.slash("/walka stop")
     rt.advance(10)
@@ -702,7 +702,7 @@ def test_the_session_in_progress_counts_once_it_is_long_enough_to_keep(make_rt):
     rt = make_rt(saved_variables=saved(own(NOW - 90000, steps=2500)))
     rt.set(speed=7.0)
     rt.slash("/walka start")
-    rt.advance(15)                          # the countdown, then 12 seconds on the belt
+    rt.advance(15)                          # fifteen seconds: not yet a walk
     session = rt.walka.GetSession(rt.walka)
     assert 0 < session.seconds < rt.walka.MIN_SESSION_SECONDS
     assert real(rt)["steps"] == 2500 and real(rt)["walks"] == 1, "a start that may be thrown away does not show"
@@ -745,7 +745,7 @@ def test_a_paused_session_still_counts(rt):
     rt.slash("/walka start")
     rt.advance(60)
     rt.slash("/walka pause")
-    rt.advance(5)                           # the belt coasts to a halt
+    rt.advance(5)
     paused = real(rt)
     rt.advance(60)
     assert real(rt) == paused and paused["walks"] == 1
@@ -866,7 +866,7 @@ def test_the_totals_never_step_back_while_walking_stopping_and_pruning(make_rt):
     assert record(rt)["real"]["steps"] % 1 != 0, "the share of the measured walk is not a whole number"
     previous = real(rt)
     rt.set(speed=7.0)
-    for length in (25, 61, 33, 47, 22, 90):
+    for length in (25, 61, 33, 47, 18, 90):
         rt.slash("/walka start")
         for second in range(length + 3):
             if second == length:
@@ -876,7 +876,7 @@ def test_the_totals_never_step_back_while_walking_stopping_and_pruning(make_rt):
             for key in ("steps", "distanceM", "kcal", "seconds", "walks"):
                 assert now[key] >= previous[key], f"{key} went back at second {second} of a {length} s walk"
             previous = now
-    # Two walks to begin with and six sessions - but the 22-second one moved
-    # the belt for less than the 20 seconds it takes to count as a walk.
+    # Two walks to begin with and six sessions - but the 18-second one is
+    # shorter than the 20 seconds it takes to count as a walk.
     assert previous["walks"] == 7 and len(lua_list(rt.db.sessions)) == 4
     assert real(rt.reload()) == previous

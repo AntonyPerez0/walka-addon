@@ -1,14 +1,13 @@
 """Treadmills Walka knows by their Bluetooth name.
 
-Any treadmill that speaks standard Bluetooth FTMS can be used: it is found
-by the service it advertises, or picked from a scan in the dashboard. A name
-listed here only buys two things - the pad is taken as soon as it is heard,
-rather than at the end of the scan, and a quirk of its firmware can be
-allowed for.
+Any treadmill that reports its data over standard Bluetooth FTMS can be
+read: it is found by the service it advertises, or picked from a scan in
+the dashboard. A name listed here buys one thing - the pad is taken as soon
+as it is heard, rather than at the end of the scan.
 
-A name belongs here when there is evidence that the machine is *driven*
-over plain FTMS (start, speed, pause, stop), not merely that it shows up in
-fitness apps. docs/HARDWARE.md says where each entry comes from.
+A name belongs here when there is evidence that the machine sends its speed
+as plain FTMS Treadmill Data. docs/HARDWARE.md says where each entry comes
+from.
 """
 
 from __future__ import annotations
@@ -20,9 +19,6 @@ from dataclasses import dataclass
 class KnownTreadmill:
     prefix: str  # what the Bluetooth name starts with (letter case is ignored)
     brand: str
-    # Ask for control twice before the first command. (qdomyos-zwift needed
-    # this to make a WELLFIT obey speed commands.)
-    request_control_twice: bool = False
 
 
 KNOWN_TREADMILLS: tuple[KnownTreadmill, ...] = (
@@ -31,7 +27,7 @@ KNOWN_TREADMILLS: tuple[KnownTreadmill, ...] = (
     # WELLFIT treadmills (TM029 Pro and others) advertise two names: "WELLFIT
     # TM Linker" is the one for apps, "WELLFIT TM Audio" is the loudspeaker -
     # hence the whole name, not "WELLFIT TM".
-    KnownTreadmill("WELLFIT TM Linker", "WELLFIT", request_control_twice=True),
+    KnownTreadmill("WELLFIT TM Linker", "WELLFIT"),
 )
 
 DEFAULT_NAME_PREFIXES: tuple[str, ...] = tuple(known.prefix for known in KNOWN_TREADMILLS)

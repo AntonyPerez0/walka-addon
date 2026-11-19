@@ -7,15 +7,16 @@ specified in ``docs/PROTOCOL.md`` - keep all three in sync.
 A frame is 8 payload bytes followed by a big-endian CRC-16/CCITT-FALSE of the
 payload. There are two kinds, told apart by the frame type.
 
-The live frame (``Frame``) is what the belt is driven by. Payload bit layout,
-most-significant bit first::
+The live frame (``Frame``) is the addon's state from moment to moment: the
+walking session it has marked, and how the character is moving. Payload bit
+layout, most-significant bit first::
 
     bits  0..3   version         (4)   = VERSION
     bits  4..5   frame type      (2)   = TYPE_LIVE
     bits  6..13  seq             (8)   heartbeat counter, wraps at 256
     bits 14..21  session         (8)   session counter, 0 = no session
     bits 22..37  flags           (16)  see Flags
-    bits 38..49  target speed    (12)  belt speed wanted, 0.01 km/h units
+    bits 38..49  (not used)      (12)  0 - until 0.6: a belt speed the addon asked for
     bits 50..61  character speed (12)  0.02 yd/s units
     bits 62..63  reserved        (2)   = 0
 
@@ -30,7 +31,7 @@ makes::
     bits 20..59  value           (40)  unsigned
     bits 60..63  reserved        (4)   = 0
 
-A stat frame says nothing about what the belt should do, so it must never be
+A stat frame says nothing about the walking session, so it must never be
 read as a live frame: the two are separate types with nothing in common,
 ``decode`` is the one place that tells them apart, and ``Frame.unpack`` /
 ``Frame.from_bits`` refuse everything that is not a live frame.
@@ -48,7 +49,7 @@ FRAME_BYTES = 10
 PAYLOAD_BYTES = 8
 FRAME_BITS = FRAME_BYTES * 8
 
-TYPE_LIVE = 0  # live state: the only kind that may steer the belt
+TYPE_LIVE = 0  # live state: the walking session, and how the character is moving
 TYPE_STAT = 1  # one number of the character's journey
 # (Types 2 and 3 are not assigned: such a frame is refused.)
 
@@ -93,8 +94,8 @@ _TYPE_SHIFT = _VERSION_SHIFT - 2
 class Flags(IntFlag):
     """State flags carried in every live frame (bit 0 = least significant)."""
 
-    ACTIVE = 1  # a walking session is running: the belt may be driven
-    PAUSED = 2  # session paused: the belt must be paused
+    ACTIVE = 1  # a walking session is marked: the walk is filed under it
+    PAUSED = 2  # ... and paused in the game (shown; the walk is whatever the belt does)
     MOVING = 4  # character speed > 0
     MOUNTED = 8
     TAXI = 16  # on a flight path
@@ -109,8 +110,8 @@ class Flags(IntFlag):
 
 
 # Flags that the addon set until version 0.5 and has not sent since: nothing
-# here ever acted on them, and what the belt does not need stays in the
-# game. A frame from an older addon that carries one is still a frame of
+# here ever acted on them, and what the companion does not need stays in
+# the game. A frame from an older addon that carries one is still a frame of
 # the addon's (not_from_the_addon), but the flag is shown nowhere.
 LEGACY_FLAGS = Flags.DEAD | Flags.COMBAT | Flags.FALLING | Flags.RESTING
 
@@ -213,7 +214,7 @@ def _split_fields(value: int, fields: tuple[tuple[str, int], ...]) -> dict[str, 
 
 @dataclass(frozen=True)
 class Frame:
-    """One decoded live frame: the addon's state, which the belt follows."""
+    """One decoded live frame: the addon's state from moment to moment."""
 
     seq: int = 0
     session: int = 0
@@ -230,7 +231,9 @@ class Frame:
     # ---- convenience accessors -------------------------------------------------
     @property
     def target_kmh(self) -> float:
-        """Belt speed requested by the addon, km/h."""
+        """What an addon older than 0.7 put here: the belt speed it asked
+        for, km/h. Nothing in the companion reads it (or could act on it);
+        the addon now sends 0."""
         return self.target_raw * TARGET_UNIT_KMH
 
     @property

@@ -306,8 +306,8 @@ class Strip:
 
 def test_a_whole_cycle_travels_from_the_packer_to_the_companions_handler(rt, ns):
     """Packed in Lua, drawn as pixels, read back by the companion's decoder
-    and routed by its beacon source: live frames to the reading the belt
-    follows, stat frames to ``on_stat`` - in the documented rhythm of one
+    and routed by its beacon source: live frames to its reading of the
+    session, stat frames to ``on_stat`` - in the documented rhythm of one
     stat frame every fifth redraw."""
     lua = ns.Protocol
     stat_ids = lua.STAT
@@ -362,9 +362,9 @@ def test_a_whole_cycle_travels_from_the_packer_to_the_companions_handler(rt, ns)
             live_seen += 1
         else:
             source.inject(decoded.stat)
-        # The belt's reading is never more than one redraw old, and always a live frame's.
+        # The reading of the session is never more than one redraw old, and always a live frame's.
         reading = source.reading()
-        assert reading.active and reading.target_kmh == pytest.approx(3.2)
+        assert reading.active and reading.session == 3
         assert reading.age_s <= 0.1 + 1e-9
         assert source.frame is not None and source.frame.seq == (redraw if decoded.frame is not None else redraw - 1)
 

@@ -8,15 +8,17 @@
 -- A frame is 10 bytes: 8 payload bytes + CRC-16/CCITT-FALSE (big-endian).
 -- There are two kinds, told apart by the frame type.
 --
--- The live frame (Protocol.packBits) is what the belt is driven by. Payload
--- bit layout, most-significant bit first:
+-- The live frame (Protocol.packBits) says whether a walking session is
+-- running and how the character is moving. Payload bit layout,
+-- most-significant bit first:
 --
 --   bits  0..3   version        (4)   = Protocol.VERSION
 --   bits  4..5   frame type     (2)   = Protocol.TYPE_LIVE
 --   bits  6..13  seq            (8)   heartbeat counter, wraps at 256
 --   bits 14..21  session        (8)   session counter, 0 = no session
 --   bits 22..37  flags          (16)  see Protocol.FLAG
---   bits 38..49  target speed   (12)  belt speed wanted, 0.01 km/h units
+--   bits 38..49  target speed   (12)  = 0: not used since 0.7 (until then the
+--                                     belt speed the addon asked for)
 --   bits 50..61  character speed(12)  0.02 yd/s units
 --   bits 62..63  reserved       (2)   = 0
 --
@@ -32,8 +34,8 @@
 --   bits 60..63  reserved       (4)   = 0
 --
 -- The companion never reads a stat frame as a live one, so while a stat
--- frame is on screen the belt simply goes without news: send them sparingly
--- (Protocol.STAT_EVERY) and never two in a row.
+-- frame is on screen it simply goes without news of the session: send them
+-- sparingly (Protocol.STAT_EVERY) and never two in a row.
 
 local ADDON_NAME, ns = ...
 ns = ns or {}
@@ -57,8 +59,9 @@ Protocol.CHAR_MAX_RAW = 4095
 
 -- Flag bit values (bit 0 is the least-significant bit of the 16-bit field).
 Protocol.FLAG = {
-    ACTIVE   = 1,     -- a walking session is running: the belt may be driven
-    PAUSED   = 2,     -- session paused: the belt must be paused
+    ACTIVE   = 1,     -- a walking session is running: the companion files
+                      -- the walk it records under this session
+    PAUSED   = 2,     -- the session is paused
     MOVING   = 4,     -- character speed > 0
     MOUNTED  = 8,
     TAXI     = 16,    -- on a flight path
@@ -68,8 +71,8 @@ Protocol.FLAG = {
     AFK      = 512,
     -- (1024 and 2048 are not used. Until version 0.5 the four said that the
     -- character was dead, in combat, falling or resting. The companion never
-    -- acted on any of them, so they are no longer sent: what the belt does
-    -- not need stays in the game.)
+    -- acted on any of them, so they are no longer sent: what the companion
+    -- does not need stays in the game.)
     ESTIMATED = 4096, -- character speed is an estimate (the game hides the
                       -- real value from addons during combat)
 }
@@ -110,7 +113,7 @@ do
 end
 -- Every STAT_EVERY-th redraw is a stat frame instead of a live frame: at ten
 -- redraws a second that is two stats a second, a whole cycle in 8 seconds,
--- and the belt still hears from the game four times out of five.
+-- and four redraws out of five still say how the session stands.
 Protocol.STAT_EVERY = 5
 
 -- Bits of the INFO_FLAGS value.
@@ -283,7 +286,7 @@ end
 --   seq       = 0..255,
 --   session   = 0..255,
 --   flags     = 0..65535 (sum of Protocol.FLAG values),
---   target    = raw target belt speed (0.01 km/h units, 0..4095),
+--   target    = 0 (the field is not used since 0.7; 0.01 km/h units, 0..4095),
 --   charSpeed = raw character speed (0.02 yd/s units, 0..4095),
 -- }
 function Protocol.packBits(frame, out)
@@ -410,7 +413,8 @@ function Protocol.nameValues(name, out)
     return out
 end
 
---- Convert a belt speed in km/h to the raw target field.
+--- Convert a belt speed in km/h to the raw target field. (The addon no
+-- longer sends one; kept so that the field can be written and checked.)
 function Protocol.kmhToRaw(kmh)
     return clampInt((kmh or 0) / Protocol.TARGET_UNIT_KMH, Protocol.TARGET_MAX_RAW)
 end
