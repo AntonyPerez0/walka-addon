@@ -92,6 +92,10 @@ used.
       stays there.
 - [ ] `/afk` during a session: "Paused (AFK)". Type something in chat: still
       paused. Move your character: it resumes.
+- [ ] `/afk` again and leave it for more than ten minutes: a chat line says
+      that the session stays paused until you press Resume, and the HUD
+      says "Paused". Move your character: still paused. Press the play
+      button: it resumes.
 - [ ] `/walka history`: opens centred; Escape and the X close it; the wheel
       scrolls the list. *Sync* reloads the interface and a running session
       is still running afterwards.

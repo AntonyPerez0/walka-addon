@@ -100,12 +100,19 @@ class Flags(IntFlag):
     TAXI = 16  # on a flight path
     SWIMMING = 32
     FLYING = 64
-    DEAD = 128  # dead or ghost
-    COMBAT = 256
+    DEAD = 128  # (no longer sent: see LEGACY_FLAGS)
+    COMBAT = 256  # (no longer sent)
     AFK = 512
-    FALLING = 1024
-    RESTING = 2048  # inn / city rest state
+    FALLING = 1024  # (no longer sent)
+    RESTING = 2048  # (no longer sent)
     ESTIMATED = 4096  # character speed is an estimate (hidden from addons in combat)
+
+
+# Flags that the addon set until version 0.5 and has not sent since: nothing
+# here ever acted on them, and what the belt does not need stays in the
+# game. A frame from an older addon that carries one is still a frame of
+# the addon's (not_from_the_addon), but the flag is shown nowhere.
+LEGACY_FLAGS = Flags.DEAD | Flags.COMBAT | Flags.FALLING | Flags.RESTING
 
 
 class Stat(IntEnum):
@@ -372,8 +379,8 @@ def decode_bits(bits: Sequence[int]) -> Frame | StatFrame:
     return decode(bits_to_bytes(bits))
 
 
-# Every flag the addon can set (bits 0-12). The three bits above them are not
-# assigned.
+# Every flag an addon can have set (bits 0-12; four of them only an addon
+# before 0.6: LEGACY_FLAGS). The three bits above them are not assigned.
 FLAGS_DEFINED = sum(int(flag) for flag in Flags)
 
 

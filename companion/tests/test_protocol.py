@@ -358,3 +358,13 @@ def test_python_decodes_what_the_addon_packs(lua, addon_source):
         assert lua_protocol.kmhToRaw(kmh) == protocol.kmh_to_raw(kmh)
     for yps in (0, 2.5, 7.0, 14.0, 81.9, 82, 1e6, -1):
         assert lua_protocol.ypsToRaw(yps) == protocol.yps_to_raw(yps)
+
+
+def test_flags_an_older_addon_sent_are_still_those_of_the_addon():
+    """Until 0.5 the addon also said dead, in combat, falling and resting.
+    A companion that is updated first must go on reading that addon's strip."""
+    assert protocol.LEGACY_FLAGS == Flags.DEAD | Flags.COMBAT | Flags.FALLING | Flags.RESTING
+    for flag in (Flags.DEAD, Flags.COMBAT, Flags.FALLING, Flags.RESTING):
+        frame = Frame(seq=1, session=1, flags=Flags.ACTIVE | Flags.MOVING | flag, target_raw=320, char_speed_raw=350)
+        assert protocol.not_from_the_addon(protocol.decode(frame.pack())) is None
+    assert protocol.FLAGS_DEFINED == 0x1FFF

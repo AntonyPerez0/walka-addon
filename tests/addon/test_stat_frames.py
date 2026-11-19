@@ -304,7 +304,8 @@ def test_stat_frames_in_combat_with_everything_hidden(rt):
     assert protocol.unpack_char_info(stats[Stat.CHAR_INFO]) == protocol.CharInfo(17, 60, 4, protocol.Faction.ALLIANCE)
     assert stats[Stat.FOOT_YD] > 200
     # The live frames in between say what they always say in combat.
-    assert rt.live_frame().has(Flags.ESTIMATED | Flags.COMBAT | Flags.ACTIVE)
+    live = rt.live_frame()
+    assert live.has(Flags.ESTIMATED) and live.has(Flags.ACTIVE)
 
 
 def test_a_hidden_beacon_keeps_the_schedule(rt):

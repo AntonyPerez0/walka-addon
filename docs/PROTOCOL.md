@@ -52,17 +52,27 @@ Bit 0 is the least-significant bit of the 16-bit field.
 | 16    | TAXI      | On a flight path. |
 | 32    | SWIMMING  | |
 | 64    | FLYING    | |
-| 128   | DEAD      | Dead or ghost. |
-| 256   | COMBAT    | |
+| 128   | -         | Not used: see below. |
+| 256   | -         | Not used. |
 | 512   | AFK       | |
-| 1024  | FALLING   | |
-| 2048  | RESTING   | In an inn or city. |
+| 1024  | -         | Not used. |
+| 2048  | -         | Not used. |
 | 4096  | ESTIMATED | The character speed is an estimate (see below). |
 
 ACTIVE, PAUSED, MOVING and AFK change what the companion does; the rest are
-for display and for future use. AFK matters together with PAUSED: the addon
+for display. The strip says how the character is moving and whether anyone
+is there, and nothing more: until version 0.5 the four bits marked *not
+used* said that the character was dead (128), in combat (256), falling
+(1024) or resting (2048). The companion never acted on any of them, so the
+addon no longer sets them. A companion still takes a frame that carries
+one for a frame of the addon's - an older addon may be drawing it - and
+shows the flag nowhere.
+
+AFK matters together with PAUSED: the addon
 pauses a session by itself when the player goes AFK, and keeps the AFK flag
-set for as long as that automatic pause lasts. The companion treats a pause
+set for as long as that automatic pause lasts. (That is ten minutes at
+most: after that the addon turns it into a pause that only *Resume* ends,
+and drops the flag.) The companion treats a pause
 *without* AFK as something the player asked for (pause then resume is a
 deliberate way to restart a belt that was stopped at the treadmill); an
 automatic one is not.

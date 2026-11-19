@@ -64,11 +64,12 @@ Protocol.FLAG = {
     TAXI     = 16,    -- on a flight path
     SWIMMING = 32,
     FLYING   = 64,
-    DEAD     = 128,   -- dead or ghost
-    COMBAT   = 256,
+    -- (128 and 256 are not used: see below.)
     AFK      = 512,
-    FALLING  = 1024,
-    RESTING  = 2048,  -- inn / city rest state
+    -- (1024 and 2048 are not used. Until version 0.5 the four said that the
+    -- character was dead, in combat, falling or resting. The companion never
+    -- acted on any of them, so they are no longer sent: what the belt does
+    -- not need stays in the game.)
     ESTIMATED = 4096, -- character speed is an estimate (the game hides the
                       -- real value from addons during combat)
 }

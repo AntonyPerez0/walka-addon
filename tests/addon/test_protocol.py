@@ -50,7 +50,10 @@ def test_constants_agree_with_the_companion(ns):
     assert lua.CHAR_UNIT_YPS == protocol.CHAR_UNIT_YPS
     assert lua.TARGET_MAX_RAW == protocol.TARGET_MAX_RAW
     assert lua.CHAR_MAX_RAW == protocol.CHAR_MAX_RAW
-    assert {str(name): int(value) for name, value in lua.FLAG.items()} == {flag.name: flag.value for flag in Flags}
+    # (The companion still knows four flags that only an addon before 0.6 sent.)
+    sent = {flag.name: flag.value for flag in Flags if flag not in protocol.LEGACY_FLAGS}
+    assert {str(name): int(value) for name, value in lua.FLAG.items()} == sent
+    assert len(sent) == len(Flags) - 4
 
 
 def test_random_frames_pack_like_python_and_decode_back(rt, ns):

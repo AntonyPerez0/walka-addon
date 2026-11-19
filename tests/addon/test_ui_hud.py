@@ -214,7 +214,10 @@ def test_paused_by_hand(rt):
     assert view(rt)["state"] == "Walking"
 
 
-AFK_HELP = "You went AFK, so the session is paused. It resumes when your character moves."
+AFK_HELP = (
+    "You went AFK, so the session is paused. It resumes when your character moves - "
+    "for ten minutes; after that, press the play button."
+)
 
 
 def test_paused_because_afk(rt):

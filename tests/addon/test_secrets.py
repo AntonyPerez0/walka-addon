@@ -132,7 +132,7 @@ def test_combat_never_errors_and_frames_are_flagged_estimated(rt):
     rt.enter_combat()
     tick_checked(rt, 100)
     current = frame(rt)
-    assert current.has(Flags.ESTIMATED) and current.has(Flags.COMBAT) and current.has(Flags.MOVING)
+    assert current.has(Flags.ESTIMATED) and current.has(Flags.MOVING)
     assert rt.walka.GetGameState(rt.walka).estimated is True
 
     rt.leave_combat()

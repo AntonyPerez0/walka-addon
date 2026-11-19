@@ -11,7 +11,7 @@ import random
 
 import pytest
 from walka import beacon, protocol
-from walka.protocol import Flags, Frame, FrameError
+from walka.protocol import LEGACY_FLAGS, Flags, Frame, FrameError
 
 from .conftest import MPH_STEP, nearest_step
 from .harness import lua_list
@@ -83,11 +83,7 @@ def test_idle_frame(rt):
         ({"taxi": True}, Flags.TAXI),
         ({"swimming": True}, Flags.SWIMMING),
         ({"flying": True}, Flags.FLYING),
-        ({"dead": True}, Flags.DEAD),
-        ({"combat": True}, Flags.COMBAT),
         ({"afk": True}, Flags.AFK),
-        ({"falling": True}, Flags.FALLING),
-        ({"resting": True}, Flags.RESTING),
         ({"statsSecret": True}, Flags.ESTIMATED),
     ],
 )
@@ -103,12 +99,24 @@ def test_flags_follow_the_game_state(rt, state, flag):
     assert decode(rt).flags == Flags(0)
 
 
+@pytest.mark.parametrize("state", ["dead", "combat", "falling", "resting"])
+def test_what_the_belt_does_not_need_stays_in_the_game(rt, state):
+    """The companion never acted on these, so the strip does not say them:
+    what can be read off the screen is how the character moves and whether
+    anyone is there, and nothing more."""
+    rt.tick()
+    assert decode(rt).flags == Flags(0)
+    rt.set(**{state: True})
+    rt.tick(3)
+    assert decode(rt).flags == Flags(0)
+    assert not decode(rt).flags & LEGACY_FLAGS
+
+
 def test_all_state_flags_at_once(rt):
     rt.set(speed=20.0, mounted=True, taxi=True, swimming=True, flying=True, dead=True, combat=True,
            afk=True, falling=True, resting=True)
     rt.tick()
-    everything = (Flags.MOVING | Flags.MOUNTED | Flags.TAXI | Flags.SWIMMING | Flags.FLYING | Flags.DEAD
-                  | Flags.COMBAT | Flags.AFK | Flags.FALLING | Flags.RESTING)
+    everything = Flags.MOVING | Flags.MOUNTED | Flags.TAXI | Flags.SWIMMING | Flags.FLYING | Flags.AFK
     assert decode(rt).flags == everything
 
 
@@ -189,7 +197,7 @@ def test_only_changed_cells_are_repainted_but_the_result_is_always_right(rt):
         frame = beacon.decode_cells(cells)
         if isinstance(frame, Frame):        # (a stat frame says nothing of the state)
             assert frame.has(Flags.MOUNTED) == bool(rt.game.mounted)
-            assert frame.has(Flags.COMBAT) == bool(rt.game.combat)
+            assert not frame.flags & LEGACY_FLAGS
 
 
 # ---- pixels -------------------------------------------------------------------------

@@ -328,7 +328,7 @@ def test_afk_ending_alone_does_not_resume_the_session(rt):
     rt.set(combat=True, resting=True, mounted=True)
     rt.tick(20)
     assert rt.walka.IsPaused(rt.walka)
-    assert flags(rt) == AFK_PAUSED | Flags.COMBAT | Flags.RESTING | Flags.MOUNTED
+    assert flags(rt) == AFK_PAUSED | Flags.MOUNTED
 
 
 def test_the_session_resumes_when_the_character_moves_after_afk(rt):
@@ -441,6 +441,108 @@ def test_where_the_game_hides_the_afk_flag_the_addon_keeps_its_own_clock(rt):
     rt.set(speed=0, combat=True)
     rt.advance(game.AFK_IDLE_SECONDS + 60)
     assert not rt.walka.IsPaused(rt.walka)
+
+
+# An automatic pause ends by itself only for so long. After ten minutes nobody
+# can say who is at the keyboard, or what stands on the belt by now.
+
+USER_PAUSED = Flags.ACTIVE | Flags.PAUSED
+
+
+def away_for(rt, seconds: float) -> None:
+    """The clock moves on while the session stays paused."""
+    rt.set(clock=rt.game.clock + seconds, uptime=rt.game.uptime + seconds)
+    rt.tick()
+
+
+def test_a_long_afk_pause_is_ended_by_resume_alone(rt):
+    events = collect_events(rt)
+    afk_paused_session(rt, events)
+    limit = rt.walka.AFK_RESUME_SECONDS
+    assert limit == 600
+    assert session(rt)["pausedAt"] <= rt.game.clock
+
+    away_for(rt, limit - 30)
+    assert session(rt)["pauseReason"] == "afk", "not yet"
+    rt.clear_printed()
+    away_for(rt, 40)
+    assert rt.walka.IsPaused(rt.walka) and session(rt)["pauseReason"] == "user"
+    assert events.count(("SESSION", "pause")) == 2, "the windows are told: 'Paused (AFK)' is now 'Paused'"
+    assert rt.printed == [
+        rt.walka.PREFIX
+        + "you have been away for more than 10 minutes - the session stays paused until you press Resume "
+        + "(the play button on the HUD, or /walka resume)."
+    ]
+    # On the strip it is now a pause of the player's own: without the AFK
+    # flag, so that the Resume to come counts as asked for.
+    rt.tick(5)
+    assert flags(rt) == USER_PAUSED, "also while the game still shows the player as AFK"
+    rt.set(afk=False)
+    rt.tick(5)
+    assert flags(rt) == USER_PAUSED
+
+    # Somebody sits down and plays: the belt stays where it is.
+    rt.set(speed=7.0)
+    rt.tick(20)
+    rt.set(speed=0)
+    rt.tick(20)
+    rt.set(speed=7.0)
+    rt.tick(100)
+    assert rt.walka.IsPaused(rt.walka) and live_speed(rt) == (0, 0)
+    assert flags(rt) == USER_PAUSED | Flags.MOVING
+    assert rt.printed[1:] == [], "said once"
+
+    rt.slash("/walka resume")
+    rt.tick()
+    assert not rt.walka.IsPaused(rt.walka)
+    assert session(rt).get("pausedAt") is None
+    assert flags(rt) == Flags.ACTIVE | Flags.MOVING
+
+
+def test_a_short_afk_pause_still_ends_when_the_character_moves(rt):
+    afk_paused_session(rt)
+    away_for(rt, rt.walka.AFK_RESUME_SECONDS - 60)
+    rt.set(afk=False)
+    rt.tick(3)
+    rt.set(speed=7.0)
+    rt.tick()
+    assert not rt.walka.IsPaused(rt.walka)
+
+
+def test_a_long_afk_pause_is_kept_without_a_word_when_announcements_are_off(rt):
+    afk_paused_session(rt)
+    rt.walka.Set(rt.walka, "announce", False)
+    rt.clear_printed()
+    away_for(rt, rt.walka.AFK_RESUME_SECONDS + 1)
+    assert session(rt)["pauseReason"] == "user"
+    assert rt.printed == []
+
+
+def test_the_time_limit_of_an_afk_pause_counts_across_a_reload(rt):
+    afk_paused_session(rt)
+    began = session(rt)["pausedAt"]
+    away_for(rt, rt.walka.AFK_RESUME_SECONDS - 100)
+    fresh = rt.reload(gap=60)
+    assert session(fresh)["pauseReason"] == "afk" and session(fresh)["pausedAt"] == began
+    away_for(fresh, 50)
+    assert session(fresh)["pauseReason"] == "user"
+    fresh.set(afk=False, speed=0)
+    fresh.tick(3)
+    fresh.set(speed=7.0)
+    fresh.tick(10)
+    assert fresh.walka.IsPaused(fresh.walka)
+
+
+def test_an_afk_pause_saved_without_its_time_starts_counting_at_the_reload(rt):
+    """A session saved by a version that did not note when the pause began."""
+    afk_paused_session(rt)
+    rt.run("local walka = ...; walka:GetSession().pausedAt = nil", rt.walka)
+    fresh = rt.reload(gap=30)
+    assert session(fresh)["pausedAt"] == int(fresh.game.clock)  # (the addon's clock counts whole seconds)
+    away_for(fresh, fresh.walka.AFK_RESUME_SECONDS - 5)
+    assert session(fresh)["pauseReason"] == "afk"
+    away_for(fresh, 10)
+    assert session(fresh)["pauseReason"] == "user"
 
 
 def test_a_second_afk_pauses_again(rt):

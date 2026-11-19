@@ -414,11 +414,7 @@ const FLAG_HELP = {
   TAXI: "On a flight path",
   SWIMMING: "Swimming",
   FLYING: "Flying",
-  DEAD: "Dead or a ghost",
-  COMBAT: "In combat",
   AFK: "Away from keyboard",
-  FALLING: "Falling",
-  RESTING: "Resting (inn or city)",
   ESTIMATED: "The character's speed is an estimate - the game hides it from addons in combat",
 };
 

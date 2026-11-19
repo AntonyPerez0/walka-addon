@@ -33,6 +33,11 @@ Walka.TICK_SECONDS = 0.1      -- game state sampling + beacon refresh
 Walka.UI_SECONDS = 0.25       -- how often the windows are told to redraw
 Walka.MIN_SESSION_SECONDS = 20 -- shorter sessions are not kept
 Walka.RESUME_WINDOW_SECONDS = 180 -- a session survives a /reload this long
+-- An automatic (AFK) pause ends by itself, when the character next starts
+-- moving - but only for this long. After that nobody can say who is at the
+-- keyboard or what stands on the belt by now (a chair rolled onto the pad,
+-- a child, a pet), so the pause becomes one that only Resume ends.
+Walka.AFK_RESUME_SECONDS = 600
 Walka.MAX_SESSIONS = 400
 
 ----------------------------------------------------------------------------
@@ -373,7 +378,7 @@ end
 ----------------------------------------------------------------------------
 
 --- The session in progress, or nil. Fields: id, start, seconds, distanceM,
--- steps, kcal, yards, maxKmh, paused, pauseReason, character.
+-- steps, kcal, yards, maxKmh, paused, pauseReason, pausedAt, character.
 function Walka:GetSession()
     return self.session
 end
@@ -459,6 +464,7 @@ function Walka:PauseSession(reason)
     end
     session.paused = true
     session.pauseReason = reason or "user"
+    session.pausedAt = Game.Now()
     self.targetKmh = 0
     if self.db.settings.announce then
         if reason == "afk" then
@@ -477,6 +483,7 @@ function Walka:ResumeSession()
     end
     session.paused = false
     session.pauseReason = nil
+    session.pausedAt = nil
     session.afkStill = nil
     -- The belt restarts at its minimum speed.
     self.model:reset(nil)
@@ -485,6 +492,24 @@ function Walka:ResumeSession()
         self:Print("session resumed.")
     end
     self:Fire("SESSION", "resume")
+end
+
+--- An automatic pause that has lasted too long is no longer ended by the
+-- character moving (see AFK_RESUME_SECONDS): it becomes the player's own
+-- pause, which only Resume ends. On the strip it then no longer carries the
+-- AFK flag, so that pressing Resume counts with the companion as a resume
+-- somebody asked for.
+local function keepAfkPause(self, session)
+    session.pauseReason = "user"
+    session.afkStill = nil
+    if self.db.settings.announce then
+        self:Print(string.format(
+            "you have been away for more than %d minutes - the session stays paused until you press Resume "
+                .. "(the play button on the HUD, or /walka resume).",
+            math.floor(Walka.AFK_RESUME_SECONDS / 60)
+        ))
+    end
+    self:Fire("SESSION", "pause")
 end
 
 function Walka:TogglePause()
@@ -581,6 +606,10 @@ end
 
 local beaconFrame = { seq = 0, session = 0, flags = 0, target = 0, charSpeed = 0 }
 
+-- What of the character's state goes onto the strip: what the companion
+-- needs for the belt and its dashboard - how the character is moving, and
+-- whether anyone is there. Nothing else leaves the game: not whether it is
+-- fighting, dead, falling or resting (the addon knows, and keeps it).
 local function stateFlags(state)
     local flags = 0
     if state.moving then flags = flags + FLAG.MOVING end
@@ -588,11 +617,7 @@ local function stateFlags(state)
     if state.taxi then flags = flags + FLAG.TAXI end
     if state.swimming then flags = flags + FLAG.SWIMMING end
     if state.flying then flags = flags + FLAG.FLYING end
-    if state.dead then flags = flags + FLAG.DEAD end
-    if state.combat then flags = flags + FLAG.COMBAT end
     if state.afk then flags = flags + FLAG.AFK end
-    if state.falling then flags = flags + FLAG.FALLING end
-    if state.resting then flags = flags + FLAG.RESTING end
     if state.estimated then flags = flags + FLAG.ESTIMATED end
     return flags
 end
@@ -617,8 +642,11 @@ function Walka:Tick(dt)
             -- (a flight path, auto-run, /follow) pressed no key for anyone:
             -- it has to stand first, and a flight path never counts. (Also
             -- when the automatic pause has been switched off meanwhile: this
-            -- pause was automatic, so is its end.)
-            if not state.afk and state.moving and session.afkStill and not state.taxi then
+            -- pause was automatic, so is its end.) And only for so long:
+            -- after AFK_RESUME_SECONDS the pause is ended by Resume alone.
+            if Game.Now() - session.pausedAt >= Walka.AFK_RESUME_SECONDS then
+                keepAfkPause(self, session)
+            elseif not state.afk and state.moving and session.afkStill and not state.taxi then
                 self:ResumeSession()
             else
                 session.afkStill = not state.moving
@@ -734,6 +762,8 @@ local function restoreSession(self)
         session.pauseReason = session.paused and "user" or nil
     end
     session.afkStill = nil  -- (who was standing before the reload proves nothing now)
+    -- When the pause began (a file from before this was kept: now).
+    session.pausedAt = session.paused and (tonumber(session.pausedAt) or Game.Now()) or nil
     local savedAt = tonumber(saved.savedAt) or 0
     if Game.Now() - savedAt <= Walka.RESUME_WINDOW_SECONDS then
         self.session = session
