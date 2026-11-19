@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "walka"
-version = "0.6.0"
+version = "0.6.1"
 description = "Walka companion for Windows and macOS: links an under-desk walking pad to World of Warcraft (and other games)."
 readme = "README.md"
 license = { text = "MIT" }
