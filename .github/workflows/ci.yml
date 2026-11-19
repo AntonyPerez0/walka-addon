@@ -95,6 +95,9 @@ jobs:
           New-Item -ItemType Directory -Force -Path release | Out-Null
           Copy-Item companion/dist/Walka.exe release/
           Copy-Item -Recurse Walka release/Walka
+          # The addon's zip is made from this folder: the licence and the
+          # disclaimer go with it to wherever the addon is passed on.
+          Copy-Item LICENSE, DISCLAIMER.md release/Walka/
           Copy-Item README.md release/
       - uses: actions/upload-artifact@v4
         with:
