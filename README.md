@@ -8,26 +8,26 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/AntonyPerez0/walka-addon/releases/latest/download/Walka.exe"><img src="docs/images/download-button.svg" width="360" alt="Download Walka for Windows"></a>
+  <a href="https://github.com/AntonyPerez0/walka-addon/releases/latest/download/Walka.exe"><img src="docs/images/download-button.svg" width="340" alt="Download Walka for Windows"></a>
 </p>
 
 <p align="center">
-  One file, <code>Walka.exe</code> · Free · Nothing to install - you just open it
+  <a href="https://github.com/AntonyPerez0/walka-addon/releases/latest/download/Walka-mac-apple-silicon.zip"><img src="docs/images/download-mac-button.svg" width="340" alt="Download Walka for Mac"></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AntonyPerez0/walka-addon/releases/latest/download/Walka-mac-apple-silicon.zip"><img src="docs/images/download-mac-button.svg" width="360" alt="Download Walka for Mac"></a><br>
-  <sub>For a Mac with an Apple chip (M1 or later). An older Mac with an Intel processor? <a href="https://github.com/AntonyPerez0/walka-addon/releases/latest/download/Walka-mac-intel.zip">Download this one</a>.<br>
-  The Mac version is new and has not been tried with the game on a real Mac yet: see <a href="#on-a-mac">On a Mac</a>.</sub>
+  <a href="https://github.com/AntonyPerez0/walka-addon/releases/latest/download/Walka-addon.zip"><img src="docs/images/download-addon-button.svg" width="230" alt="Download the game addon"></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/AntonyPerez0/walka-addon/releases/latest/download/Walka-addon.zip"><img src="docs/images/download-addon-button.svg" width="250" alt="Download the game addon"></a><br>
-  <sub>The Walka addon for World of Warcraft. Walka can also put it in the game for you (step 3).</sub>
+  <sub><b>Free.</b> Nothing to install: on Windows it is one file, <code>Walka.exe</code>, and you just open it.<br>
+  <b>Mac:</b> the button is for an Apple chip (M1 or later) - for an older Mac with an Intel processor, <a href="https://github.com/AntonyPerez0/walka-addon/releases/latest/download/Walka-mac-intel.zip">download this one</a>.
+  The Mac version is new and has not been tried with the game on a real Mac yet: see <a href="#on-a-mac">On a Mac</a>.<br>
+  <b>Game addon:</b> the Walka addon for World of Warcraft. Walka can also put it in the game for you (step 3).</sub>
 </p>
 
 <p align="center">
-  <a href="#is-the-download-safe"><img src="docs/images/virus-free.svg" width="360" alt="No viruses found. Every release is scanned with Microsoft Defender."></a><br>
+  <a href="#is-the-download-safe"><img src="docs/images/virus-free.svg" width="300" alt="No viruses found. Every release is scanned with Microsoft Defender."></a><br>
   <a href="https://github.com/AntonyPerez0/walka-addon/releases/latest"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fgithub.com%2FAntonyPerez0%2Fwalka-addon%2Freleases%2Flatest%2Fdownload%2Fvirus-scan.json&amp;query=%24.badge&amp;label=latest%20scan&amp;color=1a7f37" alt="The virus scan of the latest release: what Microsoft Defender found, and when"></a>
 </p>
 
@@ -37,13 +37,6 @@
   <a href="#stopping-the-belt">Stopping the belt</a> ·
   <a href="#safety">Safety</a> ·
   <a href="#troubleshooting">Troubleshooting</a>
-</p>
-
-<p align="center">
-  <img src="https://img.shields.io/badge/Windows-10%20%26%2011-0078d4" alt="Windows 10 and 11">
-  <img src="https://img.shields.io/badge/Mac-Apple%20silicon%20%26%20Intel-6e6e73" alt="Mac: Apple silicon and Intel">
-  <img src="https://img.shields.io/badge/World%20of%20Warcraft-Forever-c79c3e" alt="World of Warcraft: Forever">
-  <img src="https://img.shields.io/badge/treadmill-UREVO%20%C2%B7%20WELLFIT%20%C2%B7%20other%20Bluetooth%20FTMS-256abf" alt="Treadmill: UREVO, WELLFIT and other Bluetooth FTMS treadmills">
 </p>
 
 <p align="center">
@@ -57,10 +50,11 @@ This is the program - for Windows and for Mac - that goes with the
 **Walka addon** in the game. You need both: the addon watches your
 character, and this program talks to your walking pad.
 
-**You need:** a Windows 10 or 11 PC or a Mac, with Bluetooth, a walking pad or
-treadmill that apps can control over Bluetooth (a UREVO Strol 2E, a
-WELLFIT TM029 Pro - see [which treadmills work](#which-treadmills-work)),
-and World of Warcraft: Forever.
+**You need:** a Windows 10 or 11 PC or a Mac (Apple silicon or Intel), with
+Bluetooth, a walking pad or treadmill that apps can control over Bluetooth
+(a UREVO Strol 2E, a WELLFIT TM029 Pro, or another Bluetooth FTMS
+treadmill - see [which treadmills work](#which-treadmills-work)), and
+World of Warcraft: Forever.
 
 ## Get started
 
