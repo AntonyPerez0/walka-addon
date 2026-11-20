@@ -21,6 +21,18 @@ for path in (str(HERE), str(SRC)):
         sys.path.insert(0, path)
 
 
+@pytest.fixture(autouse=True)
+def message_boxes(monkeypatch) -> list[str]:
+    """On Windows, without a console, Walka says some things in a message
+    box - which waits for a click that no test is there to give. Here a box
+    is only written down."""
+    from walka import window
+
+    shown: list[str] = []
+    monkeypatch.setattr(window, "message_box", lambda text, **_how: shown.append(text))
+    return shown
+
+
 @pytest.fixture(scope="session")
 def repo_root() -> Path:
     return REPO

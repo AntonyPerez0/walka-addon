@@ -3,21 +3,31 @@
     pip install -e ".[build]"
     python build_exe.py
 
-Produces dist/Walka.exe on Windows and dist/Walka on a Mac: the companion,
-its dashboard page, a copy of the addon (so the dashboard's "Install
-addon" button works) and the licences of the libraries packed with it
-(third_party.py) in one file. It is built for the kind of computer it
-is built on - on a Mac, for that Mac's processor (Apple silicon or Intel).
+Produces dist/Walka.exe on Windows and dist/Walka.app on a Mac: the
+companion, its dashboard page, a copy of the addon (so the dashboard's
+"Install addon" button works) and the licences of the libraries packed with
+it (third_party.py). On Windows that is one file; on a Mac an application,
+which is a folder that macOS shows as one thing. It is built for the kind
+of computer it is built on - on a Mac, for that Mac's processor (Apple
+silicon or Intel).
+
+It is a windowed program: opened with a double-click it shows Walka's
+window (walka/window.py) and no console. Started from a command prompt
+with a command - "Walka.exe probe" - it writes there (walka/cli.py).
 """
 
 from __future__ import annotations
 
 import os
+import plistlib
+import subprocess
 import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ADDON = HERE.parent / "Walka"
+# The program's icon: drawn by tools/gen_icons.py and kept in the repository.
+ICONS = {"win32": HERE / "icons" / "walka.ico", "darwin": HERE / "icons" / "walka.icns"}
 # The licences of what is packed into the program (written by third_party.py
 # just before the build), and where they go inside it: next to the package's
 # own files, where "Walka.exe licenses" looks for them.
@@ -59,14 +69,68 @@ MACOS_HIDDEN_IMPORTS = (
 )
 
 
+# Walka's window (walka/window.py): pywebview picks what draws it at run
+# time - Edge WebView2 by way of .NET on Windows, WebKit on a Mac.
+# "Walka selfcheck" imports these too.
+WINDOWS_WINDOW_IMPORTS = ("webview.platforms.winforms", "webview.platforms.edgechromium")
+MACOS_WINDOW_IMPORTS = ("webview.platforms.cocoa",)
+
+# What macOS knows the application as (its settings, its permissions).
+MAC_BUNDLE_ID = "io.github.antonyperez0.walka"
+MAC_APP = HERE / "dist" / "Walka.app"
+BLUETOOTH_REASON = (
+    "Walka listens to your walking pad over Bluetooth: its speed, distance and steps. It sends the pad nothing."
+)
+
+
+def mac_info(version: str) -> dict:
+    """What is added to the application's Info.plist."""
+    return {
+        "CFBundleDisplayName": "Walka",
+        "CFBundleShortVersionString": version,
+        "CFBundleVersion": version,
+        # macOS ends a program that touches Bluetooth without having said
+        # what for. This is the sentence in the box that asks.
+        "NSBluetoothAlwaysUsageDescription": BLUETOOTH_REASON,
+        "NSBluetoothPeripheralUsageDescription": BLUETOOTH_REASON,  # (the same, for macOS 10.15)
+        # The window shows a page from this computer, over plain http.
+        "NSAppTransportSecurity": {"NSAllowsLocalNetworking": True},
+        "LSApplicationCategoryType": "public.app-category.healthcare-fitness",
+        "NSHumanReadableCopyright": "Walka is free software under the MIT licence.",
+    }
+
+
+def walka_version() -> str:
+    import tomllib
+
+    return tomllib.loads((HERE / "pyproject.toml").read_text("utf-8"))["project"]["version"]
+
+
+def finish_mac_app(app: Path = MAC_APP) -> None:
+    """Put Walka's own entries into the application's Info.plist - the
+    PyInstaller command line has no way to - and sign it again: the
+    signature PyInstaller gave it covered the Info.plist as it was. (Signed
+    "ad hoc", as PyInstaller does: with no developer's name, which is all
+    an Apple-silicon Mac asks for to run a program at all.)"""
+    plist = app / "Contents" / "Info.plist"
+    with plist.open("rb") as file:
+        info = plistlib.load(file)
+    info.update(mac_info(walka_version()))
+    with plist.open("wb") as file:
+        plistlib.dump(info, file)
+    subprocess.run(["codesign", "--force", "--deep", "--sign", "-", str(app)], check=True)
+    subprocess.run(["codesign", "--verify", "--deep", "--strict", str(app)], check=True)
+
+
 def pyinstaller_args(platform: str = sys.platform) -> list[str]:
     """The PyInstaller command line for this build."""
     sep = os.pathsep  # ';' on Windows, ':' elsewhere
     args = [
         str(HERE / "walka_launcher.py"),
         "--name", "Walka",
-        "--onefile",
-        "--console",
+        # No console window. (On a Mac this is also what makes it an
+        # application, Walka.app, and not a bare program.)
+        "--windowed",
         "--noconfirm",
         "--clean",
         "--paths", str(HERE / "src"),
@@ -80,13 +144,21 @@ def pyinstaller_args(platform: str = sys.platform) -> list[str]:
         "--workpath", str(HERE / "build"),
         "--specpath", str(HERE / "build"),
     ]  # fmt: skip
+    if platform == "darwin":
+        # An application is a folder anyway: nothing is gained by packing
+        # a single file into it that unpacks itself at every start.
+        args += ["--onedir", "--osx-bundle-identifier", MAC_BUNDLE_ID]
+    else:
+        args += ["--onefile"]
+    if platform in ICONS:
+        args += ["--icon", str(ICONS[platform])]
     if platform == "win32":
         args += ["--collect-submodules", "winrt"]
-        for module in WINRT_HIDDEN_IMPORTS:
+        for module in WINRT_HIDDEN_IMPORTS + WINDOWS_WINDOW_IMPORTS:
             args += ["--hidden-import", module]
     if platform == "darwin":
         # Only imported where sys.platform says so, and from inside functions.
-        for module in MACOS_HIDDEN_IMPORTS:
+        for module in MACOS_HIDDEN_IMPORTS + MACOS_WINDOW_IMPORTS:
             args += ["--hidden-import", module]
     return args
 
@@ -106,6 +178,8 @@ def main() -> int:
     # of its own work folders, and this file must be there when it packs.)
     third_party.write(LICENCES)
     PyInstaller.__main__.run(pyinstaller_args())
+    if sys.platform == "darwin":
+        finish_mac_app()
     return 0
 
 

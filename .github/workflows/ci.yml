@@ -24,7 +24,10 @@ permissions:
 #   name every package, its version and the checksums of its files. pip
 #   refuses anything else (--require-hashes). Walka itself is not
 #   "installed": the tests and the build take it from companion/src, so no
-#   packaging tool that nobody pinned runs here either.
+#   packaging tool that nobody pinned runs here either. One package is
+#   published as source only (proxy_tools, which pywebview needs): pip
+#   builds it where it installs it, and --build-constraint makes it take
+#   the setuptools for that from the same lock file, checksum and all.
 
 jobs:
   test:
@@ -40,7 +43,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install
-        run: python -m pip install --require-hashes -r companion/requirements-dev.lock
+        run: python -m pip install --require-hashes --build-constraint companion/requirements-dev.lock -r companion/requirements-dev.lock
       - name: Lint
         working-directory: companion
         run: ruff check src tests
@@ -57,41 +60,60 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install
-        run: python -m pip install --require-hashes -r companion/requirements-build.lock
+        run: python -m pip install --require-hashes --build-constraint companion/requirements-build.lock -r companion/requirements-build.lock
       - name: Build
         working-directory: companion
         run: python build_exe.py
       - name: Smoke test
         shell: pwsh
         run: |
-          $exe = "companion/dist/Walka.exe"
-          & $exe --version
-          if ($LASTEXITCODE -ne 0) { throw "version check failed" }
+          $exe = (Resolve-Path "companion/dist/Walka.exe").Path
+          # Walka.exe is a windowed program: PowerShell does not wait for
+          # one, nor take its exit code. So it is started, waited for and
+          # read like this. (What it prints goes to files here; started
+          # from a command prompt it writes to that prompt's window.)
+          function Walka([string[]] $arguments) {
+            $out = Join-Path $env:RUNNER_TEMP "walka-out.txt"
+            $err = Join-Path $env:RUNNER_TEMP "walka-err.txt"
+            $p = Start-Process -FilePath $exe -ArgumentList $arguments -Wait -PassThru -NoNewWindow -RedirectStandardOutput $out -RedirectStandardError $err
+            $script:code = $p.ExitCode
+            $text = ((Get-Content $out -Raw) + (Get-Content $err -Raw))
+            Write-Host "> Walka.exe $arguments  (exit code $($script:code))"
+            Write-Host $text
+            return $text
+          }
+          $version = Walka "--version"
+          if ($code -ne 0 -or $version -notmatch "walka \d+\.\d+") { throw "version check failed" }
           # Everything the frozen app imports only at run time (the Windows
-          # Runtime modules behind Bluetooth, the screen capture backend),
-          # the dashboard page and the bundled addon. The runner has no
-          # Bluetooth adapter, so the scan below stops before it would
-          # touch most of these: this is what notices a module missing
-          # from the bundle.
-          & $exe selfcheck
-          if ($LASTEXITCODE -ne 0) { throw "selfcheck failed: something the app needs at run time is missing from Walka.exe" }
+          # Runtime modules behind Bluetooth, the screen capture backend,
+          # what draws its window), the dashboard page and the bundled
+          # addon. The runner has no Bluetooth adapter, so the scan below
+          # stops before it would touch most of these: this is what
+          # notices a module missing from the bundle.
+          $check = Walka "selfcheck"
+          if ($code -ne 0 -or $check -notmatch "selfcheck OK") { throw "selfcheck failed: something the app needs at run time is missing from Walka.exe" }
           # The licences of the libraries packed into the program go with it.
-          $licences = (& $exe licenses | Out-String)
-          if ($licences -notmatch "THIRD-PARTY SOFTWARE IN WALKA" -or $licences -notmatch "Apache License" -or $licences -notmatch "aiohttp" -or $licences -notmatch "winrt-runtime") { throw "Walka.exe does not carry the licences of what is packed into it" }
+          $licences = Walka "licenses"
+          foreach ($wanted in "THIRD-PARTY SOFTWARE IN WALKA", "Apache License", "aiohttp", "winrt-runtime", "pywebview", "pythonnet", "Microsoft.Web.WebView2") {
+            if ($licences -notmatch [regex]::Escape($wanted)) { throw "Walka.exe does not carry the licences of what is packed into it: nothing about $wanted" }
+          }
           # The Bluetooth stack must load inside the frozen app. The runner
           # has no Bluetooth adapter, so the scan itself is expected to say
-          # so - what must not happen is an import error.
-          $scan = (& $exe scan --seconds 2 2>&1 | Out-String)
-          Write-Host $scan
+          # so (and exit 2) - what must not happen is an import error.
+          $scan = Walka "scan", "--seconds", "2"
           if ($scan -match "ModuleNotFoundError|ImportError|AttributeError|Traceback") { throw "Bluetooth stack did not load in the frozen app" }
-          # "No Bluetooth adapter" is the expected answer here and exits 2;
-          # do not let that become this step's exit code.
-          $global:LASTEXITCODE = 0
+
+          # Now as it is used: started with nothing but the demo's switch,
+          # it opens its window. The page must load in it, the simulated
+          # walk must be recorded, and closing the window must end the
+          # program by itself, with the walk saved.
           $env:WALKA_DATA_DIR = Join-Path $env:RUNNER_TEMP "walka-data"
-          $proc = Start-Process -FilePath $exe -ArgumentList "--demo","--no-browser","--port","8791" -PassThru -NoNewWindow
+          $log = Join-Path $env:WALKA_DATA_DIR "walka.log"
+          $proc = Start-Process -FilePath $exe -ArgumentList "--demo","--port","8791" -PassThru
+          $closed = $false
           try {
             $state = $null
-            foreach ($i in 1..40) {
+            foreach ($i in 1..60) {
               Start-Sleep -Milliseconds 500
               try { $state = Invoke-RestMethod "http://127.0.0.1:8791/api/state"; if ($state.treadmill.speed_kmh -gt 0) { break } } catch { }
             }
@@ -100,12 +122,45 @@ jobs:
             # simulated pad's remote: the companion itself cannot.)
             if ($state.treadmill.speed_kmh -le 0) { throw "the demo's walker never got the simulated belt moving" }
             if (-not $state.session) { throw "the walk on the simulated pad is not being recorded" }
-            $page = Invoke-WebRequest "http://127.0.0.1:8791/" -UseBasicParsing
-            if ($page.StatusCode -ne 200) { throw "dashboard page missing from the bundle" }
             Write-Host "belt speed $($state.treadmill.speed_kmh) km/h, recording a walk filed under: $($state.session.source)"
+            $loaded = $false
+            foreach ($i in 1..120) {
+              if ((Test-Path $log) -and (Select-String -Path $log -Pattern "the dashboard is loaded in Walka's window" -Quiet)) { $loaded = $true; break }
+              if ($proc.HasExited) { break }
+              Start-Sleep -Milliseconds 500
+            }
+            if (-not $loaded) { throw "Walka's window did not come up with the dashboard in it" }
+            if (-not (Select-String -Path $log -Pattern "drawn by edgechromium" -Quiet)) { throw "the window is not drawn by Edge WebView2" }
+            # (Packed into one file, Walka.exe is two processes: the one
+            # started here unpacks the program and waits for the other,
+            # which is the program - and has the window.)
+            $inner = Get-CimInstance Win32_Process -Filter "ParentProcessId = $($proc.Id) AND Name = 'Walka.exe'" | Select-Object -First 1
+            if (-not $inner) { throw "Walka.exe is not running the way a one-file program does" }
+            $window = Get-Process -Id $inner.ProcessId
+            foreach ($i in 1..20) {
+              $window.Refresh()
+              if ($window.MainWindowTitle) { break }
+              Start-Sleep -Milliseconds 500
+            }
+            Write-Host "window: '$($window.MainWindowTitle)'"
+            if ($window.MainWindowTitle -ne "Walka") { throw "the window on screen is not Walka's" }
+            # What the X in its corner does.
+            if (-not $window.CloseMainWindow()) { throw "the window could not be asked to close" }
+            if (-not $proc.WaitForExit(30000)) { throw "Walka did not end when its window was closed" }
+            $closed = $true
+            if ($proc.ExitCode -ne 0) { throw "Walka did not stop in an orderly way when its window was closed (exit code $($proc.ExitCode))" }
+            if (-not (Test-Path (Join-Path $env:WALKA_DATA_DIR "config.json"))) { throw "Walka did not get to the end of its shutdown" }
+            if (Test-Path (Join-Path $env:WALKA_DATA_DIR "active-session.json")) { throw "the walk was not saved when the window was closed" }
           } finally {
-            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            if (-not $closed) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+            if (Test-Path $log) { Write-Host "--- walka.log"; Get-Content $log }
           }
+          $global:LASTEXITCODE = 0
+      # Walka.exe is a windowed program, and Windows gives one no console.
+      # Its commands ("Walka.exe probe") print all the same, to the command
+      # prompt they are typed into: checked on a real one.
+      - name: Commands print to the command prompt
+        run: python tools/check_console.py companion/dist/Walka.exe
       - name: Package
         shell: pwsh
         run: |
@@ -122,8 +177,8 @@ jobs:
           path: release/
           if-no-files-found: error
 
-  # The same program for a Mac: one file, "Walka", in a zip (a zip keeps the
-  # mark that says it is a program; a bare download loses it). PyInstaller
+  # The same program for a Mac: an application, "Walka", in a zip (an
+  # application is a folder: a zip is how one is downloaded). PyInstaller
   # builds for the processor it runs on, so there are two: Apple silicon
   # and Intel.
   mac-app:
@@ -141,26 +196,36 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install
-        run: python -m pip install --require-hashes -r companion/requirements-build.lock
+        run: python -m pip install --require-hashes --build-constraint companion/requirements-build.lock -r companion/requirements-build.lock
       - name: Build
         working-directory: companion
         run: python build_exe.py
       - name: Smoke test
         run: |
-          exe=companion/dist/Walka
+          app=companion/dist/Walka.app
+          exe="$app/Contents/MacOS/Walka"
           fail() { echo "::error::$1"; exit 1; }
           # Built for the processor it is named after?
           file "$exe"
           file "$exe" | grep -q "${{ matrix.machine }}" || fail "Walka was not built for ${{ matrix.machine }}"
+          # An application macOS will run and can ask about: signed (ad
+          # hoc) after its Info.plist was written, with the sentence macOS
+          # shows when it asks about Bluetooth - a program that touches
+          # Bluetooth without one is ended on the spot.
+          codesign --verify --deep --strict "$app" || fail "the application's signature does not hold"
+          plutil -p "$app/Contents/Info.plist"
+          plutil -extract NSBluetoothAlwaysUsageDescription raw "$app/Contents/Info.plist" | grep -q "listens to your walking pad" || fail "the application does not say what it wants Bluetooth for"
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' companion/pyproject.toml)
+          [ "$(plutil -extract CFBundleShortVersionString raw "$app/Contents/Info.plist")" = "$version" ] || fail "the application does not carry Walka's version ($version)"
           "$exe" --version || fail "version check failed"
           # Everything the frozen app imports only at run time (the
           # CoreBluetooth modules behind Bluetooth, the screen capture
-          # backend, what it asks macOS), the dashboard page and the
-          # bundled addon.
+          # backend, what it asks macOS, what draws its window), the
+          # dashboard page and the bundled addon.
           "$exe" selfcheck || fail "selfcheck failed: something the app needs at run time is missing from Walka"
           # The licences of the libraries packed into the program go with it.
           "$exe" licenses > "$RUNNER_TEMP/licences.txt" || fail "Walka does not print the licences of what is packed into it"
-          for wanted in "THIRD-PARTY SOFTWARE IN WALKA" "Apache License" "aiohttp" "pyobjc-core"; do
+          for wanted in "THIRD-PARTY SOFTWARE IN WALKA" "Apache License" "aiohttp" "pyobjc-core" "pywebview"; do
             grep -q "$wanted" "$RUNNER_TEMP/licences.txt" || fail "the licences packed into Walka do not mention: $wanted"
           done
           # The Bluetooth stack must load inside the frozen app. Whether
@@ -171,9 +236,13 @@ jobs:
           if echo "$scan" | grep -Eq "ModuleNotFoundError|ImportError|AttributeError|Traceback"; then
             fail "Bluetooth stack did not load in the frozen app"
           fi
+          # Now as it is used: started with nothing but the demo's switch,
+          # it opens its window.
           export WALKA_DATA_DIR="$RUNNER_TEMP/walka-data"
-          "$exe" --demo --no-browser --port 8791 &
+          log="$WALKA_DATA_DIR/walka.log"
+          "$exe" --demo --port 8791 &
           pid=$!
+          giveup() { kill -9 $pid 2>/dev/null; echo "--- walka.log"; cat "$log" 2>/dev/null; fail "$1"; }
           state=""
           for i in $(seq 1 60); do
             sleep 0.5
@@ -181,26 +250,41 @@ jobs:
             speed=$(echo "$state" | python3 -c 'import json, sys; print(json.load(sys.stdin)["treadmill"]["speed_kmh"])' 2>/dev/null || echo 0)
             if python3 -c "import sys; sys.exit(0 if float('$speed') > 0 else 1)"; then break; fi
           done
-          [ -n "$state" ] || { kill -9 $pid; fail "the dashboard API did not come up"; }
+          [ -n "$state" ] || giveup "the dashboard API did not come up"
           # (The demo has a made-up walker who presses start on the
           # simulated pad's remote: the companion itself cannot.)
-          python3 -c "import sys; sys.exit(0 if float('$speed') > 0 else 1)" || { kill -9 $pid; fail "the demo's walker never got the simulated belt moving"; }
-          curl -fsS -o /dev/null http://127.0.0.1:8791/ || { kill -9 $pid; fail "dashboard page missing from the bundle"; }
-          echo "$state" | python3 -c 'import json, sys; s = json.load(sys.stdin); print("belt speed", s["treadmill"]["speed_kmh"], "km/h, recording a walk filed under:", s["session"]["source"])' || { kill -9 $pid; fail "the walk on the simulated pad is not being recorded"; }
-          # Closing the Terminal window it runs in is how Walka is closed on
-          # a Mac, and that arrives as this signal: the walk must be saved
-          # and the program must end by itself, not be killed.
-          kill -HUP $pid
+          python3 -c "import sys; sys.exit(0 if float('$speed') > 0 else 1)" || giveup "the demo's walker never got the simulated belt moving"
+          curl -fsS -o /dev/null http://127.0.0.1:8791/ || giveup "dashboard page missing from the bundle"
+          echo "$state" | python3 -c 'import json, sys; s = json.load(sys.stdin); print("belt speed", s["treadmill"]["speed_kmh"], "km/h, recording a walk filed under:", s["session"]["source"])' || giveup "the walk on the simulated pad is not being recorded"
+          # The page must load in the window.
+          for i in $(seq 1 120); do
+            grep -q "the dashboard is loaded in Walka's window" "$log" 2>/dev/null && break
+            kill -0 $pid 2>/dev/null || break
+            sleep 0.5
+          done
+          grep -q "the dashboard is loaded in Walka's window" "$log" 2>/dev/null || giveup "Walka's window did not come up with the dashboard in it"
+          grep -q "drawn by wkwebview" "$log" || giveup "the window is not drawn by WebKit"
+          # Told to end from outside - as at a log-out that does not wait -
+          # the walk must be saved and the program must end by itself,
+          # window and all, not be killed.
+          kill -TERM $pid
           code=0
           wait $pid || code=$?
-          [ "$code" -eq 0 ] || fail "Walka did not stop in an orderly way when its window was closed (exit code $code)"
+          echo "--- walka.log"; cat "$log"
+          [ "$code" -eq 0 ] || fail "Walka did not stop in an orderly way when it was told to (exit code $code)"
           [ -f "$WALKA_DATA_DIR/config.json" ] || fail "Walka did not get to the end of its shutdown"
+          [ ! -f "$WALKA_DATA_DIR/active-session.json" ] || fail "the walk was not saved"
       - name: Package
         run: |
           mkdir -p release
-          chmod +x companion/dist/Walka
-          zip -j "release/${{ matrix.file }}.zip" companion/dist/Walka
-          unzip -Z "release/${{ matrix.file }}.zip"
+          # (ditto: the zip Finder itself would make of an application - what
+          # is a link inside it stays a link, and what may be run stays so.)
+          ditto -c -k --keepParent companion/dist/Walka.app "release/${{ matrix.file }}.zip"
+          unzip -Z "release/${{ matrix.file }}.zip" | tail -n 3
+          # ... and it comes out of the zip as an application that still runs.
+          mkdir "$RUNNER_TEMP/unzipped" && ditto -x -k "release/${{ matrix.file }}.zip" "$RUNNER_TEMP/unzipped"
+          codesign --verify --deep --strict "$RUNNER_TEMP/unzipped/Walka.app" || { echo "::error::the application does not survive its zip"; exit 1; }
+          "$RUNNER_TEMP/unzipped/Walka.app/Contents/MacOS/Walka" selfcheck
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ matrix.file }}
@@ -365,7 +449,7 @@ jobs:
           for file in $files; do test -s "$file" || { echo "::error::$file is missing"; exit 1; }; done
           notes="**To get Walka on Windows:** under **Assets** below, click **Walka.exe**, then open it. If Windows says *Windows protected your PC*, click **More info**, then **Run anyway**. The steps are at the top of the [README](https://github.com/$GH_REPO#readme).
 
-          **On a Mac:** click **Walka-mac-apple-silicon.zip** (Macs from late 2020 on) or **Walka-mac-intel.zip** (older ones), open the zip, then open **Walka**. The first time, macOS will not open it until you allow it under *System Settings > Privacy & Security > Open Anyway*: see [On a Mac](https://github.com/$GH_REPO#on-a-mac) in the README. The Mac version is new and has not been tried with the game on a real Mac yet.
+          **On a Mac:** click **Walka-mac-apple-silicon.zip** (Macs from late 2020 on) or **Walka-mac-intel.zip** (older ones), open the zip, then open the **Walka** application that is in it. The first time, macOS will not open it until you allow it under *System Settings > Privacy & Security > Open Anyway*: see [On a Mac](https://github.com/$GH_REPO#on-a-mac) in the README. The Mac version is new and has not been tried with the game on a real Mac yet.
 
           **Early version:** not yet tried on a real walking pad. Read *Before your first walk* in the README.
 

@@ -31,7 +31,7 @@ from walka.treadmill.simulated import SimulatedTreadmill
 def test_defaults():
     args = cli.build_parser().parse_args([])
     assert args.command is None  # "run" is implied
-    assert not args.simulate and not args.demo and not args.no_capture and not args.no_browser
+    assert not args.simulate and not args.demo and not args.no_capture and not args.no_window and not args.browser
     assert args.port is None and args.data_dir is None and not args.verbose
 
 
@@ -42,7 +42,7 @@ def test_run_flags_at_top_level_and_on_the_run_command():
         ["run", "--demo", "--no-browser", "--port", "9001"],
     ):
         args = parser.parse_args(argv)
-        assert args.demo and args.no_browser and args.port == 9001 and not args.simulate
+        assert args.demo and args.no_window and args.port == 9001 and not args.simulate
     args = parser.parse_args(["--simulate", "--no-capture", "--data-dir", "/tmp/x", "-v"])
     assert args.simulate and args.no_capture and args.data_dir == "/tmp/x" and args.verbose and not args.demo
 
@@ -431,14 +431,18 @@ def test_the_build_bundles_what_selfcheck_looks_for(repo_root: Path):
     assert {"winrt." + package.lower() for package in packages} <= hidden
     assert "--hidden-import" not in build.pyinstaller_args("linux")
 
+    # Walka's window: pywebview, and what draws the window on this kind of computer.
+    assert {name for name in cli.WINDOWS_RUNTIME_MODULES if name.startswith("webview.")} <= hidden
+    assert not any("cocoa" in name for name in hidden)
+
     # A Mac build: what is only imported there, and nothing of Windows'.
     mac = build.pyinstaller_args("darwin")
     mac_hidden = {mac[i + 1] for i, arg in enumerate(mac) if arg == "--hidden-import"}
-    assert set(cli.MACOS_RUNTIME_MODULES) <= mac_hidden
-    assert not any(name.startswith("winrt") for name in mac_hidden) and "winrt" not in mac
-    assert [arg for arg in mac if arg not in mac_hidden][: len(build.pyinstaller_args("linux"))] == [
-        arg for arg in build.pyinstaller_args("linux")
-    ]
+    assert set(cli.MACOS_RUNTIME_MODULES) - {"webview"} <= mac_hidden
+    assert not any(name.startswith("winrt") or "winforms" in name for name in mac_hidden) and "winrt" not in mac
+    # ... and but for that, and for being an application and not one file, the same build.
+    linux = build.pyinstaller_args("linux")
+    assert [arg for arg in linux if arg != "--onefile"] == [arg for arg in mac if arg in linux]
 
     # The addon is bundled where addon_sync looks for it, and not in a folder
     # that Windows would merge with the package's own ("Walka" vs "walka").

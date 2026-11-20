@@ -88,6 +88,82 @@ FALLBACK_LICENCES: dict[str, tuple[str, str]] = {
         "Copyright 2002, 2003 - Bill Bumgarner, Ronald Oussoren, Steve Majewski, Lele Gaifax, et.al.\n"
         "Copyright 2003-2025 - Ronald Oussoren\n\n" + _MIT_TERMS,
     ),
+    # https://github.com/jtushman/proxy_tools/blob/master/LICENSE.txt
+    # (As it stands there, down to the unfilled <COPYRIGHT HOLDER> and the
+    # stray half sentence at the end.)
+    "proxy-tools-": (
+        "LICENSE.txt (from the proxy_tools repository)",
+        "The BSD License (BSD)\n\n"
+        "Copyright (c) 2013 Armin Ronacher\n"
+        "Copyright (c) 2014 Jonathan Tushman\n\n"
+        "Redistribution and use in source and binary forms, with or without\n"
+        "modification, are permitted provided that the following conditions are met:\n\n"
+        "  * Redistributions of source code must retain the above copyright\n"
+        "    notice, this list of conditions and the following disclaimer.\n"
+        "  * Redistributions in binary form must reproduce the above copyright\n"
+        "    notice, this list of conditions and the following disclaimer in the\n"
+        "    documentation and/or other materials provided with the distribution.\n\n"
+        'THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"\n'
+        "AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE\n"
+        "IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE\n"
+        "ARE DISCLAIMED. IN NO EVENT SHALL <COPYRIGHT HOLDER> BE LIABLE FOR ANY\n"
+        "DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES\n"
+        "(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;\n"
+        "LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND\n"
+        "ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT\n"
+        "(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF\n"
+        "THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.OTHERWISE, ARISING FROM, "
+        "OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.",
+    ),
+}
+
+# A package can carry somebody else's software without its licence among the
+# package's own licence files. Per package (by name) and kind of computer:
+# the licence that then goes with the program as well.
+#
+# pywebview brings Microsoft's WebView2 libraries - the .dll files through
+# which a program talks to Edge WebView2 - and they are packed into
+# Walka.exe with it. (Not into the Mac application: it has no use for them.)
+# Their licence is in pywebview's source (webview/lib/
+# Microsoft.Web.WebView2.LICENSE.md, as of pywebview 6.2.1) but not in the
+# package as it is installed, so it is kept here.
+_WEBVIEW2_LICENCE = """\
+## Microsoft.Web.WebView2
+
+* Microsoft.Web.WebView2.Core.dll
+* Microsoft.Web.WebView2.WinForms.dll
+* WebView2Loader.dll
+
+Copyright (C) Microsoft Corporation. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+   * Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+   * Redistributions in binary form must reproduce the above
+copyright notice, this list of conditions and the following disclaimer
+in the documentation and/or other materials provided with the
+distribution.
+   * The name of Microsoft Corporation, or the names of its contributors
+may not be used to endorse or promote products derived from this
+software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE."""
+
+CARRIED_LICENCES: dict[tuple[str, str], tuple[str, str]] = {
+    ("pywebview", "win32"): ("Microsoft.Web.WebView2.LICENSE.md (the WebView2 libraries packed with pywebview)", _WEBVIEW2_LICENCE),
 }
 
 
@@ -117,8 +193,9 @@ def runtime_distributions(pyproject: Path = HERE / "pyproject.toml") -> list[met
     return [found[key] for key in sorted(found)]
 
 
-def licence_files(distribution: metadata.Distribution) -> list[tuple[str, str]]:
-    """``(file name, text)`` of every licence file the package was installed with."""
+def licence_files(distribution: metadata.Distribution, platform: str = sys.platform) -> list[tuple[str, str]]:
+    """``(file name, text)`` of every licence file the package was installed
+    with, and of what it carries (``CARRIED_LICENCES``)."""
     texts: list[tuple[str, str]] = []
     for file in distribution.files or []:
         parts = [part.lower() for part in file.parts]
@@ -132,10 +209,11 @@ def licence_files(distribution: metadata.Distribution) -> list[tuple[str, str]]:
             except OSError:
                 continue
             texts.append((file.name, text.strip("\n")))
+    name = _name(distribution.metadata["Name"])
     if not texts:
-        name = _name(distribution.metadata["Name"]) + "-"
-        texts = [entry for prefix, entry in FALLBACK_LICENCES.items() if name.startswith(prefix)]
-    return sorted(texts)
+        texts = [entry for prefix, entry in FALLBACK_LICENCES.items() if (name + "-").startswith(prefix)]
+    carried = CARRIED_LICENCES.get((name, platform))
+    return sorted(texts) + ([carried] if carried else [])
 
 
 def declared_licence(distribution: metadata.Distribution) -> str:
