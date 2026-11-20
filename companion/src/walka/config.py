@@ -73,7 +73,11 @@ class WowConfig:
 class WebConfig:
     host: str = "127.0.0.1"
     port: int = 8787
+    # Show the dashboard when Walka starts? (The name is from when that
+    # meant a tab in the web browser.)
     open_browser: bool = True
+    # ... in a window of Walka's own (False: in the web browser).
+    window: bool = True
 
 
 @dataclass

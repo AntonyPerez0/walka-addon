@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import importlib.util
 import re
+import sys
 from pathlib import Path
 
 import pytest
@@ -34,6 +35,8 @@ def test_every_library_the_program_runs_on_is_listed_with_its_licence(repo_root:
     assert {"aiohttp", "bleak", "mss", "yarl", "multidict", "frozenlist", "aiosignal", "attrs", "idna"} <= names
     # Not the tools that only build or test: they are not in the program.
     assert not names & {"pytest", "ruff", "lupa", "pyinstaller", "pip", "setuptools", "packaging"}
+    # Walka's window, where the program is packaged with one.
+    assert ("pywebview" in names) == (sys.platform in ("win32", "darwin"))
     for distribution in distributions:
         files = third_party.licence_files(distribution)
         assert files, f"{distribution.metadata['Name']} has no licence file to pass on"
@@ -121,6 +124,11 @@ def test_the_builds_install_from_the_lock_files_only(repo_root: Path):
     assert len(installs) == 3
     for line in installs:
         assert "--require-hashes" in line and "requirements-" in line, line
+        # What pip has to build itself (proxy_tools is published as source
+        # only) is built with the setuptools of the same lock file.
+        (lock,) = set(re.findall(r"companion/requirements-\w+\.lock", line))
+        assert f"--build-constraint {lock} -r {lock}" in line, line
+        assert "setuptools" in locked(repo_root / lock)
     assert 'pip install -e' not in text, "an editable install builds Walka with tools nobody pinned"
 
 
@@ -154,3 +162,21 @@ def test_a_package_published_without_its_licence_file_still_gets_its_licence(rep
         assert holder in text and "Permission is hereby granted, free of charge" in text
         assert text.rstrip().endswith("SOFTWARE.")
     assert third_party.licence_files(Bare("some-other-package")) == []
+    # proxy_tools (pywebview needs it) is published as source without its licence file.
+    ((_file, text),) = third_party.licence_files(Bare("proxy_tools"))
+    assert "Jonathan Tushman" in text and "Redistributions in binary form must reproduce" in text
+
+
+def test_what_a_package_carries_goes_with_its_licence_too(repo_root: Path):
+    """pywebview brings Microsoft's WebView2 libraries, which are packed
+    into Walka.exe - and into nothing else."""
+    third_party = load(repo_root, "third_party")
+
+    class Pywebview:
+        files: list = []
+        metadata = {"Name": "pywebview"}
+
+    ((name, text),) = third_party.licence_files(Pywebview(), "win32")
+    assert "WebView2" in name and "Copyright (C) Microsoft Corporation" in text
+    assert "Redistributions in binary form must reproduce" in text
+    assert third_party.licence_files(Pywebview(), "darwin") == []

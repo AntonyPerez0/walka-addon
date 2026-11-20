@@ -79,7 +79,7 @@ is not affiliated with or endorsed by Blizzard.
 ## What is packed into Walka.exe (and Walka on a Mac)
 
 The program you download is Walka's code together with Python and the
-libraries it runs on, in one file:
+libraries it runs on - on Windows in one file, on a Mac in one application:
 
 * **Python** (Python Software Foundation License) - <https://www.python.org>
 * **aiohttp** and the libraries it brings along - aiohappyeyeballs,
@@ -88,6 +88,13 @@ libraries it runs on, in one file:
 * **bleak** (MIT) - Bluetooth; on Windows with the **PyWinRT** packages
   (`winrt-*`, MIT), on a Mac with **PyObjC** (MIT)
 * **python-mss** (MIT) - the screenshot of the game window's corner
+* **pywebview** (BSD) and what it needs - bottle (MIT), proxy_tools (BSD),
+  typing_extensions (PSF) - Walka's own window. On Windows with
+  **Python.NET** (pythonnet and clr_loader, MIT; cffi and pycparser, MIT
+  and BSD) and Microsoft's **WebView2** libraries (BSD-style), through
+  which the window is drawn by the Edge WebView2 that is part of Windows;
+  on a Mac with **PyObjC** (MIT), drawn by the system's WebKit. The
+  engines themselves are your system's: they are not in the download.
 * the bootloader of **PyInstaller** (GPL 2.0 or later, with an exception
   that allows distributing programs built with it under any licence) - the
   small program that unpacks and starts the rest

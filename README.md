@@ -22,7 +22,7 @@
 <p align="center">
   <sub><b>Walka only listens to your treadmill.</b> It cannot start, stop or change the speed of the belt: you do that at the treadmill itself.<br>
   <b>Experimental:</b> not yet tried on a real walking pad. Walking while you play is at your own risk - read the <a href="DISCLAIMER.md">disclaimer</a> before you download.<br>
-  <b>Free.</b> Nothing to install: on Windows it is one file, <code>Walka.exe</code>, and you just open it.<br>
+  <b>Free.</b> Nothing to install: on Windows it is one file, <code>Walka.exe</code>, and you just open it - it has a window of its own, like any program.<br>
   <b>Mac:</b> the button is for an Apple chip (M1 or later) - for an older Mac with an Intel processor, <a href="https://github.com/AntonyPerez0/walka-addon/releases/latest/download/Walka-mac-intel.zip">download this one</a>.
   The Mac version is new and has not been tried with the game on a real Mac yet: see <a href="#on-a-mac">On a Mac</a>.<br>
   <b>Game addon:</b> the Walka addon for World of Warcraft. Walka can also put it in the game for you (step 3).</sub>
@@ -85,10 +85,10 @@ are under [On a Mac](#on-a-mac) - and the rest is the same.*
    *Downloads* folder. If the browser says it "isn't commonly downloaded",
    choose **Keep** (in Edge: **...** → **Keep** → **Show more** → **Keep
    anyway**).
-2. **Double-click it.** A black window opens: that is Walka. **Leave it
-   open while you walk** - closing it ends the recording (the belt is not
-   touched). The *dashboard* page opens in your browser (if not, go to
-   `127.0.0.1:8787`).
+2. **Double-click it.** Walka opens in a window of its own, with its
+   *dashboard* in it. **Leave it open while you walk** (minimised is
+   fine) - closing the window closes Walka: the walk is saved and the
+   recording ends (the belt is not touched).
 
    The first time, Windows may say *"Windows protected your PC"*. Click
    **More info**, then **Run anyway**. (Walka is not signed by a company,
@@ -187,7 +187,7 @@ It is two pieces:
 * **the companion** (`companion/`, the `Walka.exe` you download above, or
   `Walka` on a Mac) - a small app that reads the addon's signal off the
   screen, listens to the treadmill over Bluetooth, records your walks, and
-  shows a live dashboard in your browser.
+  shows a live dashboard in a window of its own.
 
 Neither of them moves the belt. Until version 0.6 the companion did: the
 belt followed your character. That was taken out - a motorised belt under
@@ -322,8 +322,11 @@ of the window.)
    On a Mac: [the zip for your Mac](#on-a-mac), or from source with
    `python3` in place of `py`.
 
-2. **Run it.** A console window opens and your browser shows the dashboard
-   at <http://127.0.0.1:8787>.
+2. **Run it.** Walka's window opens, with the dashboard in it. (The
+   dashboard is a page served on your own computer, at
+   <http://127.0.0.1:8787>: `--browser` shows it in your web browser
+   instead, and `--no-window` shows it nowhere. See
+   [Walka's window](#walkas-window).)
 3. **Install the addon.** With the game closed, on the dashboard:
    *Settings → Game addon → Install automatically*. Or by hand: download
    [`Walka-addon.zip`](https://github.com/AntonyPerez0/walka-addon/releases/latest/download/Walka-addon.zip)
@@ -353,8 +356,9 @@ of the window.)
    [`Walka-mac-apple-silicon.zip`](https://github.com/AntonyPerez0/walka-addon/releases/latest/download/Walka-mac-apple-silicon.zip);
    *Processor: ... Intel ...* →
    [`Walka-mac-intel.zip`](https://github.com/AntonyPerez0/walka-addon/releases/latest/download/Walka-mac-intel.zip).
-2. **Open the zip** (double-click it in *Downloads*). Inside is one file,
-   `Walka`.
+2. **Open the zip** (double-click it in *Downloads*). Inside is the
+   application, `Walka`. It runs from where it is; you can also drag it
+   into *Applications*.
 3. **Double-click `Walka`.** The first time, macOS refuses: *"Apple could
    not verify Walka is free of malware"*. Click **Done**, open **System
    Settings → Privacy & Security**, scroll down to *Security* and click
@@ -363,19 +367,26 @@ of the window.)
    an Apple developer account, so macOS does not recognise it. It does not
    mean that anything was found: see
    [Is the download safe?](#is-the-download-safe)
-4. **A Terminal window opens: that is Walka.** Leave it open while you
-   walk. Closing it ends the recording (the belt is not touched). The dashboard opens in your
-   browser, and from there it is step 3 of [Get started](#get-started).
+4. **Walka's window opens**, with the dashboard in it. Leave it open while
+   you walk (minimised is fine). Closing the window - or *Walka → Quit* -
+   closes Walka: the walk is saved and the recording ends (the belt is not
+   touched). From there it is step 3 of [Get started](#get-started).
 
-macOS asks before a program may use Bluetooth or look at the screen. Walka
-runs inside Terminal, so it asks about **Terminal**:
+macOS asks before a program may use Bluetooth or look at the screen, and it
+asks about **Walka** by name:
 
 * **Bluetooth** - to listen to the walking pad. Click **Allow**.
 * **Screen Recording** - to see the strip the addon draws. The dashboard
   says when this is what is missing. Open **System Settings → Privacy &
-  Security → Screen & System Audio Recording**, switch on **Terminal**, then
+  Security → Screen & System Audio Recording**, switch on **Walka**, then
   close Walka and open it again. Recent versions of macOS ask again every
-  few weeks whether Terminal may still do this: choose **Allow**.
+  few weeks whether Walka may still do this: choose **Allow**.
+
+After you replace Walka with a newer version, macOS may ask both again:
+Walka is not signed with an Apple developer account, and to macOS a
+program like that which has changed is a new program. (If the switch for
+Walka is on but the dashboard still says the screen may not be recorded,
+switch it off and on again.)
 
 Both can be changed later in the same place in System Settings. Walka reads
 the top-left corner of the game window - and, until it has found the game
@@ -390,10 +401,47 @@ What is different from Windows:
 * **Your settings and walks** are in
   `~/Library/Application Support/Walka`.
 * **Commands** like `probe` and `beacon` are typed in Terminal: drag the
-  `Walka` file into a Terminal window, type a space and `probe`, press
-  Return.
+  `Walka` application into a Terminal window (that types where it is),
+  then - with no space in between - type `/Contents/MacOS/Walka probe` and
+  press Return. Started this way Walka belongs to Terminal as far as macOS
+  is concerned: it is **Terminal** that is asked about, and allowed,
+  Bluetooth and the screen.
 * **From source:** `cd companion`, `python3 -m pip install -e .`,
   `python3 -m walka` (Python 3.10 or newer).
+
+## Walka's window
+
+Walka is a program with a window of its own: no console window to leave
+open next to it, and no tab in your web browser. Closing the window closes
+Walka - the walk being recorded is saved first, and the belt is not
+touched.
+
+* **What draws it.** The window shows the dashboard with what your
+  system already has for showing pages inside programs: *Microsoft Edge
+  WebView2* on Windows (part of Windows 11, and on nearly every
+  Windows 10), WebKit on a Mac. Nothing is downloaded for it. The
+  dashboard is still a page that Walka serves on your own computer, at
+  `127.0.0.1:8787`, and still only there.
+* **Without WebView2** (some Windows 10 PCs) Walka opens the dashboard in
+  your web browser instead, and shows a small box that says *Walka is
+  running*: leave it open while you walk, and press **OK** in it to close
+  Walka.
+* **In the browser on purpose:** start Walka with `--browser`, or set
+  `"window": false` under `"web"` in `config.json`. `--no-window` shows
+  the dashboard nowhere; it is still at its address.
+* **Saving files.** *Download TCX* and *Download PNG* ask where to save
+  the file. (In a browser they went to the downloads folder.)
+* **Your settings and walks** are in `%APPDATA%\Walka` on Windows and in
+  `~/Library/Application Support/Walka` on a Mac. Next to them is
+  `walka.log`: what Walka used to write in its console window - what it
+  connected to, what went wrong. It holds your treadmill's name and
+  Bluetooth address, and it stays on your computer unless you send it to
+  somebody.
+* **Typing a command** (`Walka.exe probe`, `Walka.exe beacon`) on Windows:
+  open the folder `Walka.exe` is in, click the address bar at the top of
+  that window, type `cmd` and press Enter. A command prompt opens in that
+  folder: type the command there. The prompt comes back at once, before
+  the command is done - what the command prints follows below it.
 
 ## Using it
 
@@ -628,8 +676,8 @@ changed. Untick *My road* and the picture is as it was without it.
 
 Private by default:
 
-* The picture is drawn in your browser from numbers that are already on
-  your PC. Nothing is uploaded and nothing is posted for you.
+* The picture is drawn on your computer, from numbers that are already
+  on it. Nothing is uploaded and nothing is posted for you.
 * The road is read from a file on your PC and goes no further than the
   page that draws it. On the picture it is a line on a simplified map and
   the names of the continents (or of another land your road is on, such as
@@ -839,8 +887,9 @@ The pad and the game have not been tested against this code. Nothing here
 can move the belt, so what there is to check is whether your walk is
 *counted right*:
 
-1. **`Walka.exe probe`** (or `py -m walka probe`; on a Mac see
-   [On a Mac](#on-a-mac) for how to type a command). It lists what the pad
+1. **`Walka.exe probe`** (or `py -m walka probe`; for how to type a
+   command see [Walka's window](#walkas-window), and on a Mac
+   [On a Mac](#on-a-mac)). It lists what the pad
    exposes and listens while you operate it with the remote. It sends the
    treadmill no commands. Keep the report - it settles the open questions in
    [docs/HARDWARE.md](docs/HARDWARE.md).
@@ -862,12 +911,14 @@ And for you, not for Walka: start slow, and know where the remote is.
 |---|---|
 | The belt does not start, stop or change speed from Walka | It is not meant to: Walka only listens. Use the treadmill's remote or buttons. See [Walka only listens](#walka-only-listens). |
 | Treadmill not found | Is it on? Close the treadmill's own phone app (force-quit it). Remove the treadmill from Windows *Bluetooth & devices* if you paired it there. A USB Bluetooth 5 adapter helps with weak built-in radios. |
-| Treadmill not found, on a Mac | *System Settings → Privacy & Security → Bluetooth*: is **Terminal** switched on? Then close Walka and open it again. |
+| Treadmill not found, on a Mac | *System Settings → Privacy & Security → Bluetooth*: is **Walka** switched on? Then close Walka and open it again. |
 | Treadmill not found, and it is not a UREVO or WELLFIT | Give it the whole scan (15 seconds), or press *Scan* on the dashboard and pick it. If it is not in the list either, it does not speak Bluetooth FTMS - see [which treadmills work](#which-treadmills-work). |
 | It connects, but the dashboard shows no speed while the belt moves | The treadmill may not send standard treadmill data. Send a `Walka.exe probe` report. |
 | The treadmill's own phone app no longer connects | Most treadmills accept one connection at a time, and Walka has it. Press *Disconnect* on the dashboard (or close Walka) first. |
 | Dashboard says *no game signal* | Run the game windowed or borderless; keep the top-left corner uncovered; `/walka beacon on`; try `/walka beacon size 6`; run `Walka.exe beacon`. (Your walk is recorded all the same - it is only not filed under a character.) |
-| On a Mac: the dashboard says macOS has not allowed recording the screen, or *no game signal* although the game is there | *System Settings → Privacy & Security → Screen & System Audio Recording*: switch on **Terminal**, then close Walka and open it again. See [On a Mac](#on-a-mac). |
+| On a Mac: the dashboard says macOS has not allowed recording the screen, or *no game signal* although the game is there | *System Settings → Privacy & Security → Screen & System Audio Recording*: switch on **Walka**, then close Walka and open it again. See [On a Mac](#on-a-mac). |
+| Walka opens in my web browser, with a small box that says *Walka is running* | That Windows has no *Microsoft Edge WebView2*, which Walka's own window is drawn with. Walka works the same in the browser; the box is how you close it. To get the window: install the *WebView2 Runtime* from Microsoft. See [Walka's window](#walkas-window). |
+| I open Walka and nothing happens | Is it open already? Look on the taskbar (or in the Dock). Otherwise `walka.log`, in the folder with [your settings and walks](#walkas-window), says how far it got: please [open an issue](https://github.com/AntonyPerez0/walka-addon/issues) with it. |
 | A walk is not counted for my character | Was a session running in the game (`/walka status`) while you walked? Without one the walk is recorded as *No game session*. |
 | The HUD's numbers are off | They are an estimate from the pace you told the addon: set it with `/walka pace` to what the treadmill shows. The measured numbers arrive with *Sync*. |
 | History shows `~` numbers | Press *Sync* in the history window after the companion has saved the walk; check *Settings → Game addon* shows the right folder. |
@@ -904,7 +955,7 @@ companion/requirements-dev.lock`, and no install of Walka itself.)
   has no way to write to a treadmill, and a simulator), `ftms.py` (decoding
   what a treadmill says), `capture.py` + `beacon.py`
   (reading the strip), `session.py` (recording walks), `addon_sync.py`, `web.py` + `static/`
-  (dashboard), `app.py` (wiring), `cli.py`, `macos.py` (what the companion
+  (dashboard), `window.py` (Walka's own window, which shows the dashboard), `app.py` (wiring), `cli.py`, `macos.py` (what the companion
   asks macOS: where the game window is, whether it may see the screen),
   `winsession.py` (hearing that Windows is shutting down, to save the walk); `journey.py` (each character's
   journey, put together from the strip), `savedvars.py` + `road.py` (the

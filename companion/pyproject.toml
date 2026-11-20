@@ -16,6 +16,10 @@ dependencies = [
     # 10.2: the capture class, and on macOS every pixel of a Retina display
     # when asked (walka.capture). 11 changes the capture API.
     "mss>=10.2,<11",
+    # Walka's own window (walka.window): shows the dashboard with what the
+    # system has for it - Edge WebView2 on Windows, WebKit on a Mac. Where
+    # it is not installed (Linux), the dashboard opens in the browser.
+    "pywebview>=6.2,<7; sys_platform == 'win32' or sys_platform == 'darwin'",
     # bleak 3.1 is developed against the 3.x Windows Runtime bindings; the
     # 4.x series (October 2026) renamed APIs and cannot be mixed with 3.x.
     "winrt-runtime>=3.2,<4; sys_platform == 'win32'",
@@ -31,12 +35,17 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    # pywebview needs proxy_tools, which is published as source only: pip
+    # builds it where it installs it, with setuptools. Named here so that
+    # the lock files pin the setuptools that does (--build-constraint).
+    "setuptools>=77",
     "pytest>=8",
     "pytest-asyncio>=0.23",
     "lupa>=2.2",
     "ruff>=0.6",
 ]
 build = [
+    "setuptools>=77",  # (see "dev")
     "pyinstaller>=6.9",
 ]
 

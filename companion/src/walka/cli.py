@@ -7,6 +7,7 @@ import asyncio
 import importlib
 import logging
 import logging.handlers
+import os
 import queue
 import re
 import signal
@@ -15,6 +16,7 @@ import threading
 import time
 import webbrowser
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 from . import __version__, addon_sync, capture
@@ -41,6 +43,23 @@ def _open_browser(url: str) -> None:
         webbrowser.open(url)
     except Exception:
         pass
+
+
+def _dashboard_goes(args: argparse.Namespace, cfg: config_module.Config) -> str:
+    """Where the dashboard is shown when Walka starts: in Walka's own
+    ``"window"``, in the web ``"browser"``, or ``"nowhere"`` (it is still
+    served, for whoever opens its address)."""
+    if args.no_window or not cfg.web.open_browser:
+        return "nowhere"
+    if args.browser or not cfg.web.window:
+        return "browser"
+    from . import window
+
+    reason = window.unavailable()
+    if reason is None:
+        return "window"
+    log.info("the dashboard opens in your web browser, not in a window of Walka's own: %s", reason)
+    return "browser"
 
 
 def _data_dir(args: argparse.Namespace) -> Path:
@@ -199,9 +218,130 @@ def _disable_console_quick_edit() -> Callable[[], None]:
         return nothing
 
 
-def _start_logging(verbose: bool, stream=None) -> Callable[[], None]:
-    """Send log records to the console (``stream``: stderr unless given) by
-    way of a queue; returns a function that flushes and undoes it.
+def _line_of_descent(parents: dict[int, int], pid: int, generations: int = 3) -> list[int]:
+    """The process that started ``pid``, the one that started that, and so
+    on, from ``parents`` (process id -> its parent's)."""
+    line: list[int] = []
+    seen = {pid}
+    while len(line) < generations:
+        parent = parents.get(pid)
+        if not parent or parent in seen:  # (process ids are used again: no going round in circles)
+            break
+        line.append(parent)
+        seen.add(parent)
+        pid = parent
+    return line
+
+
+def _started_by() -> list[int]:
+    """(Windows) The ids of the processes this one descends from, nearest first."""
+    import ctypes
+    from ctypes import wintypes
+
+    class ProcessEntry(ctypes.Structure):  # PROCESSENTRY32W
+        _fields_ = [
+            ("dwSize", wintypes.DWORD),
+            ("cntUsage", wintypes.DWORD),
+            ("th32ProcessID", wintypes.DWORD),
+            ("th32DefaultHeapID", ctypes.c_size_t),
+            ("th32ModuleID", wintypes.DWORD),
+            ("cntThreads", wintypes.DWORD),
+            ("th32ParentProcessID", wintypes.DWORD),
+            ("pcPriClassBase", wintypes.LONG),
+            ("dwFlags", wintypes.DWORD),
+            ("szExeFile", wintypes.WCHAR * 260),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    kernel32.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.POINTER(ProcessEntry)]
+    kernel32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(ProcessEntry)]
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    snapshot = kernel32.CreateToolhelp32Snapshot(0x2, 0)  # TH32CS_SNAPPROCESS: every process
+    if not snapshot or snapshot == wintypes.HANDLE(-1).value:
+        return []
+    parents: dict[int, int] = {}
+    try:
+        entry = ProcessEntry()
+        entry.dwSize = ctypes.sizeof(ProcessEntry)
+        more = kernel32.Process32FirstW(snapshot, ctypes.byref(entry))
+        while more:
+            parents[entry.th32ProcessID] = entry.th32ParentProcessID
+            more = kernel32.Process32NextW(snapshot, ctypes.byref(entry))
+    finally:
+        kernel32.CloseHandle(snapshot)
+    return _line_of_descent(parents, os.getpid())
+
+
+def _attach_to_a_console_it_descends_from() -> bool:
+    """(Windows) Take the console of whoever started this program, if they
+    have one. Not just the parent's: packed into one file, Walka.exe is two
+    processes - the one the command prompt starts unpacks the program and
+    starts the other, which is this one - and the first has no console
+    either."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.AttachConsole.argtypes = [wintypes.DWORD]
+        kernel32.AttachConsole.restype = wintypes.BOOL
+        return any(kernel32.AttachConsole(pid) for pid in _started_by())
+    except (AttributeError, OSError):
+        return False
+
+
+def _use_the_console_it_was_started_from(argv: Sequence[str]) -> None:
+    """The packaged program for Windows is a windowed one, so that a
+    double-click opens Walka's window and no console with it. The price:
+    Windows gives such a program nowhere to print, even when it was started
+    from a command prompt - and ``Walka.exe probe`` is all printing.
+
+    So: started with a command or an option, from a command prompt, it
+    writes to that prompt's window. (Started with nothing - as a
+    double-click does - it leaves the prompt alone: it has its own window,
+    and a program that has taken a console is closed with it.) Whatever is
+    still missing after that becomes a stream that swallows what is written
+    to it, so that nothing has to check before it prints.
+    """
+    if sys.platform != "win32" or None not in (sys.stdin, sys.stdout, sys.stderr):
+        return
+    attached = bool(argv) and _attach_to_a_console_it_descends_from()
+    # (A stream that is there was sent somewhere on purpose - "> report.txt" - and is left alone.)
+    for name, device, mode in (("stdin", "CONIN$", "r"), ("stdout", "CONOUT$", "w"), ("stderr", "CONOUT$", "w")):
+        if getattr(sys, name) is not None:
+            continue
+        try:
+            # Line by line: output must be on screen when it is written, as on any console.
+            stream = open(device if attached else os.devnull, mode, encoding="utf-8", errors="replace", buffering=1)
+        except OSError:
+            stream = open(os.devnull, mode, encoding="utf-8")
+        setattr(sys, name, stream)
+
+
+LOG_FILE = "walka.log"
+LOG_FILE_BYTES = 512 * 1024  # then it starts over, keeping the one before as walka.log.1
+
+
+def _log_file_handler(file: Path) -> logging.Handler | None:
+    """Without a console, the log is the only place where Walka can say
+    what went wrong. (With one it is the same lines, kept.)"""
+    try:
+        file.parent.mkdir(parents=True, exist_ok=True)
+        handler = logging.handlers.RotatingFileHandler(
+            file, maxBytes=LOG_FILE_BYTES, backupCount=1, encoding="utf-8", delay=True
+        )
+    except OSError:
+        return None
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)-7s %(message)s"))
+    return handler
+
+
+def _start_logging(verbose: bool, stream=None, file: Path | None = None) -> Callable[[], None]:
+    """Send log records to the console (``stream``: stderr unless given) -
+    and to ``file``, if one is given - by way of a queue; returns a function
+    that flushes and undoes it.
 
     The console is written to on a thread of its own. A console that is
     slow or stuck - a text selection, a paused scroll, a pipe nobody reads -
@@ -210,8 +350,12 @@ def _start_logging(verbose: bool, stream=None) -> Callable[[], None]:
     """
     console = logging.StreamHandler(stream)
     console.setFormatter(logging.Formatter("%(asctime)s %(levelname)-7s %(message)s", datefmt="%H:%M:%S"))
+    handlers: list[logging.Handler] = [console]
+    kept = _log_file_handler(file) if file is not None else None
+    if kept is not None:
+        handlers.append(kept)
     records: queue.SimpleQueue = queue.SimpleQueue()  # unbounded: handing a record over never blocks
-    listener = logging.handlers.QueueListener(records, console)
+    listener = logging.handlers.QueueListener(records, *handlers)
     handler = logging.handlers.QueueHandler(records)
     root = logging.getLogger()
     previous_level = root.level
@@ -224,7 +368,12 @@ def _start_logging(verbose: bool, stream=None) -> Callable[[], None]:
         root.setLevel(previous_level)
         # Write out what is still queued - but a stuck console must not keep
         # the program from exiting either.
-        flusher = threading.Thread(target=listener.stop, name="walka-log-flush", daemon=True)
+        def flush() -> None:
+            listener.stop()
+            if kept is not None:
+                kept.close()
+
+        flusher = threading.Thread(target=flush, name="walka-log-flush", daemon=True)
         flusher.start()
         flusher.join(2.0)
 
@@ -240,14 +389,19 @@ def _ignore_interrupts() -> Callable[[], None]:
     return lambda: signal.signal(signal.SIGINT, signal.SIG_DFL if previous is None else previous)
 
 
+# How long whoever is about to end the process is kept waiting for the walk
+# to be saved. (Windows allows a console program five seconds.)
+SAVE_WAIT_S = 4.0
+
+
 def _stop_and_wait(
-    loop: asyncio.AbstractEventLoop, stop: asyncio.Event, stopped: threading.Event, wait_s: float = 4.0
+    loop: asyncio.AbstractEventLoop, stop: asyncio.Event, stopped: threading.Event, wait_s: float = SAVE_WAIT_S
 ) -> None:
-    """Windows is about to kill the process (console closed, log-off,
-    shutdown) and is waiting for our answer on one of its own threads: ask
-    the event loop for an orderly stop, and hold the answer back until the
-    walk has been saved - or the few seconds Windows allows are nearly
-    up."""
+    """The process is about to be ended - Windows is killing it (console
+    closed, log-off, shutdown), or Walka's window is closing - and whoever
+    does that is waiting for our answer on a thread of their own: ask the
+    event loop for an orderly stop, and hold the answer back until the walk
+    has been saved - or the few seconds we are allowed are nearly up."""
     try:
         loop.call_soon_threadsafe(stop.set)
     except RuntimeError:  # the loop is already closed: everything is stopped
@@ -309,14 +463,81 @@ def _watch_for_session_end(loop: asyncio.AbstractEventLoop, stop: asyncio.Event,
     return watcher
 
 
-async def _run(args: argparse.Namespace) -> int:
+@dataclass
+class _Running:
+    """The companion, up and serving its dashboard: what somebody on
+    another thread - the window - needs to show the page and to stop it."""
+
+    url: str
+    loop: asyncio.AbstractEventLoop
+    stop: asyncio.Event
+    stopped: threading.Event  # set once the walk is saved
+
+    def ask_to_stop(self, wait_s: float = SAVE_WAIT_S) -> None:
+        """Ask for an orderly stop, and wait - that long at most - until the
+        walk has been saved. From any thread but the companion's own."""
+        _stop_and_wait(self.loop, self.stop, self.stopped, wait_s)
+
+
+QUIT_BOX = (
+    "Walka is running. Its dashboard is open in your web browser:\n\n{url}\n\n"
+    "Leave this box open while you walk. OK closes Walka (the walk being recorded is saved first)."
+)
+
+
+def _offer_a_way_to_quit(running: _Running) -> None:
+    """With its dashboard in the browser and no console (the packaged
+    program on Windows, started with a double-click), nothing of Walka
+    itself is on screen - nothing to close. A message box is something."""
+    from . import window
+
+    if not window.no_console():
+        return
+
+    def box() -> None:
+        window.message_box(QUIT_BOX.format(url=running.url))
+        running.ask_to_stop(0)
+
+    threading.Thread(target=box, name="walka-quit-box", daemon=True).start()
+
+
+def _could_not_start(text: str) -> None:
+    """Say why Walka is not starting - where it can be seen."""
+    from . import window
+
+    print(text, file=sys.stderr)
+    log.error("%s", text)
+    if window.no_console():
+        window.message_box(text, error=True)
+
+
+async def _run(
+    args: argparse.Namespace,
+    *,
+    cfg: config_module.Config | None = None,
+    goes: str | None = None,
+    started: Callable[[_Running], None] | None = None,
+) -> int:
+    """Run the companion until it is told to stop.
+
+    ``goes``: where the dashboard is shown (see ``_dashboard_goes``; worked
+    out here if not given). A ``"window"`` is not opened here - it needs the
+    main thread, and this is then running on another: ``started`` is called
+    once the dashboard is being served, and whoever gave it does the rest
+    (``_run_in_window``).
+    """
     from . import web
     from .app import App
     from .hr import HeartRateMonitor
 
     capture.enable_dpi_awareness()
     data_dir = _data_dir(args)
-    cfg = config_module.load(data_dir)
+    if cfg is None:
+        cfg = config_module.load(data_dir)
+    if goes is None:
+        goes = _dashboard_goes(args, cfg)
+        if goes == "window":
+            goes = "browser"  # nobody is here to open one
     if args.port:
         cfg.web.port = args.port
     simulate = bool(args.simulate or args.demo)
@@ -358,21 +579,30 @@ async def _run(args: argparse.Namespace) -> int:
             except OSError:
                 continue
         if runner is None:
-            print(f"Could not open a port near {cfg.web.port} for the dashboard.", file=sys.stderr)
+            _could_not_start(f"Could not open a port near {cfg.web.port} for the dashboard.")
             return 2
         shown_host = "127.0.0.1" if cfg.web.host in ("0.0.0.0", "::", "") else cfg.web.host
         url = f"http://{shown_host}:{port}/"
+        in_window = started is not None and goes == "window"
         print(f"Walka companion {__version__}")
         print(f"  dashboard: {url}")
         print(f"  data:      {data_dir}")
         if simulate:
             print("  treadmill: SIMULATED (no Bluetooth)")
-        print("Press Ctrl+C to quit (the walk being recorded is saved first).")
+        if in_window:
+            print("Close Walka's window to quit (the walk being recorded is saved first).")
+        else:
+            print("Press Ctrl+C to quit (the walk being recorded is saved first).")
         print(LISTENS_ONLY)
-        if cfg.web.open_browser and not args.no_browser:
+        log.info("Walka %s is running: dashboard at %s, data in %s", __version__, url, data_dir)
+        running = _Running(url, loop, stop, stopped)
+        if started is not None:
+            started(running)
+        if goes == "browser":
             # On its own thread: launching a browser can initialise COM on
             # the calling thread in a mode the Bluetooth stack cannot use.
             threading.Thread(target=_open_browser, args=(url,), name="walka-browser", daemon=True).start()
+            _offer_a_way_to_quit(running)
         await stop.wait()
     except asyncio.CancelledError:
         pass
@@ -392,6 +622,150 @@ async def _run(args: argparse.Namespace) -> int:
             if runner is not None:
                 await runner.cleanup()
     return 0
+
+
+# ---- with a window of its own ---------------------------------------------------------------
+
+# Where the window keeps what the page stores between runs, in the data folder.
+WINDOW_DATA = "window"
+# How long the companion gets to finish stopping once its walk is saved
+# (letting go of the treadmill, closing the server) before Walka exits anyway.
+STOP_WAIT_S = 10.0
+
+
+def _hear_signals(
+    callback: Callable[[], None], names: Sequence[str] = ("SIGINT", "SIGTERM", "SIGHUP")
+) -> Callable[[], None]:
+    """Off Windows, with the main thread inside the window's event loop:
+    call ``callback`` when one of these signals arrives; returns a function
+    that undoes it.
+
+    Python runs a signal handler on the main thread, between two steps of
+    Python code - and a main thread that is waiting in the system's event
+    loop for the next click is running none. A ``kill`` would then be
+    heard when the mouse next moved over the window, or never. So the
+    handlers installed here do nothing; what is used is the one thing
+    Python does the moment a signal arrives, on whatever thread: it writes
+    the signal's number to a socket (``signal.set_wakeup_fd``). A thread
+    reads the other end.
+
+    Must be called on the main thread; anywhere else it does nothing.
+    """
+
+    def nothing() -> None:
+        pass
+
+    if sys.platform == "win32":
+        return nothing
+    import socket
+
+    wanted = {getattr(signal, name) for name in names if hasattr(signal, name)}
+    reader, writer = socket.socketpair()
+    writer.setblocking(False)
+    previous: dict[int, object] = {}
+    try:
+        old_fd = signal.set_wakeup_fd(writer.fileno(), warn_on_full_buffer=False)
+        for number in wanted:
+            previous[number] = signal.signal(number, lambda *_: None)
+    except ValueError:  # not the main thread (embedded, or under test): not ours to change
+        reader.close()
+        writer.close()
+        return nothing
+
+    def listen() -> None:
+        while True:
+            try:
+                numbers = reader.recv(32)
+            except OSError:
+                return
+            if not numbers:
+                return  # undone
+            if wanted.intersection(numbers):
+                callback()
+
+    threading.Thread(target=listen, name="walka-signals", daemon=True).start()
+
+    def undo() -> None:
+        signal.set_wakeup_fd(old_fd)
+        for number, handler in previous.items():
+            signal.signal(number, signal.SIG_DFL if handler is None else handler)
+        writer.close()  # ends the listening thread
+        reader.close()
+
+    return undo
+
+
+def _run_in_window(args: argparse.Namespace, cfg: config_module.Config) -> int:
+    """Run the companion with its dashboard in a window of Walka's own;
+    closing the window closes Walka.
+
+    The window has the main thread (see ``window.py``). The companion -
+    ``_run``, with its event loop - gets a thread of its own, and is
+    stopped from here the way the system stops it from a thread of its
+    own when it logs off: ask, and wait until the walk is saved.
+    """
+    from . import window
+
+    started: queue.SimpleQueue[_Running | None] = queue.SimpleQueue()
+    codes: list[int] = []
+
+    def companion() -> None:
+        try:
+            codes.append(asyncio.run(_run(args, cfg=cfg, goes="window", started=started.put)))
+        except BaseException:
+            log.exception("Walka stopped on an error")
+            codes.append(1)
+        finally:
+            started.put(None)  # (if it never got as far as serving: do not wait for it)
+
+    # (A daemon: every way out of here asks it to stop and waits for it. The
+    # one that cannot - Ctrl+C before it is even up - has no walk to lose.)
+    thread = threading.Thread(target=companion, name="walka-companion", daemon=True)
+    thread.start()
+    running = started.get()
+    if running is None:  # it could not start, and has said why
+        thread.join()
+        return codes[0]
+
+    dashboard = window.DashboardWindow(running.url, _data_dir(args) / WINDOW_DATA, on_closing=running.ask_to_stop)
+
+    def close_with_the_companion() -> None:
+        # The companion can stop without the window having been closed:
+        # Windows logging off, a kill. The window goes with it.
+        running.stopped.wait()
+        dashboard.close()
+
+    threading.Thread(target=close_with_the_companion, name="walka-window-closer", daemon=True).start()
+    unhear = _hear_signals(lambda: running.ask_to_stop(0))
+    try:
+        dashboard.run()  # until the window is closed
+    except Exception:
+        if not running.stopped.is_set():
+            log.exception("Walka's window could not be opened: the dashboard is in your web browser instead")
+            _open_browser(running.url)
+            _offer_a_way_to_quit(running)
+            try:
+                while not running.stopped.wait(0.5):  # until Ctrl+C, a signal, or the box
+                    pass
+            except KeyboardInterrupt:
+                pass
+    except KeyboardInterrupt:
+        pass
+    finally:
+        # Closing the window has asked already (DashboardWindow's
+        # on_closing): this is for every other way of getting here.
+        running.ask_to_stop()
+        thread.join(STOP_WAIT_S)
+        unhear()
+    return codes[0] if codes else 1
+
+
+def _run_command(args: argparse.Namespace) -> int:
+    cfg = config_module.load(_data_dir(args))
+    goes = _dashboard_goes(args, cfg)
+    if goes == "window":
+        return _run_in_window(args, cfg)
+    return asyncio.run(_run(args, cfg=cfg, goes=goes))
 
 
 async def _scan(args: argparse.Namespace) -> int:
@@ -553,7 +927,7 @@ def _install_addon(args: argparse.Namespace) -> int:
     return 0
 
 
-# What the packaged program (Walka.exe, or Walka on a Mac) must be able to
+# What the packaged program (Walka.exe, or Walka.app on a Mac) must be able to
 # import at run time. Most of the Windows list is imported by name from
 # inside compiled modules, or chosen at run time, where PyInstaller cannot
 # see it - so a build can be missing one and still start. "walka selfcheck"
@@ -581,12 +955,19 @@ WINDOWS_RUNTIME_MODULES: tuple[str, ...] = (
     "bleak.backends.winrt.util",
     "mss.windows",
     "mss.windows.gdi",
+    # Walka's window: pywebview, .NET (pythonnet) and the WebView2 libraries it brings.
+    "webview",
+    "webview.platforms.winforms",
+    "webview.platforms.edgechromium",
 )
 MACOS_RUNTIME_MODULES: tuple[str, ...] = (
     "bleak.backends.corebluetooth.scanner",
     "bleak.backends.corebluetooth.client",
     "mss.darwin",
     "walka.macos",
+    # Walka's window: pywebview on WebKit.
+    "webview",
+    "webview.platforms.cocoa",
 )
 
 
@@ -687,7 +1068,19 @@ def build_parser() -> argparse.ArgumentParser:
         target.add_argument("--simulate", action="store_true", help="use a simulated treadmill (no Bluetooth)")
         target.add_argument("--demo", action="store_true", help="simulated treadmill, walker AND game character")
         target.add_argument("--no-capture", action="store_true", help="do not read the screen (walks are still recorded)")
-        target.add_argument("--no-browser", action="store_true", help="do not open the dashboard in a browser")
+        target.add_argument(
+            "--browser",
+            action="store_true",
+            help="show the dashboard in your web browser, not in a window of Walka's own",
+        )
+        # (--no-browser: its name from when the dashboard was a browser tab.)
+        target.add_argument(
+            "--no-window",
+            "--no-browser",
+            dest="no_window",
+            action="store_true",
+            help="do not show the dashboard at all (it is still served, for whoever opens its address)",
+        )
         target.add_argument("--port", type=int, help="dashboard port (default 8787)")
 
     scan = sub.add_parser("scan", help="list nearby Bluetooth treadmills")
@@ -716,18 +1109,20 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    # (Before anything is printed: --version, --help.)
+    _use_the_console_it_was_started_from(sys.argv[1:] if argv is None else argv)
     parser = build_parser()
     args = parser.parse_args(argv)
     command = args.command or "run"
     # (Before the first line is written: only "run" stays up long enough to matter.)
     restore_console = _disable_console_quick_edit() if command == "run" else None
-    stop_logging = _start_logging(args.verbose)
+    stop_logging = _start_logging(args.verbose, file=_data_dir(args) / LOG_FILE if command == "run" else None)
     if not args.verbose:
         logging.getLogger("bleak").setLevel(logging.WARNING)
         logging.getLogger("aiohttp").setLevel(logging.WARNING)
     try:
         if command == "run":
-            return asyncio.run(_run(args))
+            return _run_command(args)
         if command == "scan":
             return asyncio.run(_scan(args))
         if command == "probe":

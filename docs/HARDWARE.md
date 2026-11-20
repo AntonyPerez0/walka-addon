@@ -205,14 +205,24 @@ To add a treadmill to the names Walka knows:
   there: Windows then holds the connection and the pad stops advertising.
 * Weak built-in Bluetooth (no external antenna) is a common cause of
   dropouts; a USB Bluetooth 5 adapter is the usual fix.
-* The companion's console window: clicking inside a classic Windows console
-  starts a text selection, which freezes any program that then writes to
-  it. The companion switches that ("QuickEdit") off for its own window
-  while it runs and writes its log lines from a separate thread, so the
-  window cannot hold up the recording. To copy text from the window, use
-  its menu (*Edit -> Mark*).
-* Logging off or shutting Windows down: Windows does not tell a program
-  like the companion through its console, so the companion keeps a hidden
+* The companion has a window of its own, drawn by Microsoft Edge WebView2
+  (part of Windows 11; on Windows 10 it comes with Edge's updates and with
+  Office). GitHub's Windows machines open that window in every build,
+  load the dashboard in it and close it again; it has not been looked at
+  on a real PC yet. A PC without WebView2 gets the dashboard in the
+  browser, and a message box to close the companion with.
+* The window makes its thread a single-threaded COM apartment, which the
+  Windows Runtime's Bluetooth cannot be used from. So with a window, the
+  Bluetooth - and everything else the companion does - runs on a second
+  thread (`cli._run_in_window`).
+* Started from a command prompt with a command (`Walka.exe probe`), the
+  companion writes to that prompt's window, and what follows applies to
+  it: clicking inside a classic Windows console starts a text selection,
+  which freezes any program that then writes to it. The companion
+  switches that ("QuickEdit") off while it runs and writes its log lines
+  from a separate thread, so the console cannot hold up the recording. To
+  copy text from it, use its menu (*Edit -> Mark*).
+* Logging off or shutting Windows down: the companion keeps a hidden
   window to be told, and saves the walk as it does when its own window is
   closed. This has not been tried on a real PC yet. (A walk in progress is
   also saved every half minute, and picked up again at the next start.)
@@ -220,9 +230,10 @@ To add a treadmill to the names Walka knows:
 ## Mac notes
 
 The Mac version is new. GitHub's Macs build it and run the tests, and the
-finished program is started there: it records a walk on the simulated pad
-and closes down in an orderly way when its window is closed. It has not
-been tried with the game, a real screen or a walking pad yet.
+finished application is started there: it opens its window, loads the
+dashboard in it, records a walk on the simulated pad and closes down in an
+orderly way when it is told to end. It has not been tried with the game, a
+real screen or a walking pad yet - and nobody has clicked in its window.
 
 * Bluetooth goes through macOS' CoreBluetooth (by way of bleak). macOS
   does not show a device's Bluetooth address: the "address" the companion
@@ -230,8 +241,11 @@ been tried with the game, a real screen or a walking pad yet.
   every Mac. A settings file copied from a Windows PC will not find the
   pad by its address: clear *Treadmill -> address* (or press *Scan*).
 * macOS asks before a program may use Bluetooth or record the screen.
-  Walka runs inside Terminal, so both are asked for, and granted to,
-  Terminal (*System Settings -> Privacy & Security*). Without the
+  Walka is an application, so both are asked for, and granted to, Walka
+  (*System Settings -> Privacy & Security*) - or to Terminal, when a
+  command is run from there. The application is signed "ad hoc", with no
+  developer's name: macOS then knows it by its exact contents, and may
+  ask again for a new version. Without the
   Bluetooth permission the scan fails; without Screen Recording macOS hands
   over a picture with no game in it, which is why the companion asks
   macOS first and says so on the dashboard instead of *no game signal*.
@@ -245,9 +259,14 @@ been tried with the game, a real screen or a walking pad yet.
   MacBook's camera notch the picture can begin 38 down - and nowhere
   else. If `Walka beacon` finds the window but no strip, please report
   the two positions it prints.
-* Closing the Terminal window, logging out and shutting down all reach the
-  companion as a signal (SIGHUP, SIGTERM): it saves the walk before it
-  exits, as with Ctrl+C. A forced quit cannot do that; the walk is then
+* Closing the window and *Quit* reach the companion through the window,
+  which is not allowed to close until the walk is saved; logging out and
+  shutting down ask the application to quit the same way. Being told to
+  end from outside (`kill`, or the Terminal window closing when a command
+  was started there) arrives as a signal (SIGTERM, SIGHUP), and is
+  answered the same way - that one GitHub's Macs try in every build; the
+  window's own close button and *Quit* have not been clicked on a real
+  Mac yet. A forced quit cannot save anything; the walk is then
   picked up from its last half-minute checkpoint at the next start.
 * macOS does not recognise the program (it is not signed with an Apple
   developer account or notarised), so the first start has to be allowed

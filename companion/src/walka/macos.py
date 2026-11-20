@@ -42,7 +42,7 @@ TITLE_BAR_SLACK = 48
 SCREEN_RECORDING_ADVICE = (
     "macOS has not allowed this program to record the screen, so the game cannot be seen. "
     "Open System Settings > Privacy & Security > Screen & System Audio Recording (Screen Recording on older "
-    "versions), switch on Terminal - or whichever program Walka was started from - and start Walka again"
+    "versions), switch on Walka - or Terminal, if Walka was started from there - and start Walka again"
 )
 
 

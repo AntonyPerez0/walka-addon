@@ -325,7 +325,8 @@ async function download() {
   link.click();
   link.remove();
   setTimeout(() => URL.revokeObjectURL(url), 60000);
-  announce("Saved to your downloads folder.");
+  // In Walka's own window a "Save as" box asks where to; a browser just saves.
+  announce(window.pywebview ? "" : "Saved to your downloads folder.");
 }
 
 async function copy() {
@@ -338,7 +339,7 @@ async function copy() {
       await put(await pngBlob()); // older browsers want the finished image
     }
   } catch {
-    throw new Error("The browser did not allow copying the picture. Use Download PNG instead.");
+    throw new Error("Copying the picture was not allowed here. Use Download PNG instead.");
   }
   announce("Copied. Paste it into a post or a chat.");
 }
