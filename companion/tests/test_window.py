@@ -210,6 +210,15 @@ def test_the_window_can_be_closed_from_another_thread(monkeypatch, tmp_path: Pat
     dashboard.run()
     assert fake.destroyed.is_set() and time.monotonic() - started < 5
 
+    # A window that is closing by itself - its user closed it - is left to it.
+    fake = FakeWebview(open_for=0)
+    monkeypatch.setitem(sys.modules, "webview", fake)
+    dashboard = window.DashboardWindow("http://127.0.0.1:8787/", tmp_path, on_closing=lambda: None)
+    dashboard.run()
+    fake.window.events.closing.fire()
+    dashboard.close()
+    assert not fake.destroyed.is_set()
+
     # Asked to close before it was ever opened: it does not open.
     fake = FakeWebview()
     monkeypatch.setitem(sys.modules, "webview", fake)
