@@ -122,6 +122,7 @@ class DashboardWindow:
         self._lock = threading.Lock()
         self._window = None
         self._close_asked = False
+        self._closing_itself = False
 
     def run(self) -> None:
         import webview
@@ -162,8 +163,8 @@ class DashboardWindow:
         with self._lock:
             self._close_asked = True
             window = self._window
-        if window is None:
-            return
+        if window is None or self._closing_itself:
+            return  # not open yet (and now it will not), or on its way out already
         try:
             window.destroy()  # waits until the window is there to be closed
         except Exception as exc:  # already gone
@@ -171,6 +172,7 @@ class DashboardWindow:
 
     # (pywebview calls these with no arguments: it looks at the signature.)
     def _closing(self) -> None:
+        self._closing_itself = True
         try:
             self._on_closing()
         except Exception:
