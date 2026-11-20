@@ -434,7 +434,7 @@ touched.
 * **Your settings and walks** are in `%APPDATA%\Walka` on Windows and in
   `~/Library/Application Support/Walka` on a Mac. Next to them is
   `walka.log`: what Walka used to write in its console window - what it
-  connected to, what went wrong. It holds your treadmill's name and
+  connected to, what went wrong. It can hold your treadmill's name and
   Bluetooth address, and it stays on your computer unless you send it to
   somebody.
 * **Typing a command** (`Walka.exe probe`, `Walka.exe beacon`) on Windows:
