@@ -13,8 +13,13 @@ address, nor the address used for the proof of 5.2.
 
 - 21 November 2026. Both repositories read (walka-addon `25cc69c`,
   walka-website `264e54b`). No code written.
-- The plan and the questions below were put to the owner. **Waiting for
-  the owner's yes and answers.** Nothing is built before that.
+- The plan and the questions below were put to the owner, who answered
+  "Do everything" the same day (see the next part). The build follows
+  the order under "The plan".
+- **Still the owner's:** the proof of 5.2 (they open one address in
+  their own browser and say where they landed - not done yet, and
+  everything built on the return to 127.0.0.1 waits on it to be called
+  proved); a yes to the words (drafted below); which computer they have.
 - Baseline on Linux, Python 3.12, from the hashed dev lock: `ruff check
   src tests` clean; `python -m pytest` 2826 passed, 7 skipped, 215 s.
 - The Docker daemon does not run on the machine this was planned on: a
@@ -22,7 +27,22 @@ address, nor the address used for the proof of 5.2.
 
 ## The owner's answers, in their own words
 
-(none yet)
+- 21 November 2026, to the plan and its eighteen questions: "Do
+  everything". Read by the assistant (its reading, not the owner's
+  words) as: yes to the plan, and the proposed answer to every
+  question - so: walks with an empty treadmill name are sent, a file
+  with no such key is not; the brief over the contract where rule 3a
+  speaks; SECURITY.md says what a program on the computer can reach;
+  without a store for secrets the sign-in lasts until Walka is closed;
+  on a Mac no box by surprise; no new library; the hidden `httpscheck`;
+  written for Python 3.10 and reported as not checked there; walks go
+  at once, public page or not, and the question says so; the sentence
+  for a shared computer; no number for the installation; the e-mail
+  address whole; the ended sign-in said in the card until "OK"; no line
+  in DISCLAIMER.md; both copies of the notices; the words drafted here
+  for the owner to correct. It is NOT read as leave to put in the live
+  values, to touch the version files, to tag, release or merge.
+- Not answered yet: the proof of 5.2; Windows or a Mac.
 
 ## Where the brief and the files disagree
 
@@ -249,6 +269,106 @@ merge.
     (proposed), or the root copy only.
 17. The words: drafted here as one list, corrected by the owner.
 18. Which computer the owner has, Windows or a Mac.
+
+## The words, as drafted (the owner corrects them)
+
+The card "Walka account", last in Settings. `<host>` is the address
+Walka asks; `<way>` is Discord, GitHub or Google.
+
+- Not signed in: "Optional. Walka works in full without it." Buttons
+  "Sign in with Discord", "Sign in with GitHub", "Sign in with Google".
+  Under them: "Signing in makes a Walka account if you have none: terms
+  (walka.dev/terms/), privacy (walka.dev/privacy/). Nothing is sent until
+  you switch that on. Your web browser opens for this, and Walka asks
+  `<host>`."
+- While signing in: "Waiting for your web browser. Sign in there, then
+  come back."
+- A sign-in that did not work: "Nothing was signed in." / "Walka could
+  not finish signing in. Try again." / "Nobody came back from the
+  browser. Try again." / "Walka could not keep the sign-in on this
+  computer, so nothing was signed in." / "Walka could not check that it
+  is talking to your account's server, so it asked nothing." / "There
+  was no answer. Try again later."
+- Signed in: "Signed in as `<e-mail>`, with `<way>`." Button "Sign out".
+  "'Sign out' on walka.dev does not sign this computer out: sign out
+  here." "The sign-in is kept in Windows' Credential Manager." / "... in
+  your Mac's keychain." / "... in memory, until Walka is closed."
+- The first step is not taken: "This sign-in has no Walka account yet.
+  To open one - or to delete this sign-in - go to walka.dev/account/ and
+  sign in there the same way (with `<way>`). If you already have an
+  account, it is under another e-mail address: sign out here and sign in
+  the way that uses that address." Link "Open walka.dev/account/".
+  Button "Look again (asks your Walka account)".
+- Sending off: "Nothing is sent. `<n>` walks on this computer are not in
+  your Walka account." Button "Send my walks to my Walka account..."
+  with "Asks your Walka account first."
+- The question, "Send my walks to my Walka account?":
+  1. "To `<e-mail>`, signed in with `<way>`."
+  2. "What goes, of each walk: when it started and ended, the day, and
+     how far this computer's clock was from world time; how long the
+     belt moved; distance, steps and calories (estimates), and how many
+     of the calories were on top of sitting; how each number was come by
+     (for the calories: from speed or from heart rate - the word, not
+     the heart rate); whether a walking session was running in the game;
+     and the walk's name on this computer, which is its start time."
+     "What stays here: the samples, the heart rate, the top speed, the
+     treadmill's name, the character, your weight, height, age and sex."
+  3. "Where: your Walka account, in the database the site's owner runs
+     (`<host>`). walka.dev/privacy/"
+  4. "`<n>` walks would go now." Choice "All of them" / "Only walks from
+     now on". "From then on each walk goes when it is saved, without
+     asking again." And where it applies: "`<m>` walks do not say which
+     treadmill made them, and are not sent." "`<k>` walks are outside
+     what the account takes, and stay here."
+  5. Only if the page is public: "Your page on walka.dev is public.
+     Walks you send count on it as soon as they are sent, so anyone who
+     reloads it can tell when you were on the pad. With 'All of them'
+     your whole history shows there at once."
+  6. "Every walk recorded on this computer goes to this account, whoever
+     walked."
+  7. "To stop: switch it off here, or sign out. Stopping deletes nothing
+     in the account. There a walk is deleted one at a time:
+     walka.dev/account/walks/"
+  Buttons "Send my walks" and "Not now".
+- Sending on: "Sending is on. Each walk goes to your Walka account when
+  it is saved." "`<n>` sent, `<m>` waiting." Button "Stop sending".
+- After a pass: "Sent." / "No answer - Walka tries again later." / "This
+  Walka is too old for the account as it is now: get the newest Walka."
+  / "The account is full: it has room for 20,000 walks." / "Walka
+  stopped for now and tries again when it is next started." / "Walka
+  could not check that it is talking to your account's server, so it
+  sent nothing."
+- Set aside: "The account did not take `<n>` walks. They stay here."
+  with each walk's day and the account's own message.
+- When the sign-in ends (decision 11, word for word), with a button
+  "OK": "Walka is no longer signed in to your Walka account, and has
+  stopped sending. You signed out elsewhere, or the account was deleted.
+  Your walks on this computer are untouched."
+- The stored sign-in is not there: "The sign-in is not on this computer
+  any more. Nothing is sent." A Mac that refuses the read: "macOS did
+  not let this version of Walka read the stored sign-in. Sign in again."
+- With the simulated treadmill there is no card at all.
+
+Elsewhere on the dashboard:
+
+- The rail's foot while sending is on: "Runs on this computer. Your
+  walks are sent to your Walka account." Otherwise as it is.
+- The foot of Settings while sending is on: "Your walks are sent to your
+  Walka account. Everything else on this page stays on this computer."
+  Otherwise as it is.
+- The Share view: "The picture is made on this computer. It is not
+  uploaded: you choose where to post it."
+- Deleting a walk that was sent: "Delete this walk from this computer?
+  It disappears from your totals here and from the addon's history. This
+  cannot be undone. It stays in your account, and on your public page if
+  you have one, until you delete it there: walka.dev/account/walks/"
+  Button "Delete from this computer"; afterwards "Walk deleted from this
+  computer."
+- The three pages of the listener, word for word from the brief.
+
+## What is built
+
+(nothing yet)
 
 ## What comes next
 
