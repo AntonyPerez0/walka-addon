@@ -161,6 +161,16 @@ jobs:
       # prompt they are typed into: checked on a real one.
       - name: Commands print to the command prompt
         run: python tools/check_console.py companion/dist/Walka.exe
+      # Walka.exe has never made an HTTPS request on anybody's computer.
+      # What will make them one day - the part that sends walks to a Walka
+      # account - is not in the packed program yet, but what it asks with
+      # is. So the packed program fetches https://walka.dev/ once, which
+      # must work, and then asks a server started here whose certificate
+      # nobody vouches for: that one it must turn down before it has
+      # asked anything. (If walka.dev cannot be reached from this machine,
+      # the build fails: nothing was checked.)
+      - name: HTTPS works in the program, and it checks certificates
+        run: python tools/check_https.py companion/dist/Walka.exe
       - name: Package
         shell: pwsh
         run: |
@@ -274,6 +284,12 @@ jobs:
           [ "$code" -eq 0 ] || fail "Walka did not stop in an orderly way when it was told to (exit code $code)"
           [ -f "$WALKA_DATA_DIR/config.json" ] || fail "Walka did not get to the end of its shutdown"
           [ ! -f "$WALKA_DATA_DIR/active-session.json" ] || fail "the walk was not saved"
+      # HTTPS in the packed program, as for Windows above. A Mac's Python
+      # brings no root certificates with it, and a packed one would look
+      # for them where this machine's Python keeps its own: Walka reads
+      # macOS's own list instead, and says here how many it found there.
+      - name: HTTPS works in the program, and it checks certificates
+        run: python tools/check_https.py companion/dist/Walka.app/Contents/MacOS/Walka
       - name: Package
         run: |
           mkdir -p release
