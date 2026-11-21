@@ -940,6 +940,11 @@ RUNTIME_MODULES: tuple[str, ...] = (
     "walka.web",
     "walka.probe",
     "walka.treadmill.bleak_backend",
+    # What asks a Walka account (walka/walka_account). aiohttp starts
+    # without "ssl" and says nothing: only naming it shows that it is packed.
+    "ssl",
+    "walka.walka_account.https",
+    "walka.walka_account.threads",
 )
 WINDOWS_RUNTIME_MODULES: tuple[str, ...] = (
     "winrt.windows.foundation",
@@ -1052,6 +1057,113 @@ def _selfcheck() -> int:
     return 0
 
 
+def _is_packed() -> bool:
+    """Is this the packaged program (Walka.exe, Walka on a Mac), and not Walka run from its source code?"""
+    return bool(getattr(sys, "frozen", False)) or hasattr(sys, "_MEIPASS")
+
+
+# "walka httpscheck": the one page it fetches. A constant, and the command
+# takes no address: it cannot be made to ask anybody else.
+HTTPSCHECK_HOST = "walka.dev"
+HTTPSCHECK_TRIES = 3  # the internet between a build machine and a website is not always there
+HTTPSCHECK_PAUSE_S = 1.0
+HTTPSCHECK_TRY_S = 10.0
+
+
+class _HttpsCheckFailed(Exception):
+    """What "walka httpscheck" found wrong, as the sentence it prints."""
+
+
+async def _httpscheck_steps(refuse_port: int | None) -> list[str]:
+    import ssl
+
+    from .walka_account import https
+
+    if refuse_port is not None and not 1 <= refuse_port <= 65535:
+        raise _HttpsCheckFailed("--refuse-port takes a port, 1 to 65535")
+
+    # 1. Without asking anybody: is there anything to check a certificate against?
+    try:
+        report = https.roots_report(https.make_ssl_context())
+    except Exception as exc:
+        raise _HttpsCheckFailed(f"the root certificates could not be read ({type(exc).__name__})") from None
+    if not report["count"]:
+        raise _HttpsCheckFailed(
+            f"there are no root certificates to check anybody's certificate against (from {report['source']})"
+        )
+    named = f" ({', '.join(report['named'])} among them)" if report.get("named") else ""
+    said = [
+        f"{ssl.OPENSSL_VERSION}, {'packed' if _is_packed() else 'run from source'}",
+        f"{report['count']} root certificates from {report['source']}{named}",
+    ]
+
+    # 2. A page that is there for everybody: it must answer, on a connection that was checked.
+    page = f"https://{HTTPSCHECK_HOST}/"
+    client = https.Client(https.Origin("https", HTTPSCHECK_HOST, None))
+    for attempt in range(1, HTTPSCHECK_TRIES + 1):
+        try:
+            answer = await client.request("GET", "/", timeout_s=HTTPSCHECK_TRY_S)
+        except https.NetError as error:
+            kind = error.kind
+        else:
+            said.append(f"{page} answered ({answer.status}) on a checked connection")
+            break
+        if kind == "too_big":  # an answer all the same - a long one
+            said.append(f"{page} answered on a checked connection")
+            break
+        if kind == "certificate":
+            raise _HttpsCheckFailed(f"the certificate of {page} could not be checked")
+        if kind != "no_answer":
+            raise _HttpsCheckFailed(f"{page} could not be asked ({kind})")
+        if attempt == HTTPSCHECK_TRIES:
+            raise _HttpsCheckFailed(f"{page} did not answer ({HTTPSCHECK_TRIES} tries)")
+        await asyncio.sleep(HTTPSCHECK_PAUSE_S)
+
+    # 3. A server with a certificate nobody vouches for (the build starts
+    # one): it must be refused. Not answering is not refusing - a server
+    # that is not there would pass for one that was turned down.
+    if refuse_port is not None:
+        there = f"127.0.0.1:{refuse_port}"
+        try:
+            answer = await https.Client(https.Origin("https", "127.0.0.1", refuse_port)).request(
+                "GET", "/", timeout_s=HTTPSCHECK_TRY_S
+            )
+        except https.NetError as error:
+            kind = error.kind
+        else:
+            raise _HttpsCheckFailed(
+                f"the server on {there} was asked and answered ({answer.status}): its certificate was not checked"
+            )
+        if kind == "no_answer":
+            raise _HttpsCheckFailed(f"nothing answered on {there}, and that is not a certificate refused")
+        if kind != "certificate":
+            raise _HttpsCheckFailed(f"the server on {there} was not refused for its certificate ({kind})")
+        said.append(f"the home-made certificate on {there} was refused, and nothing was asked there")
+    return said
+
+
+def _httpscheck(args: argparse.Namespace) -> int:
+    """Hidden command, run by the build: does HTTPS work in THIS program,
+    and does it check certificates? Prints one line; exits 0 if so.
+
+    Walka's packaged programs have never made an HTTPS request, and the
+    part that will (walka/walka_account) is not in them yet: this tries
+    the client it asks with. Unlike everything else in Walka it does ask
+    another machine: it fetches the front page of walka.dev, once. It
+    reads no settings and no folder, and writes no log.
+    """
+    try:
+        said = asyncio.run(_httpscheck_steps(args.refuse_port))
+    except _HttpsCheckFailed as failed:
+        print(f"httpscheck FAILED: {failed}")
+        return 1
+    except Exception as exc:  # (its name only: an error of the network can carry what was sent)
+        print(f"httpscheck FAILED: {type(exc).__name__}")
+        return 1
+    print("httpscheck OK: " + "; ".join(said))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="walka",
@@ -1060,7 +1172,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--version", action="version", version=f"walka {__version__}")
     parser.add_argument("--data-dir", help="folder for config and recorded walks")
     parser.add_argument("-v", "--verbose", action="store_true", help="debug logging")
-    # (The metavar lists the commands meant for people; "selfcheck" is for the build.)
+    # (The metavar lists the commands meant for people; "selfcheck" and "httpscheck" are for the build.)
     sub = parser.add_subparsers(dest="command", metavar="{run,scan,probe,beacon,install-addon,licenses}")
 
     run = sub.add_parser("run", help="run the companion and its dashboard (default)")
@@ -1105,6 +1217,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("licenses", help="the licences of the libraries packed into this program")
 
     sub.add_parser("selfcheck")
+    httpscheck = sub.add_parser("httpscheck")
+    httpscheck.add_argument("--refuse-port", type=int)
     return parser
 
 
@@ -1135,6 +1249,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _licenses()
         if command == "selfcheck":
             return _selfcheck()
+        if command == "httpscheck":
+            return _httpscheck(args)
     except KeyboardInterrupt:
         return 130
     finally:

@@ -16,14 +16,8 @@ address, nor the address used for the proof of 5.2.
 - The plan and the questions below were put to the owner, who answered
   "Do everything" the same day (see the next part). The build follows
   the order under "The plan".
-- **Still the owner's:** the proof of 5.2 (they open one address in
-  their own browser and say where they landed - not done yet, and
-  everything built on the return to 127.0.0.1 waits on it to be called
-  proved); a yes to the words (drafted below); which computer they have.
-- Baseline on Linux, Python 3.12, from the hashed dev lock: `ruff check
-  src tests` clean; `python -m pytest` 2826 passed, 7 skipped, 215 s.
-- The Docker daemon does not run on the machine this was planned on: a
-  local Supabase stack may stay "not tried".
+- **Still the owner's:** a yes to the words (drafted below); which
+  computer they have for the later trial.
 
 ## The owner's answers, in their own words
 
@@ -42,7 +36,14 @@ address, nor the address used for the proof of 5.2.
   in DISCLAIMER.md; both copies of the notices; the words drafted here
   for the owner to correct. It is NOT read as leave to put in the live
   values, to touch the version files, to tag, release or merge.
-- Not answered yet: the proof of 5.2; Windows or a Mac.
+- 21 November 2026, the proof of 5.2: "This is what happened when I
+  click on the link", with a picture of their browser (on a phone) at an
+  address beginning `127.0.0.1:47631/` under "This site can't be
+  reached - 127.0.0.1 refused to connect". That failure is the proof:
+  **the live project lets a sign-in come back to 127.0.0.1.** No address
+  was added in Supabase for it. (The one-time code of that try was never
+  used and has run out.)
+- Not answered yet: Windows or a Mac.
 
 ## Where the brief and the files disagree
 
@@ -368,7 +369,20 @@ Elsewhere on the dashboard:
 
 ## What is built
 
-(nothing yet)
+In `companion/src/walka/walka_account/`, each with tests in
+`companion/tests/test_walka_account_<part>.py`. Nothing uses them yet.
+
+- `threads.py` - `off_loop`: work that may block, on a daemon thread.
+- `row.py` - a walk's file to a row, the website's way (compared with
+  the website's reader on 360,000 made-up files in a scratch run).
+- `keystore.py` - the store for the refresh token: Windows Credential
+  Manager, the Mac's login keychain, memory. The Windows and Mac calls
+  have run nowhere but on CI (one real round trip each).
+- `ledger.py` - the file `walka-account.json`.
+- `https.py` - the address, the key's check, certificates, the client.
+- `httpscheck`, a hidden command in `cli.py`, with `tools/check_https.py`
+  and one step in each build job of `ci.yml`.
+- `companion/tests/fake_accounts.py` - the stand-in for the accounts.
 
 ## What comes next
 
