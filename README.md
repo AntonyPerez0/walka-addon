@@ -52,7 +52,7 @@ This is the program - for Windows and for Mac - that goes with the
 **Walka addon** in the game. You need both: the addon knows which character
 you are playing, and this program listens to your walking pad.
 
-Walka has a website too: <https://antonyperez0.github.io/walka-website/>
+Walka has a website too: <https://walka.dev/>
 
 **You need:** a Windows 10 or 11 PC or a Mac (Apple silicon or Intel), with
 Bluetooth, a walking pad or treadmill that shows its numbers to apps over
