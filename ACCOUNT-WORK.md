@@ -383,6 +383,23 @@ In `companion/src/walka/walka_account/`, each with tests in
 - `httpscheck`, a hidden command in `cli.py`, with `tools/check_https.py`
   and one step in each build job of `ci.yml`.
 - `companion/tests/fake_accounts.py` - the stand-in for the accounts.
+- `calls.py` - the requests of 5.4 and what each answer means.
+- `signin.py` - one sign-in through the browser, with its listener.
+- `sender.py` and `service.py` - the sending pass, and `WalkaAccount`,
+  the object to be handed to `App` (it is not handed in yet).
+- `companion/tests/walka_account_rig.py` - the rig the tests share.
+
+Known and left, for the report:
+
+- A stored sign-in that could not be deleted at sign-out is not tried
+  again at a later start.
+- aiohttp asks a GET once more by itself when the line is cut after
+  sending: a read (never a send of walks) can reach the accounts twice.
+- A refresh refused with any other code than the two the brief names
+  stops the run and ends nothing.
+- At a start nothing reads the store (rule 3a), so the card shows the
+  e-mail address from the file until the first request finds the store
+  empty.
 
 ## What comes next
 
