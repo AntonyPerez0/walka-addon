@@ -57,8 +57,9 @@ that moved the belt are gone:
   speed wanted" field of the strip is always zero now, and a companion
   ignores it whatever an older addon puts there.
 * **Nothing the dashboard does reaches the treadmill either.** Its buttons
-  connect and disconnect the companion, change settings, install the addon
-  and delete walks.
+  connect and disconnect the companion, change settings, install the addon,
+  delete walks, sign Walka in to a Walka account and out of it, and switch
+  the sending of walks to it on and off.
   *Disconnect* and closing the companion let go of the treadmill and leave
   the belt exactly as it is.
 

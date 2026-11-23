@@ -32,10 +32,25 @@ version is out, and named in its notes if you want to be.
   ([docs/SAFETY.md](docs/SAFETY.md) says what the companion does on a
   connection, and how the rest is kept out.)
 * Anything that lets someone or something other than the person at the
-  computer read what Walka stores (walks, weight and height, heart rate),
-  change its settings or delete walks - for example another web page open
-  in the same browser, or another device on the network - or make Walka
-  send anything anywhere.
+  computer read what Walka stores (walks, weight and height, heart rate,
+  the e-mail address of a Walka account that is signed in), change its
+  settings or delete walks, sign Walka in to a Walka account or out of
+  one, or switch the sending of walks on - for example another web page
+  open in the same browser, or another device on the network.
+* Anything that makes Walka send what its user did not switch on, or
+  send anything anywhere but to the Walka account its user signed in to.
+  ([Your Walka account](README.md#your-walka-account-on-walkadev) in the
+  README says what is sent, and when. One command is not meant by this:
+  `Walka.exe httpscheck`, which the build runs to see that the program
+  checks certificates. It fetches the front page of walka.dev - one
+  page, tried up to three times if nothing answers - and sends nothing
+  of its user's with it. It runs only if somebody types it: no button
+  and no setting does.)
+* The keys of a sign-in to a Walka account turning up where they can be
+  read: in a file of Walka's, in `walka.log`, on the dashboard's page or
+  in anything its API answers, on a command line or in an environment
+  variable. They belong in Walka's memory, and the one that lasts in
+  Windows' Credential Manager or the Mac's keychain.
 * A picture or video on the screen that is taken for the game's signal.
   (It can no longer move anything, but it could file a walk under the
   wrong character.)
@@ -51,7 +66,17 @@ How the dashboard is shut off from other pages is at the top of
 
 * A program that already runs on the same computer as the user. It can
   press keys, read files and talk to the treadmill itself; Walka cannot
-  defend against it.
+  defend against it. Now that Walka can be signed in to a Walka account,
+  that reaches further, so it is said plainly: the dashboard has no
+  password, and it is shut off from other web pages, not from programs.
+  Such a program - or another user of the same computer - can read the
+  e-mail address of the Walka account that is signed in, sign Walka out,
+  start a sign-in, and switch sending on: then the walks on that computer
+  go to that Walka account, and count on its page at once if the page is
+  public. On Windows, a program that runs as the same user can also read
+  the stored sign-in in Credential Manager, and that is the whole Walka
+  account: whoever has it can read the body numbers and the food diary
+  there, make the page public and delete the Walka account.
 * Someone with physical access to the computer or the treadmill.
 * Other software on a treadmill's Bluetooth: a treadmill takes commands
   from whatever connects to it. That is the treadmill's design, not

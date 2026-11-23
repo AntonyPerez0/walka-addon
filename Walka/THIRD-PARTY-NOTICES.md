@@ -84,7 +84,8 @@ libraries it runs on, in one file:
 * **Python** (Python Software Foundation License) - <https://www.python.org>
 * **aiohttp** and the libraries it brings along - aiohappyeyeballs,
   aiosignal, attrs, frozenlist, idna, multidict, propcache, yarl (Apache
-  License 2.0, MIT, BSD, PSF) - the dashboard's web server
+  License 2.0, MIT, BSD, PSF) - the dashboard's web server, and the
+  requests Walka makes to a Walka account
 * **bleak** (MIT) - Bluetooth; on Windows with the **PyWinRT** packages
   (`winrt-*`, MIT), on a Mac with **PyObjC** (MIT)
 * **python-mss** (MIT) - the screenshot of the game window's corner
