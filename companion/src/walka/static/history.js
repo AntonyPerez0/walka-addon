@@ -4,6 +4,7 @@
 import { $, U, api, del, fmt, h, icon, run, setShown, setText, toast } from "./util.js";
 import { SessionChart, WeekChart } from "./charts.js";
 import { SOURCE_LABEL } from "./status.js";
+import { sentWalkWords } from "./walkaaccount.js";
 
 const FIRST_PAGE = 200;
 const ALL = 2000;
@@ -13,6 +14,7 @@ let tableKey = "";
 let sessions = [];
 let limit = FIRST_PAGE;
 let listTrigger = null; // changes when the set of stored walks may have changed
+let sentTrigger = null; // changes when a walk may have gone to the Walka account
 let loading = false;
 let openId = null;
 let openChart = null;
@@ -146,14 +148,19 @@ function renderDetail(panel, walk, record) {
   const confirm = h("div", { class: "confirm", hidden: true });
   const removeButton = h("button", { class: "btn danger", type: "button", text: "Delete walk..." });
   const keep = h("button", { class: "btn", type: "button", text: "Keep it" });
-  const reallyRemove = h("button", { class: "btn danger solid", type: "button", text: "Delete permanently" });
-  confirm.append(
-    h("p", {
-      text: "Delete this walk? It disappears from your totals here and from the addon's history. This cannot be undone.",
-    }),
-    keep,
-    reallyRemove,
-  );
+  // A walk that was sent to the Walka account stays there: deleting it here says so, and where.
+  const sent = walk.in_walka_account === true ? sentWalkWords() : null;
+  const reallyRemove = h("button", {
+    class: "btn danger solid",
+    type: "button",
+    text: sent ? sent.button : "Delete permanently",
+  });
+  const question = sent
+    ? h("p", null, sent.question)
+    : h("p", {
+        text: "Delete this walk? It disappears from your totals here and from the addon's history. This cannot be undone.",
+      });
+  confirm.append(question, keep, reallyRemove);
   removeButton.addEventListener("click", () => {
     confirm.hidden = false;
     removeButton.hidden = true;
@@ -171,7 +178,7 @@ function renderDetail(panel, walk, record) {
       sessions = sessions.filter((item) => item.id !== walk.id);
       closeDetail();
       renderList();
-      toast("Walk deleted.", "ok");
+      toast(sent ? sent.toast : "Walk deleted.", "ok");
     }),
   );
 
@@ -265,21 +272,31 @@ function renderList() {
   );
 }
 
-async function loadSessions() {
+/** Fetch the list. `quietly`: only to learn which walks are in the Walka account by now - the
+    list is drawn again only if something in it changed, and a failure is tried again later. */
+async function loadSessions(quietly = false) {
   if (loading) return;
   loading = true;
+  let same = false;
   try {
     const data = await api(`/api/sessions?limit=${limit}`);
-    sessions = data.sessions || [];
+    const found = data.sessions || [];
+    same = quietly && JSON.stringify(found) === JSON.stringify(sessions);
+    sessions = found;
     setShown($("sessions-error"), false);
   } catch (error) {
-    setText($("sessions-error"), `Could not load your walks. ${error.message}`);
-    setShown($("sessions-error"), true);
-    listTrigger = null; // try again on the next snapshot
+    if (quietly) {
+      sentTrigger = null;
+      same = true;
+    } else {
+      setText($("sessions-error"), `Could not load your walks. ${error.message}`);
+      setShown($("sessions-error"), true);
+      listTrigger = null; // try again on the next snapshot
+    }
   } finally {
     loading = false;
   }
-  renderList();
+  if (!same) renderList();
 }
 
 // ---- wiring --------------------------------------------------------------------------------
@@ -305,9 +322,18 @@ export function updateHistory(s) {
   updateWeek(s);
   // A walk was saved, discarded or deleted somewhere: refresh the list.
   const trigger = `${s.totals.all.sessions}|${s.last_session ? s.last_session.id : ""}`;
+  // The Walka account's part of the snapshot changed (only there when Walka has that part): a
+  // walk may have been sent, and the question before deleting it then says where its copy is.
+  const sent = s.walka_account ? s.walka_account.rev : null;
   if (trigger !== listTrigger) {
+    // (Not while a list is on its way: that one may be from before the change. With the next snapshot.)
+    if (loading) return;
     listTrigger = trigger;
+    sentTrigger = sent;
     loadSessions();
+  } else if (sent !== sentTrigger && !loading) {
+    sentTrigger = sent;
+    loadSessions(true);
   }
 }
 

@@ -2152,6 +2152,73 @@ input[type="checkbox"] {
   text-align: center;
 }
 
+/* The Walka-account card: sending walks to a Walka account. Quiet on purpose - no lamp, plain
+   buttons - until somebody signs in. Its parts are written by walkaaccount.js; one that has
+   nothing to say is hidden. */
+.walka-account,
+.walka-account-part {
+  display: grid;
+  gap: 12px;
+  justify-items: start;
+  min-width: 0;
+}
+.walka-account-part {
+  gap: 10px;
+  width: 100%;
+  font-size: 14px;
+}
+.walka-account p {
+  max-width: 78ch; /* the card is as wide as the page: a line of words should not be */
+  overflow-wrap: anywhere; /* an e-mail address is shown whole, however long */
+}
+.walka-account-signed {
+  font-size: 15px;
+}
+/* The question before sending, the first step, and the word that a sign-in ended: a panel in
+   the card. Neutral - nothing here is an alarm (the red panel is for deleting a walk). */
+.walka-account-panel {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+  width: 100%;
+  max-width: 86ch;
+  padding: 14px 16px 16px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r);
+  background: var(--surface-2);
+}
+.walka-account-question h4 {
+  font-size: 15px;
+}
+.walka-account-question:focus {
+  outline: none;
+}
+.walka-account-question:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.walka-account-question .segmented {
+  background: var(--surface-3);
+}
+/* Walks the Walka account did not take, or that stay here: when each began, and why. */
+.walka-account-walks {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  max-width: 86ch;
+  font-size: 13px;
+}
+.walka-account-walks li {
+  display: grid;
+  grid-template-columns: 148px minmax(0, 1fr);
+  gap: 12px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-s);
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
 /* ---------------------------------------------------------------- toasts, tooltips */
 
 .toasts {

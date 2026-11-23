@@ -59,7 +59,7 @@
       <li><a class="pill" id="pill-addon" href="#live/link-addon" data-tone="idle"><span class="lamp"><svg aria-hidden="true"><use href="#i-off"/></svg></span><span class="pill-name">Addon</span><span class="pill-state">-</span></a></li>
     </ul>
   </div>
-  <p class="rail-foot">Runs on this computer. Nothing is uploaded.</p>
+  <p class="rail-foot" id="rail-foot">Runs on this computer. Nothing is uploaded.</p>
 </div>
 
 <div id="offline" class="offline" role="alert" hidden>
@@ -348,7 +348,7 @@
         <span class="share-status" id="share-status" role="status"></span>
       </div>
       <p class="muted small" id="share-copy-note" hidden>Copy image needs this page to be open on the PC that runs the companion (address 127.0.0.1). Download PNG works everywhere.</p>
-      <p class="muted small">The picture is made on this computer. Nothing is uploaded: you choose where to post it.</p>
+      <p class="muted small">The picture is made on this computer. It is not uploaded: you choose where to post it.</p>
     </section>
 
     <div class="stack" id="share-options">
@@ -484,8 +484,19 @@
       </section>
     </div>
 
+    <!-- Sending walks to a Walka account. Not there at all unless Walka has that part (the script
+         shows the card only then), and quiet until somebody signs in: everything in it is written
+         by walkaaccount.js. -->
+    <section class="card wide" id="set-walka-account" aria-labelledby="set-walka-account-h" tabindex="-1" hidden inert>
+      <header class="card-head">
+        <h3 id="set-walka-account-h">Walka account</h3>
+        <span class="head-state" id="walka-account-state"></span>
+      </header>
+      <div class="walka-account" id="walka-account-body"></div>
+    </section>
+
   </div>
-  <p class="foot muted small">Walka companion <span id="version"></span>. Everything on this page stays on this computer. Provided as is, with no warranty: <a href="https://github.com/AntonyPerez0/walka-addon/blob/HEAD/DISCLAIMER.md" target="_blank" rel="noopener noreferrer">disclaimer</a>.</p>
+  <p class="foot muted small">Walka companion <span id="version"></span>. <span id="foot-stays">Everything on this page stays on this computer.</span> Provided as is, with no warranty: <a href="https://github.com/AntonyPerez0/walka-addon/blob/HEAD/DISCLAIMER.md" target="_blank" rel="noopener noreferrer">disclaimer</a>.</p>
 </section>
 
 </main>

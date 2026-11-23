@@ -11,6 +11,7 @@ import { initLive, updateLive } from "./live.js";
 import { historyUnitsChanged, initHistory, updateHistory } from "./history.js";
 import { initSettings, settingsUnitsChanged, updateSettings } from "./settings.js";
 import { initShare, shareUnitsChanged, updateShare } from "./share.js";
+import { updateFeet } from "./walkaaccount.js";
 
 const VIEWS = ["live", "history", "share", "settings"];
 const STALE_AFTER_MS = 3000; // snapshots arrive every 500 ms
@@ -87,6 +88,8 @@ function updateChrome(s, summary, links, online) {
     title = "Offline - Walka";
   }
   if (document.title !== title) document.title = title;
+  // "Nothing is uploaded", on every view - unless walks are being sent to a Walka account.
+  updateFeet(s);
 }
 
 function render() {
