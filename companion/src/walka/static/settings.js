@@ -9,6 +9,7 @@
 
 import { $, CM_PER_INCH, U, api, h, post, run, setShown, setText, setTone, toast } from "./util.js";
 import { installAddon, scanInto, syncAddon } from "./live.js";
+import { initWalkaAccount, updateWalkaAccount } from "./walkaaccount.js";
 
 let config = null; // the last config seen
 let configKey = "";
@@ -656,6 +657,8 @@ export function initSettings({ onUnits }) {
     }
     installAddon(event.currentTarget, dir);
   });
+
+  initWalkaAccount();
 }
 
 export function updateSettings(s, links) {
@@ -666,6 +669,7 @@ export function updateSettings(s, links) {
   if (wasSet !== profileSet) for (const form of forms) form.refresh();
   updateUnitsControl(s.units);
   updateStatusCards(s, links);
+  updateWalkaAccount(s);
   setText($("version"), s.version);
 }
 
