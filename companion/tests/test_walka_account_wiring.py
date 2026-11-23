@@ -38,7 +38,7 @@ from aiohttp.test_utils import TestClient, TestServer
 
 import walka_account_rig
 from conftest import HERE, SRC
-from fake_accounts import FakeAccounts
+from fake_accounts import FakeAccounts, waits_for_a_caller
 from test_app import Rig as HouseRig
 from test_app_ftms import PadRig
 from walka import app as app_module
@@ -297,8 +297,13 @@ def of_the_part(names: set[str]) -> set[str]:
 
 
 def leftovers() -> list[asyncio.Task]:
-    """The house's look at what is still running, but for the test itself."""
-    return [task for task in asyncio.all_tasks() if task not in THE_TEST_ITSELF]
+    """The house's look at what is still running, but for the test itself.
+
+    And but for the task in which a server that still listens - the
+    stand-in - waits for its next caller: Windows has one, and a new one
+    after every request.
+    """
+    return [task for task in asyncio.all_tasks() if task not in THE_TEST_ITSELF and not waits_for_a_caller(task)]
 
 
 def parts_tasks() -> list[str]:

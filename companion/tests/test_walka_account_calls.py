@@ -26,7 +26,7 @@ from urllib.parse import parse_qsl, urlsplit
 import pytest
 
 import fake_accounts
-from fake_accounts import ADULTS, DAYS_TO_COME, PREFER, FakeAccounts
+from fake_accounts import ADULTS, DAYS_TO_COME, PREFER, FakeAccounts, waits_for_a_caller
 from walka.walka_account import calls
 from walka.walka_account.calls import CallError, Signed
 from walka.walka_account.https import Answer, Client, NetError, Origin, parse_origin
@@ -234,13 +234,20 @@ def unused_port() -> int:
         return plug.getsockname()[1]
 
 
-async def settled(before: set) -> bool:
-    """Has every task that began since ``before`` ended? (Waits a little: the stand-in's own end last.)"""
-    for _ in range(200):
-        if set(asyncio.all_tasks()) <= before:
-            return True
+async def still_running(before: set) -> list[str]:
+    """Every task that began since ``before`` and has not ended, by what it runs.
+
+    (Waits a little: the stand-in's own end last.) All but the one in
+    which the stand-in waits for its next caller: on Windows that is a
+    task too, and a new one after every request.
+    """
+    loop = asyncio.get_running_loop()
+    until = loop.time() + 10  # (real seconds: a few thousandths are needed, the rest is room for a slow machine)
+    while True:
+        left = [task for task in asyncio.all_tasks() - before if not waits_for_a_caller(task)]
+        if not left or loop.time() > until:
+            return [getattr(task.get_coro(), "__qualname__", "?") for task in left]
         await asyncio.sleep(0.01)
-    return False
 
 
 # ---- the list itself -----------------------------------------------------------------------------
@@ -2245,7 +2252,7 @@ def test_requests_made_at_the_same_time_each_get_their_own_answer_and_leave_noth
             assert isinstance(refusal, CallError) and refusal.kind == "not_open"
             CAUGHT.append(refusal)
             assert len(a.fake.walks(a.user)) == 2 and a.fake.walks(other) == []
-            assert await settled(before)
+            assert await still_running(before) == []
 
     run(scenario)
 
@@ -2277,7 +2284,7 @@ def test_a_request_that_is_cancelled_ends_at_once_and_leaves_nothing_behind(path
             with pytest.raises(asyncio.CancelledError):
                 await asyncio.wait_for(asking, 5)
             await asyncio.wait_for(gate.left.wait(), 5)
-            assert await settled(before)
+            assert await still_running(before) == []
             assert a.fake.walks(a.user) == []
 
     run(scenario)
