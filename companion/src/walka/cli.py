@@ -80,6 +80,99 @@ def _build_treadmill(cfg: config_module.Config, simulate: bool):
     )
 
 
+# ---- the Walka account's part ---------------------------------------------------------
+
+# Where the accounts are, and the key that says which project is asked - its
+# PUBLISHABLE key, the one that stands in the website's own pages. Both are
+# read from the environment when Walka starts and stand in no file of
+# Walka's. (Not SUPABASE_URL and SUPABASE_KEY, which other tools export.)
+ACCOUNT_URL_VARIABLE = "WALKA_ACCOUNT_URL"
+ACCOUNT_KEY_VARIABLE = "WALKA_ACCOUNT_KEY"
+# The oldest aiohttp the part's client was tried on (and on 3.14.5). With
+# 3.9.0 a request that is cut off leaves a task behind, and closing Walka
+# must leave none.
+ACCOUNT_NEEDS_AIOHTTP = (3, 9, 5)
+
+
+def _aiohttp_is_new_enough() -> bool:
+    import aiohttp
+
+    numbers = []
+    for part in str(getattr(aiohttp, "__version__", "")).split(".")[:3]:
+        digits = re.match(r"\d+", part)
+        if digits is None:
+            break
+        numbers.append(int(digits.group()))
+    return len(numbers) >= 2 and tuple(numbers) >= ACCOUNT_NEEDS_AIOHTTP
+
+
+def _open_sign_in_page(url: str) -> None:
+    """Open the page where the person signs in to their Walka account, in
+    their own web browser. On a thread of its own, like the dashboard:
+    launching a browser can initialise COM on the calling thread in a mode
+    the Bluetooth stack cannot use - and the caller is the event loop. (The
+    address is a key of the sign-in: it is never written to the log.)"""
+    threading.Thread(target=_open_browser, args=(url,), name="walka-browser", daemon=True).start()
+
+
+def _build_walka_account(data_dir: Path, treadmill, environ=os.environ):
+    """The part that signs in to a Walka account and sends walks to it
+    (``walka_account``) - or None, and then Walka has no such part at all:
+    no card on the dashboard, no key in the snapshot, routes that answer 404.
+
+    None, always, in the packaged program (Walka.exe, Walka on a Mac),
+    whatever the environment says: no download can reach the accounts
+    before the website says what Walka does with them. From source it is
+    there only when both variables are set, the address is one Walka takes,
+    the key is not a secret one, and the treadmill is a real one: a walk
+    made with the simulated treadmill never reaches a Walka account. (And
+    only with an aiohttp its client was tried on: from source, whichever
+    is installed is used.)
+
+    What is said in the log names a variable, never what it holds.
+    """
+    if _is_packed():
+        return None
+    url, key = environ.get(ACCOUNT_URL_VARIABLE), environ.get(ACCOUNT_KEY_VARIABLE)
+    if not url and not key:
+        return None  # how Walka comes: nothing is said, and nothing is there
+    why, level = None, logging.WARNING
+    try:
+        from .walka_account import https, keystore
+        from .walka_account.service import WalkaAccount
+
+        origin = https.parse_origin(url) if url and key else None
+        if not url or not key:
+            why = f"{ACCOUNT_URL_VARIABLE} and {ACCOUNT_KEY_VARIABLE} must both be set"
+        elif origin is None:
+            why = (
+                f"{ACCOUNT_URL_VARIABLE} is not an address Walka asks (HTTPS only - or, for a database on this "
+                "computer, 127.0.0.1 with its port - and nothing after the address)"
+            )
+        elif not https.key_is_usable(key):
+            why = f"{ACCOUNT_KEY_VARIABLE} is not a key Walka uses (the accounts' publishable key, never a secret one)"
+        elif treadmill.kind == "simulated":
+            # (--simulate, --demo, or "kind": "simulated" in config.json. Nothing is wrong: said quietly.)
+            why, level = "the treadmill is the simulated one, and made-up walks never go to a Walka account", logging.INFO
+        elif not _aiohttp_is_new_enough():
+            why = "it needs aiohttp {}.{}.{} or newer".format(*ACCOUNT_NEEDS_AIOHTTP)
+        else:
+            part = WalkaAccount(origin, key, data_dir, keystore=keystore.open_keystore(), opener=_open_sign_in_page)
+            log.info(
+                "Walka has its Walka account's part: it is run from its source code, with %s and %s set",
+                ACCOUNT_URL_VARIABLE,
+                ACCOUNT_KEY_VARIABLE,
+            )
+            return part
+    except Exception as exc:
+        # Walka works in full without the part: an error here must not keep
+        # it from starting. (The kind of error only: its words could hold
+        # the address or the key.)
+        why = f"it could not be made ready (an error of the kind {type(exc).__name__})"
+    log.log(level, "Walka has no Walka account's part: %s", why)
+    return None
+
+
 def _build_beacon(cfg: config_module.Config, *, read_screen: bool = True):
     from .sources import BeaconSource
 
@@ -550,7 +643,14 @@ async def _run(
     else:
         beacon = _build_beacon(cfg)
     heart_rate = None if simulate else HeartRateMonitor(enabled=cfg.heart_rate.enabled, address=cfg.heart_rate.address)
-    app = App(cfg, data_dir, treadmill=treadmill, beacon=beacon, heart_rate=heart_rate)
+    app = App(
+        cfg,
+        data_dir,
+        treadmill=treadmill,
+        beacon=beacon,
+        heart_rate=heart_rate,
+        walka_account=_build_walka_account(data_dir, treadmill),
+    )
     if args.demo:
         # The demo's made-up character must not turn up among the real ones later.
         app.journeys.use_memory_only(demo=True)
@@ -940,10 +1040,19 @@ RUNTIME_MODULES: tuple[str, ...] = (
     "walka.web",
     "walka.probe",
     "walka.treadmill.bleak_backend",
-    # What asks a Walka account (walka/walka_account). aiohttp starts
-    # without "ssl" and says nothing: only naming it shows that it is packed.
+    # What asks a Walka account (walka/walka_account), every module of it.
+    # aiohttp starts without "ssl" and says nothing: only naming it shows
+    # that it is packed. (The packaged program has the modules and no part
+    # made of them: see _build_walka_account.)
     "ssl",
+    "walka.walka_account.calls",
     "walka.walka_account.https",
+    "walka.walka_account.keystore",
+    "walka.walka_account.ledger",
+    "walka.walka_account.row",
+    "walka.walka_account.sender",
+    "walka.walka_account.service",
+    "walka.walka_account.signin",
     "walka.walka_account.threads",
 )
 WINDOWS_RUNTIME_MODULES: tuple[str, ...] = (
