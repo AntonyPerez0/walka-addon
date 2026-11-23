@@ -132,9 +132,11 @@ for any of that.
   drawn on the game's world map - brightest where you really walked.
 - 🖼️ **A picture to share.** Your journey so far as a picture, made on
   your own computer. You choose what is on it and where it goes.
-- 🔒 **Stays on your computer.** Nothing is uploaded. Walka never presses keys,
-  moves the mouse or reads the game's memory - it looks at the top-left
-  corner of the game window ([what it looks at, exactly](#what-walka-looks-at)).
+- 🔒 **Stays on your computer.** Nothing is uploaded unless you sign in to
+  [your Walka account (on walka.dev)](#your-walka-account-on-walkadev) and
+  switch sending on yourself. Walka never presses keys, moves the mouse or
+  reads the game's memory - it looks at the top-left corner of the game
+  window ([what it looks at, exactly](#what-walka-looks-at)).
 
 <p align="center">
   <img src="docs/images/share-card.jpg" width="360" alt="A Share picture: real-world steps and miles walked, the character's level, time played, and the road it travelled on a map of the world">
@@ -158,6 +160,7 @@ Everything below is the long version, for when you want it.
 [Walka only listens](#walka-only-listens) ·
 [Heart rate](#heart-rate-optional) ·
 [Garmin Connect, Strava and others](#garmin-connect-strava-and-others) ·
+[Your Walka account](#your-walka-account-on-walkadev) ·
 [Your journey, and a picture to share](#your-journey-and-a-picture-to-share) ·
 [The road map](#the-road-map) ·
 [Other games, or no game](#other-games-or-no-game)
@@ -393,7 +396,8 @@ switch it off and on again.)
 Both can be changed later in the same place in System Settings. Walka reads
 the top-left corner of the game window - and, until it has found the game
 for the first time, searches the screen for it: see
-[What Walka looks at](#what-walka-looks-at). Nothing leaves your computer.
+[What Walka looks at](#what-walka-looks-at). No picture of your screen
+leaves your computer.
 
 What is different from Windows:
 
@@ -401,7 +405,9 @@ What is different from Windows:
   yours is somewhere else, choose the addon folder yourself under
   *Settings → Game addon*.
 * **Your settings and walks** are in
-  `~/Library/Application Support/Walka`.
+  `~/Library/Application Support/Walka`. A sign-in to
+  [your Walka account](#your-walka-account-on-walkadev) is not in that
+  folder: it is kept in your Mac's keychain.
 * **Commands** like `probe` and `beacon` are typed in Terminal: drag the
   `Walka` application into a Terminal window (that types where it is),
   then - with no space in between - type `/Contents/MacOS/Walka probe` and
@@ -438,7 +444,19 @@ touched.
   `walka.log`: what Walka used to write in its console window - what it
   connected to, what went wrong. It can hold your treadmill's name and
   Bluetooth address, and it stays on your computer unless you send it to
-  somebody.
+  somebody. Once you have signed in to
+  [your Walka account](#your-walka-account-on-walkadev) there is also
+  `walka-account.json` (with an empty `walka-account.lock` beside it). It
+  holds which Walka account is signed in on this computer (the address
+  of the database it is in, its e-mail address, its id there, and whether
+  you signed in with Discord, GitHub or Google), whether sending is
+  switched on and what you chose when you switched it on, and what became
+  of each walk: sent, there already, or not taken, with the reason that
+  was given. It stays when you sign out, and so does the e-mail address
+  in it. The sign-in itself is not in that folder, nor in any file of
+  Walka's: it is kept in Windows' Credential Manager or in your Mac's
+  keychain. Neither the sign-in nor that e-mail address is ever written
+  to `walka.log`.
 * **Typing a command** (`Walka.exe probe`, `Walka.exe beacon`) on Windows:
   open the folder `Walka.exe` is in, click the address bar at the top of
   that window, type `cmd` and press Enter. A command prompt opens in that
@@ -495,8 +513,10 @@ a walk, press **Sync** in the history window (it reloads the interface; a
 session in progress carries on) or just log in next time, and the history
 switches that session to what the treadmill measured. The dashboard shows
 measured values the whole time - put it on a second monitor. (It is only
-reachable from the PC itself: it shows your walks, weight and height and
-has no password, so it is not offered to other devices on your network.)
+reachable from the PC itself: it shows your walks, weight and height - and
+the e-mail address of your Walka account, while Walka is signed in to
+one - and has no password, so it is not offered to other devices on your
+network.)
 
 ### In combat
 
@@ -570,6 +590,84 @@ Each walk can be downloaded as a **TCX** file (dashboard → *History* → a
 walk → *TCX*) and imported by hand: on connect.garmin.com, *Activities* →
 *Import*. Imported walks show time, distance, calories and heart rate.
 Garmin does not add their steps to your daily step total.
+
+## Your Walka account (on walka.dev)
+
+Optional. Walka works in full without it, and if you never sign in it
+sends nothing and asks nobody.
+
+On Walka's website, <https://walka.dev/>, you can have a Walka account. It
+holds your walks - and, if you put them there, body numbers and a food
+diary - and its page is private until you make it public. Walka can send
+your walks to it. They are then kept in the database the website's owner
+runs; the website's [privacy page](https://walka.dev/privacy/) says who
+else has a hand in that.
+
+* **Signing in.** Dashboard → *Settings → Walka account* → *Sign in with
+  Discord*, *GitHub* or *Google*. Your web browser opens: sign in there,
+  then come back. Signing in makes a Walka account if you have none
+  ([terms](https://walka.dev/terms/),
+  [privacy](https://walka.dev/privacy/)). A Walka account's first step -
+  *I am 18 or older, and I have read the terms and the privacy page* - is
+  taken on [walka.dev/account/](https://walka.dev/account/): Walka does
+  not tick it for you, and until it is taken sending cannot be switched
+  on.
+* **Nothing is sent until you switch that on.** Signing in does not do
+  it. *Send my walks to my Walka account...* asks first: it names the
+  Walka account, says what goes and how many walks, and lets you choose -
+  all of them, or only walks from now on. From then on every walk
+  recorded on this computer goes to that Walka account, whoever walked.
+* **What goes,** of each walk: when it started and ended, the day, and
+  how far your computer's clock was from world time; how long the belt
+  moved; distance, steps and calories (estimates), and how many of the
+  calories were on top of sitting; how each number was come by (for the
+  calories: from speed or from heart rate - the word, not the heart
+  rate); whether a walking session was running in the game; and the
+  walk's name on your computer, which is its start time. Each walk goes
+  under a random number made for it, and says that it came from Walka.
+  Every request names Walka and its version and says nothing else about
+  your computer - but, like anything asked over the internet, it arrives
+  with your IP address.
+* **What stays on your computer:** the samples (speed and heart rate
+  every five seconds), the heart rate, the top speed, the treadmill's
+  name, your character, its name, its realm and its road, and your
+  weight, height, age and sex. A walk made with the simulated treadmill
+  (as with `--demo`) is never sent, and while Walka runs with that treadmill
+  *Walka account* is not in Settings at all. A walk your Walka account
+  does not take - one that lasts longer than two days, say - is not sent
+  either: the dashboard says which.
+* **When.** When Walka is started, and after each walk is saved, without
+  asking again. (A walk that is saved as Walka closes goes at the next
+  start. When there is no answer, Walka tries again later.) If your page
+  on walka.dev is public, a walk counts on it as soon as it is sent.
+* **To stop:** *Stop sending* in the same place, or *Sign out*. Either
+  takes effect at once, and neither deletes anything in your Walka
+  account.
+* **Deleting on one side deletes nothing on the other.** A walk you
+  delete on the dashboard stays in your Walka account until you delete it
+  there ([walka.dev/account/walks/](https://walka.dev/account/walks/)). A
+  walk you delete there stays on your computer and is not sent again.
+  Nothing your Walka account does changes or deletes a walk on your
+  computer.
+
+**The sign-in Walka keeps is not a key for walks. It is the whole Walka
+account:** whoever has it can read the body numbers and the food diary
+there, make your page public and delete the Walka account.
+
+* **Where it is kept:** in Windows' Credential Manager, or in your Mac's
+  keychain - never in a file of Walka's. On a system that has neither
+  (Linux, from source) it is kept in memory, and you are signed in until
+  Walka is closed.
+* **Signing out in Walka removes it.** Deleting `Walka.exe` (or `Walka`
+  on a Mac) does not: sign out first. (If Walka is gone already, the
+  entry can be deleted by hand, in Windows' Credential Manager or in
+  Keychain Access on a Mac: its name begins `Walka account`.)
+* **"Sign out" on walka.dev does not sign this computer out.** A computer
+  stays signed in until somebody signs out on it, in Walka, or the Walka
+  account is deleted.
+* **A proxy set for your system is not used.** Walka makes its requests
+  directly, and asks nobody whose certificate it cannot check. Where the
+  internet is reached only through a proxy, Walka cannot sign in or send.
 
 ## Your journey, and a picture to share
 
@@ -679,7 +777,7 @@ changed. Untick *My road* and the picture is as it was without it.
 Private by default:
 
 * The picture is drawn on your computer, from numbers that are already
-  on it. Nothing is uploaded and nothing is posted for you.
+  on it. It is not uploaded, and nothing is posted for you.
 * The road is read from a file on your PC and goes no further than the
   page that draws it. On the picture it is a line on a simplified map and
   the names of the continents (or of another land your road is on, such as
@@ -868,7 +966,10 @@ What Walka does and does not do:
   looks at the corner of the game window, the way a screenshot tool does
   ([exactly what](#what-walka-looks-at)), and what it reads there is your
   own character's movement state - not whether it is fighting, dead or
-  resting, which the addon does not put on the strip.
+  resting, which the addon does not put on the strip. With sending to
+  [your Walka account](#your-walka-account-on-walkadev) switched on, one
+  thing read off the game goes with each walk: whether a walking session
+  was running. Not your character, its name, its realm or its road.
 * Walka is free, and stays free: no paid version, no advertising and no
   asking for money - in the game or outside it.
 * When the game hides a value from addons (speed in combat), Walka does not
@@ -957,7 +1058,8 @@ companion/requirements-dev.lock`, and no install of Walka itself.)
   has no way to write to a treadmill, and a simulator), `ftms.py` (decoding
   what a treadmill says), `capture.py` + `beacon.py`
   (reading the strip), `session.py` (recording walks), `addon_sync.py`, `web.py` + `static/`
-  (dashboard), `window.py` (Walka's own window, which shows the dashboard), `app.py` (wiring), `cli.py`, `macos.py` (what the companion
+  (dashboard), `walka_account/` (signing in to a Walka account and sending
+  walks to it - the only part that asks anything over the internet), `window.py` (Walka's own window, which shows the dashboard), `app.py` (wiring), `cli.py`, `macos.py` (what the companion
   asks macOS: where the game window is, whether it may see the screen),
   `winsession.py` (hearing that Windows is shutting down, to save the walk); `journey.py` (each character's
   journey, put together from the strip), `savedvars.py` + `road.py` (the
