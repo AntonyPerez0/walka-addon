@@ -633,7 +633,7 @@ def test_waiting_for_an_answer_ends_at_once_when_cancelled_and_leaves_nothing_be
             await asyncio.wait_for(bare.arrived.wait(), 5)
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
-                await asyncio.wait_for(task, 1)  # at once: not when the 20 seconds are up
+                await asyncio.wait_for(task, 5)  # at once: not when the 20 seconds are up (room for a slow machine)
         # The same while the two sides are still agreeing on a checked connection.
         async with Bare("silent") as bare:
             task = asyncio.ensure_future(Client(Origin("https", "127.0.0.1", bare.port)).request("GET", "/x"))
@@ -642,7 +642,7 @@ def test_waiting_for_an_answer_ends_at_once_when_cancelled_and_leaves_nothing_be
             await asyncio.sleep(0.05)
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
-                await asyncio.wait_for(task, 1)
+                await asyncio.wait_for(task, 5)
         for _ in range(200):
             left = tasks() - before
             if not left:
@@ -1006,7 +1006,7 @@ def test_a_look_up_that_never_answers_holds_nobody(monkeypatch):
             await asyncio.sleep(0.01)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
-            await asyncio.wait_for(task, 1)
+            await asyncio.wait_for(task, 5)
         in_time = await failure(Client(Origin("https", "accounts.example", None)).request("GET", "/x", timeout_s=0.2))
         monkeypatch.setattr(https, "LOOK_UP_S", 0.05)
         with pytest.raises(OSError):

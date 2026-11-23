@@ -116,8 +116,8 @@ class _Handler(BaseHTTPRequestHandler):
             self.request = self.server.tls.wrap_socket(self.request, server_side=True)
             self.agreed = True
             self.server.count("handshakes")
-        except OSError:  # (ssl's errors are OSErrors) - turned back at the certificate, or never spoke TLS
-            pass
+        except OSError as exc:  # (ssl's errors are OSErrors) - turned back at the certificate, or never spoke TLS
+            self.server.turned_back(type(exc).__name__)
         super().setup()
 
     def handle(self) -> None:
@@ -157,9 +157,17 @@ class HomeMadeServer(ThreadingHTTPServer):
     def __init__(self, certificate: Path, key: Path) -> None:
         self.tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         self.tls.load_cert_chain(str(certificate), str(key))
+        # Nothing to come back with later ("session tickets"). A server
+        # sends those once a visitor has taken its certificate, and counts
+        # the visitor only when they are sent. One who takes the certificate
+        # and leaves at once is gone by then: on Windows the sending fails,
+        # and the visitor would be counted as one who turned back. With no
+        # tickets, whoever took the certificate is counted the moment they did.
+        self.tls.num_tickets = 0
         self.certificate = certificate
         self._lock = threading.Lock()
         self._counts = {"connections": 0, "handshakes": 0, "requests": 0, "done": 0}
+        self.left_with: list[str] = []  # the kind of error each one ended with who did not take the certificate
         super().__init__(("127.0.0.1", 0), _Handler)
         self.port: int = self.server_address[1]
         self._thread = threading.Thread(target=self.serve_forever, name="home-made-server", daemon=True)
@@ -168,6 +176,10 @@ class HomeMadeServer(ThreadingHTTPServer):
     def count(self, what: str) -> None:
         with self._lock:
             self._counts[what] += 1
+
+    def turned_back(self, kind: str) -> None:
+        with self._lock:
+            self.left_with.append(kind)
 
     def counts(self) -> dict[str, int]:
         """How many connected, how many of them took the certificate, and how many requests were made.
@@ -262,6 +274,7 @@ def check(command: list[str], runs_for_s: float = RUNS_FOR_S) -> str:
 
             code, out, err = run_program([*command, "httpscheck", "--refuse-port", str(server.port)], folder, runs_for_s)
             after = server.counts()
+            left_with = list(server.left_with)
         finally:
             server.stop()
     print(f"> {' '.join(command)} httpscheck --refuse-port {server.port}  (exit code {code})")
@@ -276,6 +289,9 @@ def check(command: list[str], runs_for_s: float = RUNS_FOR_S) -> str:
         f"{after['handshakes'] - before['handshakes']} that took its certificate, "
         f"{after['requests'] - before['requests']} request(s)"
     )
+    if left_with:
+        # (Only the kind of error: it tells a refusal from a line that broke, should the count ever be doubted.)
+        print(f"whoever did not take it left the server with: {', '.join(left_with)}")
     if after["requests"] != before["requests"] or after["handshakes"] != before["handshakes"]:
         raise CheckFailed("the program took a certificate that nobody vouches for")
     lines = [line for line in out.splitlines() if line.startswith("httpscheck OK")]

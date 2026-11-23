@@ -320,6 +320,41 @@ def test_a_home_made_certificate_is_refused_before_anything_is_asked(tool, tmp_p
     assert SECRET not in caplog.text and SECRET not in out and SECRET not in err
 
 
+def test_one_who_takes_the_certificate_and_leaves_at_once_is_counted_all_the_same(tool, tmp_path: Path):
+    """A server usually has something more to send once its certificate is
+    taken (what to come back with later), and holds the visitor for one
+    who took it only when that is sent. To a visitor who has left already
+    the sending fails on Windows: the one who took the certificate was
+    counted as one who turned back. So the home-made server sends nothing
+    of the kind - which a visitor can see on every system."""
+    server = tool.HomeMadeServer(*tool.make_certificate(tmp_path))
+    takes_anything = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    takes_anything.check_hostname = False
+    takes_anything.verify_mode = ssl.CERT_NONE
+    takes_anything.minimum_version = ssl.TLSVersion.TLSv1_3  # (the kind of TLS in which it is sent afterwards)
+    try:
+        with socket.create_connection(("127.0.0.1", server.port), timeout=10) as plain:
+            with takes_anything.wrap_socket(plain) as taken:
+                assert taken.version() == "TLSv1.3"
+        assert server.counts() == {"connections": 1, "handshakes": 1, "requests": 0}
+
+        with socket.create_connection(("127.0.0.1", server.port), timeout=10) as plain:
+            with takes_anything.wrap_socket(plain) as taken:
+                taken.sendall(b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+                answer = b""
+                while True:
+                    part = taken.recv(4096)
+                    if not part:
+                        break
+                    answer += part
+                # Everything the server had to say is read: the answer, and nothing to come back with.
+                assert answer.endswith(b"home-made\n")
+                assert taken.session is None or not taken.session.has_ticket
+        assert server.counts() == {"connections": 2, "handshakes": 2, "requests": 1}
+    finally:
+        server.stop()
+
+
 def test_a_certificate_that_is_vouched_for_is_taken_and_the_name_is_looked_up_walkas_way(
     tool, tmp_path: Path, monkeypatch
 ):
@@ -524,6 +559,8 @@ def test_the_helper_passes_walka_itself(tool, tmp_path: Path, capsys):
     assert line.startswith("httpscheck OK: ") and "was refused" in line
     said = capsys.readouterr().out
     assert "1 connection(s), 0 that took its certificate, 0 request(s)" in said
+    # ... and with which kind of error the server was left, for whoever reads the build's log.
+    assert "whoever did not take it left the server with: " in said
 
 
 @pytest.mark.parametrize(

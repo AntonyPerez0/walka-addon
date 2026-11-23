@@ -26,7 +26,16 @@ from aiohttp import test_utils, web
 from multidict import CIMultiDict
 
 import fake_accounts
-from fake_accounts import ADULTS, DAYS_TO_COME, DENIED_DESCRIPTION, PREFER, ROW_KEYS, FakeAccounts, Seen
+from fake_accounts import (
+    ADULTS,
+    DAYS_TO_COME,
+    DENIED_DESCRIPTION,
+    PREFER,
+    ROW_KEYS,
+    FakeAccounts,
+    Seen,
+    waits_for_a_caller,
+)
 
 NOW = 1795300000.0  # 21 November 2026, 22:26:40 UTC
 PUSH = {"on_conflict": "user_id,start_key", "select": "id"}
@@ -1903,3 +1912,63 @@ def test_a_gate_can_cut_the_line_instead_and_closing_the_stand_in_frees_whoever_
         assert fake.walks(user) == []
 
     play(scenario)
+
+
+# ---- the task in which a server waits for its next caller (Windows) -----------------------------
+
+
+def test_the_task_in_which_a_server_waits_for_its_next_caller_is_known_by_its_name():
+    class IocpProactor:
+        """Shaped like asyncio's own for Windows, which no other system can run: the name is what is asked."""
+
+        def accept(self, future):
+            async def accept_coro(future, conn):
+                await future
+
+            return accept_coro(future, None)
+
+    async def scenario():
+        somebody_connects = asyncio.get_running_loop().create_future()
+        waits = asyncio.ensure_future(IocpProactor().accept(somebody_connects))
+        other = asyncio.ensure_future(asyncio.sleep(30))
+        await asyncio.sleep(0)
+        found = [waits_for_a_caller(task) for task in (waits, other, asyncio.current_task())]
+        somebody_connects.set_result(None)
+        other.cancel()
+        await asyncio.wait({waits, other}, timeout=5)
+        return found
+
+    assert asyncio.run(asyncio.wait_for(scenario(), 30)) == [True, False, False]
+
+
+def test_while_it_listens_the_stand_in_keeps_no_task_but_that_one_and_none_once_it_is_closed():
+    """What the tests that look for tasks left behind lean on. On Windows
+    the loop has one task for the stand-in that listens, and another one
+    after every request; elsewhere it has none."""
+
+    async def new_tasks(before: set, but=lambda task: False) -> list:
+        loop = asyncio.get_running_loop()
+        until = loop.time() + 10  # (a connection that was just closed ends a moment later)
+        while True:
+            left = [task for task in asyncio.all_tasks() - before if not but(task)]
+            if not left or loop.time() > until:
+                return left
+            await asyncio.sleep(0.01)
+
+    async def scenario():
+        loop = asyncio.get_running_loop()
+        before = set(asyncio.all_tasks())
+        waiting = []
+        async with FakeAccounts(wall=Clock()) as fake:
+            for _ in range(3):
+                waiting.append([task for task in asyncio.all_tasks() - before if waits_for_a_caller(task)])
+                status, _headers, _text = await fake.visit(fake.origin + "/landed")
+                assert status == 200
+                assert await new_tasks(before, but=waits_for_a_caller) == []
+        assert await new_tasks(before) == []
+        return isinstance(loop, getattr(asyncio, "ProactorEventLoop", ())), waiting
+
+    windows, waiting = asyncio.run(asyncio.wait_for(scenario(), 30))
+    assert [len(tasks) for tasks in waiting] == ([1, 1, 1] if windows else [0, 0, 0])
+    if windows:  # a new one each time somebody connected
+        assert len({id(task) for tasks in waiting for task in tasks}) == 3

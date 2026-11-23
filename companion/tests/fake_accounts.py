@@ -227,6 +227,20 @@ def collect_violations() -> list[str]:
     return found
 
 
+def waits_for_a_caller(task: asyncio.Task) -> bool:
+    """Is ``task`` the loop's own, in which a server that listens waits for whoever connects next?
+
+    On Windows the loop keeps one such task for every server that listens
+    - the stand-in's among them - and begins a new one each time somebody
+    connects. It ends when the server is closed. Nothing of Walka's began
+    it: a test that looks at which tasks are still running must not take
+    it for one left behind. (On other systems a server waits without a
+    task. The name is the one Python gives it: asyncio's
+    ``IocpProactor.accept``.)
+    """
+    return getattr(task.get_coro(), "__qualname__", "").endswith("accept.<locals>.accept_coro")
+
+
 # (method, path) -> what it is. Anything else is outside the list of brief 5.4.
 _ROUTES = {
     ("GET", "/auth/v1/authorize"): "authorize",
