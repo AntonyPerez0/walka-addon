@@ -5,14 +5,20 @@ and talks to the app through a JSON API.
 
 Nothing here can move a treadmill belt - the companion has no way to. But
 the API shows the walker's walks, weight and height, and can change
-settings and delete walks, so it is defended against other web pages open
-in the same browser:
+settings and delete walks. Where Walka has its Walka account's part
+(``walka_account``; see ``cli._build_walka_account`` for when), it also
+shows the e-mail address of the Walka account that is signed in, and it
+can sign Walka in and out and switch the sending of walks on and off. So
+it is defended against other web pages open in the same browser:
 
 * requests must carry a ``Host`` header naming localhost or an IP address
   (blocks DNS-rebinding);
 * state-changing requests must be ``application/json`` (a cross-site page
   cannot send that without a CORS preflight, which is never granted) and, if
   the browser sends ``Origin``, it must be this server.
+
+That is a defence against web pages, not against programs: one that runs
+on this computer sends no ``Origin`` and is let through.
 """
 
 from __future__ import annotations
@@ -216,7 +222,15 @@ def create_app(app: App) -> web.Application:
             limit = max(1, min(2000, int(request.query.get("limit", "200"))))
         except ValueError:
             limit = 200
-        return web.json_response({"sessions": [r.summary() for r in app.store.recent(limit)]})
+        found = [(record, record.summary()) for record in app.store.recent(limit)]
+        part = app.walka_account
+        if part is not None:
+            # For the question before a walk is deleted: a copy that is in
+            # the Walka account stays there. (Read from what Walka wrote
+            # down on this computer: nobody is asked.)
+            for record, summary in found:
+                summary["in_walka_account"] = part.in_account(record.id, record.start)
+        return web.json_response({"sessions": [summary for _record, summary in found]})
 
     @routes.get("/api/sessions/{session_id}")
     async def session(request: web.Request) -> web.Response:
@@ -307,6 +321,78 @@ def create_app(app: App) -> web.Application:
         app.update_config({"heart_rate": {"enabled": enabled, "address": address, "name": str(data.get("name") or "")}})
         monitor.configure(enabled=enabled, address=address)
         return ok()
+
+    # ---- Walka account ---------------------------------------------------------
+    def walka_account_route(path: str):
+        """A button of the Walka-account card: a POST under the guard, and no key of /api/config.
+
+        The routes are always there, and without the part (``app.walka_account``)
+        each answers 404 and does nothing. With it each answers at once: what
+        was asked for goes on in a task of the part's own and shows in the
+        snapshot. This server still answers for a moment after Walka has begun
+        to close: the part then refuses (409) and starts nothing.
+
+        The page sends ``{}`` with a button that needs nothing said (and no
+        body at all counts as that, as everywhere in this API). A body
+        that is something else than a JSON object presses no button (400) -
+        not even one that only stops something.
+        """
+
+        def register(act: Callable[[Any, dict[str, Any]], tuple[int, dict[str, Any]]]):
+            @routes.post(path)
+            async def handler(request: web.Request) -> web.Response:
+                part = app.walka_account
+                if part is None:
+                    return web.json_response({"ok": False, "error": "not available"}, status=404)
+                said = await _body(request)
+                try:
+                    status, answer = act(part, said)
+                except Exception as exc:
+                    # The part's buttons do not raise. Should one ever, the
+                    # server would write the error into the log with all
+                    # its words - and they could hold the e-mail address or
+                    # a key. So: the kind of error, and no more.
+                    log.warning(
+                        "a button of the Walka-account card broke off with an error of the kind %s", type(exc).__name__
+                    )
+                    return web.json_response({"ok": False, "error": "failed"}, status=500)
+                return web.json_response(answer, status=status)
+
+            return act
+
+        return register
+
+    @walka_account_route("/api/walka-account/sign-in")
+    def walka_account_sign_in(part: Any, said: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        # Only one of the three ways, named in the body, starts a sign-in:
+        # an empty body, or anything else, opens no browser and no listener.
+        return part.sign_in(said.get("way"))
+
+    @walka_account_route("/api/walka-account/sign-out")
+    def walka_account_sign_out(part: Any, _said: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        return part.sign_out()
+
+    @walka_account_route("/api/walka-account/look-again")
+    def walka_account_look_again(part: Any, _said: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        return part.look_again()  # (asks the Walka account: the button says so)
+
+    @walka_account_route("/api/walka-account/question")
+    def walka_account_question(part: Any, _said: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        return part.prepare_question()  # (asks the Walka account: the button says so)
+
+    @walka_account_route("/api/walka-account/sending")
+    def walka_account_sending(part: Any, said: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        # Switching sending on wants the question's id and the choice
+        # spelled out: an empty body switches nothing.
+        return part.switch_on(said.get("question"), said.get("send"))
+
+    @walka_account_route("/api/walka-account/sending/off")
+    def walka_account_sending_off(part: Any, _said: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        return part.switch_off()
+
+    @walka_account_route("/api/walka-account/notice/ok")
+    def walka_account_notice_ok(part: Any, _said: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        return part.notice_ok()
 
     application = web.Application(middlewares=[guard])
     application.add_routes(routes)

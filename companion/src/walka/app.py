@@ -58,6 +58,7 @@ class App:
         treadmill: Treadmill,
         beacon: BeaconSource | None = None,
         heart_rate: Any = None,
+        walka_account: Any = None,
         wall_clock: Callable[[], float] = time.time,
         mono_clock: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -106,6 +107,16 @@ class App:
         self._was_moving = False
         self._totals_cache: tuple[float, dict[str, Any]] | None = None
         self._state = self._load_state()
+
+        # Sending walks to a Walka account (walka_account/). By default it
+        # is not there at all: cli hands it in only when Walka runs from
+        # its source code with the accounts' address set (see
+        # cli._build_walka_account). It has tasks of its own and is only
+        # ever told things here - that a walk was saved, that Walka is
+        # closing: recording a walk never waits for it.
+        self.walka_account = walka_account
+        if walka_account is not None:
+            walka_account.attach(self)
 
     # ---- small persistent state --------------------------------------------------
     def _load_state(self) -> dict[str, Any]:
@@ -311,6 +322,17 @@ class App:
                 f"{record.steps} steps, {record.kcal:.0f} kcal."
             )
             self.sync_addon()
+            if self.walka_account is not None:
+                try:
+                    self.walka_account.walk_saved()  # (only wakes its sender: nothing is waited for here)
+                except Exception as exc:
+                    # This walk is on disk, and the next one in the list
+                    # must get there too: nothing of a Walka account may
+                    # stand in its way. (The kind of error only, as in start().)
+                    log.warning(
+                        "the Walka account's part could not be told of a saved walk: an error of the kind %s",
+                        type(exc).__name__,
+                    )
         self.store.clear_checkpoint()
 
     # ---- addon sync --------------------------------------------------------------
@@ -481,7 +503,7 @@ class App:
             moving=self._was_moving,
         )
         reading = self._last_reading
-        return {
+        snapshot: dict[str, Any] = {
             "version": __version__,
             "time": wall,
             "units": self.config.units,
@@ -515,6 +537,11 @@ class App:
             "events": list(self.events)[:30],
             "journey": self.journeys.summary(),
         }
+        if self.walka_account is not None:
+            # Only with the part handed in: without it the page has no
+            # Walka-account card, and nothing here names one.
+            snapshot["walka_account"] = self.walka_account.snapshot()
+        return snapshot
 
     # ---- lifecycle ---------------------------------------------------------------
     async def _tick_loop(self) -> None:
@@ -569,6 +596,15 @@ class App:
         self._tasks.append(asyncio.create_task(self._tick_loop(), name="walka-tick"))
         self._tasks.append(asyncio.create_task(self._connect_loop(), name="walka-connect"))
         self._tasks.append(asyncio.create_task(self.journeys.run(), name="walka-journey"))
+        if self.walka_account is not None:
+            try:
+                # (Its task is its own, not one of self._tasks: see stop().)
+                self.walka_account.start()
+            except Exception as exc:
+                # Walka works in full without it. (The kind of error only:
+                # its words could name the Walka account, and the log is
+                # no place for that.)
+                log.warning("the Walka account's part did not start: an error of the kind %s", type(exc).__name__)
         self.sync_addon()
 
     async def stop(self) -> None:
@@ -578,6 +614,15 @@ class App:
         self._connect_now.set()
         for task in self._tasks:
             task.cancel()
+        if self.walka_account is not None:
+            # Told to stop here, with the tasks and before the walk is
+            # saved - and only told: this waits for nothing. From now on it
+            # asks nobody and its routes refuse. What has to be waited for
+            # comes last, when everything of Walka's own is done.
+            try:
+                self.walka_account.cancel()
+            except Exception as exc:
+                log.warning("the Walka account's part did not stop cleanly: an error of the kind %s", type(exc).__name__)
         await asyncio.gather(*self._tasks, return_exceptions=True)
         self._tasks.clear()
         try:
@@ -598,3 +643,12 @@ class App:
             self.beacon.stop()
         self.journeys.save()
         self.save_config()
+        if self.walka_account is not None:
+            # Last of all: the walk is on disk, the treadmill let go of and
+            # the settings saved. Whoever is ending Walka waits a few
+            # seconds at most (cli.SAVE_WAIT_S), and none of them may be
+            # spent on a Walka account before the walk is safe.
+            try:
+                await self.walka_account.close()
+            except Exception as exc:
+                log.debug("closing the Walka account's part failed: an error of the kind %s", type(exc).__name__)
