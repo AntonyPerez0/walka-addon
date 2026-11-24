@@ -4,10 +4,11 @@ It lies in the data folder, beside the walks. Under the address of the
 accounts, and then under the Walka account's id: how the person signed
 in, the e-mail address (so that the card can say WHICH Walka account
 without asking the network), whether sending is on, what was chosen when
-it was switched on, and for each walk dealt with - under its id AND its
-start, because an id is given out again after a walk is deleted - whether
-it was added, was there already, or was set aside. A walk that is not in
-the file is waiting. The e-mail address and the id are in this file only.
+it was switched on, the mark that was made then, and for each walk dealt
+with - under its id AND its start, because an id is given out again
+after a walk is deleted - whether it was added, was there already, or
+was set aside. A walk that is not in the file is waiting. The e-mail
+address and the id are in this file only.
 
 Two more things are written down, each a plain yes or no. Under the
 address: that this Walka signed out and the system's store for secrets
@@ -18,9 +19,12 @@ account: that the accounts said it was deleted (``gone``) - then the
 copies of its walks are gone with it.
 
 No key of a sign-in is ever in it: those live in memory and in the
-system's store for secrets (``keystore``).
+system's store for secrets (``keystore``). The mark is no key: it opens
+nothing. It is a random text, made anew each time the question before
+sending is answered, and kept twice - here, beside "sending is on", and
+in the system's store.
 
-Three rules, each with its reason:
+Four rules, each with its reason:
 
 - Every write is: take the lock, read the file again, change ONE thing,
   replace the file. Two Walkas can run on one data folder. If each wrote
@@ -29,15 +33,37 @@ Three rules, each with its reason:
 - A file that is there but cannot be opened is never taken for an empty
   one. Writing an empty one back would lose the other Walka's entries and
   the moment "from now on" was chosen.
-- Sending counts only for the Walka account that is signed in and only
-  with a choice beside it, and finishing ANY sign-in writes "off" for
-  every Walka account of that address: no sign-in leads past the
+- Sending counts only for the Walka account that is signed in, and only
+  with a choice and a mark beside it. Finishing ANY sign-in writes "off"
+  for every Walka account of that address: no sign-in leads past the
   question. A Walka that is running never takes "on" from the file, and
   a file without the sign-in in the system's store means "not signed
-  in". What that leaves: at a start the file is believed, for the Walka
-  account whose sign-in the store still holds. An older copy of the file
-  put back (from a backup, say) or a file changed by hand can so switch
-  sending on again, for that same Walka account, without the question.
+  in".
+- The file alone does not say that sending is on. At a start its "on" is
+  shown as it stands - no store is read for that - but before a walk
+  goes, Walka reads the mark in the system's store, where it reads the
+  sign-in anyway. Only if that is the mark of this file is anything
+  sent. If the store holds another mark or none, "off" is written here
+  and nothing is sent. The mark is taken out of the store whenever "off"
+  is written by a button or by a sign-in that ends, and a new one is
+  made at every "on": so an older copy of the file put back (from a
+  backup, say), or a file changed by hand to say "on", bears a mark
+  that the store does not hold, and the person is asked again. What
+  that leaves, each pinned by a test that names it:
+  - a store that would let the mark be neither taken out nor written
+    over when sending was stopped;
+  - a Walka that is ended between writing "off" and taking the mark out
+    (the computer goes off; or the store sits on the delete until Walka
+    is closed, which waits a second for it and no longer);
+  - two Walkas on one data folder: sending is stopped in one, and the
+    older copy is put back before the other has read the file again -
+    that one looked into the store earlier in its run, and does not
+    look a second time;
+  - a backup that puts back the system's store together with the file.
+  And it is no guard against whoever can write the file WHILE sending
+  is on: the mark stands in it, and can be kept while the rest is
+  changed (the choice, say). That is the program on the same computer
+  of SECURITY.md, not an older copy.
 
 Lost, or damaged: sending is off; switched on again, everything is sent
 anew and answered "there already". A file of a newer Walka is left alone.
@@ -65,6 +91,8 @@ LOCK_NAME = "walka-account.lock"
 VERSION = 1
 
 NOTICES = ("ended",)
+# The longest mark taken, in characters. (Walka's own are 32.)
+MOST_MARK = 128
 
 # How long a busy file is waited for. Counted in tries, not read off a
 # clock: about a fifth of a second to open the file, a second to replace
@@ -138,6 +166,11 @@ def _origin_text(origin: Any) -> str:
     return text
 
 
+def valid_mark(value: Any) -> bool:
+    """A mark as Walka makes one: plain characters that can be seen, no space, not long."""
+    return isinstance(value, str) and 0 < len(value) <= MOST_MARK and all("!" <= ch <= "~" for ch in value)
+
+
 def _valid_chosen(raw: Any) -> dict | None:
     if not isinstance(raw, dict):
         return None
@@ -179,6 +212,13 @@ def _valid_account(raw: Any, is_signed_in: bool) -> dict | None:
     if not isinstance(raw, dict):
         return None
     chosen = _valid_chosen(raw.get("chosen"))
+    # The one place where the file's "on" is taken: said outright, with a
+    # choice and a mark beside it, and for the Walka account that is
+    # signed in. (Whether the mark is the one in the system's store
+    # cannot be told from the file: the sender looks before a walk goes.
+    # See the top.)
+    mark = raw.get("mark")
+    sending = raw.get("sending") is True and chosen is not None and valid_mark(mark) and is_signed_in
     walks: dict[str, dict] = {}
     raw_walks = raw.get("walks")
     if isinstance(raw_walks, dict):
@@ -189,12 +229,10 @@ def _valid_account(raw: Any, is_signed_in: bool) -> dict | None:
     return {
         "way": _word(raw.get("way"), 32),
         "email": _word(raw.get("email"), 254),
-        # The one place where the file's "on" is taken: said outright, with a
-        # choice beside it, and for the Walka account that is signed in.
-        # (Whether the file itself is the newest one cannot be told from
-        # the file: an older copy put back is believed. See the top.)
-        "sending": raw.get("sending") is True and chosen is not None and is_signed_in,
+        "sending": sending,
         "chosen": chosen,
+        # A mark says something only beside "on": without it there is none.
+        "mark": mark if sending else None,
         # The accounts said that this Walka account was deleted. (Nobody is signed in to one
         # that is gone - and a file that says both is believed about the sign-in.)
         "gone": raw.get("gone") is True and not is_signed_in,
@@ -229,8 +267,9 @@ def validate(book: Any) -> dict:
     """The book again, as a new dict, with everything dropped that is not of the shape.
 
     Unknown states and wrong types go. ``"sending": true`` survives only
-    with a choice beside it, and only for the Walka account that is
-    signed in. A book of a newer Walka raises ``LedgerError("newer")``.
+    with a choice and a mark beside it, and only for the Walka account
+    that is signed in. A book of a newer Walka raises
+    ``LedgerError("newer")``.
     """
     if not isinstance(book, dict):
         return empty_book()
@@ -292,7 +331,7 @@ def _account(place: dict, user_id: Any) -> dict:
     if not _text(user_id, 200):
         raise ValueError("not the id of a Walka account")
     return place["accounts"].setdefault(
-        user_id, {"way": "", "email": "", "sending": False, "chosen": None, "gone": False, "walks": {}}
+        user_id, {"way": "", "email": "", "sending": False, "chosen": None, "mark": None, "gone": False, "walks": {}}
     )
 
 
@@ -322,6 +361,7 @@ def sign_in(book: dict, origin: Any, user_id: str, way: str, email: str) -> None
     for other in place["accounts"].values():
         other["sending"] = False
         other["chosen"] = None
+        other["mark"] = None
     account["way"] = way
     account["email"] = email
     account["gone"] = False  # (somebody has just signed in to it)
@@ -352,6 +392,7 @@ def sign_out(
     place["signed_in"] = None
     for account in place["accounts"].values():
         account["sending"] = False
+        account["mark"] = None
     place["notice"] = notice
     if left_in_store:
         place["left_in_store"] = True
@@ -361,12 +402,13 @@ def sign_out(
             account["gone"] = True
 
 
-def set_sending(book: dict, origin: Any, user_id: str, on: bool, chosen: dict | None) -> None:
+def set_sending(book: dict, origin: Any, user_id: str, on: bool, chosen: dict | None, mark: str | None = None) -> None:
     """Switch sending on or off for one Walka account.
 
-    On needs the Walka account to be the one signed in, and a choice
-    ("all", or "from" a moment): anything else raises ValueError, and
-    ``change`` then writes nothing. Off is always taken.
+    On needs the Walka account to be the one signed in, a choice ("all",
+    or "from" a moment) and the mark that was made for this answer to
+    the question: anything else raises ValueError, and ``change`` then
+    writes nothing. Off is always taken, and no mark stays beside it.
     """
     place = address(book, origin)
     if on is not True:
@@ -374,15 +416,40 @@ def set_sending(book: dict, origin: Any, user_id: str, on: bool, chosen: dict | 
         if isinstance(account, dict):
             account["sending"] = False
             account["chosen"] = _valid_chosen(chosen)
+            account["mark"] = None
         return
     fit = _valid_chosen(chosen)
     if fit is None:
         raise ValueError("sending is switched on only with a choice")
+    if not valid_mark(mark):
+        raise ValueError("sending is switched on only with a mark")
     if signed_in(book, origin) is None or place["signed_in"] != user_id:
         raise ValueError("sending is switched on only for the Walka account that is signed in")
     account = place["accounts"][user_id]
     account["sending"] = True
     account["chosen"] = fit
+    account["mark"] = mark
+
+
+def stop_if_marked(book: dict, origin: Any, user_id: str, mark: str) -> bool:
+    """Switch sending off - but only if the file still says "on" for this Walka account with this very mark.
+
+    For the sender, when the system's store does not hold the mark it
+    read here. True: the file said so, and says "off" now (what was
+    chosen stays, as when sending is stopped). False: the file has
+    changed since - the other Walka on this data folder stopped sending,
+    or the question was answered there anew - and nothing was changed:
+    whoever asked looks again.
+    """
+    found = signed_in(book, origin)
+    if found is None or found[0] != user_id:
+        return False
+    account = found[1]
+    if account.get("sending") is not True or account.get("mark") != mark:
+        return False
+    account["sending"] = False
+    account["mark"] = None
+    return True
 
 
 def note_walks(book: dict, origin: Any, user_id: str, entries: dict[str, dict]) -> None:

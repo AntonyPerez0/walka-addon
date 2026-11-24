@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import logging
 import threading
 from urllib.parse import parse_qsl, urlsplit
 
@@ -130,8 +131,10 @@ def test_a_whole_sign_in_through_the_browser(tmp_path):
 
             # The refresh token is in the store and nowhere else; the file says who, and that sending is off.
             (stored,) = rig.keystore.secrets()
-            assert rig.keystore.calls == [("write", rig.entry)]
+            # (And no mark stays in the store past a sign-in: sending is off after every one.)
+            assert rig.keystore.calls == [("write", rig.entry), ("delete", rig.mark_entry)]
             assert rig.entry == "Walka account - " + rig.fake.origin
+            assert rig.mark_entry == rig.entry + " - sending" and rig.keystore.marks() == []
             place = rig.book()["addresses"][rig.origin.text]
             assert place["signed_in"] == user and place["notice"] is None
             assert place["accounts"][user] == {
@@ -139,6 +142,7 @@ def test_a_whole_sign_in_through_the_browser(tmp_path):
                 "email": "walker@mail.example",
                 "sending": False,
                 "chosen": None,
+                "mark": None,
                 "gone": False,
                 "walks": {},
             }
@@ -356,7 +360,8 @@ def test_signing_out_with_a_token_that_has_run_out_asks_nobody(tmp_path):
             assert rig.account.sign_out() == OK
             await rig.idle()
             assert len(rig.fake.requests) == before  # no courtesy, and never a refresh in order to sign out
-            assert rig.keystore.secrets() == [] and rig.keystore.calls[-1] == ("delete", rig.entry)
+            assert rig.keystore.secrets() == []
+            assert rig.keystore.calls[-2:] == [("delete", rig.entry), ("delete", rig.mark_entry)]
             assert rig.snapshot()["state"] == "signed_out"
 
     run(scenario)
@@ -555,7 +560,7 @@ def test_a_book_carried_in_with_sending_on_is_off_after_any_sign_in(tmp_path):
         async with Rig(tmp_path, start=False) as rig:
             user = rig.person()
             other = "0b6f0a52-6d6f-4a8e-9d1c-3a1f0e5b7c21"
-            chosen = {"what": "all", "at": 5.0}
+            on = {"sending": True, "chosen": {"what": "all", "at": 5.0}, "mark": "a-mark-from-elsewhere"}
             book = {
                 "version": 1,
                 "addresses": {
@@ -563,8 +568,8 @@ def test_a_book_carried_in_with_sending_on_is_off_after_any_sign_in(tmp_path):
                         "signed_in": other,
                         "notice": None,
                         "accounts": {
-                            user: {"way": "github", "email": "x@y.example", "sending": True, "chosen": chosen},
-                            other: {"way": "google", "email": "z@y.example", "sending": True, "chosen": chosen},
+                            user: {"way": "github", "email": "x@y.example", **on},
+                            other: {"way": "google", "email": "z@y.example", **on},
                         },
                     }
                 },
@@ -585,6 +590,8 @@ def test_a_book_carried_in_with_sending_on_is_off_after_any_sign_in(tmp_path):
             accounts = rig.book()["addresses"][rig.origin.text]["accounts"]
             assert [accounts[who]["sending"] for who in (user, other)] == [False, False]
             assert [accounts[who]["chosen"] for who in (user, other)] == [None, None]
+            assert [accounts[who]["mark"] for who in (user, other)] == [None, None]
+            assert "a-mark-from-elsewhere" not in rig.files_text()
 
     run(scenario)
 
@@ -819,7 +826,7 @@ def test_the_other_walka_signs_in_as_another_account_and_nothing_goes_until_the_
             def theirs_now(book: dict) -> None:
                 ledger.sign_out(book, rig.origin)
                 ledger.sign_in(book, rig.origin, theirs, "google", "theirs@mail.example")
-                ledger.set_sending(book, rig.origin, theirs, True, {"what": "all", "at": 1.0})
+                ledger.set_sending(book, rig.origin, theirs, True, {"what": "all", "at": 1.0}, "a-mark-of-the-other")
 
             ledger.Ledger(rig.dir).change(theirs_now)
             before = len(rig.fake.requests)
@@ -2056,7 +2063,8 @@ def test_a_file_that_cannot_be_written_means_no_sign_in_and_the_key_leaves_the_s
             shown = rig.snapshot()
             assert (shown["state"], shown["problem"]) == ("signed_out", "no_store")
             assert rig.keystore.secrets() == [] and rig.account.access_token() is None
-            assert [what for what, _name in rig.keystore.calls] == ["write", "delete"]
+            # (The key in, whatever mark there might be out - that goes with every sign-in - and the key out again.)
+            assert rig.keystore.calls == [("write", rig.entry), ("delete", rig.mark_entry), ("delete", rig.entry)]
             assert shown["left_in_store"] == ""  # (the store said that the key is out again)
 
     run(scenario)
@@ -2070,7 +2078,10 @@ def test_a_file_that_says_sending_is_on_for_an_account_without_an_e_mail_address
             await rig.sign_in()
             rig.walk(3600)
             chosen = {"what": "all", "at": 5.0}
-            ledger.Ledger(rig.dir).change(lambda book: ledger.set_sending(book, rig.origin, user, True, chosen))
+            # (With a mark, and the same one in the store: nothing but the missing address stands in the way.)
+            mark = "a-mark-by-hand"
+            ledger.Ledger(rig.dir).change(lambda book: ledger.set_sending(book, rig.origin, user, True, chosen, mark))
+            rig.keystore._entries[rig.mark_entry] = mark
             await rig.restart(start=False)
             before = len(rig.fake.requests)
             shown = rig.snapshot()
@@ -2186,6 +2197,8 @@ def test_answering_the_question_when_the_file_cannot_be_written_switches_nothing
             assert shown["last"]["word"] == "stopped"
             assert rig.pushes() == [] and rig.fake.walks(user) == []
             assert rig.account_in_book(user)["sending"] is False
+            # (The mark that was made for this answer went into the store first - and is out again.)
+            assert mark_calls(rig) == ["delete", "write", "delete"] and rig.keystore.marks() == []
             await rig.saved()
             assert rig.pushes() == []
             await rig.restart()
@@ -2259,14 +2272,16 @@ def test_signing_out_while_the_store_sits_on_a_write_takes_the_key_away_when_the
             await until(lambda: store_threads() == 0)
             await rig.idle()
             assert rig.keystore.secrets() == []  # no key of the sign-in outlives the sign-out
-            assert [what for what, _name in rig.keystore.calls][-2:] == ["write", "delete"]
+            # (The delete of the sign-in, and behind it the one of the mark, which waited in the same line.)
+            assert [what for what, _name in rig.keystore.calls][-3:] == ["write", "delete", "delete"]
+            assert set(rig.keystore.calls[-2:]) == {("delete", rig.entry), ("delete", rig.mark_entry)}
             assert rig.book()["addresses"][rig.origin.text]["signed_in"] is None
             # Walka was told "no answer" and never hears of the late delete: the card goes on saying
             # that it could not make sure, until its button finds the entry gone.
             assert left_in(rig) == ("sign_in", True)
             assert rig.account.sign_out() == OK
             await rig.idle()
-            assert left_in(rig) == ("", False) and rig.keystore.calls[-1] == ("delete", rig.entry)
+            assert left_in(rig) == ("", False) and rig.keystore.calls[-2:] == tried(rig, let_go=True)
 
     run(scenario)
 
@@ -2302,11 +2317,12 @@ def test_a_sign_outs_late_delete_does_not_take_out_the_key_of_the_sign_in_that_f
             await until(lambda: rig.keystore.calls.count(("write", rig.entry)) == 2)  # the store sits on this write
             assert rig.account.sign_out() == OK
             await rig.idle()  # its delete waits on; whoever asked for it has gone
-            assert len(lock.waiting) == 1 and rig.snapshot()["state"] == "signed_out"
+            # (Two wait: the delete of the sign-in, and the one of the mark that follows every sign-out.)
+            assert len(lock.waiting) == 2 and rig.snapshot()["state"] == "signed_out"
             # The person signs in again. That sign-in's key is asked to be written AFTER the delete ...
             del rig.keystore.block["write"]
             assert rig.account.sign_in("github") == OK
-            await until(lambda: len(lock.waiting) == 2)
+            await until(lambda: len(lock.waiting) == 3)
             gate.set()  # ... and gets its turn BEFORE it, when the store comes back.
             await rig.idle()
             await until(lambda: store_threads() == 0)
@@ -2501,6 +2517,14 @@ def store_calls(rig: Rig) -> list[str]:
     return [what for what, _name in rig.keystore.calls]
 
 
+def tried(rig: Rig, *, let_go: bool) -> list[tuple[str, str]]:
+    """The calls of one try to take a sign-in out of the store - a sign-out's, or the card's "Try
+    again": the sign-in's entry is deleted, and then the mark's. ``let_go=False``: the store will not
+    delete - then something else is written over the mark, which stands in no file."""
+    calls = [("delete", rig.entry), ("delete", rig.mark_entry)]
+    return calls if let_go else [*calls, ("write", rig.mark_entry)]
+
+
 async def signed_in_long_ago(rig: Rig) -> str:
     """Somebody is signed in, sending is on, a walk was sent - and the access token has run out since
     (the usual state of a Walka that has been open for a while): signing out then asks nobody."""
@@ -2519,6 +2543,8 @@ def test_a_store_that_will_not_let_the_sign_in_go_is_said_in_the_card_and_tried_
         async with Rig(tmp_path) as rig:
             user = await signed_in_long_ago(rig)
             (stored,) = rig.keystore.secrets()
+            mark = rig.mark()
+            assert mark is not None and rig.account_in_book(user)["mark"] == mark
             before = len(rig.fake.requests)
             rig.keystore.refuse["delete"] = word  # a Mac's keychain that is locked, say
 
@@ -2529,7 +2555,9 @@ def test_a_store_that_will_not_let_the_sign_in_go_is_said_in_the_card_and_tried_
             assert shown["left_in_store"] == ""  # (the store has not answered yet)
             await rig.idle()
             # The store said no. The key of the whole Walka account is still in it, and still good ...
-            assert rig.keystore.secrets() == [stored] and store_calls(rig)[-1] == "delete"
+            assert rig.keystore.secrets() == [stored] and rig.keystore.calls[-3:] == tried(rig, let_go=False)
+            # (The mark would not go either. What the store holds in its place stands in no file.)
+            assert rig.mark() not in (None, mark) and rig.mark() not in rig.files_text()
             assert len(rig.fake.requests) == before  # (no courtesy with a token that ran out: nobody was asked)
             # ... and the card says so, with a ready-made word - beside "signed out", not instead of it.
             shown = rig.snapshot()
@@ -2551,11 +2579,12 @@ def test_a_store_that_will_not_let_the_sign_in_go_is_said_in_the_card_and_tried_
             assert rig.keystore.calls == [] and len(rig.fake.requests) == before
             assert rig.wait.limits(waits) == [] and rig.keystore.secrets() == [stored]  # (no timer either)
 
-            # The store still says no: the press is ONE delete - no read, no request - and the word stands.
+            # The store still says no: the press is one delete of the sign-in (and one of the mark,
+            # which is written over instead) - no read, no request - and the word stands.
             rig.keystore.refuse["delete"] = word
             assert rig.account.sign_out() == OK
             await rig.idle()
-            assert rig.keystore.calls == [("delete", rig.entry)] and len(rig.fake.requests) == before
+            assert rig.keystore.calls == tried(rig, let_go=False) and len(rig.fake.requests) == before
             assert left_in(rig) == ("sign_in", True) and rig.snapshot()["state"] == "signed_out"
 
             # Now it lets go: the press takes the entry out, and the word goes - from the card and the file.
@@ -2563,15 +2592,16 @@ def test_a_store_that_will_not_let_the_sign_in_go_is_said_in_the_card_and_tried_
             rev = rig.snapshot()["rev"]
             assert rig.account.sign_out() == OK
             await rig.idle()
-            assert rig.keystore.calls == [("delete", rig.entry)] * 2 and rig.keystore.secrets() == []
+            both = tried(rig, let_go=False) + tried(rig, let_go=True)
+            assert rig.keystore.calls == both and rig.keystore.secrets() == [] and rig.keystore.marks() == []
             assert left_in(rig) == ("", False) and rig.snapshot()["rev"] > rev
             assert len(rig.fake.requests) == before
             # With the word gone the button is gone, and "Sign out" with nobody signed in touches nothing again.
             assert rig.account.sign_out() == OK
             await rig.idle()
-            assert rig.keystore.calls == [("delete", rig.entry)] * 2
+            assert rig.keystore.calls == both
             await rig.restart()
-            assert left_in(rig) == ("", False) and rig.keystore.calls == [("delete", rig.entry)] * 2
+            assert left_in(rig) == ("", False) and rig.keystore.calls == both
 
     run(scenario)
 
@@ -2620,7 +2650,12 @@ def test_a_new_sign_in_takes_the_word_away_for_its_key_is_written_over_the_entry
             await rig.sign_in(user)
             assert rig.snapshot()["state"] == "signed_in" and left_in(rig) == ("", False)
             (new,) = rig.keystore.secrets()
-            assert new != old and "delete" not in store_calls(rig)[len(calls_before) :]
+            # (The sign-in's entry was written over, not deleted. The mark's is deleted at every sign-in.)
+            assert new != old and rig.keystore.calls[len(calls_before) :] == [
+                ("write", rig.entry),
+                ("delete", rig.mark_entry),
+            ]
+            assert rig.keystore.marks() == []
             await rig.restart()
             assert left_in(rig) == ("", False)
             # And signing out of it is an ordinary sign-out again.
@@ -2659,7 +2694,7 @@ def test_the_word_stands_beside_the_notice_that_the_sign_in_ended_and_each_goes_
             del rig.keystore.refuse["delete"]
             assert rig.account.sign_out() == OK
             await rig.idle()
-            assert left_in(rig) == ("", False) and rig.keystore.calls == [("delete", rig.entry)]
+            assert left_in(rig) == ("", False) and rig.keystore.calls == tried(rig, let_go=True)
             assert rig.keystore.secrets() == [] and len(rig.fake.requests) == before
 
     run(scenario)
@@ -2698,7 +2733,7 @@ def test_walka_closed_before_the_store_answered_and_the_next_start_says_that_the
             assert rig.account.sign_out() == OK
             await rig.idle()
             assert left_in(rig) == ("", False) and rig.keystore.secrets() == []
-            assert rig.keystore.calls == [("delete", rig.entry)]
+            assert rig.keystore.calls == tried(rig, let_go=True)
 
     run(scenario)
 
@@ -2744,7 +2779,8 @@ def test_try_again_is_one_delete_at_a_time_however_often_it_is_pressed(tmp_path)
             gate.set()
             del rig.keystore.block["delete"]
             await rig.idle()
-            assert left_in(rig) == ("", False) and rig.keystore.calls == [("delete", rig.entry)]
+            # (Five presses, one try: the sign-in's entry, and then the mark's.)
+            assert left_in(rig) == ("", False) and rig.keystore.calls == tried(rig, let_go=True)
 
     run(scenario)
 
@@ -2971,9 +3007,9 @@ def test_try_again_leaves_the_entry_alone_when_somebody_has_signed_in_in_the_oth
                 shown = other.snapshot()
                 assert (shown["state"], shown["problem"], shown["notice"]) == ("signed_in", "", "")
             else:
-                # Nobody is signed in by the file: the press is the one delete it always was, and no key
+                # Nobody is signed in by the file: the press is the one try it always was, and no key
                 # stays behind a card that has stopped saying so.
-                assert rig.keystore.calls == [("delete", rig.entry)] and rig.keystore.secrets() == []
+                assert rig.keystore.calls == tried(rig, let_go=True) and rig.keystore.secrets() == []
             rig.account = first
             rig.keystore.calls.clear()
             assert first.sign_out() == OK  # (the word is gone, and with it the button: nothing again)
@@ -3009,7 +3045,7 @@ def test_try_again_goes_by_the_file_only_when_the_sign_out_reached_it(tmp_path, 
             rig.keystore.calls.clear()
             assert rig.account.sign_out() == OK
             await rig.idle()
-            assert rig.keystore.calls == [("delete", rig.entry)] and rig.keystore.secrets() == []
+            assert rig.keystore.calls == tried(rig, let_go=True) and rig.keystore.secrets() == []
             assert rig.snapshot()["left_in_store"] == ""
 
     run(scenario)
@@ -3095,3 +3131,938 @@ def test_a_sign_in_that_was_ended_elsewhere_is_not_a_walka_account_that_is_gone(
 
     run(scenario)
 
+
+
+# ---- the mark beside "sending is on": the file alone does not switch sending on --------------------
+#
+# What the last review found (C7): an older copy of walka-account.json put back from a backup, or a
+# file changed by hand, switched sending on again without the question while the sign-in was still in
+# the system's store. Now a mark is made when the question is answered, and kept in the store and in
+# the file; before a walk goes, the two are held against each other.
+
+
+def the_file(rig: Rig):
+    return rig.dir / ledger.FILE_NAME
+
+
+def mark_calls(rig: Rig, since: int = 0) -> list[str]:
+    """What was asked of the store about the mark, in order."""
+    return [what for what, name in rig.keystore.calls[since:] if name == rig.mark_entry]
+
+
+async def on_with_one_walk_sent(rig: Rig) -> tuple[str, str]:
+    """Somebody signs in and answers the question: one walk goes. Gives the Walka account's id, and the mark."""
+    user = rig.person()
+    rig.walk(7200)
+    await rig.sign_in()
+    await rig.switch_on("all")
+    assert len(rig.fake.walks(user)) == 1 and rig.snapshot()["sending"] is True
+    mark = rig.mark()
+    assert mark is not None and rig.account_in_book(user)["mark"] == mark
+    return user, mark
+
+
+def quietly_off(rig: Rig) -> bool:
+    """The card as after "Stop sending": signed in, sending off, and no word of anything having gone wrong."""
+    shown = rig.snapshot()
+    assert (shown["state"], shown["sending"], shown["chosen"], shown["from"]) == ("signed_in", False, "", None)
+    assert (shown["problem"], shown["notice"], shown["left_in_store"], shown["busy"]) == ("", "", "", "")
+    assert shown["last"] == {"word": "", "at": 0.0, "added": 0} and shown["question"] is None
+    assert shown["can_send"] is True  # (the question can be answered again)
+    return True
+
+
+def test_answering_the_question_makes_a_mark_and_keeps_it_in_the_store_and_in_the_file(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            user = rig.person()
+            rig.walk(7200)
+            await rig.sign_in()
+            assert rig.mark() is None and rig.account_in_book(user)["mark"] is None
+            question = await rig.question()
+            assert rig.mark() is None  # (asking the question makes none: answering does)
+            calls = len(rig.keystore.calls)
+            seen_at_the_write: list[object] = []
+            real = rig.keystore.write
+
+            def write_and_look(name, secret):
+                seen_at_the_write.append(json.loads(the_file(rig).read_text("utf-8")))
+                real(name, secret)
+
+            rig.keystore.write = write_and_look
+            assert rig.account.switch_on(question["id"], "all") == OK
+            await rig.idle()
+            # The store first, and only then the file: one write, and nothing read.
+            assert rig.keystore.calls[calls:] == [("write", rig.mark_entry)]
+            (before,) = seen_at_the_write
+            assert before["addresses"][rig.origin.text]["accounts"][user]["sending"] is False
+            mark = rig.mark()
+            assert isinstance(mark, str) and len(mark) == 32 and service.MARK_BYTES == 24
+            assert rig.account_in_book(user)["mark"] == mark and rig.account_in_book(user)["sending"] is True
+            assert len(rig.fake.walks(user)) == 1
+            # In the file and in the store, and nowhere else: not in the snapshot, not in a walk's file.
+            assert mark not in json.dumps(rig.snapshot()) and mark not in rig.files_but_the_book()
+            assert mark in the_file(rig).read_text("utf-8")
+            # Nothing but chance goes into it: not who, not where, not when.
+            for word in (user, "walker", "mail.example", rig.origin.host, str(int(rig.clock.wall()))):
+                assert word not in mark
+
+    run(scenario)
+
+
+def test_every_answer_to_the_question_makes_a_new_mark(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            user, first = await on_with_one_walk_sent(rig)
+            made = [first]
+            for _ in range(5):
+                assert rig.account.switch_off() == OK
+                await rig.idle()
+                assert rig.mark() is None and rig.account_in_book(user)["mark"] is None
+                assert first not in the_file(rig).read_text("utf-8")
+                await rig.switch_on("from_now_on")
+                made.append(rig.mark())
+                assert rig.account_in_book(user)["mark"] == made[-1]
+            assert len(set(made)) == 6 and None not in made
+
+    run(scenario)
+
+
+def test_an_older_copy_of_the_file_put_back_after_stop_sending_switches_nothing_on(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            user, mark = await on_with_one_walk_sent(rig)
+            backup = the_file(rig).read_bytes()  # a backup, taken while sending was on
+            assert rig.account.switch_off() == OK  # "Stop sending"
+            await rig.idle()
+            assert rig.account_in_book(user)["sending"] is False and rig.mark() is None
+            made_while_off = rig.walk(600)
+            await rig.saved()
+            assert len(rig.fake.walks(user)) == 1
+            # The older copy is put back - Time Machine, a restored folder, a tool that keeps folders alike.
+            the_file(rig).write_bytes(backup)
+            assert rig.account_in_book(user)["sending"] is True and rig.account_in_book(user)["mark"] == mark
+            requests, calls = len(rig.fake.requests), len(rig.keystore.calls)
+            await rig.restart()
+            # The file says "on", and the sign-in is in the store. The mark is not: so nobody is asked
+            # anything - not for a new key, not for the version of the rules - and "off" is written.
+            assert rig.keystore.calls[calls:] == [("read", rig.entry), ("read", rig.mark_entry)]
+            assert rig.fake.requests[requests:] == []
+            assert quietly_off(rig)
+            assert (rig.snapshot()["counts"]["waiting"], rig.snapshot()["counts"]["sent"]) == (1, 1)
+            account = rig.account_in_book(user)
+            assert (account["sending"], account["mark"]) == (False, None)
+            assert b'"sending":true' not in the_file(rig).read_bytes() and mark not in rig.files_text()
+            # The walk that was made while sending was off stays here.
+            assert rig.entry_of(user, made_while_off) is None and rig.file_of(made_while_off).exists()
+            assert len(rig.fake.walks(user)) == 1
+            # And so it stays: another walk, another start, hours - nothing goes, and the store is not read again.
+            rig.walk(300)
+            await rig.saved()
+            await rig.restart()
+            await rig.advance(7200)
+            assert rig.keystore.calls[calls:] == [("read", rig.entry), ("read", rig.mark_entry)]
+            assert rig.fake.requests[requests:] == [] and quietly_off(rig)
+            # Until the question is answered again: then all of them go.
+            await rig.switch_on("all")
+            assert len(rig.fake.walks(user)) == 3 and rig.mark() not in (None, mark)
+
+    run(scenario)
+
+
+@pytest.mark.parametrize("how", ["on, and nothing beside it", "on, with a made-up mark", "on, with a mark that is none"])
+def test_a_file_changed_by_hand_to_say_on_switches_nothing_on(tmp_path, how):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            user = rig.person()
+            waiting = rig.walk(7200)
+            await rig.sign_in()  # ... and the question was never answered
+            book = json.loads(the_file(rig).read_text("utf-8"))
+            account = book["addresses"][rig.origin.text]["accounts"][user]
+            account["sending"], account["chosen"] = True, {"what": "all"}
+            if how == "on, with a made-up mark":
+                account["mark"] = "a-mark-made-up-by-hand"
+            elif how == "on, with a mark that is none":
+                account["mark"] = True
+            else:
+                del account["mark"]
+            the_file(rig).write_text(json.dumps(book), "utf-8")
+            requests, calls = len(rig.fake.requests), len(rig.keystore.calls)
+            await rig.restart()
+            assert rig.fake.requests[requests:] == [] and rig.fake.walks(user) == []
+            assert quietly_off(rig) and rig.entry_of(user, waiting) is None
+            if how == "on, with a made-up mark":
+                # It reads as "on" - until a walk is to go: then the store is asked, and holds no such mark.
+                assert rig.keystore.calls[calls:] == [("read", rig.entry), ("read", rig.mark_entry)]
+                assert "a-mark-made-up-by-hand" not in rig.files_text()
+            else:
+                # Without a mark the file does not say "on" at all: nothing is looked up for it.
+                assert rig.keystore.calls[calls:] == []
+            await rig.saved()
+            await rig.restart()
+            assert rig.fake.requests[requests:] == [] and rig.fake.walks(user) == []
+            assert rig.account_in_book(user)["sending"] is False
+
+    run(scenario)
+
+
+def test_a_made_up_mark_is_not_believed_because_the_store_holds_some_other_mark(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            user, mark = await on_with_one_walk_sent(rig)
+            # Sending is on, and the store holds the mark. The file is changed by hand: another mark.
+            await rig.restart()
+            book = json.loads(the_file(rig).read_text("utf-8"))
+            book["addresses"][rig.origin.text]["accounts"][user]["mark"] = mark[:-1] + ("A" if mark[-1] != "A" else "B")
+            the_file(rig).write_text(json.dumps(book), "utf-8")
+            rig.walk(600)
+            requests = len(rig.fake.requests)
+            await rig.restart()
+            assert rig.fake.requests[requests:] == [] and len(rig.fake.walks(user)) == 1 and quietly_off(rig)
+            # What the store holds is left as it is: it may be the newest answer's (the other Walka's).
+            assert rig.mark() == mark
+
+    run(scenario)
+
+
+def test_an_older_copy_put_back_after_signing_out_and_in_again_switches_nothing_on(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            user, mark = await on_with_one_walk_sent(rig)
+            backup = the_file(rig).read_bytes()
+            assert rig.account.sign_out() == OK
+            await rig.idle()
+            assert rig.keystore.secrets() == [] and rig.mark() is None  # the mark went with the sign-in
+            await rig.sign_in(user)  # the same Walka account - and the question is not answered
+            assert rig.snapshot()["sending"] is False and rig.mark() is None
+            rig.walk(600)
+            await rig.saved()
+            the_file(rig).write_bytes(backup)
+            requests = len(rig.fake.requests)
+            await rig.restart()
+            assert rig.fake.requests[requests:] == [] and len(rig.fake.walks(user)) == 1 and quietly_off(rig)
+            assert mark not in rig.files_text()
+
+    run(scenario)
+
+
+def test_an_older_copy_put_back_after_a_sign_out_that_the_store_would_not_delete_for_switches_nothing_on(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            user = await signed_in_long_ago(rig)  # (signing out then asks nobody: the sign-in stays good)
+            mark = rig.mark()
+            (stored,) = rig.keystore.secrets()
+            backup = the_file(rig).read_bytes()
+            rig.keystore.refuse["delete"] = "refused"  # a store that lets nothing go
+            assert rig.account.sign_out() == OK
+            await rig.idle()
+            assert left_in(rig) == ("sign_in", True) and rig.keystore.secrets() == [stored]
+            # The mark could not be deleted either: so another was written over it.
+            assert rig.mark() not in (None, mark)
+            del rig.keystore.refuse["delete"]
+            rig.walk(600)
+            the_file(rig).write_bytes(backup)  # the older copy: signed in, sending on, the old mark
+            requests = len(rig.fake.requests)
+            await rig.restart()
+            # (That the sign-in itself is back with the file is the store's refusal - the card of the
+            # last run said so. Sending is not back with it.)
+            assert rig.fake.requests[requests:] == [] and len(rig.fake.walks(user)) == 1
+            assert quietly_off(rig) and rig.account_in_book(user)["sending"] is False
+
+    run(scenario)
+
+
+def test_known_and_left_a_store_that_lets_the_mark_be_neither_deleted_nor_written_over(tmp_path):
+    """What the mark does not close, pinned so that it is seen: when sending is stopped and the
+    system's store will take neither the delete nor a write (a keychain that is locked), the mark
+    stays in it - and an older copy of the file, put back afterwards, is borne out by it."""
+
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            user, mark = await on_with_one_walk_sent(rig)
+            backup = the_file(rig).read_bytes()
+            rig.keystore.refuse.update(delete="refused", write="refused")
+            assert rig.account.switch_off() == OK
+            await rig.idle()
+            assert rig.account_in_book(user)["sending"] is False and rig.mark() == mark
+            rig.keystore.refuse.clear()
+            rig.walk(600)
+            the_file(rig).write_bytes(backup)
+            await rig.restart()
+            assert rig.snapshot()["sending"] is True and len(rig.fake.walks(user)) == 2
+
+    run(scenario)
+
+
+def test_with_a_store_in_memory_an_older_copy_put_back_reads_not_signed_in(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path, lasting=False) as rig:
+            user, mark = await on_with_one_walk_sent(rig)
+            backup = the_file(rig).read_bytes()
+            await rig.restart()  # the sign-in was kept in memory: it is gone, and the mark with it
+            assert rig.snapshot()["state"] == "signed_out" and rig.keystore._entries == {}
+            rig.walk(600)
+            the_file(rig).write_bytes(backup)
+            requests, calls = len(rig.fake.requests), len(rig.keystore.calls)
+            await rig.restart()
+            shown = rig.snapshot()
+            assert (shown["state"], shown["sending"], shown["problem"], shown["notice"]) == ("signed_out", False, "", "")
+            assert rig.fake.requests[requests:] == [] and rig.keystore.calls[calls:] == []
+            assert len(rig.fake.walks(user)) == 1 and mark not in rig.files_text()
+            assert rig.book()["addresses"][rig.origin.text]["signed_in"] is None
+
+    run(scenario)
+
+
+def test_a_file_of_before_there_were_marks_is_off_and_the_question_is_asked_again(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            user, mark = await on_with_one_walk_sent(rig)
+            # As this Walka wrote the file before there were marks: "on", a choice, and no mark.
+            book = json.loads(the_file(rig).read_text("utf-8"))
+            del book["addresses"][rig.origin.text]["accounts"][user]["mark"]
+            the_file(rig).write_text(json.dumps(book), "utf-8")
+            rig.keystore._entries.pop(rig.mark_entry)
+            rig.walk(600)
+            requests, calls = len(rig.fake.requests), len(rig.keystore.calls)
+            await rig.restart()
+            assert quietly_off(rig) and rig.fake.requests[requests:] == [] and rig.keystore.calls[calls:] == []
+            assert len(rig.fake.walks(user)) == 1
+            await rig.switch_on("all")
+            assert len(rig.fake.walks(user)) == 2 and rig.snapshot()["sending"] is True
+            await rig.restart()
+            assert rig.snapshot()["sending"] is True
+
+    run(scenario)
+
+
+# ---- never a wrong "off" ---------------------------------------------------------------------------
+
+
+def test_through_ordinary_starts_sending_stays_on_and_the_mark_is_read_once_in_a_run(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            user, mark = await on_with_one_walk_sent(rig)
+            assert mark_calls(rig) == ["delete", "write"]  # (the sign-in took out what was not there; the answer wrote)
+            # The run in which the question was answered never reads the mark: it made it.
+            rig.walk(600)
+            await rig.saved()
+            await rig.advance(3700)
+            rig.walk(600)
+            await rig.saved()
+            assert len(rig.fake.walks(user)) == 3 and mark_calls(rig) == ["delete", "write"]
+            for start in range(4):
+                calls, sent = len(rig.keystore.calls), len(rig.fake.walks(user))
+                rig.clock.advance(86400)
+                rig.walk(600)
+                await rig.restart()
+                # The start: the stored sign-in, the mark, and the new key goes back into the store.
+                assert rig.keystore.calls[calls:] == [("read", rig.entry), ("read", rig.mark_entry), ("write", rig.entry)]
+                assert len(rig.fake.walks(user)) == sent + 1
+                # Later in that run - also when the next key is fetched - the mark is not read again.
+                rig.walk(500)
+                await rig.saved()
+                await rig.advance(3700)
+                rig.walk(600)
+                await rig.saved()
+                assert len(rig.fake.walks(user)) == sent + 3
+                assert mark_calls(rig, calls) == ["read"] and refreshes(rig) == 2 * (start + 1) + 1
+                shown = rig.snapshot()
+                assert (shown["state"], shown["sending"], shown["last"]["word"]) == ("signed_in", True, "sent")
+                assert rig.mark() == mark and rig.account_in_book(user)["mark"] == mark
+
+    run(scenario)
+
+
+def test_an_update_of_walka_leaves_sending_on(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            user, mark = await on_with_one_walk_sent(rig)
+            rig.walk(600)
+            await rig.restart(version="99.0.0")
+            assert len(rig.fake.walks(user)) == 2 and rig.snapshot()["sending"] is True and rig.mark() == mark
+
+    run(scenario)
+
+
+def test_two_walkas_on_one_folder_agree_on_the_one_mark_the_second_reads_it(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            user, mark = await on_with_one_walk_sent(rig)
+            first = rig.account
+            second = rig.build()
+
+            async def woken(account) -> None:
+                rig.account = account
+                await rig.saved()
+
+            # The second Walka is started on the same folder: signed in and on, by the file.
+            calls = len(rig.keystore.calls)
+            second.start()
+            await woken(second)
+            assert second.snapshot()["sending"] is True and rig.keystore.calls[calls:] == []  # (nothing to send)
+            rig.walk(600)
+            await woken(second)
+            # It reads the mark - it makes none of its own - and its walk goes.
+            assert mark_calls(rig, calls) == ["read"] and rig.mark() == mark
+            assert len(rig.fake.walks(user)) == 2
+            # The first goes on as before, and reads nothing: it made the mark.
+            calls = len(rig.keystore.calls)
+            rig.walk(500)
+            await woken(first)
+            assert len(rig.fake.walks(user)) == 3 and mark_calls(rig, calls) == []
+            assert first.snapshot()["sending"] is True and second.snapshot()["sending"] is True
+
+            # The question is answered anew in the second (stopped there, and switched on again): a new
+            # mark. The first hears of it from the file, reads the store's mark once, and goes on sending.
+            rig.account = second
+            assert second.switch_off() == OK
+            await rig.idle()
+            await rig.switch_on("all")
+            new = rig.mark()
+            assert new not in (None, mark) and rig.account_in_book(user)["mark"] == new
+            calls = len(rig.keystore.calls)
+            rig.walk(400)
+            await woken(first)
+            assert len(rig.fake.walks(user)) == 4 and mark_calls(rig, calls) == ["read"]
+            assert first.snapshot()["sending"] is True and first.snapshot()["last"]["word"] == "sent"
+            rig.walk(300)
+            await woken(first)
+            assert len(rig.fake.walks(user)) == 5 and mark_calls(rig, calls) == ["read"]  # (once)
+            assert rig.mark() == new and mark_calls(rig).count("write") == 2  # one for each answer, and no more
+
+    run(scenario)
+
+
+def test_stop_sending_in_one_walka_stops_the_other_and_takes_the_mark_away(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            user, mark = await on_with_one_walk_sent(rig)
+            first, second = rig.account, rig.build()
+            second.start()
+            rig.account = second
+            await rig.idle()
+            assert second.switch_off() == OK
+            await rig.idle()
+            assert rig.mark() is None and rig.account_in_book(user)["sending"] is False
+            rig.account = first
+            rig.walk(600)
+            await rig.saved()
+            assert first.snapshot()["sending"] is False and len(rig.fake.walks(user)) == 1
+
+    run(scenario)
+
+
+def test_an_older_file_never_matches_again_after_stop_and_a_new_answer(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            user, first = await on_with_one_walk_sent(rig)
+            older = the_file(rig).read_bytes()  # "on", for all walks, under the first mark
+            assert rig.account.switch_off() == OK
+            await rig.idle()
+            # Answered anew: only walks from now on. A walk from before that is NOT to go.
+            before_now = rig.walk(600)
+            rig.clock.advance(60)
+            await rig.switch_on("from_now_on")
+            second = rig.mark()
+            assert second not in (None, first) and len(rig.fake.walks(user)) == 1
+            newer = the_file(rig).read_bytes()
+            the_file(rig).write_bytes(older)  # the file of the first answer is put back: "all of them"
+            requests = len(rig.fake.requests)
+            await rig.restart()
+            assert rig.fake.requests[requests:] == [] and quietly_off(rig)
+            assert rig.entry_of(user, before_now) is None and len(rig.fake.walks(user)) == 1
+            assert rig.mark() == second  # (the store is left as it is)
+            # The copy that IS the newest answer's is borne out: put back, it is on, as it was chosen.
+            the_file(rig).write_bytes(newer)
+            rig.clock.advance(3600)
+            rig.walk(30)
+            await rig.restart()
+            shown = rig.snapshot()
+            assert (shown["sending"], shown["chosen"]) == (True, "from")
+            assert len(rig.fake.walks(user)) == 2 and rig.entry_of(user, before_now) is None
+
+    run(scenario)
+
+
+def test_signing_out_takes_the_mark_away_and_the_same_walka_account_is_asked_again(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            user, mark = await on_with_one_walk_sent(rig)
+            assert rig.account.sign_out() == OK
+            await rig.idle()
+            assert rig.mark() is None and rig.account_in_book(user)["mark"] is None
+            await rig.sign_in(user)
+            rig.walk(600)
+            await rig.saved()
+            await rig.restart()
+            assert quietly_off(rig) and len(rig.fake.walks(user)) == 1 and mark_calls(rig).count("read") == 0
+            await rig.switch_on("all")
+            assert len(rig.fake.walks(user)) == 2 and rig.mark() not in (None, mark)
+
+    run(scenario)
+
+
+def test_a_sign_in_that_ended_takes_the_mark_away(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            user, _mark = await on_with_one_walk_sent(rig)
+            rig.clock.advance(4000)
+            rig.fake.expire_access_tokens()
+            rig.fake.sign_out_everywhere(user)
+            rig.walk(60)
+            await rig.saved()  # the refresh is refused for good: decision 11
+            assert (rig.snapshot()["state"], rig.snapshot()["notice"]) == ("signed_out", "ended")
+            assert rig.mark() is None and rig.keystore.secrets() == []
+            assert rig.account_in_book(user)["mark"] is None
+
+    run(scenario)
+
+
+def test_every_finished_sign_in_takes_out_a_mark_that_was_left_in_the_store(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            user, mark = await on_with_one_walk_sent(rig)
+            backup = the_file(rig).read_bytes()
+            await rig.restart()
+            # The data folder is lost (or Walka is pointed at a new one): the store still has everything.
+            the_file(rig).unlink()
+            await rig.restart()
+            assert rig.snapshot()["state"] == "signed_out" and rig.mark() == mark
+            await rig.sign_in(user)
+            assert rig.mark() is None  # the sign-in took it out: sending is off after every sign-in
+            rig.walk(600)
+            the_file(rig).write_bytes(backup)  # ... and the old file comes back after all
+            requests = len(rig.fake.requests)
+            await rig.restart()
+            assert rig.fake.requests[requests:] == [] and quietly_off(rig) and len(rig.fake.walks(user)) == 1
+
+    run(scenario)
+
+
+def test_stop_sending_while_it_is_off_does_not_touch_the_store_but_stops_what_the_file_says_is_on(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            user = rig.person()
+            await rig.sign_in()
+            calls = len(rig.keystore.calls)
+            assert rig.account.switch_off() == OK  # (the route is there while sending is off, too)
+            await rig.idle()
+            assert rig.keystore.calls[calls:] == []
+            # The other Walka on this data folder answered the question: the file says "on", and the
+            # store holds its mark. This Walka never took "on" from the file - and its "Stop sending"
+            # stops it all the same, and takes the mark out.
+            mark, chosen = "the-mark-of-the-other-walka", {"what": "all", "at": 5.0}
+            rig.keystore.write(rig.mark_entry, mark)
+            ledger.Ledger(rig.dir).change(lambda book: ledger.set_sending(book, rig.origin, user, True, chosen, mark))
+            assert rig.snapshot()["sending"] is False
+            assert rig.account.switch_off() == OK
+            await rig.idle()
+            assert rig.account_in_book(user)["sending"] is False and rig.mark() is None
+
+    run(scenario)
+
+
+def test_stop_sending_takes_no_on_from_a_file_that_was_put_back_while_walka_runs(tmp_path):
+    """ "Stop sending" writes "off" and then shows what the file says. A file put back while Walka
+    runs can name another sign-in, with sending on: that "on" is not taken - not in the card, and
+    not by the sender. (Nothing read from the file switches sending on in a Walka that is running.)"""
+
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            anna, ben = rig.person("anna@mail.example"), rig.person("ben@mail.example")
+            rig.walk(7200)
+            await rig.sign_in(ben)
+            await rig.switch_on("all")
+            bens = the_file(rig).read_bytes()  # an older copy: Ben is signed in, and sending is on
+            assert rig.account.sign_out() == OK
+            await rig.idle()
+            await rig.sign_in(anna)
+            await rig.switch_on("all")
+            assert (len(rig.fake.walks(ben)), len(rig.fake.walks(anna))) == (1, 1)
+            assert rig.snapshot()["first_step"] == "taken" and rig.account.access_token() is not None
+            the_file(rig).write_bytes(bens)  # put back, while Walka runs
+            requests, sign_in_no = len(rig.fake.requests), rig.account._sign_in_no
+            assert rig.account.switch_off() == OK
+            await rig.idle()
+            # The card names whom the file names - and sending is off, as the button said.
+            shown = rig.snapshot()
+            assert (shown["state"], shown["email"], shown["sending"]) == ("signed_in", "ben@mail.example", False)
+            assert rig.account.view.mark == "" and rig.mark() is None
+            # Nothing of Anna's sign-in is kept for a card that names Ben: not her key, not what was
+            # known of her first step, and a key that is being renewed for her is not written back.
+            assert rig.account.access_token() is None and shown["first_step"] == "unknown"
+            assert rig.account._sign_in_no == sign_in_no + 1
+            # And no walk goes to anybody.
+            rig.walk(600)
+            await rig.saved()
+            await rig.advance(7200)
+            assert rig.snapshot()["sending"] is False and rig.pushes()[2:] == []
+            assert [seen.path for seen in rig.fake.requests[requests:]] == []
+            assert (len(rig.fake.walks(ben)), len(rig.fake.walks(anna))) == (1, 1)
+
+    run(scenario)
+
+
+def test_known_and_left_walka_is_ended_between_writing_off_and_taking_the_mark_out(tmp_path):
+    """What the mark does not close, pinned so that it is seen. "Stop sending" writes "off" to the
+    file and then takes the mark out of the store. If Walka is ended in between - the computer goes
+    off, or the store sits on the delete until Walka is closed, which waits one second for it and
+    no longer - the mark stays in the store, and nothing takes it out until the question is answered
+    again or somebody signs in or out. An older copy of the file, put back meanwhile, is borne out."""
+
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            user, mark = await on_with_one_walk_sent(rig)
+            backup = the_file(rig).read_bytes()
+            # "Off" reached the file - and that Walka never got to the store.
+            ledger.Ledger(rig.dir).change(lambda book: ledger.set_sending(book, rig.origin, user, False, None))
+            calls = len(rig.keystore.calls)
+            await rig.restart()
+            assert quietly_off(rig) and rig.mark() == mark and rig.keystore.calls[calls:] == []  # (rule 3a)
+            rig.walk(600)
+            the_file(rig).write_bytes(backup)
+            await rig.restart()
+            assert rig.snapshot()["sending"] is True and len(rig.fake.walks(user)) == 2
+
+    run(scenario)
+
+
+def test_known_and_left_stopped_in_the_other_walka_and_the_file_put_back_before_this_one_looks(tmp_path):
+    """What the mark does not close, pinned so that it is seen. A Walka holds the store's mark
+    against the file once in a run. Two Walkas run on one data folder; sending is stopped in one;
+    an older copy of the file is put back before the other has read the file again. That one sees
+    the file as it knew it, does not look into the store a second time, and its next walk goes."""
+
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            user, mark = await on_with_one_walk_sent(rig)
+            first, second = rig.account, rig.build()
+            second.start()
+            rig.account = second
+            await rig.idle()
+            backup = the_file(rig).read_bytes()
+            assert second.switch_off() == OK
+            await rig.idle()
+            assert rig.mark() is None and rig.account_in_book(user)["sending"] is False
+            the_file(rig).write_bytes(backup)
+            rig.account = first
+            rig.walk(600)
+            await rig.saved()
+            assert first.snapshot()["sending"] is True and len(rig.fake.walks(user)) == 2
+            # At the next start the store is looked into, and does not bear the file out.
+            rig.walk(300)
+            await rig.restart()
+            assert quietly_off(rig) and len(rig.fake.walks(user)) == 2 and mark not in rig.files_text()
+
+    run(scenario)
+
+
+def test_known_and_left_a_backup_that_puts_back_the_store_together_with_the_file(tmp_path):
+    """What the mark does not close, pinned so that it is seen: a backup of the whole computer
+    brings back the system's store as it was, and the file with it. The two agree, as they did."""
+
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            user, mark = await on_with_one_walk_sent(rig)
+            await rig.restart()  # (so that it is a later run that looks, not the one that made the mark)
+            file_then, store_then = the_file(rig).read_bytes(), dict(rig.keystore._entries)
+            assert rig.account.switch_off() == OK
+            await rig.idle()
+            assert rig.mark() is None
+            rig.walk(600)
+            the_file(rig).write_bytes(file_then)
+            rig.keystore._entries.update(store_then)
+            await rig.restart()
+            assert rig.snapshot()["sending"] is True and len(rig.fake.walks(user)) == 2 and rig.mark() == mark
+
+    run(scenario)
+
+
+def test_known_and_left_whoever_can_write_the_file_while_sending_is_on_can_keep_its_mark(tmp_path):
+    """What the mark is not: a guard against a hand that writes the file WHILE sending is on. The
+    mark stands in the file, and stays the store's while the rest is changed - here the choice,
+    from "only walks from now on" to "all of them". (SECURITY.md's program on the same computer:
+    it can as well press the buttons.) An older copy of the file cannot do this: it bears an older mark."""
+
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            user = rig.person()
+            before = rig.walk(7200)
+            await rig.sign_in()
+            await rig.switch_on("from_now_on")
+            assert rig.fake.walks(user) == [] and rig.entry_of(user, before) is None
+            book = json.loads(the_file(rig).read_text("utf-8"))
+            book["addresses"][rig.origin.text]["accounts"][user]["chosen"] = {"what": "all"}
+            the_file(rig).write_text(json.dumps(book), "utf-8")
+            await rig.restart()
+            assert rig.snapshot()["sending"] is True and len(rig.fake.walks(user)) == 1
+
+    run(scenario)
+
+
+# ---- the store says no, or nothing -----------------------------------------------------------------
+
+
+@pytest.mark.parametrize("word", ["refused", "timeout", "failed", "unavailable"])
+def test_a_store_that_will_not_keep_the_mark_means_sending_is_not_on(tmp_path, word):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            user = rig.person()
+            rig.walk(7200)
+            await rig.sign_in()
+            question = await rig.question()
+            requests = len(rig.fake.requests)
+            rig.keystore.refuse["write"] = word
+            assert rig.account.switch_on(question["id"], "all") == OK
+            await rig.idle()
+            # Not on: not in the card, not in the file - which was not written at all - and nothing went.
+            shown = rig.snapshot()
+            assert (shown["state"], shown["sending"], shown["chosen"]) == ("signed_in", False, "")
+            assert shown["last"]["word"] == "stopped"  # the card: "That did not work just now. Try again later."
+            assert (shown["problem"], shown["notice"]) == ("", "")
+            account = rig.account_in_book(user)
+            assert (account["sending"], account["chosen"], account["mark"]) == (False, None, None)
+            assert rig.fake.requests[requests:] == [] and rig.fake.walks(user) == []
+            # After "no answer in time" the store may have written it all the same: it is taken out.
+            assert mark_calls(rig)[-2:] == ["write", "delete"] and rig.keystore.marks() == []
+            await rig.restart()
+            assert rig.snapshot()["sending"] is False and rig.fake.walks(user) == []
+            # The store lets it be written: the question is asked again, and answered.
+            del rig.keystore.refuse["write"]
+            await rig.switch_on("all")
+            assert len(rig.fake.walks(user)) == 1 and rig.snapshot()["last"]["word"] == "sent"
+
+    run(scenario)
+
+
+def test_a_store_that_sits_on_the_mark_for_too_long_means_sending_is_not_on_and_no_mark_stays(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path, start=False) as rig:
+            user = rig.person()
+            rig.walk(7200)
+            rig.account = rig.build(keystore=Keys(rig.keystore, timeout_s=0.3))
+            rig.account.start()
+            await rig.sign_in()
+            question = await rig.question()
+            gate = threading.Event()
+            rig.keystore.block["write"] = gate  # the store sits on the write of the mark ...
+            assert rig.account.switch_on(question["id"], "all") == OK
+            await rig.idle()  # ... for longer than anybody waits
+            shown = rig.snapshot()
+            assert (shown["sending"], shown["last"]["word"]) == (False, "stopped")
+            assert rig.account_in_book(user)["sending"] is False and rig.fake.walks(user) == []
+            gate.set()  # The store comes back: the mark lands after all - and the delete behind it takes it out.
+            del rig.keystore.block["write"]
+            await until(lambda: store_threads() == 0)
+            assert mark_calls(rig)[-2:] == ["write", "delete"] and rig.keystore.marks() == []
+            await rig.restart()
+            assert rig.snapshot()["sending"] is False and rig.fake.walks(user) == []
+
+    run(scenario)
+
+
+@pytest.mark.parametrize("word", ["refused", "timeout", "failed", "unavailable"])
+def test_a_store_that_does_not_answer_for_the_mark_sends_nothing_and_switches_nothing_off(tmp_path, word):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            user, mark = await on_with_one_walk_sent(rig)
+            waiting = rig.walk(600)
+            rig.keystore.only = {rig.mark_entry}  # (the stored sign-in is read as ever: only the mark is not)
+            rig.keystore.refuse["read"] = word
+            requests, calls, waits = len(rig.fake.requests), len(rig.keystore.calls), rig.wait.mark()
+            await rig.restart()
+            # Nothing is sent, and nobody was asked - not even for a new key.
+            assert rig.keystore.calls[calls:] == [("read", rig.entry), ("read", rig.mark_entry)]
+            assert rig.fake.requests[requests:] == [] and len(rig.fake.walks(user)) == 1
+            assert rig.entry_of(user, waiting) is None
+            # And nothing is switched off for it: the card and the file say what they said. This run
+            # is stopped ("Walka stopped for now and tries again when it is next started.").
+            shown = rig.snapshot()
+            assert (shown["state"], shown["sending"], shown["chosen"]) == ("signed_in", True, "all")
+            assert (shown["last"]["word"], shown["problem"], shown["notice"]) == ("stopped", "", "")
+            account = rig.account_in_book(user)
+            assert (account["sending"], account["mark"]) == (True, mark) and rig.mark() == mark
+            rig.walk(300)
+            await rig.saved()
+            await rig.advance(7200)
+            assert rig.keystore.calls[calls:] == [("read", rig.entry), ("read", rig.mark_entry)]
+            assert rig.wait.limits(waits) == []  # (no timer: it is tried at the next start)
+            # The next start, with a store that answers: both walks go.
+            del rig.keystore.refuse["read"]
+            await rig.restart()
+            assert len(rig.fake.walks(user)) == 3 and rig.snapshot()["last"]["word"] == "sent"
+            assert rig.snapshot()["sending"] is True
+
+    run(scenario)
+
+
+# ---- when the mark is looked at ----------------------------------------------------------------------
+
+
+def test_the_mark_is_not_read_at_a_start_with_nothing_to_send_nor_for_a_button(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            user, mark = await on_with_one_walk_sent(rig)
+            calls = len(rig.keystore.calls)
+            await rig.restart()
+            await rig.saved()
+            rig.walk(600, treadmill="Simulated pad")  # (a made-up walk is nothing to send)
+            await rig.saved()
+            await rig.advance(7200)
+            assert rig.snapshot()["sending"] is True and rig.keystore.calls[calls:] == []
+            # A button that asks fetches a new key: the stored sign-in is read. The mark is not: no walk goes.
+            assert rig.account.look_again() == OK
+            await rig.idle()
+            assert rig.keystore.calls[calls:] == [("read", rig.entry), ("write", rig.entry)]
+            assert await rig.question() is not None
+            assert mark_calls(rig, calls) == []
+            # Now a walk is to go, and the key the button fetched is still good: the mark is read by
+            # itself - once - before the walk goes with that key.
+            calls = len(rig.keystore.calls)
+            rig.walk(500)
+            await rig.saved()
+            assert rig.keystore.calls[calls:] == [("read", rig.mark_entry)]
+            assert len(rig.fake.walks(user)) == 2 and rig.mark() == mark
+
+    run(scenario)
+
+
+def test_an_older_copy_put_back_is_not_believed_either_when_a_key_to_ask_with_is_at_hand(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            user, mark = await on_with_one_walk_sent(rig)
+            backup = the_file(rig).read_bytes()
+            assert rig.account.switch_off() == OK
+            await rig.idle()
+            the_file(rig).write_bytes(backup)
+            await rig.restart()
+            # Nothing waits, so nothing was looked at: the card says "on", as the file does. A button
+            # that asks fetches a key ...
+            assert rig.snapshot()["sending"] is True
+            assert rig.account.look_again() == OK
+            await rig.idle()
+            assert rig.account.access_token() is not None
+            # ... and then a walk is saved. No new key is needed for it - and the mark is looked at all the same.
+            rig.account.say("no_answer")  # (and what a button of a moment ago came to is not said of this card)
+            requests, calls = len(rig.fake.requests), len(rig.keystore.calls)
+            made = rig.walk(60)
+            await rig.saved()
+            assert rig.keystore.calls[calls:] == [("read", rig.mark_entry)]
+            assert rig.fake.requests[requests:] == [] and quietly_off(rig)
+            assert rig.entry_of(user, made) is None and len(rig.fake.walks(user)) == 1
+            assert rig.account_in_book(user)["sending"] is False and mark not in rig.files_text()
+
+    run(scenario)
+
+
+@pytest.mark.parametrize("token", ["still good", "run out"])
+def test_the_only_walk_deleted_before_the_mark_is_read_means_the_store_is_not_looked_into_for_it(tmp_path, token):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            user, _mark = await on_with_one_walk_sent(rig)
+            await rig.restart(start=False)
+            if token == "still good":
+                assert rig.account.look_again() == OK  # (a button fetched a key: none is needed for the walk)
+                await rig.idle()
+            only = rig.walk(60)
+            calls, requests = len(rig.keystore.calls), len(rig.fake.requests)
+            if token == "still good":
+                real = rig.account.still
+
+                async def still_and_deleted(epoch):
+                    await real(epoch)
+                    rig.store.delete(only.id)  # on the dashboard, while the file was read again
+
+                rig.account.still = still_and_deleted
+            else:
+                real_read = rig.account.keys.read
+
+                async def read_and_deleted(name):
+                    stored = await real_read(name)
+                    rig.store.delete(only.id)  # on the dashboard, while the stored sign-in was read
+                    return stored
+
+                rig.account.keys.read = read_and_deleted
+            assert await a_pass(rig) == "nothing"
+            assert mark_calls(rig, calls) == [] and rig.fake.requests[requests:] == []
+            assert rig.snapshot()["sending"] is True and len(rig.fake.walks(user)) == 1
+
+    run(scenario)
+
+
+def test_the_answer_of_the_other_walka_that_arrives_while_the_mark_is_read_is_not_switched_off(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            user, mark = await on_with_one_walk_sent(rig)
+            await rig.restart()
+            rig.walk(600)
+            # This Walka reads the store's mark - and in that moment the other Walka on the data folder,
+            # where sending was stopped and the question answered anew, has its new mark in the store
+            # and then in the file.
+            new, chosen = "the-new-mark-of-the-other-walka", {"what": "all", "at": 9.0}
+            real = rig.account.keys.read
+
+            async def read_while_the_other_answers(name):
+                if name != rig.mark_entry:
+                    return await real(name)
+                rig.keystore.write(rig.mark_entry, new)
+                stored = await real(name)
+
+                def answered_anew(book: dict) -> None:
+                    ledger.set_sending(book, rig.origin, user, False, None)
+                    ledger.set_sending(book, rig.origin, user, True, chosen, new)
+
+                ledger.Ledger(rig.dir).change(answered_anew)
+                return stored
+
+            rig.account.keys.read = read_while_the_other_answers
+            await rig.saved()
+            # The file no longer bears the mark that was held against the store: "off" is not written.
+            # What the file says now is taken over, the store is read once more, and the walk goes.
+            assert rig.account_in_book(user)["sending"] is True and rig.account_in_book(user)["mark"] == new
+            assert rig.snapshot()["sending"] is True and len(rig.fake.walks(user)) == 2
+            assert mark_calls(rig).count("read") == 2 and mark not in rig.files_text()
+
+    run(scenario)
+
+
+def test_what_the_mark_is_never_in(tmp_path, caplog):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            user, mark = await on_with_one_walk_sent(rig)
+            # Every road on which a mark is read, held against another, not found, taken out, written over.
+            rig.walk(600)
+            await rig.restart()
+            assert rig.account.switch_off() == OK
+            await rig.idle()
+            await rig.switch_on("all")
+            second = rig.mark()
+            backup = the_file(rig).read_bytes()
+            rig.keystore.refuse["delete"] = "failed"
+            assert rig.account.switch_off() == OK
+            await rig.idle()
+            third = rig.mark()  # (written over the second, which the store would not let go)
+            del rig.keystore.refuse["delete"]
+            the_file(rig).write_bytes(backup)
+            rig.walk(300)
+            await rig.restart()
+            assert quietly_off(rig)
+            rig.keystore.only = {rig.mark_entry}
+            rig.keystore.refuse["read"] = "refused"
+            the_file(rig).write_bytes(backup)
+            await rig.restart()
+            assert rig.snapshot()["last"]["word"] == "stopped"
+            marks = {mark, second, third}
+            assert len(marks) == 3 and marks <= rig.marks_seen()
+            said = "\n".join(record.getMessage() for record in caplog.records)
+            for one in marks:
+                assert one not in said and one not in rig.files_but_the_book()
+                for account in rig.accounts:
+                    assert one not in json.dumps(account.snapshot())
+            # What the log does say of it: fixed sentences, and at most the store's own word.
+            assert "the system's store does not bear out what the file says" in said
+            assert "did not read: refused" in said
+
+    with caplog.at_level(logging.DEBUG):
+        run(scenario)

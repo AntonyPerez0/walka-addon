@@ -402,14 +402,16 @@ def test_a_sign_in_that_may_still_be_in_the_store_is_said_from_the_file_and_no_s
                 # (Nothing was pressed that changes the file: it says what it said.)
                 assert json.loads((rig.dir / ledger.FILE_NAME).read_text("utf-8")) == json.loads(written)
 
-                # The press: ONE delete. No read, no connection, no browser - and no wait on a clock but
-                # the time limit of that one call of the store.
+                # The press: one delete of the sign-in, and one of the mark beside it. No read, no
+                # connection, no browser - and no wait on a clock but the time limits of those two calls
+                # of the store.
                 assert await said(client, "/api/walka-account/sign-out") == OK
                 await rig.idle()
                 assert wires.tripped == [] and len(rig.fake.requests) == began.requests
-                assert rig.keystore.calls[began.store_calls :] == [("delete", rig.entry)]
+                assert rig.keystore.calls[began.store_calls :] == [("delete", rig.entry), ("delete", rig.mark_entry)]
                 assert rig.keystore.secrets() == [] and rig.opened[began.opened :] == []
-                assert rig.wait.limits(began.waits) == [] and len(wires.timers) == 1
+                assert rig.keystore.marks() == []  # (what the store was made to keep in its place went, too)
+                assert rig.wait.limits(began.waits) == [] and len(wires.timers) == 2
                 assert (await shown(client))["walka_account"]["left_in_store"] == ""
                 await app.stop()
             assert await left_running() == []
@@ -456,12 +458,13 @@ def test_signed_in_with_sending_off_walka_asks_nobody_at_a_start_or_after(tmp_pa
                 assert json.loads((rig.dir / ledger.FILE_NAME).read_text("utf-8")) == json.loads(written)
 
                 # Signing out now asks nobody either: the access token of the earlier run is long gone,
-                # and nobody makes a new one in order to sign out. The key leaves the store, and that is all.
+                # and nobody makes a new one in order to sign out. The key leaves the store - and with it
+                # whatever mark might be there - and that is all.
                 assert await said(client, "/api/walka-account/sign-out") == OK
                 await rig.idle()
                 assert wires.tripped == [] and len(rig.fake.requests) == began.requests
-                assert rig.keystore.calls[began.store_calls :] == [("delete", rig.entry)]
-                assert rig.keystore.secrets() == []
+                assert rig.keystore.calls[began.store_calls :] == [("delete", rig.entry), ("delete", rig.mark_entry)]
+                assert rig.keystore.secrets() == [] and rig.keystore.marks() == []
                 assert rig.wait.limits(began.waits) == []
                 await app.stop()
             assert await left_running() == []
@@ -542,12 +545,13 @@ def test_with_sending_on_and_nothing_to_send_walka_asks_nobody_and_makes_no_new_
                 # (The file that is no walk at all is not in the list of a Walka that was started anew.)
                 assert piece["counts"] == {"waiting": 0, "sent": 2, "aside": 0, **unfit, "unreadable": 0}
 
-                # And now there IS a walk to send. Walka reads the stored sign-in and sets out for the
-                # accounts - into the wires: they were live all the while. Nothing leaves this computer,
-                # the walk waits, and only now is there a wait with a time limit.
+                # And now there IS a walk to send. Walka reads the stored sign-in, and the mark beside it
+                # (is "on" what the question's answer made it? only now is that looked at), and sets out
+                # for the accounts - into the wires: they were live all the while. Nothing leaves this
+                # computer, the walk waits, and only now is there a wait with a time limit.
                 await walk_on(rig, app, 240, then_stand=True)
                 await rig.idle()
-                assert rig.keystore.calls[began.store_calls :] == [("read", rig.entry)]
+                assert rig.keystore.calls[began.store_calls :] == [("read", rig.entry), ("read", rig.mark_entry)]
                 assert [how for how, *_rest in wires.tripped] == ["loop.sock_connect"] or [
                     how for how, *_rest in wires.tripped
                 ] == ["loop.create_connection"]

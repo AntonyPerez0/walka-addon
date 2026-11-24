@@ -36,6 +36,7 @@ from walka.walka_account.keystore import (
     entry_name,
     mac_names,
     mac_outcome,
+    mark_name,
     open_keystore,
     valid_secret,
     windows_outcome,
@@ -90,6 +91,27 @@ def test_an_entry_is_named_after_the_address_it_was_made_at():
     assert SERVICE == "Walka account"
     # What a store shows as the user is a fixed word: never the e-mail address, never the id.
     assert keystore.USER_NAME == "Walka"
+
+
+def test_the_mark_has_an_entry_of_its_own_whose_name_begins_like_the_sign_ins():
+    # "Its name begins Walka account": so say the card and the README of whatever Walka keeps in the store.
+    assert mark_name("https://accounts.example") == "Walka account - https://accounts.example - sending"
+    assert mark_name("http://127.0.0.1:54321") == "Walka account - http://127.0.0.1:54321 - sending"
+    for address in ("https://accounts.example", "http://127.0.0.1:54321"):
+        assert mark_name(address).startswith(SERVICE + " - ") and mark_name(address) != entry_name(address)
+        assert mark_name(address).startswith(entry_name(address)) and checked_name(mark_name(address))
+    assert mark_name("https://a.example") != mark_name("https://b.example")
+    # In a keychain: the same service as the sign-in - what Keychain Access shows - and an account of its own.
+    assert mac_names(mark_name("https://accounts.example")) == (b"Walka account", b"https://accounts.example - sending")
+    assert mac_names(mark_name("https://accounts.example"))[1] != mac_names(NAME)[1]
+    # The two are two entries: what is done to one leaves the other as it was.
+    store = MemoryKeyStore()
+    store.write(NAME, SECRET)
+    store.write(mark_name("https://accounts.example"), OTHER)
+    store.write(NAME, "a-renewed-key")  # (the sign-in is written anew at every refresh)
+    assert store.read(mark_name("https://accounts.example")) == OTHER
+    store.delete(mark_name("https://accounts.example"))
+    assert store.read(NAME) == "a-renewed-key" and store.read(mark_name("https://accounts.example")) is None
 
 
 def test_what_can_be_stored():
@@ -1380,6 +1402,117 @@ def test_keys_deleting_never_raises(caplog):
     assert "did not delete: refused, -25308" in caplog.text
 
 
+class WillNotDelete(Watched):
+    """A store that says no to the first ``refusals`` deletes - and, if told so, to every write."""
+
+    def __init__(self, refusals: int = 1, *, writes_too: bool = False) -> None:
+        super().__init__()
+        self.refusals = refusals
+        self.writes_too = writes_too
+
+    def write(self, name: str, secret: str) -> None:
+        if self.writes_too:
+            self.log.append("write refused")
+            raise KeyStoreError("refused", -25308)
+        super().write(name, secret)
+
+    def delete(self, name: str) -> None:
+        if self.refusals > 0:
+            self.refusals -= 1
+            self.log.append("delete refused")
+            raise KeyStoreError("refused", -25308)
+        super().delete(name)
+
+
+def test_keys_a_delete_that_may_write_instead_writes_only_when_the_store_will_not_delete(caplog):
+    async def scenario():
+        # The store lets go: the entry is deleted, and nothing is written.
+        store = Watched()
+        store.inner.write(NAME, SECRET)
+        assert await Keys(store).delete(NAME, or_write=OTHER) is True
+        assert store.log == ["delete"] and store.inner.read(NAME) is None
+        # Nothing was there: the same.
+        assert await Keys(store).delete(NAME, or_write=OTHER) is True
+        assert store.log == ["delete", "delete"] and store.inner.read(NAME) is None
+
+        # The store will not let go: the other text is written over the entry - and that counts as gone.
+        store = WillNotDelete()
+        store.inner.write(NAME, SECRET)
+        assert await Keys(store).delete(NAME, or_write=OTHER) is True
+        assert store.log == ["delete refused", "write"] and store.inner.read(NAME) == OTHER
+
+        # It will neither delete nor write: "could not" - and never an error.
+        store = WillNotDelete(writes_too=True)
+        store.inner.write(NAME, SECRET)
+        assert await Keys(store).delete(NAME, or_write=OTHER) is False
+        assert store.log == ["delete refused", "write refused"] and store.inner.read(NAME) == SECRET
+
+        # Without the word nothing is ever written by a delete: the key of a sign-in is never written over.
+        store = WillNotDelete()
+        store.inner.write(NAME, SECRET)
+        assert await Keys(store).delete(NAME) is False
+        assert store.log == ["delete refused"] and store.inner.read(NAME) == SECRET
+
+        # What cannot be stored is not written over anything either.
+        store = WillNotDelete()
+        store.inner.write(NAME, SECRET)
+        assert await Keys(store).delete(NAME, or_write="two words") is False
+        assert store.inner.read(NAME) == SECRET
+
+    with caplog.at_level(logging.DEBUG):
+        run(scenario)
+    assert SECRET not in caplog.text and OTHER not in caplog.text
+
+
+def test_keys_a_late_delete_that_may_write_instead_stands_down_behind_a_later_write():
+    store = WillNotDelete()
+    store.inner.write(NAME, SECRET)
+    keys = Keys(store)
+    keys._lock = lock = LatestFirst()
+
+    async def scenario():
+        store.gate.clear()
+        read = asyncio.ensure_future(keys.read(NAME))  # the store sits on this one
+        await until(store.arrived.is_set)
+        # "Stop sending": the mark is to go - and, if the store will not delete, to be written over.
+        delete = asyncio.ensure_future(keys.delete(NAME, or_write="written-over"))
+        await until(lambda: len(lock.waiting) == 1)
+        write = asyncio.ensure_future(keys.write(NAME, OTHER))  # the question is answered anew: asked AFTER
+        await until(lambda: len(lock.waiting) == 2)
+        store.gate.set()  # the store comes back, and the write gets its turn before the delete
+        assert await read == SECRET
+        assert await write is True and await delete is True
+        await until(lambda: not worker_threads())
+
+    run(scenario)
+    # The new mark is neither deleted nor written over: the delete stood down before it asked the store.
+    assert store.log == ["read", "write"] and store.inner.read(NAME) == OTHER
+
+
+def test_keys_what_was_written_instead_of_a_delete_does_not_stop_a_delete_that_still_waits():
+    store = WillNotDelete()
+    store.inner.write(NAME, SECRET)
+    keys = Keys(store)
+    keys._lock = lock = LatestFirst()
+
+    async def scenario():
+        store.gate.clear()
+        read = asyncio.ensure_future(keys.read(NAME))  # the store sits on this one
+        await until(store.arrived.is_set)
+        first = asyncio.ensure_future(keys.delete(NAME, or_write="written-over-1"))
+        await until(lambda: len(lock.waiting) == 1)
+        second = asyncio.ensure_future(keys.delete(NAME, or_write="written-over-2"))
+        await until(lambda: len(lock.waiting) == 2)
+        store.gate.set()  # the second goes first: the store says no once, and it writes over the entry
+        assert await read == SECRET
+        assert await second is True and await first is True
+        await until(lambda: not worker_threads())
+
+    run(scenario)
+    # ... and the first, which was asked before that, still takes the entry out: nothing is left behind.
+    assert store.log == ["read", "delete refused", "write", "delete"] and store.inner.read(NAME) is None
+
+
 def test_keys_pass_on_the_stores_word_and_number_and_nothing_else(caplog):
     async def scenario():
         errors = []
@@ -1555,6 +1688,7 @@ def must_be(got: str | None, wanted: str | None, what: str) -> None:
 @pytest.mark.skipif(sys.platform != "win32", reason="asks the real Credential Manager")
 def test_a_real_credential_manager_keeps_reads_and_forgets_a_made_up_secret():
     name = f"Walka test {uuid.uuid4()}"
+    beside = f"{name} - sending"  # as the mark's entry is named beside the sign-in's
     first, longest, last = made_up(12), made_up(512), made_up(20)
     store = WindowsKeyStore()
 
@@ -1636,6 +1770,15 @@ def test_a_real_credential_manager_keeps_reads_and_forgets_a_made_up_secret():
             ):
                 pytest.fail("a write that no longer holds was made all the same", pytrace=False)
             must_be(await ask("reading through Keys again", keys.read(name)), first, "through Keys, after its write")
+            # A mark beside it, under a name that begins the same: an entry of its own.
+            if await ask("writing the mark beside it", keys.write(beside, last)) is not True:
+                pytest.fail("writing the mark beside it: not written", pytrace=False)
+            must_be(await ask("reading the mark", keys.read(beside)), last, "the mark beside it")
+            must_be(await ask("reading the entry beside the mark", keys.read(name)), first, "beside the mark")
+            if await keys.delete(beside, or_write=longest) is not True:
+                pytest.fail("deleting the mark: answered 'could not'", pytrace=False)
+            must_be(await ask("reading the mark after its delete", keys.read(beside)), None, "the mark, deleted")
+            must_be(await ask("reading the entry once the mark went", keys.read(name)), first, "after the mark went")
             await ask("deleting through Keys", keys._delete(name))
             must_be(await ask("reading after the delete", keys.read(name)), None, "after the delete")
             if await keys.delete(name) is not True:
@@ -1646,10 +1789,11 @@ def test_a_real_credential_manager_keeps_reads_and_forgets_a_made_up_secret():
         must_be(step("reading after the delete", store.read, name), None, "after the delete, asked directly")
         step("deleting again", store.delete, name)
     finally:
-        try:
-            store.delete(name)
-        except KeyStoreError:
-            pass
+        for left in (name, beside):
+            try:
+                store.delete(left)
+            except KeyStoreError:
+                pass
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="asks the real keychain of a Mac")
@@ -1660,6 +1804,7 @@ def test_a_real_keychain_keeps_reads_and_forgets_a_made_up_secret():
     one = uuid.uuid4()
     name = f"Walka test {one}"
     split = f"Walka test {one} - https://accounts.example"  # service and account apart, as the real entry is
+    beside = f"{split} - sending"  # the same service and another account, as the mark's entry is
     first, longest, last = made_up(12), made_up(512), made_up(20)
     store = MacKeyStore()
     keys = Keys(store, timeout_s=20.0)
@@ -1736,6 +1881,15 @@ def test_a_real_keychain_keeps_reads_and_forgets_a_made_up_secret():
             await ask("writing the entry with an address", keys.write(split, first))
             must_be(await ask("reading the entry with an address", keys.read(split)), first, "with an address")
             must_be(await ask("reading the first entry again", keys.read(name)), last, "beside the other")
+            # And a mark beside that one, as beside the real sign-in: an item of its own in the same service.
+            assert mac_names(beside)[0] == mac_names(split)[0] and mac_names(beside)[1] != mac_names(split)[1]
+            await ask("writing the mark beside it", keys.write(beside, last))
+            must_be(await ask("reading the mark", keys.read(beside)), last, "the mark beside it")
+            must_be(await ask("reading the entry beside the mark", keys.read(split)), first, "beside the mark")
+            if await keys.delete(beside, or_write=longest) is not True:
+                pytest.fail("deleting the mark: answered 'could not'", pytrace=False)
+            must_be(await ask("reading the mark after its delete", keys.read(beside)), None, "the mark, deleted")
+            must_be(await ask("reading the entry once the mark went", keys.read(split)), first, "after the mark went")
             await ask("deleting the entry with an address", keys._delete(split))
             must_be(await ask("reading the deleted entry", keys.read(split)), None, "the entry with an address")
             must_be(await ask("reading the first entry once more", keys.read(name)), last, "after the other went")
@@ -1748,6 +1902,7 @@ def test_a_real_keychain_keeps_reads_and_forgets_a_made_up_secret():
         finally:
             await keys.delete(name)
             await keys.delete(split)
+            await keys.delete(beside)
 
     try:
         run(scenario, 300)

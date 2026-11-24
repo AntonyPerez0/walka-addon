@@ -14,5 +14,8 @@ There is no timer.
 
 The keys of a sign-in live in memory, and the refresh token alone in the
 system's store for secrets (``keystore``). They are in no file and in no
-line of the log. Nothing here deletes or changes a walk on the computer.
+line of the log. Beside the refresh token the store holds one more thing
+while sending is on: a mark, a random text that is a key to nothing and
+also stands in ``walka-account.json``, so that the file alone cannot say
+"sending is on". Nothing here deletes or changes a walk on the computer.
 """

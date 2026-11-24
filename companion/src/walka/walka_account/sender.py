@@ -15,7 +15,15 @@ first, and each step ends the pass when nothing is left:
    is gone, cannot be read, does not say which treadmill made it, or is
    outside what the Walka account takes, is not sent. None left: the
    pass ends, and still nothing was asked.
-3. Only now a key: the access token, made anew if it has run out.
+3. Only now a key: the access token, made anew if it has run out. And
+   with it, once in a run, a look into the system's store for the mark
+   that stands in the file beside "sending is on" - there, where the
+   stored sign-in is read anyway, or by itself when the old token is
+   still good. The store holds another mark or none (an older copy of
+   the file was put back, or the file was changed by hand): "off" is
+   written, the pass ends, and nobody was asked. A run in which the
+   question itself was answered does not look. (All of it is the
+   service's: ``fresh_token``.)
 4. Once in a run, before the first walk goes: which version of its rules
    the database is at. A higher one than Walka knows: nothing is sent.
 5. The walks, at most 200 in a request. Before EVERY request the file

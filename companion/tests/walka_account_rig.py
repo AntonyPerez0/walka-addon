@@ -15,6 +15,11 @@ is handed when Walka runs:
   call, and can be told to refuse. ``lasting=True`` stands for Windows'
   Credential Manager or a Mac's keychain (it outlives ``rig.restart()``);
   ``lasting=False`` for a system without one.
+  It holds two kinds of thing, and tells them apart by the entry's name:
+  the key of a sign-in (``secrets()``, under ``rig.entry``) and the mark
+  that is made when the question before sending is answered (``marks()``,
+  under ``rig.mark_entry``; ``rig.mark()`` is the one of this address).
+  ``calls`` are the calls for both.
   ``LatestFirst`` is a lock to put into a ``Keys`` (``keys._lock``) for the
   tests of what waits behind a call the store sits on: of those who wait,
   the one who came last goes first.
@@ -55,9 +60,11 @@ at what must never happen::
 
 ``after_test`` fails the test if the stand-in saw a request outside the
 list of what Walka may ask, if a key of a sign-in stands in any file of
-the data folder, in the snapshot or in the log, if the log names an
-e-mail address, a Walka account's id or the accounts' address, or if a
-task was left with an error nobody read.
+the data folder, in the snapshot or in the log, if a mark stands anywhere
+but in ``walka-account.json`` (it is a key to nothing, and is kept like
+one all the same), if the log names an e-mail address, a Walka account's
+id or the accounts' address, or if a task was left with an error nobody
+read.
 """
 
 from __future__ import annotations
@@ -76,7 +83,7 @@ from fake_accounts import FakeAccounts, Seen
 from walka.session import SessionRecord, SessionStore
 from walka.walka_account import ledger
 from walka.walka_account.https import parse_origin
-from walka.walka_account.keystore import KeyStoreError, MemoryKeyStore, entry_name
+from walka.walka_account.keystore import KeyStoreError, MemoryKeyStore, entry_name, mark_name
 from walka.walka_account.service import WalkaAccount
 
 NOW = 1795300000.0  # 21 November 2026, 22:26:40 UTC
@@ -84,6 +91,14 @@ OK = (200, {"ok": True})
 PAD = "UREVO SpaceWalk E3"  # what a real pad calls itself
 
 MADE: list[Rig] = []  # every rig of the test that runs
+
+# How the name of a mark's entry ends: the sign-in's entry is named after the address alone.
+MARK_ENDS = mark_name("x")[len(entry_name("x")) :]
+
+
+def is_mark(name: str) -> bool:
+    """Is this the name of an entry for a mark - not for the key of a sign-in?"""
+    return name.endswith(MARK_ENDS)
 
 
 def run(scenario):
@@ -117,12 +132,14 @@ class Clock:
 class CountingKeyStore(MemoryKeyStore):
     """A store for secrets in memory that writes down every call made to it.
 
-    ``calls``: each call as (what, name). ``writes``: each secret written,
-    with how many requests the accounts had seen by then (so a test can
-    tell that a key was stored BEFORE a request was made). ``refuse``:
-    what -> one of the store's four words; while it is there, that call
-    raises it. ``block``: what -> a ``threading.Event``; while it is there
-    and not set, that call sits in the store, as a Mac's keychain can.
+    ``calls``: each call as (what, name). ``writes``: each key of a
+    sign-in written, with how many requests the accounts had seen by then
+    (so a test can tell that a key was stored BEFORE a request was made).
+    ``marks_seen``: every mark ever written. ``refuse``: what -> one of
+    the store's four words; while it is there, that call raises it - for
+    every entry, or only for those whose names are in ``only`` (if it is
+    not empty). ``block``: what -> a ``threading.Event``; while it is
+    there and not set, that call sits in the store, as a Mac's keychain can.
     """
 
     def __init__(self, *, lasting: bool = True, requests_seen: Any = lambda: 0) -> None:
@@ -130,12 +147,16 @@ class CountingKeyStore(MemoryKeyStore):
         self.lasting = lasting
         self.calls: list[tuple[str, str]] = []
         self.writes: list[tuple[str, int]] = []
+        self.marks_seen: set[str] = set()
         self.refuse: dict[str, str] = {}
+        self.only: set[str] = set()
         self.block: dict[str, threading.Event] = {}
         self._requests_seen = requests_seen
 
     def _note(self, what: str, name: str) -> None:
         self.calls.append((what, name))
+        if self.only and name not in self.only:
+            return
         gate = self.block.get(what)
         if gate is not None:
             gate.wait(10)
@@ -148,7 +169,10 @@ class CountingKeyStore(MemoryKeyStore):
 
     def write(self, name: str, secret: str) -> None:
         self._note("write", name)
-        self.writes.append((secret, self._requests_seen()))
+        if is_mark(name):
+            self.marks_seen.add(secret)
+        else:
+            self.writes.append((secret, self._requests_seen()))
         super().write(name, secret)
 
     def delete(self, name: str) -> None:
@@ -156,8 +180,12 @@ class CountingKeyStore(MemoryKeyStore):
         super().delete(name)
 
     def secrets(self) -> list[str]:
-        """What is stored this instant."""
-        return list(self._entries.values())
+        """The keys of sign-ins that are stored this instant. (Not the marks: see ``marks``.)"""
+        return [secret for name, secret in self._entries.items() if not is_mark(name)]
+
+    def marks(self) -> list[str]:
+        """The marks that are stored this instant."""
+        return [secret for name, secret in self._entries.items() if is_mark(name)]
 
 
 class LatestFirst:
@@ -357,6 +385,7 @@ class Rig:
         assert origin is not None
         self.origin = origin
         self.entry = entry_name(origin.text)  # the name of the stored sign-in
+        self.mark_entry = mark_name(origin.text)  # the name of the mark beside it, while sending is on
         self.account = self.build()
         if self._start:
             self.account.start()
@@ -568,6 +597,22 @@ class Rig:
         """The rows of every request that sent walks, oldest first."""
         return [seen.json for seen in self.pushes_seen()]
 
+    def mark(self) -> str | None:
+        """The mark that the store holds for this address this instant, or None."""
+        return self.keystore._entries.get(self.mark_entry)
+
+    def marks_seen(self) -> set[str]:
+        """Every mark that was in play: those the store ever held, and those it holds (however they got there)."""
+        return self.keystore.marks_seen | set(self.keystore.marks())
+
+    def files_but_the_book(self) -> str:
+        """Everything that stands in any file under the data folder - but for ``walka-account.json`` itself."""
+        return "\n".join(
+            path.read_bytes().decode("utf-8", "replace")
+            for path in sorted(self.dir.rglob("*"))
+            if path.is_file() and path.name != ledger.FILE_NAME
+        )
+
     def needles(self) -> set[str]:
         """Every key of a sign-in that was in play: codes, access and refresh tokens, the other site's tokens."""
         return set(self.fake.secrets_issued()) | self.keys_seen | set(self.keystore.secrets())
@@ -602,8 +647,13 @@ def after_test(caplog: Any) -> None:
         told = {rig.fake.key, rig.fake.origin, rig.fake.origin.split("//")[-1], *rig.people, *rig.people.values()}
         told.discard("")
         assert [word for word in told if word in written] == [], "the log names the account or the accounts' address"
+        # The mark: in walka-account.json (that is its point) and in the system's store, and nowhere else.
+        marks = {mark for mark in rig.marks_seen() if mark}
+        assert [mark for mark in marks if mark in rig.files_but_the_book()] == [], "a mark stands in another file"
+        assert [mark for mark in marks if mark in written] == [], "a mark stands in the log"
         for account in rig.accounts:
             shown = json.dumps(account.snapshot())
             assert [key for key in keys if key in shown] == [], "a key of a sign-in stands in the snapshot"
+            assert [mark for mark in marks if mark in shown] == [], "a mark stands in the snapshot"
             assert [user for user in rig.people if user in shown] == [], "the snapshot names the Walka account's id"
             assert rig.fake.key not in shown

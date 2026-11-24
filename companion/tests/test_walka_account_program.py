@@ -127,6 +127,9 @@ def somebody_walks(rig: Rig, app: App) -> list[tuple[float, float]]:
 HELD_UP_S = 8.0
 
 THE_STORED_SIGN_IN = "the-stored-sign-in-1"
+# The mark that was made when the question before sending was answered: in the file beside "sending is
+# on", and in the store for secrets beside the sign-in. (Without it the file's "on" is not believed.)
+THE_MARK = "the-mark-of-that-answer-1"
 SOMEBODY = "5a1c0b6e-0d6f-4f0e-9d53-6b1d5b9e7a11"
 # Accounts that are reached by a name - which no computer has. (Every other test asks 127.0.0.1, and
 # no name is looked up for that.)
@@ -138,7 +141,7 @@ def an_earlier_run_signed_in_and_switched_on(data: Path, address: str, when: flo
 
     def an_earlier_run(book: dict) -> None:
         ledger.sign_in(book, address, SOMEBODY, "github", "walker@mail.example")
-        ledger.set_sending(book, address, SOMEBODY, True, {"what": "all", "at": when})
+        ledger.set_sending(book, address, SOMEBODY, True, {"what": "all", "at": when}, THE_MARK)
 
     ledger.Ledger(data).change(an_earlier_run)
 
@@ -170,8 +173,10 @@ def test_the_walk_is_recorded_tick_by_tick_and_walka_closes_at_once_while_an_ans
                 origin = parse_origin(BY_NAME)
                 assert origin is not None
                 rig.origin, rig.entry = origin, keystore.entry_name(origin.text)
+                rig.mark_entry = keystore.mark_name(origin.text)
                 an_earlier_run_signed_in_and_switched_on(rig.dir, BY_NAME, rig.clock.wall() - 60.0)
                 rig.keystore._entries[rig.entry] = THE_STORED_SIGN_IN
+                rig.keystore._entries[rig.mark_entry] = THE_MARK
                 monkeypatch.setattr(socket, "getaddrinfo", a_look_up_that_never_answers)
                 app = hand_in(rig, tmp_path)
                 await app.start()
@@ -220,7 +225,8 @@ def test_the_walk_is_recorded_tick_by_tick_and_walka_closes_at_once_while_an_ans
             if who == "the look-up of a name":
                 # (Asked on a thread that Python does not wait for when the program ends.)
                 assert set(looked_up) == {("accounts.example", False)} and rig.fake.requests == []
-                assert rig.keystore.calls == [("read", rig.entry)]
+                # (The stored sign-in, and the mark beside it: once, before the first walk of a run goes.)
+                assert rig.keystore.calls == [("read", rig.entry), ("read", rig.mark_entry)]
             # ... tick by tick: each added its fifth of a second to the walk, and none was left out.
             seconds = [walked for _when, walked in ticks]
             assert all(abs(after - before - TICK_S) < 1e-6 for before, after in zip(seconds, seconds[1:], strict=False))
@@ -319,7 +325,7 @@ class Store(keystore.MemoryKeyStore):
         if what == "store":
             never.wait()
             (marks / "the store answered").write_text("")
-        return "the-stored-sign-in-1"
+        return "the-mark-of-that-answer-1" if name.endswith(" - sending") else "the-stored-sign-in-1"
 
 
 look_up = socket.getaddrinfo
@@ -448,7 +454,7 @@ def test_walka_as_a_process_ends_at_once_with_the_walk_saved_though_something_ne
     assert "Walka has its Walka account's part" in kept_log and " DEBUG " in kept_log
     files = [path for path in sorted(data.rglob("*")) if path.is_file()]
     everything = "\n".join(path.read_bytes().decode("utf-8", "replace") for path in files)
-    for word in (THE_STORED_SIGN_IN, SOMEBODY, "walker@mail.example", "accounts.example", "test-key"):
+    for word in (THE_STORED_SIGN_IN, THE_MARK, SOMEBODY, "walker@mail.example", "accounts.example", "test-key"):
         assert word not in said and word not in kept_log, word
     assert THE_STORED_SIGN_IN not in everything and "test-key" not in everything
 

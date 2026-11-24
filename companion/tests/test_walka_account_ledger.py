@@ -28,6 +28,7 @@ ANNA = "0b1f6a52-7a3c-4c0e-9a51-3f0c2d9e8a11"
 BEN = "7d2e9c40-1b5f-4e77-8f02-6a4d1c3b9e22"
 ROW = "5c0a7e1e-3b1d-4d8a-9c55-0e2f4a6b8c10"
 ALL = {"what": "all", "at": 1800000000.0}
+MARK = "the-mark-of-one-answer"  # what is made when the question is answered: a random text, here a plain one
 EMPTY = {"version": 1, "addresses": {}}
 THERE = {"state": "there", "row": None, "deleted": False}
 
@@ -52,7 +53,7 @@ def never(_book):
 def signed_in_and_on(folder: Path, user: str = ANNA) -> Ledger:
     book = Ledger(folder, sleep=Naps())
     book.change(lambda b: ledger.sign_in(b, ORIGIN, user, "github", "a@b.example"))
-    book.change(lambda b: ledger.set_sending(b, ORIGIN, user, True, dict(ALL)))
+    book.change(lambda b: ledger.set_sending(b, ORIGIN, user, True, dict(ALL), MARK))
     return book
 
 
@@ -66,7 +67,7 @@ def names(folder: Path) -> list[str]:
 
 def raw_account(**changes) -> bytes:
     """A file as another computer, or a hand, might have left it: ANNA signed in, with what ``changes`` say."""
-    account = {"way": "github", "email": "a@b.example", "sending": True, "chosen": dict(ALL), "walks": {}}
+    account = {"way": "github", "email": "a@b.example", "sending": True, "chosen": dict(ALL), "mark": MARK, "walks": {}}
     account.update(changes)
     place = {"signed_in": ANNA, "notice": None, "accounts": {ANNA: account}}
     return json.dumps({"version": 1, "addresses": {ORIGIN: place}}).encode()
@@ -171,6 +172,7 @@ def test_wrong_things_inside_are_dropped_and_the_rest_stays(tmp_path):
                         "email": "",
                         "sending": False,
                         "chosen": {"what": "all", "at": 1800000000.0},
+                        "mark": None,
                         "gone": False,
                         "walks": {
                             key: {"state": "added", "row": ROW, "at": 1800000000.0},
@@ -267,7 +269,7 @@ def test_the_file_is_written_as_agreed(tmp_path):
     book = Ledger(tmp_path, sleep=Naps())
     book.change(lambda b: ledger.sign_in(b, ORIGIN, ANNA, "github", "a@b.example"))
     choice = {"what": "from", "from": 1800000000, "at": 1800000000}
-    book.change(lambda b: ledger.set_sending(b, ORIGIN, ANNA, True, choice))
+    book.change(lambda b: ledger.set_sending(b, ORIGIN, ANNA, True, choice, MARK))
     entries = {
         walk_key("20261119-213000", 1795210200): {"state": "added", "row": ROW, "at": 1800000100},
         walk_key("20261120-070000", 1795244400): {"state": "there", "row": None, "deleted": False},
@@ -293,6 +295,7 @@ def test_the_file_is_written_as_agreed(tmp_path):
                         "email": "a@b.example",
                         "sending": True,
                         "chosen": {"what": "from", "from": 1800000000.0, "at": 1800000000.0},
+                        "mark": MARK,
                         "gone": False,
                         "walks": {
                             "20261119-213000|1795210200.0": {"state": "added", "row": ROW, "at": 1800000100.0},
@@ -381,7 +384,7 @@ def test_every_temp_file_has_a_name_of_its_own_and_none_is_left(tmp_path, monkey
     monkeypatch.setattr(ledger.os, "replace", watch)
     one, two = Ledger(tmp_path, sleep=Naps()), Ledger(tmp_path, sleep=Naps())
     one.change(lambda b: ledger.sign_in(b, ORIGIN, ANNA, "github", "a@b.example"))
-    two.change(lambda b: ledger.set_sending(b, ORIGIN, ANNA, True, dict(ALL)))
+    two.change(lambda b: ledger.set_sending(b, ORIGIN, ANNA, True, dict(ALL), MARK))
     one.change(lambda b: ledger.sign_out(b, ORIGIN))
     assert len(seen) == 3 and len(set(seen)) == 3
     for name in seen:
@@ -869,11 +872,12 @@ def test_a_sign_in_switches_sending_off_for_every_walka_account_of_the_address(t
 
 
 def test_a_file_carried_in_with_sending_on_is_off_after_any_sign_in(tmp_path):
-    # A data folder from another computer: "on", with a choice, and nobody signed in here.
+    # A data folder from another computer: "on", with a choice and a mark, and nobody signed in here.
+    carried = {"way": "github", "email": "a@b.example", "sending": True, "chosen": dict(ALL), "mark": MARK}
     place = {
         "signed_in": None,
         "notice": None,
-        "accounts": {ANNA: {"way": "github", "email": "a@b.example", "sending": True, "chosen": dict(ALL)}},
+        "accounts": {ANNA: carried},
     }
     (tmp_path / FILE_NAME).write_text(json.dumps({"version": 1, "addresses": {ORIGIN: place}}), "utf-8")
     book = Ledger(tmp_path, sleep=Naps())
@@ -884,10 +888,12 @@ def test_a_file_carried_in_with_sending_on_is_off_after_any_sign_in(tmp_path):
         "email": "a@b.example",
         "sending": False,
         "chosen": None,
+        "mark": None,
         "gone": False,
         "walks": {},
     }
-    assert b'"sending":true' not in (tmp_path / FILE_NAME).read_bytes()
+    written = (tmp_path / FILE_NAME).read_bytes()
+    assert b'"sending":true' not in written and MARK.encode() not in written  # (the mark went with "on")
 
 
 def test_sending_on_is_believed_only_with_a_choice_and_for_the_one_signed_in(tmp_path):
@@ -908,6 +914,14 @@ def test_sending_on_is_believed_only_with_a_choice_and_for_the_one_signed_in(tmp
     assert sending(raw_account(sending=1)) is False
     assert sending(raw_account(sending="true")) is False
     assert sending(raw_account(chosen={"what": "from", "from": 1800000000})) is True
+    # No mark beside it - a file as this Walka wrote it before there were marks - or something that
+    # is no mark: off. (Whether a mark is the one in the system's store, the file cannot say.)
+    unmarked = json.loads(raw_account())
+    del unmarked["addresses"][ORIGIN]["accounts"][ANNA]["mark"]
+    assert sending(json.dumps(unmarked).encode()) is False
+    for no_mark in (None, "", 7, True, ["x"], {"mark": MARK}, "two words", "line\nend", "x" * 129, "caf\u00e9"):
+        assert sending(raw_account(mark=no_mark)) is False, no_mark
+    assert sending(raw_account(mark="x" * 128)) is True and sending(raw_account(mark="A-b_9~!")) is True
     # "On" for a Walka account that is not the one signed in.
     other = json.loads(raw_account())
     other["addresses"][ORIGIN]["signed_in"] = BEN
@@ -925,24 +939,96 @@ def test_switching_on_needs_a_choice_and_the_one_signed_in(tmp_path):
     book.change(lambda b: ledger.sign_in(b, ORIGIN, ANNA, "github", "a@b.example"))
     for chosen in (None, {}, {"what": "from"}, {"what": "everything"}, "all"):
         with pytest.raises(ValueError):
-            book.change(lambda b, chosen=chosen: ledger.set_sending(b, ORIGIN, ANNA, True, chosen))
+            book.change(lambda b, chosen=chosen: ledger.set_sending(b, ORIGIN, ANNA, True, chosen, MARK))
     with pytest.raises(ValueError):
-        book.change(lambda b: ledger.set_sending(b, ORIGIN, BEN, True, dict(ALL)))
-    book.change(lambda b: ledger.set_sending(b, ORIGIN, ANNA, 1, dict(ALL)))  # "on" is True and nothing like it
+        book.change(lambda b: ledger.set_sending(b, ORIGIN, BEN, True, dict(ALL), MARK))
+    book.change(lambda b: ledger.set_sending(b, ORIGIN, ANNA, 1, dict(ALL), MARK))  # "on" is True and nothing like it
     with pytest.raises(ValueError):
-        book.change(lambda b: ledger.set_sending(b, "https://other.example", ANNA, True, dict(ALL)))
+        book.change(lambda b: ledger.set_sending(b, "https://other.example", ANNA, True, dict(ALL), MARK))
     assert account_of(book.read())["sending"] is False
 
-    book.change(lambda b: ledger.set_sending(b, ORIGIN, ANNA, True, {"what": "from", "from": 1800000000.0}))
+    book.change(lambda b: ledger.set_sending(b, ORIGIN, ANNA, True, {"what": "from", "from": 1800000000.0}, MARK))
     assert account_of(book.read())["sending"] is True
     assert account_of(book.read())["chosen"] == {"what": "from", "from": 1800000000.0}
     book.change(lambda b: ledger.sign_out(b, ORIGIN))
     with pytest.raises(ValueError):  # signed out: no switching on
+        book.change(lambda b: ledger.set_sending(b, ORIGIN, ANNA, True, dict(ALL), MARK))
+    # And never without the mark that was made for this answer to the question.
+    book.change(lambda b: ledger.sign_in(b, ORIGIN, ANNA, "github", "a@b.example"))
+    for no_mark in (None, "", 7, "two words", "x" * 129):
+        with pytest.raises(ValueError):
+            book.change(lambda b, no_mark=no_mark: ledger.set_sending(b, ORIGIN, ANNA, True, dict(ALL), no_mark))
+    with pytest.raises(ValueError):
         book.change(lambda b: ledger.set_sending(b, ORIGIN, ANNA, True, dict(ALL)))
+    assert account_of(book.read())["sending"] is False and account_of(book.read())["mark"] is None
+    book.change(lambda b: ledger.sign_out(b, ORIGIN))
     # Off is always taken, for anybody, and makes nobody up.
     book.change(lambda b: ledger.set_sending(b, ORIGIN, ANNA, False, None))
     book.change(lambda b: ledger.set_sending(b, ORIGIN, BEN, False, None))
     assert set(book.read()["addresses"][ORIGIN]["accounts"]) == {ANNA}
+
+
+def test_the_mark_stands_beside_on_and_goes_with_every_off(tmp_path):
+    # Stopped, signed out, a sign-in that ended, a new sign-in: after each the file bears no mark.
+    def mark() -> object:
+        return account_of(Ledger(tmp_path).read())["mark"]
+
+    def switch_on(book: Ledger, with_mark: str = MARK) -> None:
+        book.change(lambda b: ledger.set_sending(b, ORIGIN, ANNA, True, dict(ALL), with_mark))
+
+    book = signed_in_and_on(tmp_path)
+    assert mark() == MARK and MARK.encode() in (tmp_path / FILE_NAME).read_bytes()
+    book.change(lambda b: ledger.set_sending(b, ORIGIN, ANNA, False, dict(ALL)))
+    assert mark() is None and account_of(book.read())["chosen"] == ALL  # (what was chosen stays; the mark does not)
+    assert MARK.encode() not in (tmp_path / FILE_NAME).read_bytes()
+    switch_on(book, "another-mark")
+    assert mark() == "another-mark"
+    book.change(lambda b: ledger.sign_out(b, ORIGIN))
+    assert mark() is None
+    book.change(lambda b: ledger.sign_in(b, ORIGIN, ANNA, "github", "a@b.example"))
+    switch_on(book)
+    book.change(lambda b: ledger.sign_out(b, ORIGIN, notice="ended"))
+    assert mark() is None
+    book.change(lambda b: ledger.sign_in(b, ORIGIN, ANNA, "github", "a@b.example"))
+    switch_on(book)
+    book.change(lambda b: ledger.sign_in(b, ORIGIN, BEN, "google", "ben@b.example"))
+    assert mark() is None and account_of(book.read(), BEN)["mark"] is None
+    assert b'"mark":"' not in (tmp_path / FILE_NAME).read_bytes()
+
+
+def test_a_mark_without_on_says_nothing_and_is_not_kept(tmp_path):
+    (tmp_path / FILE_NAME).write_bytes(raw_account(sending=False))
+    assert account_of(Ledger(tmp_path).read())["mark"] is None
+    (tmp_path / FILE_NAME).write_bytes(raw_account(chosen=None))
+    assert account_of(Ledger(tmp_path).read())["mark"] is None
+    # And once anything is written, the file itself no longer bears it.
+    Ledger(tmp_path, sleep=Naps()).change(lambda b: ledger.note_walks(b, ORIGIN, ANNA, {"a|1.0": dict(THERE)}))
+    assert MARK.encode() not in (tmp_path / FILE_NAME).read_bytes()
+
+
+def test_sending_is_stopped_for_a_mark_only_while_the_file_still_bears_that_very_mark(tmp_path):
+    book = signed_in_and_on(tmp_path)
+
+    def stop(user: str = ANNA, mark: str = MARK, origin: str = ORIGIN) -> bool:
+        return book.change(lambda b: ledger.stop_if_marked(b, origin, user, mark))
+
+    before = (tmp_path / FILE_NAME).read_bytes()
+    # Another mark (the question was answered anew meanwhile), another Walka account, another
+    # address: nothing is changed, and the answer says so.
+    assert stop(mark="another-mark") is False and stop(user=BEN) is False
+    assert stop(origin="https://other.example") is False
+    assert (tmp_path / FILE_NAME).read_bytes() == before
+    # This very mark: off, the mark gone, what was chosen kept - as when sending is stopped.
+    assert stop() is True
+    account = account_of(book.read())
+    assert (account["sending"], account["mark"], account["chosen"]) == (False, None, ALL)
+    assert ledger.signed_in(book.read(), ORIGIN)[0] == ANNA  # (nobody is signed out for it)
+    # Off already (the other Walka stopped sending): nothing to do, and nothing done.
+    after = (tmp_path / FILE_NAME).read_bytes()
+    assert stop() is False and (tmp_path / FILE_NAME).read_bytes() == after
+    # Nobody signed in: the same.
+    book.change(lambda b: ledger.sign_out(b, ORIGIN))
+    assert stop() is False
 
 
 def test_what_a_change_leaves_behind_goes_through_the_same_sieve(tmp_path):
@@ -962,15 +1048,18 @@ def test_the_changes_switch_off_by_themselves_not_only_through_the_sieve():
     # ``validate`` would hide a change that forgot to: here the book is looked at as the change left it.
     book = ledger.empty_book()
     ledger.sign_in(book, ORIGIN, ANNA, "github", "a@b.example")
-    ledger.set_sending(book, ORIGIN, ANNA, True, dict(ALL))
+    ledger.set_sending(book, ORIGIN, ANNA, True, dict(ALL), MARK)
     place = book["addresses"][ORIGIN]
-    assert account_of(book)["sending"] is True
+    assert account_of(book)["sending"] is True and account_of(book)["mark"] == MARK
     ledger.sign_out(book, ORIGIN, notice="ended")
     assert account_of(book)["sending"] is False and place["signed_in"] is None and place["notice"] == "ended"
+    assert account_of(book)["mark"] is None  # (the mark goes with "on", by the change itself)
     account_of(book)["sending"] = True  # as a file from elsewhere might say
+    account_of(book)["mark"] = MARK
     ledger.sign_in(book, ORIGIN, BEN, "google", "ben@b.example")
     assert place["notice"] is None and place["signed_in"] == BEN
     assert account_of(book)["sending"] is False and account_of(book)["chosen"] is None
+    assert account_of(book)["mark"] is None
     # The same for the two words that came later: a sign-in takes them away by itself.
     ledger.sign_out(book, ORIGIN, left_in_store=True, gone=BEN)
     assert place["left_in_store"] is True and account_of(book, BEN)["gone"] is True
@@ -979,15 +1068,20 @@ def test_the_changes_switch_off_by_themselves_not_only_through_the_sieve():
     # ... and the store's "no" to an older sign-out, arriving now, does not bring one back.
     ledger.sign_in_left(book, ORIGIN, True)
     assert place["left_in_store"] is False
-    ledger.set_sending(book, ORIGIN, BEN, True, dict(ALL))
+    ledger.set_sending(book, ORIGIN, BEN, True, dict(ALL), MARK)
+    assert account_of(book, BEN)["mark"] == MARK
     ledger.set_sending(book, ORIGIN, BEN, False, None)
+    assert account_of(book, BEN)["mark"] is None
     assert account_of(book, BEN)["sending"] is False and account_of(book, BEN)["chosen"] is None
+    ledger.set_sending(book, ORIGIN, BEN, True, dict(ALL), MARK)
+    assert ledger.stop_if_marked(book, ORIGIN, BEN, MARK) is True
+    assert account_of(book, BEN)["sending"] is False and account_of(book, BEN)["mark"] is None
 
 
 def test_noting_a_walk_touches_nothing_but_the_walks():
     book = ledger.empty_book()
     ledger.sign_in(book, ORIGIN, ANNA, "github", "a@b.example")
-    ledger.set_sending(book, ORIGIN, ANNA, True, dict(ALL))
+    ledger.set_sending(book, ORIGIN, ANNA, True, dict(ALL), MARK)
     # Off, with the choice still beside it and ANNA signed in: the one case where the sieve would let "on" through.
     ledger.set_sending(book, ORIGIN, ANNA, False, dict(ALL))
     before = json.loads(json.dumps(book))
@@ -1143,6 +1237,7 @@ def test_noting_walks(tmp_path):
         "email": "",
         "sending": False,
         "chosen": None,
+        "mark": None,
         "gone": False,
         "walks": {key: THERE},
     }

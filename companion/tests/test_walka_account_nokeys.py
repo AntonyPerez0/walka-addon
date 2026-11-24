@@ -6,7 +6,10 @@ the refresh token alone in the system's store for secrets. They are in no
 file, not in what the dashboard serves, and not in the log, which people
 attach to public issues. The Walka account's id may stand in one file
 only (``walka-account.json``), and the e-mail address there and in the
-snapshot, where the card shows it.
+snapshot, where the card shows it. And the mark that is made when the
+question before sending is answered - a key to nothing, kept like one all
+the same - stands in the system's store and in that one file, while
+sending is on, and nowhere else.
 
 So here Walka runs as it runs: a real ``App``, started, with its
 dashboard served the way the command line serves it, and its log kept the
@@ -335,6 +338,8 @@ class Story:
         self.outside_the_card: list[str] = []  # every snapshot that was served, but for the Walka account's piece
         self.walk_files: dict[str, bytes] = {}  # the files of the walks, byte for byte
         self.keys: set[str] = set()  # every key of a sign-in that was in play: allowed nowhere
+        self.marks: set[str] = set()  # every mark that was made for an answer to the question, or written over one
+        self.book_while_on = ""  # walka-account.json as it was while sending was on: there a mark does stand
         self.users: list[str] = []  # the Walka accounts' ids: in walka-account.json only
         self.emails: list[str] = []  # in walka-account.json and in the snapshot only
         self.accounts_at: list[str] = []  # where the accounts are: in the file and the snapshot only
@@ -456,6 +461,9 @@ async def the_whole_story(rig: Rig, tmp_path: Path, story: Story) -> None:
         gone += 2
         assert (piece["sending"], piece["counts"]["sent"], piece["last"]["word"]) == (True, gone, "sent")
         assert rig.entry_of(anna, old[0])["state"] == "there" and rig.entry_of(anna, old[1])["state"] == "added"
+        # (The answer made a mark: it is in the store, and in the file beside "sending is on".)
+        story.book_while_on = (rig.dir / ledger.FILE_NAME).read_text("utf-8")
+        assert rig.mark() is not None and rig.mark() in story.book_while_on
 
         # Somebody walks; the walk is recorded, saved, and goes by itself.
         await walk_on(rig, app, 60, then_stand=True)
@@ -600,6 +608,8 @@ async def the_whole_story(rig: Rig, tmp_path: Path, story: Story) -> None:
     story.listened_at = [urlsplit(dict(parse_qsl(urlsplit(opened).query))["redirect_to"]).port for opened in rig.opened]
     assert len(set(story.listened_at)) == 5 and page.port not in story.listened_at
     story.keys |= keys_in_play(rig)
+    story.marks = {mark for mark in rig.marks_seen() if mark}
+    assert rig.keystore.marks() == []  # (everybody has signed out: no mark is left in the store)
     story.places = {
         "/api/state": "\n".join(page.states),
         "/api/events": "".join(page.pushed),
@@ -682,6 +692,12 @@ def test_after_a_whole_story_no_key_of_a_sign_in_stands_in_any_file_any_answer_o
 
     # No key of any sign-in, anywhere. Not what the accounts said either.
     assert places_with(story.keys, places) == {}
+    # The marks: each stood in walka-account.json while sending was on under it (the canary: one is
+    # found in the file as it was then) - and in nothing else that is written down or given out, ever.
+    # Now that everybody has signed out, the file bears none either.
+    assert len(story.marks) >= 2 and all(len(mark) == 32 for mark in story.marks)
+    assert len(found(story.marks, story.book_while_on)) == 1
+    assert places_with(story.marks, places) == {}
     assert places_with(NEVER_REPEATED, places) == {}
     # The Walka account's id: in its file only. The e-mail address: there and in the snapshot only
     # (seen above). Where the accounts are: there and in the snapshot only - never in the log.
