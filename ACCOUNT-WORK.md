@@ -8,8 +8,11 @@ kind lie beside it and are removed with it: `ACCOUNT-WORDS.md` (every
 sentence a person reads, old words and new, for the owner's yes) and
 `ACCOUNT-REPORT.md` (the report the brief's section 10 asks for).
 
-The live project's address and key stand nowhere in this repository, and
-not in this file either (decision 12). Neither does anybody's e-mail
+Until 24 November the live project's address and key stood nowhere in
+this repository (decision 12). Since the owner's "Release it now" of that
+day they stand in one file of the program
+(`companion/src/walka/walka_account/project.py`) and nowhere else: not in
+this file either. Neither does anybody's e-mail
 address, nor the address used for the proof of 5.2.
 
 ## Where it stands
@@ -82,6 +85,20 @@ address, nor the address used for the proof of 5.2.
   published release is never replaced. The report was published as a
   private page for the owner to pass on, and the owner was asked what
   was meant.
+- 24 November 2026, asked what "publish" meant, with three choices put
+  before them (the report page is enough; open a pull request; release
+  it now - the last with the words: this goes against the brief's order
+  (website first, your trial first), nothing has been tried on a real
+  Windows PC or Mac, and it cannot be undone): **"Release it now"**. So
+  the brief's last step is done, by the owner's word and against the
+  order of its section 8: the address and the publishable key are in the
+  program, the from-source rule is lifted, and it goes out under a new
+  version number. Chosen by the assistant, not by the owner: the number
+  0.8.0-rc2 - a trial release, as 0.8.0-rc1 was, which is published but
+  never becomes "the latest" download - because nobody has yet signed in
+  or sent a walk for real; and a tag on this branch, with no merge into
+  the default branch, so that the README people download Walka from
+  does not speak of sending before the website does.
 - Not answered yet: Windows or a Mac.
 
 ## Where the brief and the files disagree
@@ -340,10 +357,12 @@ tests in `companion/tests/test_walka_account_<name>.py`:
 
 Its place in Walka:
 
-- `cli.py` - `_build_walka_account`: a part only from source, with both
-  variables, an address that passes, a key that is not a secret one, and
-  a treadmill that is not the simulated one. The hidden command
-  `httpscheck`. The browser for a sign-in.
+- `cli.py` - `_build_walka_account`: since the release, every Walka has
+  the part, made with the built-in address and key
+  (`walka_account/project.py`), unless the treadmill is the simulated
+  one. A packed program does not read the two variables; from source
+  both together name a developer's own database, and one alone means no
+  part. The hidden command `httpscheck`. The browser for a sign-in.
 - `app.py` - `App(..., walka_account=None)`: started with Walka, told of
   each saved walk, cancelled before the walk is saved at closing and
   closed after it; the snapshot's key `walka_account` only with a part.
@@ -368,11 +387,13 @@ feet), and small changes in `index.html`, `settings.js`, `app.js`,
 The documents: `README.md`, `SECURITY.md`, `docs/SAFETY.md`, both copies
 of `THIRD-PARTY-NOTICES.md`. Drafts until the owner's yes.
 
-The build checks: `tools/check_https.py` and `tools/check_no_account.py`
-with one step each in the Windows build and the Mac builds of `ci.yml`:
-the packed program makes checked HTTPS requests and refuses a home-made
-certificate; and the packed program, started with both variables set,
-has no Walka-account part.
+The build checks: `tools/check_https.py` and `tools/check_account_part.py`
+(until the release: `check_no_account.py`) with one step each in the
+Windows build and the Mac builds of `ci.yml`: the packed program makes
+checked HTTPS requests and refuses a home-made certificate; and the
+packed program, started with both variables set to something else, has
+its Walka-account part with nobody signed in and the variables ignored,
+and none when started as the demo.
 
 The tests: `fake_accounts.py` (the stand-in for the accounts),
 `walka_account_rig.py` (the rig), one test file for each module, and for
@@ -417,10 +438,12 @@ Known and left (all of it is in `ACCOUNT-REPORT.md`, in plain words):
 
 ## What comes next
 
-1. The owner says what "publish" meant, and which computer they have.
-   Each answer goes into this file, in the owner's words, with its date.
-2. Not this work: the website's maintainer changes the privacy page and
-   the terms; the owner tries it from source against the live project;
-   then a change of a few lines adds the address and the key, lifts the
-   from-source rule and goes out under a new version number. These three
-   files are removed before the branch is merged.
+1. The owner tries the trial release v0.8.0-rc2 on a real computer: the
+   hand check in `ACCOUNT-REPORT.md`, section 6, with the download
+   itself. Nobody has signed in or sent a walk for real before it.
+2. The website's maintainer changes the privacy page and the terms
+   (`ACCOUNT-REPORT.md`, section 5). They do not yet say what Walka now
+   does.
+3. Then, if the trial is good: 0.8.0 proper under its own number, and
+   the merge into the default branch - with these three files removed
+   and the README's words about sending going live with it.

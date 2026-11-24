@@ -7,6 +7,15 @@ report that section 10 of the brief asks for. Like `ACCOUNT-WORK.md` and
 is merged. The live project's address and key stand nowhere in it, and
 neither does anybody's e-mail address.
 
+**Read this first: the release.** Later on 24 November the owner was
+asked what "publish" meant, was told what a release would mean, and
+answered "Release it now". So the brief's last step was done, by the
+owner's word and against the order of its section 8. What follows in
+this report was written before that and is left as it stood; where it
+says that the address and key stand nowhere, that a download has no
+part, or that nothing is released, section 8 at the end says what is
+true now.
+
 Three words used throughout. "The part" is the new piece of Walka's
 desktop program that signs in to a Walka account and sends walks. "The
 stand-in" is a home-made copy of the Walka accounts' server that runs
@@ -1026,3 +1035,80 @@ Still open:
  page. (The website maintainer's work.)
 4. **The readings of "Do everything"**, of 21 and of 24 November: both
  lists are in `ACCOUNT-WORK.md`. Say if any was not meant.
+
+(The first of these was answered the same day: section 8.)
+
+## 8. The release, 24 November
+
+**The owner's word.** Asked what "publish" meant, with three choices
+(the report page is enough; open a pull request; release it now - the
+last with the words that it goes against the brief's order, that nothing
+has been tried on a real Windows PC or Mac, and that it cannot be
+undone), the owner answered: "Release it now".
+
+**What was changed for it.**
+
+- The address of the Walka accounts and their publishable key now
+stand in the program, in one file and nowhere else
+(`companion/src/walka/walka_account/project.py`). Both are public by
+design: the website's own pages carry the same two. They were taken
+from the brief and then compared, letter for letter, with what the
+public website itself serves: the same. It is never a secret key.
+- The from-source rule is lifted. A download (Walka.exe, Walka on a
+Mac) now has the part, with that address and no other: it does not
+so much as read the two variables. From source the two variables
+still name a developer's own database. With the simulated treadmill
+there is still no part.
+- Having the part asks nobody. A Walka in which nobody has signed in
+makes no connection, reads no password store and shows nothing but
+the quiet card last in Settings. That was proved again for the
+default part, built as a download builds it.
+- Now that there is something to go to, no test may go there: in every
+test the built-in address reads as "none", and a guard fails any test
+in which anything tries to reach another computer. Under a tripwire
+of the reviewer's own, the whole suite - 4,495 tests, 109
+processes - made no connection and no look-up of a name beyond this
+computer.
+- The build check that proved "a download has no part" now proves what
+a download must be (`tools/check_account_part.py`): started with the
+two variables set to something else, it has the part, nobody signed
+in, sending off, the variables ignored, nothing written; and started
+as the demo it has none. It presses "Stop sending" only - never "Sign
+in", which would open a browser.
+- The version is 0.8.0-rc2 in the three version files.
+- The release's own page gained one paragraph, from words already
+agreed: that a Walka account is optional, that Walka sends nothing
+and asks nobody if you never sign in, and where the README says what
+is sent, when, and how to stop.
+- 4,496 tests pass here after it.
+
+**What kind of release.** Chosen by the assistant, not by the owner:
+
+- **A trial release, v0.8.0-rc2**, as v0.8.0-rc1 was. Walka's own
+release job publishes a version with "-rc" as a trial: it is public,
+and it never becomes "the latest" download that the README's buttons
+give. Nobody has yet signed in or sent a walk for real, so the first
+people to do so should be people who chose a trial. Making it 0.8.0
+proper is one more step, after the owner has tried it.
+- **From this branch, by a tag, with no merge.** The default branch's
+README is the page people download Walka from; it is unchanged, so
+it does not speak of sending before the website does.
+
+**What this release cannot have behind it**, said plainly:
+
+- No whole sign-in and no send has ever been made against the real
+accounts, by anybody. This release is the first time.
+- Nothing ran on a real Windows PC or a real Mac outside the build
+machines. On a newly set-up Windows PC a root certificate may be
+missing; the card then says that Walka could not check that it is
+talking to your Walka account's server, and nothing is sent.
+- The website's privacy page and terms do not yet say what Walka now
+does (section 5 is the list for that). Its pages still say "nothing
+is uploaded". The card and the question in Walka say what goes.
+- If the trial shows a fault, the fix goes out as a new number: a
+published release is never replaced.
+
+**What the owner can do now.** Download v0.8.0-rc2 from the releases
+page (it is marked as a pre-release), start it with a real treadmill
+or real walks, and do the trial of section 6, point 3, with the
+download itself: no source code and no variables are needed any more.
