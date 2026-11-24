@@ -8,10 +8,13 @@ itself, using the pad's counters only as *deltas* (see ``CounterTracker``).
 
 from __future__ import annotations
 
+import errno
 import json
 import logging
 import os
+import sys
 import time
+import weakref
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -346,12 +349,138 @@ def _local_noon(epoch: float) -> float:
     return time.mktime((t.tm_year, t.tm_mon, t.tm_mday, 12, 0, 0, 0, 0, -1))
 
 
+# ---- whose walk is still going -------------------------------------------------
+#
+# ``active-session.json`` is the walk that is still going, written again
+# every half minute. A Walka that is started finds it there and cannot tell
+# from the file whether the Walka that wrote it crashed or is still at it:
+# Walka can be opened twice on one data folder. So the Walka that writes it
+# holds a lock of the system's own on an empty file beside it, from the
+# walk's first checkpoint until the checkpoint is cleared. The system lets
+# go of the lock when the process ends, however it ends: after a crash the
+# lock is free, and the walk is recovered as it always was.
+#
+# The lock only ever answers one question: is that walk still going
+# elsewhere? It is asked at a start, and before a walk's first checkpoint
+# is written where another Walka's lies. It never keeps a checkpoint from
+# being written, and where a folder has no locks at all a start recovers
+# what it finds, as it did without them.
+#
+# And a Walka clears the checkpoint it wrote itself, no other: one that it
+# left alone at its start is not its to take away when it is closed.
+
+LOCK_NAME = "active-session.lock"
+
+_ON_WINDOWS = sys.platform == "win32"
+_BINARY = getattr(os, "O_BINARY", 0)
+# Windows locks single bytes, and no other program can read a byte that is
+# locked. So the byte lies far behind the end of the file, which is empty:
+# whoever reads the file (a backup, a virus scanner) never comes near it.
+_LOCK_AT = 1 << 30
+# A second byte, one for each process: see ``_held_elsewhere``.
+_PROBE_AT = _LOCK_AT + 1 + (os.getpid() & 0xFFFFF)
+
+_OURS, _THEIRS, _NO_LOCK = "ours", "theirs", "no lock"
+
+
+def _lock(fd: int, at: int = _LOCK_AT) -> None:
+    """Take the lock, or raise OSError at once: this never waits."""
+    if _ON_WINDOWS:
+        import msvcrt
+
+        os.lseek(fd, at, os.SEEK_SET)  # Windows locks from where the file stands
+        msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+    else:
+        import fcntl
+
+        # flock, not lockf: lockf is let go when ANY descriptor of the file
+        # is closed in this process, and would not hold between two stores
+        # of one process either.
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def _unlock(fd: int, at: int = _LOCK_AT) -> None:
+    try:
+        if _ON_WINDOWS:
+            import msvcrt
+
+            os.lseek(fd, at, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    except Exception:  # closing the descriptor lets go of it anyway
+        pass
+
+
+def _held_elsewhere(fd: int, refusal: OSError) -> bool:
+    """The lock was refused. Because somebody holds it - or because this folder has no locks?
+
+    Only the first may keep a walk from being recovered.
+    """
+    if not _ON_WINDOWS:
+        return refusal.errno in (errno.EAGAIN, errno.EWOULDBLOCK)
+    # Windows says the same of both. A byte that nobody else locks tells
+    # them apart: if that one can be taken, locks work here, and the other
+    # one is held.
+    try:
+        _lock(fd, _PROBE_AT)
+    except Exception:
+        return False
+    _unlock(fd, _PROBE_AT)
+    return True
+
+
+class _Hold:
+    """One open descriptor that holds the lock. Letting go twice, or from two threads, is fine."""
+
+    def __init__(self, fd: int) -> None:
+        self._fd = [fd]
+
+    @property
+    def held(self) -> bool:
+        return bool(self._fd)
+
+    def let_go(self) -> None:
+        try:
+            fd = self._fd.pop()  # (one step: a second caller finds nothing)
+        except IndexError:
+            return
+        _unlock(fd)
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+
+
+# The locks THIS process holds, by the real path of the lock file. The
+# system's lock belongs to one open descriptor: a second store on the same
+# folder in the same process would be refused by the first one's lock, and
+# could not tell itself from another Walka. With this it can. (That second
+# store is Walka "crashed and started again" as the tests play it.)
+_HELD: dict[str, _Hold] = {}
+
+
+def _let_go_of(taken: list[_Hold]) -> None:
+    """A store is gone that never cleared its checkpoint: its descriptor must not stay open."""
+    while taken:
+        taken.pop().let_go()
+
+
 class SessionStore:
     """Finished walks on disk: one JSON file per walk under ``sessions/``."""
 
     def __init__(self, data_dir: Path) -> None:
         self.dir = Path(data_dir) / "sessions"
         self.active_path = Path(data_dir) / "active-session.json"
+        self.lock_path = Path(data_dir) / LOCK_NAME
+        try:
+            self._lock_key = os.path.normcase(os.path.realpath(self.lock_path))
+        except (OSError, ValueError):
+            self._lock_key = os.path.normcase(os.path.abspath(self.lock_path))
+        self._taken: list[_Hold] | None = None  # the hold this store took, for the day the store is dropped
+        self._own_checkpoint = False  # the checkpoint that lies there is this store's to clear
         self.records: list[SessionRecord] = []  # oldest first
         self.dir.mkdir(parents=True, exist_ok=True)
         self._load()
@@ -368,9 +497,21 @@ class SessionStore:
         self._recover_active()
 
     def _recover_active(self) -> None:
-        """A checkpoint left behind by a crash becomes a finished walk."""
+        """A checkpoint left behind by a crash becomes a finished walk.
+
+        Not one whose walk is still going in another Walka on this folder:
+        made into a finished walk now, it would be cut short for good.
+        """
         if not self.active_path.exists():
             return
+        if self._claim() == _THEIRS:
+            log.info("a walk is still going in another Walka on this data folder: its checkpoint is left alone")
+            return
+        self._walk_of_the_checkpoint()
+        self._remove_checkpoint()
+
+    def _walk_of_the_checkpoint(self) -> None:
+        """Make a finished walk of the checkpoint that lies there. Never raises."""
         try:
             record = SessionRecord.from_json(json.loads(self.active_path.read_text("utf-8")))
             if record.seconds >= MIN_SESSION_SECONDS:
@@ -378,7 +519,6 @@ class SessionStore:
                 log.info("recovered an unfinished walk from %s", day_key(record.start))
         except Exception as exc:
             log.warning("could not recover the unfinished walk: %s", exc)
-        self.clear_checkpoint()
 
     @staticmethod
     def _write(path: Path, data: dict[str, Any]) -> None:
@@ -412,19 +552,100 @@ class SessionStore:
     def get(self, session_id: str) -> SessionRecord | None:
         return next((r for r in self.records if r.id == session_id), None)
 
+    def _claim(self) -> str:
+        """Say whose the walk still going is, taking the lock if it is free. Never waits, never raises.
+
+        ``_OURS``: this process holds the lock (now, or already).
+        ``_THEIRS``: another Walka holds it. ``_NO_LOCK``: there is no
+        lock to be had in this folder - then everything is as it was
+        before there were locks.
+        """
+        try:
+            hold = _HELD.get(self._lock_key)
+            if hold is not None and hold.held:
+                return _OURS
+            fd = os.open(self.lock_path, os.O_RDWR | os.O_CREAT | _BINARY, 0o600)
+            kept = False
+            try:
+                try:
+                    _lock(fd)
+                except OSError as refusal:
+                    return _THEIRS if _held_elsewhere(fd, refusal) else _NO_LOCK
+                hold = _Hold(fd)
+                kept = True
+            finally:
+                if not kept:
+                    os.close(fd)
+            _HELD[self._lock_key] = hold
+            if self._taken is None:
+                # (Made once for each store, and it knows the list only: not the store.)
+                self._taken = []
+                weakref.finalize(self, _let_go_of, self._taken)
+            self._taken[:] = [hold]
+            return _OURS
+        except Exception as exc:
+            log.debug("no lock for the walk that is still going: %s", type(exc).__name__)
+            return _NO_LOCK
+
     def checkpoint(self, record: SessionRecord) -> None:
+        # The lock first, then the file: a checkpoint of a Walka that runs
+        # never lies there without it. (Refused or not, the walk is written.)
+        whose = self._claim()
+        if whose == _OURS and not self._own_checkpoint:
+            self._recover_what_was_left_meanwhile()
+        self._own_checkpoint = True
         try:
             self._write(self.active_path, record.to_json())
         except OSError as exc:
             log.debug("checkpoint failed: %s", exc)
 
+    def _recover_what_was_left_meanwhile(self) -> None:
+        """Before this store writes a walk's first checkpoint, with the lock in its hand.
+
+        A checkpoint that lies there now is not this store's, and nobody
+        records it any more: another Walka on this folder was recording a
+        walk while this one ran, and crashed. No start has recovered it -
+        this Walka's own start left it alone, if the walk was going then.
+        Written over now, it would be gone: so it is recovered first, as a
+        start does it. (Only with the lock in hand: without one, nothing
+        says that the other Walka is gone.) Never raises.
+        """
+        try:
+            hold = _HELD.get(self._lock_key)
+            if not self._taken or self._taken[0] is not hold:
+                return  # the lock is held through another store of this process: nothing is known of that one's walk
+            if self.active_path.exists():
+                self._walk_of_the_checkpoint()
+        except Exception as exc:
+            log.debug("what was left of another walk was not looked at: %s", type(exc).__name__)
+
     def clear_checkpoint(self) -> None:
+        """This Walka's walk is saved, or came to nothing: its checkpoint goes.
+
+        Its own, and no other. A Walka that was started while another one
+        records leaves that one's checkpoint where it is at its start - and
+        must not take it away when it is closed either: nothing would be
+        left of that walk until it is written again, and nothing at all if
+        its Walka crashed before that. So a checkpoint this store did not
+        write stays. (If nobody records any more, the next start finds it.)
+        """
+        if self._own_checkpoint:
+            self._remove_checkpoint()
+
+    def _remove_checkpoint(self) -> None:
+        """Take the checkpoint away: this store wrote it, or has just made a walk of it."""
+        self._own_checkpoint = False
         try:
             self.active_path.unlink()
         except FileNotFoundError:
             pass
         except OSError as exc:
             log.debug("could not remove checkpoint: %s", exc)
+            # (Still this store's to take away: the next clearing tries again, as it always did.)
+            self._own_checkpoint = True
+        hold = _HELD.pop(self._lock_key, None)
+        if hold is not None:
+            hold.let_go()
 
     # ---- queries ---------------------------------------------------------------
     def recent(self, limit: int = 100) -> list[SessionRecord]:
