@@ -108,6 +108,17 @@ address, nor the address used for the proof of 5.2.
   or sent a walk for real; and a tag on this branch, with no merge into
   the default branch, so that the README people download Walka from
   does not speak of sending before the website does.
+- 24 November 2026, told that the tag could not be pushed from the
+  session and asked how it should be done (push the tag yourself; or the
+  branch is merged into the default branch and the release started
+  there, which changes the README people download Walka from, and for
+  which these three notes are removed first; or stop for now): **"I want
+  you to publish. I don't want to do anything you should be doing
+  that."** Read as: the second way, since it is the only one the
+  assistant can go by itself. So these notes are removed in the next
+  commit, as the brief asks before a merge; what they held stays in the
+  branch's history, and the report stands as the page that was
+  published for the owner.
 - Not answered yet: Windows or a Mac.
 
 ## Where the brief and the files disagree
