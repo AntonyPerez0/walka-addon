@@ -108,12 +108,12 @@ class App:
         self._totals_cache: tuple[float, dict[str, Any]] | None = None
         self._state = self._load_state()
 
-        # Sending walks to a Walka account (walka_account/). By default it
-        # is not there at all: cli hands it in only when Walka runs from
-        # its source code with the accounts' address set (see
-        # cli._build_walka_account). It has tasks of its own and is only
-        # ever told things here - that a walk was saved, that Walka is
-        # closing: recording a walk never waits for it.
+        # Sending walks to a Walka account (walka_account/). Here it is
+        # not there unless it is handed in: cli does that, at every start
+        # that listens to a real treadmill (see cli._build_walka_account).
+        # It has tasks of its own and is only ever told things here - that
+        # a walk was saved, that Walka is closing: recording a walk never
+        # waits for it.
         self.walka_account = walka_account
         if walka_account is not None:
             walka_account.attach(self)

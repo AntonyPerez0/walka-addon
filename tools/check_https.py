@@ -3,12 +3,12 @@
     python tools/check_https.py companion/dist/Walka.exe
     python tools/check_https.py companion/dist/Walka.app/Contents/MacOS/Walka
 
-Walka has never made an HTTPS request on anybody's computer: the part
-that sends walks to a Walka account is not in the packed program yet.
-What that part will ask with is, and the hidden command "httpscheck"
-tries it there (walka/cli.py): it fetches https://walka.dev/ once, which
-must work, and then asks a server whose certificate nobody vouches for,
-which must not.
+Walka makes HTTPS requests where somebody has signed in to a Walka
+account - and on no build machine, where nobody ever is. So what the
+part that sends walks asks with is tried by itself: the hidden command
+"httpscheck" (walka/cli.py) fetches https://walka.dev/ once, which must
+work, and then asks a server whose certificate nobody vouches for, which
+must not.
 
 This starts that second server: on 127.0.0.1, with a key and a
 certificate made here a moment ago and thrown away afterwards. It first

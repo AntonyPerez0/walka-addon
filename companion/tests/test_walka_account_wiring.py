@@ -1,11 +1,16 @@
 """The Walka account's part, handed to Walka: the ``App``, the dashboard's routes, the command line.
 
-By default the part is not there, and then Walka is as it was: no key in
-the snapshot, routes that answer 404, nothing asked of anybody. Handed in,
+Where the part is not handed in, Walka is as it was: no key in the
+snapshot, routes that answer 404, nothing asked of anybody. Handed in,
 the ``App`` only ever tells it things - that a walk was saved, that Walka
 is closing - and nothing of it can cost the person their walk. And the
-command line hands it in only to a Walka that runs from its source code,
-with both variables set, on a treadmill that is not the simulated one.
+command line hands it in to every Walka on a treadmill that is not the
+simulated one: made with the address and key that are built in - or, in a
+Walka that runs from its source code with both variables set, with those.
+The packaged program reads no variable.
+
+(In a test Walka knows no built-in address: conftest.py takes it away.
+A test that wants one gives a made-up one - the fixture ``built_in``.)
 
 The accounts are the stand-in (``fake_accounts``), the store for secrets
 is one in memory, and no test opens a real browser. After EVERY test the
@@ -49,7 +54,7 @@ from walka.session import SessionStore
 from walka.sources import BeaconSource
 from walka.treadmill import TreadmillStatus
 from walka.treadmill.simulated import SimulatedTreadmill
-from walka.walka_account import keystore, ledger
+from walka.walka_account import keystore, ledger, project
 from walka.walka_account.service import WalkaAccount
 from walka_account_rig import NOW, OK, PAD, CountingKeyStore, Rig
 
@@ -506,9 +511,12 @@ def test_every_button_of_the_card_through_its_route(tmp_path):
             user = rig.person("walker@mail.example", way="github")
             sent, waits = rig.walk(7200), rig.walk(3600)
             async with dashboard(app) as client:
-                # Sign in: the route answers at once, the rest shows in the snapshot.
+                # Sign in: the route answers at once, the rest shows in the snapshot. (The person is
+                # still in the browser while the snapshot is looked at, and comes back after it.)
+                rig.browser_waits = asyncio.Event()
                 assert await said(client, "/api/walka-account/sign-in", {"way": "github"}) == (200, {"ok": True})
                 assert (await shown(client))["walka_account"]["state"] == "signing_in"
+                rig.browser_waits.set()
                 await rig.idle()
                 piece = (await shown(client))["walka_account"]
                 assert (piece["state"], piece["email"], piece["way"]) == ("signed_in", "walker@mail.example", "github")
@@ -751,7 +759,7 @@ def test_history_is_told_of_a_copy_in_a_walka_account_that_is_not_signed_in_now_
             assert app.snapshot()["walka_account"]["counts"]["sent"] == 1
             question = await rig.question()
             assert question["waiting"] == 2
-            # The same Walka folder, started again without the part (packed, or the variables are gone):
+            # The same Walka folder, started again without the part (as the demo, say, or by an older Walka):
             # neither word, and the question before deleting is the one it always was.
             await rig.idle()
             without = hand_in(rig, tmp_path, part=False)
@@ -1571,11 +1579,37 @@ def store(monkeypatch) -> CountingKeyStore:
     return made
 
 
+# A built-in address and key, made up: what a test's Walka knows in place of the real two. (On this
+# computer, at a port where nobody listens: whatever a test did with it, nothing would leave.)
+BUILT_IN_URL, BUILT_IN_KEY = "http://127.0.0.1:54319", "built-in-test-key"
+NEVER_SAID = ("accounts.example", "54319", "54321", KEY, BUILT_IN_KEY)
+
+
+@pytest.fixture
+def built_in(monkeypatch) -> None:
+    monkeypatch.setattr(project, "ADDRESS", BUILT_IN_URL)
+    monkeypatch.setattr(project, "PUBLISHABLE_KEY", BUILT_IN_KEY)
+
+
+def packed(monkeypatch, how: str = "sys.frozen") -> None:
+    """What a packed program has that Walka from its source code has not (PyInstaller sets both)."""
+    if how in ("sys.frozen", "both"):
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+    if how in ("sys._MEIPASS", "both"):
+        monkeypatch.setattr(sys, "_MEIPASS", "/nowhere/unpacked", raising=False)
+    assert cli._is_packed()
+
+
 def lines(caplog) -> list[logging.LogRecord]:
     return [record for record in caplog.records if record.name == "walka"]
 
 
-def test_from_source_with_both_variables_and_a_real_treadmill_walka_has_the_part(tmp_path, caplog, store):
+def none_of_it_is_said(caplog) -> bool:
+    return not [word for word in NEVER_SAID if word in caplog.text]
+
+
+def test_from_source_with_both_variables_and_a_real_treadmill_walka_has_the_part(tmp_path, caplog, store, built_in):
+    """A developer's own database - and theirs alone: the address that is built in is not the one asked."""
     for address in (URL, "https://accounts.example/", "https://accounts.example:8443", "http://127.0.0.1:54321"):
         caplog.clear()
         data = tmp_path / str(len(address))
@@ -1588,29 +1622,85 @@ def test_from_source_with_both_variables_and_a_real_treadmill_walka_has_the_part
         # One line says so, with neither value.
         (line,) = lines(caplog)
         assert line.levelno == logging.INFO and URL_VARIABLE in line.getMessage() and KEY_VARIABLE in line.getMessage()
-        assert "accounts.example" not in caplog.text and "54321" not in caplog.text and KEY not in caplog.text
-    # By default the environment it reads is the program's own.
-    assert cli._build_walka_account(tmp_path, Pad()) is None and lines(caplog) == [line]
+        assert "from its source code" in line.getMessage() and none_of_it_is_said(caplog)
+
+
+def test_by_default_the_environment_it_reads_is_the_programs_own(tmp_path, caplog, store, monkeypatch):
+    assert cli._build_walka_account(tmp_path, Pad()) is None and lines(caplog) == []
+    monkeypatch.setenv(URL_VARIABLE, URL)
+    monkeypatch.setenv(KEY_VARIABLE, KEY)
+    part = cli._build_walka_account(tmp_path, Pad())
+    assert part.origin.text == URL and part.key == KEY
+
+
+@pytest.mark.parametrize(
+    "environ",
+    [{}, {"PATH": "/bin"}, {URL_VARIABLE: "", KEY_VARIABLE: ""}, {"SUPABASE_URL": URL, "SUPABASE_KEY": KEY}],
+    ids=["nothing", "other things", "both empty", "another tool's"],
+)
+def test_from_source_with_neither_variable_walka_has_the_part_that_is_built_in(tmp_path, caplog, store, built_in, environ):
+    caplog.set_level(logging.DEBUG, logger="walka")
+    part = cli._build_walka_account(tmp_path / "data", Pad(), environ)
+    assert isinstance(part, WalkaAccount)
+    assert part.origin.text == BUILT_IN_URL and part.key == BUILT_IN_KEY
+    assert part.keys.kind == "memory" and part._opener is cli._open_sign_in_page
+    # Made, and nothing more: no file, no folder, no look into the store, nobody asked.
+    assert not (tmp_path / "data").exists() and store.calls == []
+    # Nothing is said of it but with "walka -v" - and then not where the accounts are, nor of a variable.
+    (line,) = lines(caplog)
+    assert line.levelno == logging.DEBUG and line.getMessage() == "Walka has its Walka account's part"
+    assert none_of_it_is_said(caplog)
 
 
 @pytest.mark.parametrize("how", ["sys.frozen", "sys._MEIPASS", "both"])
-def test_the_packaged_program_has_no_part_whatever_the_environment_says(tmp_path, monkeypatch, caplog, how):
-    if how in ("sys.frozen", "both"):
-        monkeypatch.setattr(sys, "frozen", True, raising=False)
-    if how in ("sys._MEIPASS", "both"):
-        monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path / "unpacked"), raising=False)
-    assert cli._is_packed()
-    assert cli._build_walka_account(tmp_path, Pad(), dict(BOTH)) is None
-    # ... and it does not so much as look: nothing is read, nothing is said, no store is opened.
-    assert cli._build_walka_account(tmp_path, Pad(), NeverRead(BOTH)) is None
-    assert caplog.records == [] and list(tmp_path.iterdir()) == []
-    monkeypatch.undo()
-    assert not cli._is_packed()
+def test_the_packaged_program_has_the_part_that_is_built_in_and_never_reads_the_variables(
+    tmp_path, monkeypatch, caplog, store, built_in, how
+):
+    """Walka.exe, Walka on a Mac: whatever the two variables hold - both,
+    one, an address Walka would take or one it would refuse - the part is
+    made with the address that is built in, and nothing is said of them."""
+    caplog.set_level(logging.DEBUG, logger="walka")
+    packed(monkeypatch, how)
+    whatever = (
+        NeverRead(BOTH),
+        dict(BOTH),
+        {URL_VARIABLE: URL},
+        {KEY_VARIABLE: KEY},
+        {URL_VARIABLE: "http://accounts.example", KEY_VARIABLE: "sb_secret_abcdefghijklmnopqrstuvwx"},
+        {},
+    )
+    for environ in whatever:
+        caplog.clear()
+        part = cli._build_walka_account(tmp_path / "data", Pad(), environ)
+        assert isinstance(part, WalkaAccount)
+        assert part.origin.text == BUILT_IN_URL and part.key == BUILT_IN_KEY
+        (line,) = lines(caplog)
+        assert line.levelno == logging.DEBUG and line.getMessage() == "Walka has its Walka account's part"
+        assert "WALKA_ACCOUNT" not in caplog.text and none_of_it_is_said(caplog)
+    # ... and so with the program's own environment, which is the one it would read.
+    monkeypatch.setenv(URL_VARIABLE, URL)
+    monkeypatch.setenv(KEY_VARIABLE, KEY)
+    assert cli._build_walka_account(tmp_path / "data", Pad()).origin.text == BUILT_IN_URL
+    assert not (tmp_path / "data").exists() and store.calls == []
 
 
-def test_with_neither_variable_there_is_no_part_and_not_a_word(tmp_path, caplog):
+@pytest.mark.parametrize("is_packed", [False, True], ids=["from source", "packed"])
+def test_a_walka_that_knows_no_address_has_no_part_and_says_not_a_word(tmp_path, monkeypatch, caplog, is_packed):
+    """Which is every Walka a test starts, unless the test gives it one (conftest.py)."""
+    caplog.set_level(logging.DEBUG, logger="walka")
+    assert project.ADDRESS == "" and project.PUBLISHABLE_KEY == ""
+    if is_packed:
+        packed(monkeypatch)
     for environ in ({}, {"PATH": "/bin"}, {URL_VARIABLE: "", KEY_VARIABLE: ""}, {"SUPABASE_URL": URL, "SUPABASE_KEY": KEY}):
         assert cli._build_walka_account(tmp_path, Pad(), environ) is None
+    # (Half of the two is none: an address without its key asks nobody.)
+    monkeypatch.setattr(project, "ADDRESS", BUILT_IN_URL)
+    assert cli._build_walka_account(tmp_path, Pad(), {}) is None
+    monkeypatch.setattr(project, "ADDRESS", "")
+    monkeypatch.setattr(project, "PUBLISHABLE_KEY", BUILT_IN_KEY)
+    assert cli._build_walka_account(tmp_path, Pad(), {}) is None
+    if is_packed:
+        assert cli._build_walka_account(tmp_path, Pad(), dict(BOTH)) is None
     assert caplog.records == [] and list(tmp_path.iterdir()) == []
 
 
@@ -1618,44 +1708,97 @@ def test_with_neither_variable_there_is_no_part_and_not_a_word(tmp_path, caplog)
     "environ",
     [{URL_VARIABLE: URL}, {KEY_VARIABLE: KEY}, {URL_VARIABLE: URL, KEY_VARIABLE: ""}, {URL_VARIABLE: "", KEY_VARIABLE: KEY}],
 )
-def test_one_variable_alone_is_no_part_and_one_line_that_holds_no_value(tmp_path, caplog, environ):
+def test_one_variable_alone_is_no_part_and_one_line_that_holds_no_value(tmp_path, caplog, environ, built_in):
+    """No part at all - not the built-in one either: whoever set a variable did not ask for the real accounts."""
     assert cli._build_walka_account(tmp_path, Pad(), environ) is None
     (line,) = lines(caplog)
     assert line.levelno == logging.WARNING and URL_VARIABLE in line.getMessage() and KEY_VARIABLE in line.getMessage()
-    assert "accounts.example" not in caplog.text and KEY not in caplog.text
+    assert none_of_it_is_said(caplog)
     assert list(tmp_path.iterdir()) == []
 
 
 @pytest.mark.parametrize("address", REFUSED_ADDRESSES)
-def test_an_address_walka_does_not_take_is_no_part_and_one_line_without_it(tmp_path, caplog, address):
+def test_an_address_walka_does_not_take_is_no_part_and_one_line_without_it(tmp_path, caplog, address, built_in):
     assert cli._build_walka_account(tmp_path, Pad(), {URL_VARIABLE: address, KEY_VARIABLE: KEY}) is None
     (line,) = lines(caplog)
     assert line.levelno == logging.WARNING and URL_VARIABLE in line.getMessage()
-    for value in (address, address.strip(), "accounts.example", "evil.example", "secret-word", "passwd", KEY):
+    for value in (address, address.strip(), "evil.example", "secret-word", "passwd"):
         assert value not in caplog.text
+    assert none_of_it_is_said(caplog)
     assert list(tmp_path.iterdir()) == []
 
 
 @pytest.mark.parametrize("key", REFUSED_KEYS)
-def test_a_secret_key_or_one_that_is_none_is_no_part_and_one_line_without_it(tmp_path, caplog, key):
+def test_a_secret_key_or_one_that_is_none_is_no_part_and_one_line_without_it(tmp_path, caplog, key, built_in):
     assert cli._build_walka_account(tmp_path, Pad(), {URL_VARIABLE: URL, KEY_VARIABLE: key}) is None
     (line,) = lines(caplog)
     assert line.levelno == logging.WARNING and KEY_VARIABLE in line.getMessage()
-    for value in (key, key[:24], key[:8], key[:5], key[-5:], "accounts.example", "sb_secret", "service_role"):
+    for value in (key, key[:24], key[:8], key[:5], key[-5:], "sb_secret", "service_role"):
         assert value not in caplog.text
+    assert none_of_it_is_said(caplog)
     assert list(tmp_path.iterdir()) == []
 
 
-def test_with_the_simulated_treadmill_there_is_no_part(tmp_path, caplog):
+@pytest.mark.parametrize("is_packed", [False, True], ids=["from source", "packed"])
+def test_a_built_in_address_or_key_that_walka_would_not_take_is_no_part_either(tmp_path, monkeypatch, caplog, is_packed):
+    """What is built in goes through the same two looks as what a variable
+    holds: were the file ever changed to an address with a path, plain
+    http, or a secret key, no Walka would ask there. (The real two are
+    looked at in test_walka_account_nokeys.py.)"""
+    if is_packed:
+        packed(monkeypatch)
+    for address in REFUSED_ADDRESSES:
+        caplog.clear()
+        monkeypatch.setattr(project, "ADDRESS", address)
+        monkeypatch.setattr(project, "PUBLISHABLE_KEY", BUILT_IN_KEY)
+        assert cli._build_walka_account(tmp_path, Pad(), {}) is None
+        (line,) = lines(caplog)
+        assert line.levelno == logging.WARNING and "the address built into Walka" in line.getMessage()
+        assert "WALKA_ACCOUNT" not in caplog.text and BUILT_IN_KEY not in caplog.text
+        for value in (address, address.strip(), "accounts.example", "evil.example", "secret-word", "passwd"):
+            assert value not in caplog.text
+    for key in REFUSED_KEYS:
+        caplog.clear()
+        monkeypatch.setattr(project, "ADDRESS", BUILT_IN_URL)
+        monkeypatch.setattr(project, "PUBLISHABLE_KEY", key)
+        assert cli._build_walka_account(tmp_path, Pad(), {}) is None
+        (line,) = lines(caplog)
+        assert line.levelno == logging.WARNING and "the key built into Walka" in line.getMessage()
+        assert "WALKA_ACCOUNT" not in caplog.text and "54319" not in caplog.text
+        for value in (key, key[:24], key[:8], key[:5], key[-5:], "sb_secret", "service_role"):
+            assert value not in caplog.text
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_with_the_simulated_treadmill_there_is_no_part(tmp_path, caplog, built_in):
     for treadmill in (SimulatedTreadmill(), cli._build_treadmill(Config(), True)):
         caplog.clear()
         assert cli._build_walka_account(tmp_path, treadmill, dict(BOTH)) is None
         (line,) = lines(caplog)
         assert "simulated" in line.getMessage() and line.levelno == logging.INFO
-        assert "accounts.example" not in caplog.text and KEY not in caplog.text
+        assert none_of_it_is_said(caplog)
     config = Config()
     config.treadmill.kind = "simulated"  # as config.json can say, with neither switch
     assert cli._build_walka_account(tmp_path, cli._build_treadmill(config, False), dict(BOTH)) is None
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("is_packed", [False, True], ids=["from source", "packed"])
+def test_with_the_simulated_treadmill_there_is_no_built_in_part_either(tmp_path, monkeypatch, caplog, built_in, is_packed):
+    """--demo, --simulate, or config.json: a made-up walk never reaches a
+    Walka account, in the packaged program as from source. Nothing is
+    wrong, and nobody asked: it is said for "walka -v" only."""
+    caplog.set_level(logging.DEBUG, logger="walka")
+    if is_packed:
+        packed(monkeypatch)
+    config = Config()
+    config.treadmill.kind = "simulated"
+    for treadmill in (SimulatedTreadmill(), cli._build_treadmill(Config(), True), cli._build_treadmill(config, False)):
+        caplog.clear()
+        assert cli._build_walka_account(tmp_path, treadmill, {}) is None
+        (line,) = lines(caplog)
+        assert "simulated" in line.getMessage() and line.levelno == logging.DEBUG
+        assert none_of_it_is_said(caplog)
     assert list(tmp_path.iterdir()) == []
 
 
@@ -1679,50 +1822,176 @@ def test_with_the_simulated_treadmill_there_is_no_part(tmp_path, caplog):
     ],
 )
 def test_an_aiohttp_older_than_the_one_the_client_was_tried_on_is_no_part(
-    tmp_path, monkeypatch, caplog, store, version, new_enough
+    tmp_path, monkeypatch, caplog, store, built_in, version, new_enough
 ):
     monkeypatch.setattr(aiohttp, "__version__", version)
-    part = cli._build_walka_account(tmp_path, Pad(), dict(BOTH))
-    assert (part is not None) is new_enough
-    (line,) = lines(caplog)
-    assert ("aiohttp 3.9.5" in line.getMessage()) is (not new_enough)
-    assert "accounts.example" not in caplog.text and KEY not in caplog.text
+    # With a developer's own database, and with the address that is built in.
+    for environ in (dict(BOTH), {}):
+        caplog.clear()
+        part = cli._build_walka_account(tmp_path, Pad(), environ)
+        assert (part is not None) is new_enough
+        (line,) = lines(caplog)
+        assert ("aiohttp 3.9.5" in line.getMessage()) is (not new_enough)
+        made = logging.INFO if environ else logging.DEBUG
+        assert line.levelno == (made if new_enough else logging.WARNING)
+        assert none_of_it_is_said(caplog)
     assert store.calls == []
 
 
-def test_a_part_that_cannot_be_made_does_not_keep_walka_from_starting(tmp_path, monkeypatch, caplog):
+def test_a_part_that_cannot_be_made_does_not_keep_walka_from_starting(tmp_path, monkeypatch, caplog, built_in):
     def broken():
-        raise RuntimeError(f"{URL} would not take {KEY}")
+        raise RuntimeError(f"{URL} would not take {KEY}, nor {BUILT_IN_URL} {BUILT_IN_KEY}")
 
     monkeypatch.setattr(keystore, "open_keystore", broken)
+    for environ in (dict(BOTH), {}):
+        caplog.clear()
+        assert cli._build_walka_account(tmp_path, Pad(), environ) is None
+        (line,) = lines(caplog)
+        assert "RuntimeError" in line.getMessage() and line.exc_info is None and line.levelno == logging.WARNING
+        assert none_of_it_is_said(caplog)
+    packed(monkeypatch)
+    caplog.clear()
     assert cli._build_walka_account(tmp_path, Pad(), dict(BOTH)) is None
     (line,) = lines(caplog)
-    assert "RuntimeError" in line.getMessage() and line.exc_info is None
-    assert "accounts.example" not in caplog.text and KEY not in caplog.text
+    assert "RuntimeError" in line.getMessage() and line.exc_info is None and none_of_it_is_said(caplog)
 
 
-def test_the_address_and_the_key_stand_in_no_file_of_walkas(repo_root: Path):
-    """They are read from the environment when Walka starts. (The names of the variables are not the values.)"""
+# ---- the gate, cell by cell ------------------------------------------------------------------------
+
+# What the two variables can hold when Walka is started. ("Neither is taken": an address that is no
+# HTTPS address and a key of the secret kind - what the looks above turn down one by one.)
+WHAT_THE_VARIABLES_HOLD = {
+    "neither is set": {},
+    "the address alone": {URL_VARIABLE: URL},
+    "the key alone": {KEY_VARIABLE: KEY},
+    "both, as Walka takes them": dict(BOTH),
+    "both, and neither is taken": {URL_VARIABLE: "ftp://accounts.example/rest?x=1", KEY_VARIABLE: a_service_role_key()},
+    "a secret key": {URL_VARIABLE: URL, KEY_VARIABLE: "sb_secret_abcdefghijklmnopqrstuvwx"},
+    "plain http": {URL_VARIABLE: "http://accounts.example", KEY_VARIABLE: KEY},
+}
+
+
+def what_the_gate_must_do(is_packed: bool, variables: str, simulated: bool, old_aiohttp: bool) -> tuple[str, int, str]:
+    """The rule, said once more and by itself: whose part Walka has ("" for
+    none), at what level its one line is said, and how that line goes on
+    after "Walka has its Walka account's part" or "Walka has no Walka
+    account's part: "."""
+    # The packaged program knows the address that is built in, and no other. From source the two
+    # variables name a developer's own database - and half of them, or a wrong one, names nothing.
+    own = not is_packed and variables != "neither is set"
+    if own and variables in ("the address alone", "the key alone"):
+        return "", logging.WARNING, f"{URL_VARIABLE} and {KEY_VARIABLE} must both be set"
+    if own and variables in ("both, and neither is taken", "plain http"):
+        return "", logging.WARNING, f"{URL_VARIABLE} is not an address Walka asks"
+    if own and variables == "a secret key":
+        return "", logging.WARNING, f"{KEY_VARIABLE} is not a key Walka uses"
+    # Said to whoever set the variables; to nobody else unless they ask ("walka -v").
+    quietly = logging.INFO if own else logging.DEBUG
+    if simulated:
+        return "", quietly, "the treadmill is the simulated one"
+    if old_aiohttp:
+        return "", logging.WARNING, "it needs aiohttp 3.9.5 or newer"
+    if own:
+        return "the variables'", quietly, f": it is run from its source code, with {URL_VARIABLE} and {KEY_VARIABLE} set"
+    return "built in", quietly, ""
+
+
+def test_the_gate_cell_by_cell(tmp_path, monkeypatch, caplog, store, built_in):
+    """Every start there is: packed (by either mark) or from source; the
+    variables unset, by half, good, or wrong in each way; a real
+    treadmill or the simulated one; an aiohttp that will do or one that
+    is too old. Eighty-four cells, and in each: whose part, one line of
+    the log and its level - and never a word of what a variable holds or
+    of what is built in. The packaged program does not read the
+    variables in any cell, and says nothing of them."""
+    caplog.set_level(logging.DEBUG, logger="walka")
+    will_do = aiohttp.__version__
+    cells = 0
+    for how in ("from source", "sys.frozen", "sys._MEIPASS"):
+        for variables, held in WHAT_THE_VARIABLES_HOLD.items():
+            for simulated in (False, True):
+                for old_aiohttp in (False, True):
+                    cell = f"{how}; {variables}; simulated: {simulated}; aiohttp too old: {old_aiohttp}"
+                    is_packed = how != "from source"
+                    with pytest.MonkeyPatch.context() as here:
+                        if is_packed:
+                            packed(here, how)
+                        assert cli._is_packed() is is_packed, cell
+                        here.setattr(aiohttp, "__version__", "3.9.4" if old_aiohttp else will_do)
+                        caplog.clear()
+                        part = cli._build_walka_account(
+                            tmp_path / "data",
+                            SimulatedTreadmill() if simulated else Pad(),
+                            NeverRead(held) if is_packed else dict(held),
+                        )
+                    whose, level, goes_on = what_the_gate_must_do(is_packed, variables, simulated, old_aiohttp)
+                    made_with = None if part is None else (part.origin.text, part.key)
+                    assert made_with == {"": None, "built in": (BUILT_IN_URL, BUILT_IN_KEY), "the variables'": (URL, KEY)}[whose], cell
+                    (line,) = lines(caplog)
+                    said = line.getMessage()
+                    begins = "Walka has its Walka account's part" if whose else "Walka has no Walka account's part: "
+                    assert line.levelno == level and line.exc_info is None, (cell, said)
+                    assert said.startswith(begins + goes_on) and (whose == "" or said == begins + goes_on), (cell, said)
+                    assert ("WALKA_ACCOUNT" in caplog.text) is ("WALKA_ACCOUNT" in goes_on) and not (
+                        is_packed and "WALKA_ACCOUNT" in caplog.text
+                    ), (cell, said)
+                    assert none_of_it_is_said(caplog), (cell, said)
+                    assert not [word for word in ("ftp:", "rest?", "sb_secret", "eyJ", "http:") if word in caplog.text], cell
+                    cells += 1
+    assert cells == 84
+    # Made or not, and nothing more: no file, no folder, no look into the store.
+    assert not (tmp_path / "data").exists() and list(tmp_path.iterdir()) == [] and store.calls == []
+
+
+# The one file of Walka's that says where the Walka accounts are (walka_account/project.py).
+THE_ONE_FILE = "companion/src/walka/walka_account/project.py"
+
+
+def test_where_the_accounts_are_stands_in_one_file_of_walkas_and_the_variables_in_another(repo_root: Path):
+    """The address and the key are built in, in one file that holds nothing
+    else; the two variables are read by the command line, and by nothing
+    else. (What that one file holds is looked at in
+    test_walka_account_nokeys.py - here only that no other file of the
+    program's holds such a thing. Names, never what was found: a failure
+    of this test is printed.)"""
     source = (repo_root / "companion" / "src" / "walka" / "cli.py").read_text("utf-8")
     assert source.count(f'"{URL_VARIABLE}"') == 1 and source.count(f'"{KEY_VARIABLE}"') == 1
+    assert source.count("project.ADDRESS") == 1 and source.count("project.PUBLISHABLE_KEY") == 1
+    hold_it, name_a_variable, read_the_environment, looked = [], [], [], 0
     for path in sorted((repo_root / "companion" / "src" / "walka").rglob("*.py")):
-        text = path.read_text("utf-8")
-        assert "supabase.co" not in text and "sb_publishable_" not in text, path.name
-        if path.name != "cli.py":
-            assert "WALKA_ACCOUNT_" not in text, path.name
+        text, name = path.read_text("utf-8"), path.relative_to(repo_root).as_posix()
+        looked += 1
+        if "supabase.co" in text or "sb_publishable_" in text:
+            hold_it.append(name)
+        if "WALKA_ACCOUNT_" in text:
+            name_a_variable.append(name)
         if path.parent.name == "walka_account" or path.name in ("app.py", "web.py"):
-            assert "os.environ" not in text and "getenv" not in text, path.name
+            if "os.environ" in text or "getenv" in text:
+                read_the_environment.append(name)
+    assert looked > 40 and hold_it == [THE_ONE_FILE]
+    assert name_a_variable == ["companion/src/walka/cli.py"] and read_the_environment == []
+    # That one file is the two constants and words about them: it imports nothing and does nothing.
+    import ast
+
+    tree = ast.parse((repo_root / THE_ONE_FILE).read_text("utf-8"))
+    kinds = [type(node).__name__ for node in tree.body]
+    assert kinds == ["Expr", "ImportFrom", "Assign", "Assign"]
+    assert tree.body[1].module == "__future__"
+    assert [node.targets[0].id for node in tree.body[2:]] == ["ADDRESS", "PUBLISHABLE_KEY"]
+    assert all(isinstance(node.value, ast.Constant) and isinstance(node.value.value, str) for node in tree.body[2:])
 
 
 NOT_THE_REPOSITORYS = (".git", ".pytest_cache", ".ruff_cache", "__pycache__", "node_modules", ".venv", "venv", "build", "dist")
 
 
-def test_nothing_shaped_like_a_real_address_or_a_real_key_stands_anywhere_in_the_repository(repo_root: Path):
-    """The live project's address and its key are in no file here - not in
-    code, tests, documents or a workflow - until the website has said what
-    Walka does with them. (Made-up ones are short, and end in ``.example``.)"""
+def test_nothing_shaped_like_a_real_address_or_a_real_key_stands_anywhere_else_in_the_repository(repo_root: Path):
+    """The real project's address and its key are in ONE file here - and in
+    no other: not in code, tests, documents or a workflow. Nor is a secret
+    key, anywhere. (Made-up ones are short, and end in ``.example``. This
+    walks the folders as they lie on disk, kept by git or not.)"""
     shaped = re.compile(rb"sb_publishable_[A-Za-z0-9_-]{20,}|sb_secret_[A-Za-z0-9_-]{30,}|[a-z0-9]{20}\.supabase\.(co|in)\b")
-    looked, found = 0, []
+    secret = re.compile(rb"sb_secret_[A-Za-z0-9_-]{30,}")
+    looked, found, secrets = 0, [], []
     for folder, folders, files in os.walk(repo_root):
         if "pyvenv.cfg" in files:
             folders[:] = []  # somebody's Python environment, whatever its name: other people's libraries
@@ -1738,12 +2007,15 @@ def test_nothing_shaped_like_a_real_address_or_a_real_key_stands_anywhere_in_the
                 continue
             looked += 1
             if shaped.search(data):
-                found.append(str(path.relative_to(repo_root)))
-    assert looked > 150 and found == []
+                found.append(path.relative_to(repo_root).as_posix())
+            if secret.search(data):
+                secrets.append(path.relative_to(repo_root).as_posix())
+    assert looked > 150 and found == [THE_ONE_FILE] and secrets == []
     assert (repo_root / ".github" / "workflows" / "ci.yml").is_file()  # (the workflows are among what was looked at)
     # ... and the look would find one of each kind.
     for made_up in (b"https://" + b"a1" * 10 + b".supabase.co", b"sb_publishable_" + b"x" * 31, b"sb_secret_" + b"x" * 31):
         assert shaped.search(made_up)
+    assert secret.search(b"sb_secret_" + b"x" * 31) and not secret.search(b"sb_publishable_" + b"x" * 31)
 
 
 def test_the_sign_in_page_is_opened_on_a_thread_of_its_own_and_its_address_is_never_logged(monkeypatch, caplog):
@@ -1838,13 +2110,21 @@ class Run:
         return "\n".join(path.read_bytes().decode("utf-8", "replace") for path in found)
 
 
-def test_walka_run_from_source_with_both_variables_has_the_part_and_signs_in(tmp_path, monkeypatch, caplog):
-    """The whole of it, through cli's own code: the part is built from the
-    environment, handed to the App, reached through the dashboard - and the
-    sign-in page is opened by cli's own opener, on its own thread. With the
-    log kept as ``walka -v`` keeps it: in ``walka.log``, in the data folder."""
+@pytest.mark.parametrize("how", ["from source, with both variables", "packed, with the address that is built in"])
+def test_walka_run_has_the_part_and_signs_in(tmp_path, monkeypatch, caplog, how):
+    """The whole of it, through cli's own code: the part is built - from
+    the environment, by a Walka that runs from its source code; from what
+    is built in, by the packaged program, whatever the environment says -
+    handed to the App, reached through the dashboard, and the sign-in page
+    is opened by cli's own opener, on its own thread. With the log kept as
+    ``walka -v`` keeps it: in ``walka.log``, in the data folder.
+
+    (What is "built in" here is the stand-in's address on this computer.
+    The packaged program's variables name a second stand-in, which is
+    never asked anything.)"""
     walka = Run(tmp_path, monkeypatch, "--no-capture", pad=True)
     never_in_the_log: list[str] = []
+    is_packed = how.startswith("packed")
 
     async def scenario():
         loop = asyncio.get_running_loop()
@@ -1857,10 +2137,18 @@ def test_walka_run_from_source_with_both_variables_has_the_part_and_signs_in(tmp
             return True
 
         monkeypatch.setattr(webbrowser, "open", browser)
-        async with FakeAccounts(wall=lambda: NOW) as fake:
+        async with FakeAccounts(wall=lambda: NOW) as fake, FakeAccounts(wall=lambda: NOW) as elsewhere:
             user = fake.add_user("walker@mail.example")
-            monkeypatch.setenv(URL_VARIABLE, fake.origin)
-            monkeypatch.setenv(KEY_VARIABLE, fake.key)
+            assert elsewhere.origin != fake.origin
+            if is_packed:
+                packed(monkeypatch)
+                monkeypatch.setattr(project, "ADDRESS", fake.origin)
+                monkeypatch.setattr(project, "PUBLISHABLE_KEY", fake.key)
+                monkeypatch.setenv(URL_VARIABLE, elsewhere.origin)
+                monkeypatch.setenv(KEY_VARIABLE, "the-variables-key")
+            else:
+                monkeypatch.setenv(URL_VARIABLE, fake.origin)
+                monkeypatch.setenv(KEY_VARIABLE, fake.key)
             task = asyncio.create_task(cli._run(walka.args))
             there = f"http://127.0.0.1:{walka.port}"
             async with aiohttp.ClientSession() as session:
@@ -1910,10 +2198,15 @@ def test_walka_run_from_source_with_both_variables_has_the_part_and_signs_in(tmp
             assert "walker@mail.example" not in served[1] and of_the_part(names_in(json.loads(served[1]))) == set()
             written = "\n".join(logging.Formatter().format(record) for record in caplog.records)
             never_in_the_log.extend((*keys, fake.origin, fake.origin[7:], fake.key, user, "walker@mail.example", "authorize"))
+            never_in_the_log.extend((elsewhere.origin, elsewhere.origin[7:], "the-variables-key"))
             for word in never_in_the_log:
                 assert word not in written, word
             assert "Walka has its Walka account's part" in written
+            # The packaged program says nothing of the variables, which it never read.
+            assert ("WALKA_ACCOUNT" in written) is (not is_packed)
             assert user in (walka.data / ledger.FILE_NAME).read_text("utf-8")  # (the file is where the id may stand)
+            # Where the variables of the packaged program point, nobody was asked anything; nor is it named in a file.
+            assert elsewhere.requests == [] and elsewhere.origin[7:] not in walka.files_text()
 
     stop_logging = cli._start_logging(True, stream=io.StringIO(), file=walka.data / cli.LOG_FILE)
     try:
@@ -1924,33 +2217,40 @@ def test_walka_run_from_source_with_both_variables_has_the_part_and_signs_in(tmp
     # holds no key, no address of the accounts, and nothing of who signed in.
     kept = "\n".join(path.read_text("utf-8") for path in sorted(walka.data.glob(cli.LOG_FILE + "*")))
     assert "Walka has its Walka account's part" in kept and "is running: dashboard at" in kept
-    assert len(never_in_the_log) >= 9 and [word for word in never_in_the_log if word in kept] == []
+    assert len(never_in_the_log) >= 12 and [word for word in never_in_the_log if word in kept] == []
 
 
-@pytest.mark.parametrize("how", ["--simulate", "--demo", "config.json", "packed"])
-def test_walka_run_has_no_part_with_the_simulated_treadmill_or_packed_whatever_the_environment_says(
-    tmp_path, monkeypatch, how
-):
+@pytest.mark.parametrize("how", ["--simulate", "--demo", "config.json"])
+@pytest.mark.parametrize(
+    "where", ["from source, with both variables", "from source, with the address that is built in", "packed"]
+)
+def test_walka_run_has_no_part_with_the_simulated_treadmill(tmp_path, monkeypatch, how, where):
     """A made-up walk never reaches a Walka account: all three ways to the
-    simulated treadmill, through cli's own code - and the packaged program."""
+    simulated treadmill, through cli's own code - in a Walka that runs
+    from its source code, with a database of its developer's own or with
+    the address that is built in, and in the packaged program."""
     flags = {"--simulate": ["--simulate", "--no-capture"], "--demo": ["--demo"]}.get(how, ["--no-capture"])
-    walka = Run(tmp_path, monkeypatch, *flags, pad=how == "packed")
+    walka = Run(tmp_path, monkeypatch, *flags, pad=False)
     if how == "config.json":
         (walka.data / "config.json").write_text(json.dumps({"treadmill": {"kind": "simulated"}}), "utf-8")
-    if how == "packed":
-        monkeypatch.setattr(sys, "frozen", True, raising=False)
 
     async def scenario():
         async with FakeAccounts(wall=lambda: NOW) as fake:
             fake.add_user("walker@mail.example")
-            monkeypatch.setenv(URL_VARIABLE, fake.origin)
-            monkeypatch.setenv(KEY_VARIABLE, fake.key)
+            if where.endswith("both variables"):
+                monkeypatch.setenv(URL_VARIABLE, fake.origin)
+                monkeypatch.setenv(KEY_VARIABLE, fake.key)
+            else:
+                monkeypatch.setattr(project, "ADDRESS", fake.origin)
+                monkeypatch.setattr(project, "PUBLISHABLE_KEY", fake.key)
+            if where == "packed":
+                packed(monkeypatch)
             task = asyncio.create_task(cli._run(walka.args))
             there = f"http://127.0.0.1:{walka.port}"
             async with aiohttp.ClientSession() as session:
                 state = await until_served(session, walka.port)
                 assert walka.parts == [None] and "walka_account" not in state
-                assert state["treadmill"]["kind"] == ("ftms" if how == "packed" else "simulated")
+                assert state["treadmill"]["kind"] == "simulated"
                 for path in ROUTES:
                     for body in ({}, {"way": "github"}, {"question": "q", "send": "all"}):
                         async with session.post(there + path, json=body) as response:
@@ -1975,6 +2275,73 @@ def test_the_variables_of_whoever_runs_the_tests_are_taken_away():
     assert cli._build_walka_account(Path("nowhere"), Pad()) is None
 
 
+# Whether this file knew either of the real two when it was read - before any test, and before any
+# fixture. (Whether, and not what: nothing here holds them.)
+KNOWN_WHEN_THIS_FILE_WAS_READ = bool(project.ADDRESS or project.PUBLISHABLE_KEY)
+
+
+@pytest.fixture(scope="module")
+def known_to_a_fixture_of_the_whole_file() -> bool:
+    return bool(project.ADDRESS or project.PUBLISHABLE_KEY)
+
+
+def test_where_the_accounts_really_are_is_not_known_to_a_test(monkeypatch, known_to_a_fixture_of_the_whole_file):
+    """Walka has its part by default now, with the real address built in.
+    In a test it knows none: from source or packed, a Walka that a test
+    starts and gives nothing has no part - and so nobody to ask. Nor is
+    it known before a test begins - to a file of tests as it is read, or
+    to a fixture that is made once for a whole file: conftest.py takes
+    it away for good, not for each test."""
+    assert project.ADDRESS == "" and project.PUBLISHABLE_KEY == ""
+    assert not KNOWN_WHEN_THIS_FILE_WAS_READ and not known_to_a_fixture_of_the_whole_file
+    assert cli._build_walka_account(Path("nowhere"), Pad()) is None
+    packed(monkeypatch)
+    assert cli._build_walka_account(Path("nowhere"), Pad()) is None
+
+
+def test_a_walka_that_a_test_starts_as_a_process_of_its_own_is_given_no_real_address_either():
+    """conftest.py does not reach a process of its own: a Walka started
+    so knows where the accounts really are, unless it is told otherwise.
+    So every script here that runs Walka's command line whole first gives
+    itself a built-in address of its own - a made-up one, or none - and
+    every command that runs the module itself runs the demo (the
+    simulated treadmill, with which no Walka has the part) or only asks
+    for the version."""
+    import ast
+
+    scripts, commands = [], []
+    runs_it = "cli.main(" + "sys.argv"  # (in two pieces: this file is among those looked at)
+    for path in sorted(HERE.glob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text("utf-8"))):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                if runs_it in node.value:
+                    scripts.append(path.name)
+                    given = re.findall(r"(?m)^project\.ADDRESS(?:, project\.PUBLISHABLE_KEY = \{built_in!r\}| = project\.PUBLISHABLE_KEY = \"\")$", node.value)
+                    assert len(given) == 1, path.name
+                    # ... before the command line is run, not after.
+                    assert node.value.index("project.ADDRESS") < node.value.index(runs_it), path.name
+            if isinstance(node, ast.List):
+                words = [word.value for word in node.elts if isinstance(word, ast.Constant) and isinstance(word.value, str)]
+                if "-m" in words and "walka" in words:
+                    commands.append(path.name)
+                    assert "--demo" in words or words[-1] == "--version", (path.name, words)
+    assert scripts == ["test_walka_account_build.py", "test_walka_account_httpscheck.py", "test_walka_account_program.py"]
+    assert commands == ["test_cli.py", "test_cli.py", "test_window.py"]
+
+
+def test_a_test_that_set_the_two_and_did_not_put_them_back_hands_nothing_on():
+    """(This one sets them, as a careless test would - and conftest.py empties them again afterwards.)"""
+    import conftest
+
+    assert conftest._looking is not conftest._BETWEEN_TESTS  # (a test is running: this one)
+    project.ADDRESS, project.PUBLISHABLE_KEY = BUILT_IN_URL, BUILT_IN_KEY
+    assert (project.ADDRESS, project.PUBLISHABLE_KEY) == (BUILT_IN_URL, BUILT_IN_KEY)
+
+
+def test_the_test_after_it_knows_neither():
+    assert project.ADDRESS == "" and project.PUBLISHABLE_KEY == ""
+
+
 def test_the_real_store_for_secrets_and_the_real_browser_fail_a_test(_no_real_keystore_and_no_real_browser):
     reached = _no_real_keystore_and_no_real_browser
     with pytest.raises(AssertionError, match="store for secrets"):
@@ -1988,7 +2355,203 @@ def test_the_real_store_for_secrets_and_the_real_browser_fail_a_test(_no_real_ke
     reached.clear()  # (or this test would fail, as it should)
 
 
+# Addresses that are nobody's: kept for documents (192.0.2.x, 2001:db8::), so that even if the look
+# below did let one through, nobody would be asked. It lets none through: each is refused before
+# anything leaves this computer.
+NOT_THIS_COMPUTER = (
+    ("192.0.2.1", 9),
+    ("0.0.0.0", 9),
+    ("128.0.0.1", 9),
+    ("10.0.0.1", 443),
+    ("accounts.example", 443),
+    ("localhost.accounts.example", 443),
+    ("127.0.0.1.accounts.example", 443),
+    ("", 9),
+)
+NAMES_OF_SOMEBODY_ELSE = ("accounts.example", "localhost.accounts.example", "127.0.0.1.accounts.example", "walka.dev")
+
+
+def test_a_connection_or_a_look_up_that_leaves_this_computer_fails_a_test(_nothing_leaves_this_computer):
+    """The look itself, tried: every way out is refused BEFORE it is taken.
+    What the look hands on to - the system's own connect and look-up - is
+    stood in for here, and is never reached with anything but this
+    computer. (So this test stays at home even with the look taken out,
+    and then fails.)"""
+    import conftest
+
+    reached = _nothing_leaves_this_computer
+    the_systems = dict(reached.ways)
+    got_through: list[Any] = []
+
+    def stand_in(way: str):
+        def instead(*told, **_how):
+            connects = way.startswith("connect") or way == "sendto"
+            host = (told[-1] if way == "sendto" else told[1])[0] if connects else told[0]
+            # (This computer itself, and numbers that need no look-up, are the look's to let through.)
+            if conftest.on_this_computer(host) or (not connects and (host is None or conftest.is_an_address(host))):
+                return the_systems[way](*told, **_how)
+            got_through.append((way, host))
+            raise OSError("let through")
+
+        return instead
+
+    async def no_sock_connect(_loop, _sock, address):
+        got_through.append(("sock_connect", address))
+        raise OSError("let through")
+
+    reached.ways.update({way: stand_in(way) for way in the_systems}, sock_connect=no_sock_connect)
+
+    for address in NOT_THIS_COMPUTER:
+        for connect in ("connect", "connect_ex"):
+            with socket.socket() as sock:
+                sock.settimeout(0.01)
+                with pytest.raises(AssertionError, match="not this computer"):
+                    getattr(sock, connect)(address)
+    tried = 2 * len(NOT_THIS_COMPUTER)
+    assert len(reached) == tried
+    try:
+        six = socket.socket(socket.AF_INET6)
+    except OSError:
+        six = None  # (a computer without that kind of address: nothing to try)
+    if six is not None:
+        with six:
+            six.settimeout(0.01)
+            for address in (("2001:db8::1", 9, 0, 0), ("::ffff:192.0.2.1", 9, 0, 0), ("::", 9, 0, 0)):
+                with pytest.raises(AssertionError, match="not this computer"):
+                    six.connect(address)
+        tried += 3
+    # Without connecting first - as a name is asked for by hand, of a server of names.
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        for address in NOT_THIS_COMPUTER:
+            with pytest.raises(AssertionError, match="not this computer"):
+                sock.sendto(b"?", address)
+        with pytest.raises(AssertionError, match="not this computer"):
+            sock.sendto(b"?", 0, ("192.0.2.1", 53))
+    tried += len(NOT_THIS_COMPUTER) + 1
+    for name in NAMES_OF_SOMEBODY_ELSE:
+        with pytest.raises(AssertionError, match="a name was looked up"):
+            socket.getaddrinfo(name, 443)
+        with pytest.raises(AssertionError, match="a name was looked up"):
+            socket.gethostbyname(name)
+        with pytest.raises(AssertionError, match="a name was looked up"):
+            socket.gethostbyname_ex(name)
+        with pytest.raises(AssertionError, match="a name was looked up"):
+            socket.create_connection((name, 443), timeout=0.01)
+    tried += 4 * len(NAMES_OF_SOMEBODY_ELSE)
+    assert len(reached) == tried and got_through == []
+    # What is said names no place: it is printed, and the place could be where the accounts really are.
+    assert not [said for said in reached if "example" in said or "192" in said or "walka.dev" in said]
+
+    # The event loop's ways: its own connection, and a client of aiohttp's - as the part asks.
+    async def through_the_loop() -> list[str]:
+        said = []
+        for host in ("192.0.2.1", "accounts.example"):
+            try:
+                await asyncio.wait_for(asyncio.open_connection(host, 9), 10)
+            except AssertionError as refused:
+                said.append(str(refused))
+        async with aiohttp.ClientSession() as session:
+            try:
+                await session.get("http://192.0.2.1:9/", timeout=aiohttp.ClientTimeout(total=10))
+            except (AssertionError, OSError, aiohttp.ClientError, asyncio.TimeoutError) as refused:
+                said.append(type(refused).__name__)
+        # (Windows' event loop, which goes round the socket: its own way of connecting, by itself.)
+        from asyncio import proactor_events
+
+        with socket.socket() as sock:
+            try:
+                await proactor_events.BaseProactorEventLoop.sock_connect(asyncio.get_running_loop(), sock, ("192.0.2.1", 9))
+            except AssertionError as refused:
+                said.append(str(refused))
+        return said
+
+    said = run(through_the_loop, 60)
+    assert len(said) == 4 and "not this computer" in said[0] and "a name was looked up" in said[1]
+    assert "not this computer" in said[3]
+    assert len(reached) == tried + 4 and got_through == []
+    reached.clear()  # (or this test would fail, as it should)
+
+    # This computer itself is let through - by its numbers, and by the one name it always has.
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        # (Two come and nobody takes them in. Room for both: with room for one, Windows turns the second away.)
+        listener.listen(8)
+        port = listener.getsockname()[1]
+        socket.create_connection(("127.0.0.1", port), timeout=10).close()
+        with socket.socket() as sock:
+            sock.settimeout(10)
+            assert sock.connect_ex(("127.0.0.1", port)) == 0
+    assert socket.getaddrinfo("127.0.0.1", 80) and socket.getaddrinfo(None, 80) and socket.getaddrinfo("localhost", 80)
+    assert socket.gethostbyname("127.0.0.1") == "127.0.0.1"
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as listener, socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        listener.bind(("127.0.0.1", 0))
+        assert sock.sendto(b"?", listener.getsockname()) == 1 and sock.sendto(b"?", 0, listener.getsockname()) == 1
+    assert list(reached) == [] and got_through == []
+    reached.ways.update(the_systems)
+
+
+def test_what_reaches_out_while_no_test_is_running_is_refused_too_and_fails_the_test_that_comes_next(
+    _nothing_leaves_this_computer,
+):
+    """A thread that a test left behind gets to the network when its test
+    is over; a fixture of a whole file runs before the first test of it.
+    The look is there all the while - not put up for each test and taken
+    down after it - and what it refuses then is written down for the next
+    test to fail on. (Here "no test is running" is made up, and what the
+    look would hand on to is stood in for: this test stays at home even
+    with the look taken out.)"""
+    import conftest
+
+    reached, between = _nothing_leaves_this_computer, conftest._BETWEEN_TESTS
+    assert conftest._looking is reached and reached is not between and conftest.reached_between_tests() == []
+    the_systems, got_through = dict(between.ways), []
+    assert the_systems == conftest._THE_SYSTEMS_OWN and len(the_systems) == 7
+
+    def instead(*told, **_how):
+        got_through.append(told)
+        raise OSError("let through")
+
+    between.ways.update({way: instead for way in the_systems})
+    conftest._looking = between  # (as it stands whenever no test is running)
+    try:
+        with socket.socket() as sock:
+            with pytest.raises(AssertionError, match="not this computer"):
+                sock.connect(("192.0.2.1", 9))
+        with pytest.raises(AssertionError, match="a name was looked up"):
+            socket.getaddrinfo("accounts.example", 443)
+    finally:
+        conftest._looking = reached
+        between.ways.update(the_systems)
+    assert len(between) == 2 and list(reached) == [] and got_through == []
+    # The test that comes next asks what there was, and fails on it. It is told once.
+    assert conftest.reached_between_tests() == [
+        "a connection was opened to somewhere that is not this computer",
+        "a name was looked up that is not this computer's",
+    ]
+    assert conftest.reached_between_tests() == [] and list(between) == []
+    # And the looks are the same ones before, in and after every test: nothing puts them up or takes them down.
+    assert socket.socket.connect.__module__ == socket.getaddrinfo.__module__ == "conftest"
+    assert socket.socket.connect_ex.__module__ == socket.socket.sendto.__module__ == "conftest"
+
+
+def test_what_counts_as_this_computer():
+    import conftest
+
+    for host in ("127.0.0.1", "127.0.0.2", "127.255.255.254", "::1", "localhost", "LOCALHOST", "::ffff:127.0.0.1", b"127.0.0.1"):
+        assert conftest.on_this_computer(host), host
+    for host in (
+        "128.0.0.1", "126.255.255.255", "0.0.0.0", "", "::", "192.168.1.1", "10.0.0.1", "169.254.1.1", "::ffff:10.0.0.1",
+        "accounts.example", "localhost.example", "127.0.0.1.example", "localhost:80", "127.1", "2130706433", None, 2130706433,
+        ("127.0.0.1", 80), "fe80::1%eth0",
+    ):  # fmt: skip
+        assert not conftest.on_this_computer(host), host
+    assert conftest.is_an_address("192.0.2.1") and conftest.is_an_address("2001:db8::1") and conftest.is_an_address("fe80::1%eth0")
+    assert not conftest.is_an_address("accounts.example") and not conftest.is_an_address("127.1") and not conftest.is_an_address("")
+
+
 INNER_TESTS = '''
+import socket
+import sys
 import webbrowser
 from pathlib import Path
 from types import SimpleNamespace
@@ -1996,7 +2559,7 @@ from types import SimpleNamespace
 import pytest
 
 from walka import cli
-from walka.walka_account import keystore
+from walka.walka_account import keystore, project
 
 BOTH = {"WALKA_ACCOUNT_URL": "https://accounts.example", "WALKA_ACCOUNT_KEY": "test-key"}
 
@@ -2013,6 +2576,32 @@ def test_whose_walka_goes_on_without_the_part():
     assert cli._build_walka_account(Path("nowhere"), SimpleNamespace(kind="ftms"), dict(BOTH)) is None
 
 
+def test_whose_walka_takes_a_refused_connection_for_no_answer():
+    try:
+        socket.create_connection(("192.0.2.1", 9), timeout=0.01)
+    except Exception:
+        pass
+
+
+def test_whose_walka_takes_a_refused_look_up_for_no_answer():
+    try:
+        socket.getaddrinfo("accounts.example", 443)
+    except Exception:
+        pass
+
+
+def test_that_knows_no_address_of_the_accounts_packed_or_not(monkeypatch):
+    assert project.ADDRESS == "" and project.PUBLISHABLE_KEY == ""
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    assert cli._build_walka_account(Path("nowhere"), SimpleNamespace(kind="ftms"), dict(BOTH)) is None
+
+
+@pytest.mark.real_address
+def test_that_is_marked_for_the_address():
+    known = bool(project.ADDRESS) and bool(project.PUBLISHABLE_KEY)
+    assert known
+
+
 @pytest.mark.real_keystore
 def test_that_is_marked_for_the_store():
     assert keystore.open_keystore("linux").kind == "memory"
@@ -2026,7 +2615,7 @@ def test_that_is_marked_for_the_browser():
 
 def test_a_test_that_reached_them_fails_though_walka_swallowed_the_error(tmp_path):
     """The look at the end of each test (conftest.py), tried on tests of its
-    own in a pytest of their own: two of the five reach what they must not,
+    own in a pytest of their own: four of the nine reach what they must not,
     in places where Walka goes on regardless."""
     (tmp_path / "test_inner.py").write_text(INNER_TESTS, "utf-8")
     environment = dict(os.environ, PYTHONPATH=os.pathsep.join((str(HERE), str(SRC))))
@@ -2034,11 +2623,79 @@ def test_a_test_that_reached_them_fails_though_walka_swallowed_the_error(tmp_pat
     done = subprocess.run(command, cwd=tmp_path, env=environment, capture_output=True, text=True, timeout=300)
     assert done.returncode == 1, done.stdout + done.stderr
     # (The last line counts them; another pytest may count a warning in between.)
-    assert re.search(r"\b5 passed\b", done.stdout) and re.search(r"\b2 errors\b", done.stdout), done.stdout
+    assert re.search(r"\b9 passed\b", done.stdout) and re.search(r"\b4 errors\b", done.stdout), done.stdout
     assert not re.search(r"\b\d+ failed\b", done.stdout), done.stdout
     failed = sorted(line.split("::")[1].split(" ")[0] for line in done.stdout.splitlines() if line.startswith("ERROR "))
-    assert failed == ["test_whose_walka_goes_on_without_the_part", "test_whose_walka_swallows_the_browsers_error"]
+    assert failed == [
+        "test_whose_walka_goes_on_without_the_part",
+        "test_whose_walka_swallows_the_browsers_error",
+        "test_whose_walka_takes_a_refused_connection_for_no_answer",
+        "test_whose_walka_takes_a_refused_look_up_for_no_answer",
+    ]
     assert "PytestUnknownMarkWarning" not in done.stdout
+
+
+INNER_TESTS_WITH_A_FIXTURE_OF_THE_WHOLE_FILE = '''
+import socket
+
+import pytest
+
+from walka.walka_account import project
+
+KNOWN_WHEN_THIS_FILE_WAS_READ = bool(project.ADDRESS or project.PUBLISHABLE_KEY)
+
+
+def reach_out():
+    try:
+        socket.create_connection(("192.0.2.1", 9), timeout=0.01)
+    except Exception:
+        pass
+
+
+@pytest.fixture(scope="module")
+def of_the_whole_file():
+    known = bool(project.ADDRESS or project.PUBLISHABLE_KEY)
+    reach_out()
+    yield known
+    reach_out()
+
+
+def test_before_which_a_fixture_reached_out(of_the_whole_file):
+    pass
+
+
+def test_in_the_middle_that_knew_no_address_at_any_time(of_the_whole_file):
+    assert not KNOWN_WHEN_THIS_FILE_WAS_READ and not of_the_whole_file
+
+
+def test_after_which_a_fixture_reached_out(of_the_whole_file):
+    pass
+'''
+
+
+def test_what_reaches_out_before_the_first_test_or_after_the_last_fails_one_too(tmp_path):
+    """The same, in a pytest of its own: a fixture that is made once for
+    a whole file reaches out before the first test of it has begun, and
+    again when the last is over. Both are refused, and each fails the
+    test beside it. (And neither that fixture nor the file, as it was
+    read, knew where the accounts really are.)"""
+    (tmp_path / "test_inner.py").write_text(INNER_TESTS_WITH_A_FIXTURE_OF_THE_WHOLE_FILE, "utf-8")
+    environment = dict(os.environ, PYTHONPATH=os.pathsep.join((str(HERE), str(SRC))))
+    command = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "conftest", "-rE", "test_inner.py"]
+    done = subprocess.run(command, cwd=tmp_path, env=environment, capture_output=True, text=True, timeout=300)
+    assert done.returncode == 1, done.stdout + done.stderr
+    assert re.search(r"\b2 passed\b", done.stdout) and re.search(r"\b2 errors\b", done.stdout), done.stdout
+    assert not re.search(r"\b\d+ failed\b", done.stdout), done.stdout
+    # Which test, where, and why: the one before its set-up was done, the other when all was over.
+    told = re.findall(r"(?m)^_+ ERROR at (setup|teardown) of (\w+) _+$", done.stdout)
+    assert told == [
+        ("setup", "test_before_which_a_fixture_reached_out"),
+        ("teardown", "test_after_which_a_fixture_reached_out"),
+    ]
+    before, after = done.stdout.split(" ERROR at teardown of ")
+    assert "before this test began, something reached for another computer" in before
+    assert "after a test was over, something it left behind reached for another computer" in after
+    assert before.count("AssertionError: ") >= 1 and "before this test began" not in after
 
 
 @pytest.mark.real_keystore

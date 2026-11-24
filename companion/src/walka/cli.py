@@ -83,9 +83,11 @@ def _build_treadmill(cfg: config_module.Config, simulate: bool):
 # ---- the Walka account's part ---------------------------------------------------------
 
 # Where the accounts are, and the key that says which project is asked - its
-# PUBLISHABLE key, the one that stands in the website's own pages. Both are
-# read from the environment when Walka starts and stand in no file of
-# Walka's. (Not SUPABASE_URL and SUPABASE_KEY, which other tools export.)
+# PUBLISHABLE key, the one that stands in the website's own pages - is built
+# into Walka (walka_account/project.py, and nowhere else). Somebody who runs
+# Walka from its source code can name a database of their own instead, on
+# their own computer or elsewhere, with these two variables. (Not
+# SUPABASE_URL and SUPABASE_KEY, which other tools export.)
 ACCOUNT_URL_VARIABLE = "WALKA_ACCOUNT_URL"
 ACCOUNT_KEY_VARIABLE = "WALKA_ACCOUNT_KEY"
 # The oldest aiohttp the part's client was tried on (and on 3.14.5). With
@@ -120,49 +122,70 @@ def _build_walka_account(data_dir: Path, treadmill, environ=os.environ):
     (``walka_account``) - or None, and then Walka has no such part at all:
     no card on the dashboard, no key in the snapshot, routes that answer 404.
 
-    None, always, in the packaged program (Walka.exe, Walka on a Mac),
-    whatever the environment says: no download can reach the accounts
-    before the website says what Walka does with them. From source it is
-    there only when both variables are set, the address is one Walka takes,
-    the key is not a secret one, and the treadmill is a real one: a walk
-    made with the simulated treadmill never reaches a Walka account. (And
-    only with an aiohttp its client was tried on: from source, whichever
-    is installed is used.)
+    The packaged program (Walka.exe, Walka on a Mac) and Walka run from
+    its source code both have it, made with the address and the key that
+    are built in (``walka_account/project.py``). Having it asks nobody:
+    the part opens no connection until somebody has signed in.
 
-    What is said in the log names a variable, never what it holds.
+    From source - and only there - the two variables name another
+    database instead: a developer's own. Both must be set, the address
+    must be one Walka takes and the key not a secret one. One of them
+    alone is refused, and then there is no part at all - not the built-in
+    one either: whoever set a variable did not ask for the real accounts.
+    The packaged program does not so much as read them: whatever they
+    hold, it knows the built-in address and no other.
+
+    None with the simulated treadmill, always: a walk made with it never
+    reaches a Walka account. (And only with an aiohttp the part's client
+    was tried on: from source, whichever is installed is used.)
+
+    What is said in the log names a variable, never what it holds - and
+    never the built-in address or key.
     """
-    if _is_packed():
-        return None
-    url, key = environ.get(ACCOUNT_URL_VARIABLE), environ.get(ACCOUNT_KEY_VARIABLE)
-    if not url and not key:
-        return None  # how Walka comes: nothing is said, and nothing is there
-    why, level = None, logging.WARNING
+    url = key = None
+    if not _is_packed():
+        url, key = environ.get(ACCOUNT_URL_VARIABLE), environ.get(ACCOUNT_KEY_VARIABLE)
+    own = bool(url or key)  # somebody's own database, named - whole or by half - by the variables
+    # (What is said quietly: to whoever set the variables, in a line of the log. Without them
+    # nobody asked, and it is for "walka -v" only.)
+    why, level, quietly = None, logging.WARNING, logging.INFO if own else logging.DEBUG
     try:
-        from .walka_account import https, keystore
+        from .walka_account import https, keystore, project
         from .walka_account.service import WalkaAccount
 
+        if not own:
+            url, key = project.ADDRESS, project.PUBLISHABLE_KEY
+            if not url or not key:
+                return None  # a Walka that was given no address: nothing is said, and nothing is there
         origin = https.parse_origin(url) if url and key else None
         if not url or not key:
             why = f"{ACCOUNT_URL_VARIABLE} and {ACCOUNT_KEY_VARIABLE} must both be set"
+        elif origin is None and not own:
+            why = "the address built into Walka is not one it asks"
         elif origin is None:
             why = (
                 f"{ACCOUNT_URL_VARIABLE} is not an address Walka asks (HTTPS only - or, for a database on this "
                 "computer, 127.0.0.1 with its port - and nothing after the address)"
             )
+        elif not https.key_is_usable(key) and not own:
+            why = "the key built into Walka is not one it uses"
         elif not https.key_is_usable(key):
             why = f"{ACCOUNT_KEY_VARIABLE} is not a key Walka uses (the accounts' publishable key, never a secret one)"
         elif treadmill.kind == "simulated":
             # (--simulate, --demo, or "kind": "simulated" in config.json. Nothing is wrong: said quietly.)
-            why, level = "the treadmill is the simulated one, and made-up walks never go to a Walka account", logging.INFO
+            why, level = "the treadmill is the simulated one, and made-up walks never go to a Walka account", quietly
         elif not _aiohttp_is_new_enough():
             why = "it needs aiohttp {}.{}.{} or newer".format(*ACCOUNT_NEEDS_AIOHTTP)
         else:
             part = WalkaAccount(origin, key, data_dir, keystore=keystore.open_keystore(), opener=_open_sign_in_page)
-            log.info(
-                "Walka has its Walka account's part: it is run from its source code, with %s and %s set",
-                ACCOUNT_URL_VARIABLE,
-                ACCOUNT_KEY_VARIABLE,
-            )
+            if own:
+                log.info(
+                    "Walka has its Walka account's part: it is run from its source code, with %s and %s set",
+                    ACCOUNT_URL_VARIABLE,
+                    ACCOUNT_KEY_VARIABLE,
+                )
+            else:
+                log.debug("Walka has its Walka account's part")
             return part
     except Exception as exc:
         # Walka works in full without the part: an error here must not keep
@@ -1042,13 +1065,13 @@ RUNTIME_MODULES: tuple[str, ...] = (
     "walka.treadmill.bleak_backend",
     # What asks a Walka account (walka/walka_account), every module of it.
     # aiohttp starts without "ssl" and says nothing: only naming it shows
-    # that it is packed. (The packaged program has the modules and no part
-    # made of them: see _build_walka_account.)
+    # that it is packed.
     "ssl",
     "walka.walka_account.calls",
     "walka.walka_account.https",
     "walka.walka_account.keystore",
     "walka.walka_account.ledger",
+    "walka.walka_account.project",
     "walka.walka_account.row",
     "walka.walka_account.sender",
     "walka.walka_account.service",
@@ -1271,11 +1294,12 @@ def _httpscheck(args: argparse.Namespace) -> int:
     """Hidden command, run by the build: does HTTPS work in THIS program,
     and does it check certificates? Prints one line; exits 0 if so.
 
-    Walka's packaged programs have never made an HTTPS request, and the
-    part that will (walka/walka_account) is not in them yet: this tries
-    the client it asks with. Unlike everything else in Walka it does ask
-    another machine: it fetches the front page of walka.dev, once. It
-    reads no settings and no folder, and writes no log.
+    The part that makes HTTPS requests (walka/walka_account) makes none
+    until somebody has signed in - on their own computer, where no build
+    is looking. So this tries the client it asks with, here. Unlike the
+    rest of Walka it asks another machine unasked: it fetches the front
+    page of walka.dev, once. It reads no settings and no folder, and
+    writes no log.
     """
     try:
         said = asyncio.run(_httpscheck_steps(args.refuse_port))

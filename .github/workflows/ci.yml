@@ -163,29 +163,32 @@ jobs:
       # prompt they are typed into: checked on a real one.
       - name: Commands print to the command prompt
         run: python tools/check_console.py companion/dist/Walka.exe
-      # Walka.exe has never made an HTTPS request on anybody's computer.
-      # What will make them one day - the part that sends walks to a Walka
-      # account - is not in the packed program yet, but what it asks with
-      # is. So the packed program fetches https://walka.dev/ once, which
-      # must work, and then asks a server started here whose certificate
-      # nobody vouches for: that one it must turn down before it has
-      # asked anything. (If walka.dev cannot be reached from this machine,
-      # the build fails: nothing was checked.)
+      # Walka.exe makes HTTPS requests on a computer where somebody has
+      # signed in to a Walka account - and on no build machine, where
+      # nobody ever is. So what it asks with is tried here by itself: the
+      # packed program fetches https://walka.dev/ once, which must work,
+      # and then asks a server started here whose certificate nobody
+      # vouches for: that one it must turn down before it has asked
+      # anything. (If walka.dev cannot be reached from this machine, the
+      # build fails: nothing was checked.)
       - name: HTTPS works in the program, and it checks certificates
         run: python tools/check_https.py companion/dist/Walka.exe
-      # Walka can sign in to a Walka account and send walks to it - run
-      # from its source code, by somebody who has set it up for that. The
-      # program built here has no such part, whatever it is started with:
-      # no download reaches the accounts before the website has said what
-      # Walka does with them. So it is started once as it would have to be
-      # for that part to be there - a real treadmill asked for, not the
-      # demo's, and everything set that the part reads - and must say
-      # nothing of a Walka account, answer none of its buttons and keep
-      # no file of one. (tools/check_no_account.py says how; what it sets,
-      # it sets for that one run. This machine has no Bluetooth adapter
-      # and no treadmill: Walka serves its dashboard while it looks.)
-      - name: The program has no Walka account's part
-        run: python tools/check_no_account.py companion/dist/Walka.exe
+      # Walka can sign in to a Walka account and send walks to it, and
+      # the program built here has that part - made with the address that
+      # is built into it, and with no other. So it is started twice, each
+      # time with the two variables set that name another address to a
+      # Walka run from its source code. As people start it - a real
+      # treadmill asked for - it must have the part, with nobody signed
+      # in and sending off, not made with that other address, and must
+      # have written no file of a Walka account. As the demo it must say
+      # nothing of a Walka account and answer none of its buttons: a
+      # made-up walk never goes. Nobody is signed in on this machine, so
+      # the accounts are asked nothing. (tools/check_account_part.py says
+      # how; what it sets, it sets for those runs. This machine has no
+      # Bluetooth adapter and no treadmill: Walka serves its dashboard
+      # while it looks.)
+      - name: The program has its Walka account's part, and none as the demo
+        run: python tools/check_account_part.py companion/dist/Walka.exe
       - name: Package
         shell: pwsh
         run: |
@@ -305,12 +308,13 @@ jobs:
       # macOS's own list instead, and says here how many it found there.
       - name: HTTPS works in the program, and it checks certificates
         run: python tools/check_https.py companion/dist/Walka.app/Contents/MacOS/Walka
-      # No Walka account's part in the packed program, as for Windows
-      # above: started once with a real treadmill asked for and with
-      # everything set that the part reads. (Whether this machine lets it
-      # use Bluetooth is another matter: it serves its dashboard all the same.)
-      - name: The program has no Walka account's part
-        run: python tools/check_no_account.py companion/dist/Walka.app/Contents/MacOS/Walka
+      # The Walka account's part in the packed program, as for Windows
+      # above: started once with a real treadmill asked for and once as
+      # the demo, each time with the two variables set that a packed
+      # program must not read. (Whether this machine lets it use
+      # Bluetooth is another matter: it serves its dashboard all the same.)
+      - name: The program has its Walka account's part, and none as the demo
+        run: python tools/check_account_part.py companion/dist/Walka.app/Contents/MacOS/Walka
       - name: Package
         run: |
           mkdir -p release
@@ -491,6 +495,8 @@ jobs:
           **Early version:** not yet tried on a real walking pad. Read *Before your first walk* in the README.
 
           **Walka only listens to your treadmill:** it cannot start, stop or change the speed of the belt - you set the speed on the treadmill itself. Walking while you play is at your own risk; Walka comes with no warranty and is not a medical device. Read the [disclaimer](https://github.com/$GH_REPO/blob/$TAG/DISCLAIMER.md) before your first walk.
+
+          **Your Walka account (on walka.dev):** optional. Walka works in full without it, and if you never sign in it sends nothing and asks nobody. If you sign in and switch sending on yourself, each walk goes to your Walka account. What is sent, when, and how to stop: [Your Walka account](https://github.com/$GH_REPO/blob/$TAG/README.md#your-walka-account-on-walkadev).
 
           **Virus scan:** before this was published, Microsoft Defender scanned Walka.exe, the Mac programs and the addon's files, and found nothing. *virus-scan.json* under Assets says when, and with which virus definitions. A scan that finds nothing is not proof that a file is harmless: see [Is the download safe?](https://github.com/$GH_REPO#is-the-download-safe)
 

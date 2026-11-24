@@ -281,8 +281,12 @@ from pathlib import Path
 from walka import cli
 from walka import session
 from walka.treadmill import TreadmillStatus
-from walka.walka_account import keystore
+from walka.walka_account import keystore, project
 
+# A process of its own does not come by conftest.py: left alone, this Walka would know where the
+# Walka accounts really are. It is given no built-in address: what it has is what its two variables
+# name, on this computer - and were those ever lost on the way, it would have no part at all.
+project.ADDRESS = project.PUBLISHABLE_KEY = ""
 what, marks = sys.argv[1], Path(sys.argv[2])
 never = threading.Event()
 session.MIN_SESSION_SECONDS = 1.0
