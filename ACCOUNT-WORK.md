@@ -3,7 +3,10 @@
 This file belongs to the branch `claude/walka-account-signin-sync-2xtpeb`
 and is removed before the branch is merged. Whoever continues gets the
 brief (`docs/brief-walka-sends-walks.md` in `AntonyPerez0/walka-website`,
-branch `ccr-a2c5d66c-cbhqpm`) and this file.
+branch `ccr-a2c5d66c-cbhqpm`) and this file. Two more files of the same
+kind lie beside it and are removed with it: `ACCOUNT-WORDS.md` (every
+sentence a person reads, old words and new, for the owner's yes) and
+`ACCOUNT-REPORT.md` (the report the brief's section 10 asks for).
 
 The live project's address and key stand nowhere in this repository, and
 not in this file either (decision 12). Neither does anybody's e-mail
@@ -12,12 +15,23 @@ address, nor the address used for the proof of 5.2.
 ## Where it stands
 
 - 21 November 2026. Both repositories read (walka-addon `25cc69c`,
-  walka-website `264e54b`). No code written.
-- The plan and the questions below were put to the owner, who answered
-  "Do everything" the same day (see the next part). The build follows
-  the order under "The plan".
-- **Still the owner's:** a yes to the words (drafted below); which
-  computer they have for the later trial.
+  walka-website `264e54b`). The plan and the questions below were put to
+  the owner, who answered "Do everything" the same day (see the next
+  part). The build followed the order under "The plan".
+- 24 November 2026. Everything of the brief's section 8 up to the stop
+  of step 6 is built and pushed: the part, its place in Walka, the card
+  and the question on the dashboard, the words of section 7 in README,
+  SECURITY, SAFETY and the notices, the tests, the build checks. A last
+  review (six reviewers, two sceptics for each serious finding)
+  confirmed twenty findings; nineteen are fixed, one is put to the owner
+  (a backup put back - see "Known and left"). What was done about each
+  is in `ACCOUNT-REPORT.md`.
+- It stops where the brief says. No live address or key anywhere; a
+  packed program has no part; the version files are untouched; no tag,
+  no release, no merge, no pull request.
+- **Still the owner's:** a yes to the words (`ACCOUNT-WORDS.md`); which
+  computer they have for the later trial; the questions at the end of
+  `ACCOUNT-REPORT.md`.
 
 ## The owner's answers, in their own words
 
@@ -38,8 +52,8 @@ address, nor the address used for the proof of 5.2.
   values, to touch the version files, to tag, release or merge.
 - 21 November 2026, the proof of 5.2: "This is what happened when I
   click on the link", with a picture of their browser (on a phone) at an
-  address beginning `127.0.0.1:47631/` under "This site can't be
-  reached - 127.0.0.1 refused to connect". That failure is the proof:
+  address on `127.0.0.1` under "This site can't be reached - 127.0.0.1
+  refused to connect". That failure is the proof:
   **the live project lets a sign-in come back to 127.0.0.1.** No address
   was added in Supabase for it. (The one-time code of that try was never
   used and has run out.)
@@ -57,8 +71,9 @@ The file wins unless said. Each of these was told to the owner.
    first connection of that run: the name is copied once, when the
    recorder is made (`app.py:244`). So "empty name: not sent" holds back
    real walks, and new ones keep joining them. A file with no such key at
-   all was written by no Walka. Until the owner answers, the brief's
-   default stands (not sent, counted apart). Loading fills a missing key
+   all was written by no Walka. By the owner's answer of 21 November (as
+   it was read) a walk with an empty name IS sent, and a file with no
+   such key is not, and is counted apart. Loading fills a missing key
    with `""`, so the two can only be told apart from the file itself.
 2. **The contract against the brief**, where the brief is followed
    because rule 3a is not up for trade: `data-model.md` says a program
@@ -271,106 +286,19 @@ merge.
 17. The words: drafted here as one list, corrected by the owner.
 18. Which computer the owner has, Windows or a Mac.
 
-## The words, as drafted (the owner corrects them)
+## The words
 
-The card "Walka account", last in Settings. `<host>` is the address
-Walka asks; `<way>` is Discord, GitHub or Google.
-
-- Not signed in: "Optional. Walka works in full without it." Buttons
-  "Sign in with Discord", "Sign in with GitHub", "Sign in with Google".
-  Under them: "Signing in makes a Walka account if you have none: terms
-  (walka.dev/terms/), privacy (walka.dev/privacy/). Nothing is sent until
-  you switch that on. Your web browser opens for this, and Walka asks
-  `<host>`."
-- While signing in: "Waiting for your web browser. Sign in there, then
-  come back."
-- A sign-in that did not work: "Nothing was signed in." / "Walka could
-  not finish signing in. Try again." / "Nobody came back from the
-  browser. Try again." / "Walka could not keep the sign-in on this
-  computer, so nothing was signed in." / "Walka could not check that it
-  is talking to your account's server, so it asked nothing." / "There
-  was no answer. Try again later."
-- Signed in: "Signed in as `<e-mail>`, with `<way>`." Button "Sign out".
-  "'Sign out' on walka.dev does not sign this computer out: sign out
-  here." "The sign-in is kept in Windows' Credential Manager." / "... in
-  your Mac's keychain." / "... in memory, until Walka is closed."
-- The first step is not taken: "This sign-in has no Walka account yet.
-  To open one - or to delete this sign-in - go to walka.dev/account/ and
-  sign in there the same way (with `<way>`). If you already have an
-  account, it is under another e-mail address: sign out here and sign in
-  the way that uses that address." Link "Open walka.dev/account/".
-  Button "Look again (asks your Walka account)".
-- Sending off: "Nothing is sent. `<n>` walks on this computer are not in
-  your Walka account." Button "Send my walks to my Walka account..."
-  with "Asks your Walka account first."
-- The question, "Send my walks to my Walka account?":
-  1. "To `<e-mail>`, signed in with `<way>`."
-  2. "What goes, of each walk: when it started and ended, the day, and
-     how far this computer's clock was from world time; how long the
-     belt moved; distance, steps and calories (estimates), and how many
-     of the calories were on top of sitting; how each number was come by
-     (for the calories: from speed or from heart rate - the word, not
-     the heart rate); whether a walking session was running in the game;
-     and the walk's name on this computer, which is its start time."
-     "What stays here: the samples, the heart rate, the top speed, the
-     treadmill's name, the character, your weight, height, age and sex."
-  3. "Where: your Walka account, in the database the site's owner runs
-     (`<host>`). walka.dev/privacy/"
-  4. "`<n>` walks would go now." Choice "All of them" / "Only walks from
-     now on". "From then on each walk goes when it is saved, without
-     asking again." And where it applies: "`<m>` walks do not say which
-     treadmill made them, and are not sent." "`<k>` walks are outside
-     what the account takes, and stay here."
-  5. Only if the page is public: "Your page on walka.dev is public.
-     Walks you send count on it as soon as they are sent, so anyone who
-     reloads it can tell when you were on the pad. With 'All of them'
-     your whole history shows there at once."
-  6. "Every walk recorded on this computer goes to this account, whoever
-     walked."
-  7. "To stop: switch it off here, or sign out. Stopping deletes nothing
-     in the account. There a walk is deleted one at a time:
-     walka.dev/account/walks/"
-  Buttons "Send my walks" and "Not now".
-- Sending on: "Sending is on. Each walk goes to your Walka account when
-  it is saved." "`<n>` sent, `<m>` waiting." Button "Stop sending".
-- After a pass: "Sent." / "No answer - Walka tries again later." / "This
-  Walka is too old for the account as it is now: get the newest Walka."
-  / "The account is full: it has room for 20,000 walks." / "Walka
-  stopped for now and tries again when it is next started." / "Walka
-  could not check that it is talking to your account's server, so it
-  sent nothing."
-- Set aside: "The account did not take `<n>` walks. They stay here."
-  with each walk's day and the account's own message.
-- When the sign-in ends (decision 11, word for word), with a button
-  "OK": "Walka is no longer signed in to your Walka account, and has
-  stopped sending. You signed out elsewhere, or the account was deleted.
-  Your walks on this computer are untouched."
-- The stored sign-in is not there: "The sign-in is not on this computer
-  any more. Nothing is sent." A Mac that refuses the read: "macOS did
-  not let this version of Walka read the stored sign-in. Sign in again."
-- With the simulated treadmill there is no card at all.
-
-Elsewhere on the dashboard:
-
-- The rail's foot while sending is on: "Runs on this computer. Your
-  walks are sent to your Walka account." Otherwise as it is.
-- The foot of Settings while sending is on: "Your walks are sent to your
-  Walka account. Everything else on this page stays on this computer."
-  Otherwise as it is.
-- The Share view: "The picture is made on this computer. It is not
-  uploaded: you choose where to post it."
-- Deleting a walk that was sent: "Delete this walk from this computer?
-  It disappears from your totals here and from the addon's history. This
-  cannot be undone. It stays in your account, and on your public page if
-  you have one, until you delete it there: walka.dev/account/walks/"
-  Button "Delete from this computer"; afterwards "Walk deleted from this
-  computer."
-- The three pages of the listener, word for word from the brief.
+The list that stood here on 21 November is replaced by
+`ACCOUNT-WORDS.md`, which holds every sentence of this change that a
+person reads, as it stands now, with file and line, the old words where
+there were any, and a mark: the brief's own words, drafted and shown to
+the owner on 21 November, or new and not yet seen by the owner. The
+owner's yes is given to that file.
 
 ## What is built
 
-In `companion/src/walka/walka_account/`, each with tests in
-`companion/tests/test_walka_account_<part>.py`. Nothing uses them yet.
+The part, in `companion/src/walka/walka_account/`, each module with
+tests in `companion/tests/test_walka_account_<name>.py`:
 
 - `threads.py` - `off_loop`: work that may block, on a daemon thread.
 - `row.py` - a walk's file to a row, the website's way (compared with
@@ -380,19 +308,65 @@ In `companion/src/walka/walka_account/`, each with tests in
   have run nowhere but on CI (one real round trip each).
 - `ledger.py` - the file `walka-account.json`.
 - `https.py` - the address, the key's check, certificates, the client.
-- `httpscheck`, a hidden command in `cli.py`, with `tools/check_https.py`
-  and one step in each build job of `ci.yml`.
-- `companion/tests/fake_accounts.py` - the stand-in for the accounts.
 - `calls.py` - the requests of 5.4 and what each answer means.
 - `signin.py` - one sign-in through the browser, with its listener.
 - `sender.py` and `service.py` - the sending pass, and `WalkaAccount`,
-  the object to be handed to `App` (it is not handed in yet).
-- `companion/tests/walka_account_rig.py` - the rig the tests share.
+  the object handed to `App`.
 
-Known and left, for the report:
+Its place in Walka:
 
-- A stored sign-in that could not be deleted at sign-out is not tried
-  again at a later start.
+- `cli.py` - `_build_walka_account`: a part only from source, with both
+  variables, an address that passes, a key that is not a secret one, and
+  a treadmill that is not the simulated one. The hidden command
+  `httpscheck`. The browser for a sign-in.
+- `app.py` - `App(..., walka_account=None)`: started with Walka, told of
+  each saved walk, cancelled before the walk is saved at closing and
+  closed after it; the snapshot's key `walka_account` only with a part.
+- `web.py` - seven POST routes under `/api/walka-account/` (404 without
+  a part); on `/api/sessions` two flags for each walk: a copy is in the
+  Walka account that is signed in, or in another one.
+- `session.py` - while a walk is going, its Walka holds a lock
+  (`active-session.lock`) on the checkpoint, so that a second Walka on
+  the same data folder does not take the walk for one left by a crash.
+  A store clears only a checkpoint it wrote itself; and a Walka that
+  finds, with the lock free, a checkpoint another Walka left when it
+  crashed makes a finished walk of it before writing its own. Where a
+  folder has no locks everything is as it was. (The last review's one
+  serious finding; it is the only change to how walks are recorded,
+  with one line in `app.py`: the checkpoint is no longer cleared and
+  written again every half minute, only written.)
+
+The dashboard: `static/walkaaccount.js` (the card, the question, the
+feet), and small changes in `index.html`, `settings.js`, `app.js`,
+`history.js`, `app.css`.
+
+The documents: `README.md`, `SECURITY.md`, `docs/SAFETY.md`, both copies
+of `THIRD-PARTY-NOTICES.md`. Drafts until the owner's yes.
+
+The build checks: `tools/check_https.py` and `tools/check_no_account.py`
+with one step each in the Windows build and the Mac builds of `ci.yml`:
+the packed program makes checked HTTPS requests and refuses a home-made
+certificate; and the packed program, started with both variables set,
+has no Walka-account part.
+
+The tests: `fake_accounts.py` (the stand-in for the accounts),
+`walka_account_rig.py` (the rig), one test file for each module, and for
+Walka as a whole `test_walka_account_wiring.py`, `_quiet.py`,
+`_program.py`, `_nokeys.py`, `_two_walkas.py`, `_page.py`,
+`_httpscheck.py`, `_build.py`.
+
+Known and left (all of it is in `ACCOUNT-REPORT.md`, in plain words):
+
+- **Put to the owner:** an older `walka-account.json` put back from a
+  backup, or changed by hand, while the sign-in is still in the system's
+  store switches sending on again for that same Walka account without
+  the question. Closing it needs a second entry in the store; not built
+  without the owner's word.
+- A sign-in that the system's store would not let go at sign-out is
+  noted in the file and said in the card, with a button that tries
+  again. Nothing tries by itself at a later start. Two data folders on
+  one address share one entry in the store: a sign-out (or "Try again")
+  in one takes the other's sign-in out too.
 - aiohttp asks a GET once more by itself when the line is cut after
   sending: a read (never a send of walks) can reach the accounts twice.
 - A refresh refused with any other code than the two the brief names
@@ -400,8 +374,21 @@ Known and left, for the report:
 - At a start nothing reads the store (rule 3a), so the card shows the
   e-mail address from the file until the first request finds the store
   empty.
+- Two Walkas on one data folder: a refresh that comes back in the very
+  instant the other Walka signs out and in again can still leave the
+  wrong key in the store. No walk goes to the wrong Walka account.
+- A browser that comes back in the very instant a sign-in is cancelled
+  may be left with a tab that never finishes loading.
+- Nothing ran on a real Windows PC or Mac outside CI; nothing touched
+  the live project but the owner's one click.
 
 ## What comes next
 
-The owner's answers go into this file, in their words, with the date.
-Then the order above.
+1. The owner's yes to the words (`ACCOUNT-WORDS.md`), and answers to the
+   questions at the end of `ACCOUNT-REPORT.md`. Each answer goes into
+   this file, in the owner's words, with its date.
+2. Not this work: the website's maintainer changes the privacy page and
+   the terms; the owner tries it from source against the live project;
+   then a change of a few lines adds the address and the key, lifts the
+   from-source rule and goes out under a new version number. These three
+   files are removed before the branch is merged.
