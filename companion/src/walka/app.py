@@ -277,7 +277,12 @@ class App:
             )
             if wall - self._last_checkpoint >= CHECKPOINT_EVERY_S:
                 self._last_checkpoint = wall
-                self._save_unsaved()
+                if self._unsaved:
+                    # (Only then. Saving clears the checkpoint, and with it
+                    # goes the lock that tells another Walka that this walk
+                    # is still going: a walk under way keeps both, without
+                    # a gap, from its first checkpoint to its end.)
+                    self._save_unsaved()
                 if not self._unsaved:
                     # (While a finished walk is still waiting to be written,
                     # the checkpoint file is what keeps it safe: leave it.)

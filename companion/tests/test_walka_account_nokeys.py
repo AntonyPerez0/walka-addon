@@ -663,9 +663,11 @@ def test_after_a_whole_story_no_key_of_a_sign_in_stands_in_any_file_any_answer_o
     for name in ("data/config.json", "data/state.json", book, "AddOns/Walka/CompanionData.lua", "GET /api/config"):
         assert places[name], name
     assert sum(1 for name in places if name.startswith("data/sessions/")) == 26 and "GET /api/sessions" in places
-    # No file is left half-written, and none of the part's but its book and its lock.
+    # No file is left half-written, no walk is left unfinished, and none of the part's but its book and
+    # its lock. (The recorder's own lock stays where a walk was written down: an empty file.)
     names = places["the names of the files under data"]
-    assert ".tmp" not in names and "active-session" not in names
+    assert ".tmp" not in names and "active-session.json" not in names
+    assert places["data/active-session.lock"] == ""
     of_the_part = sorted(name for name in places if "account" in name and name.startswith("data/"))
     assert of_the_part == [book, "data/walka-account.lock"]
 
