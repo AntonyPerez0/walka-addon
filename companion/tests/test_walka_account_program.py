@@ -363,7 +363,10 @@ def a_saved_walk(data: Path, start: float) -> SessionRecord:
     return SessionStore(data).add(record)
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals; see the Windows checklist")
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="POSIX signals: on Windows nothing ends a child the way a log-off does, so this is not tried there",
+)
 @pytest.mark.parametrize("what", ["store", "name"])
 def test_walka_as_a_process_ends_at_once_with_the_walk_saved_though_something_never_answers(tmp_path: Path, what: str):
     """The real thing: Walka's command line in a process of its own,

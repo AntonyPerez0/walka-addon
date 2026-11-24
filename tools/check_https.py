@@ -18,6 +18,9 @@ the program and wants three things: the line "httpscheck OK", that the
 program did come to the server, and that it turned back at the
 certificate - before it had asked for anything.
 
+It says each thing the moment it is done, and how many seconds it took:
+where the time of this step goes can be read off the build's log.
+
 Needs the "openssl" command (the build machines have it; on Windows the
 copy that comes with Git will do). Run by the build
 (.github/workflows/ci.yml); only the standard library.
@@ -27,6 +30,7 @@ from __future__ import annotations
 
 import http.client
 import shutil
+import socketserver
 import ssl
 import subprocess
 import sys
@@ -64,6 +68,32 @@ subjectAltName = {alt_names}
 
 class CheckFailed(Exception):
     """The check cannot be made, or did not come out as it must. Its text says which."""
+
+
+def say(text: str) -> None:
+    """Print a line - now. Written to a build's log, Python keeps what is
+    printed until there is a lot of it, or until it ends: every line then
+    carries the time of the end, and nobody can tell which part took long."""
+    print(text, flush=True)
+
+
+class Seconds:
+    """How long each part took, by a clock that is handed in."""
+
+    def __init__(self, clock=time.monotonic) -> None:
+        self.clock = clock
+        self.took: list[tuple[str, float]] = []
+        self._since = clock()
+
+    def of(self, part: str) -> float:
+        """The seconds since the part before this one ended: written down under ``part``, and given."""
+        now = self.clock()
+        self.took.append((part, max(0.0, now - self._since)))
+        self._since = now
+        return self.took[-1][1]
+
+    def said(self) -> str:
+        return ", ".join(f"{part} {seconds:.1f}" for part, seconds in self.took)
 
 
 def find_openssl() -> str:
@@ -169,9 +199,18 @@ class HomeMadeServer(ThreadingHTTPServer):
         self._counts = {"connections": 0, "handshakes": 0, "requests": 0, "done": 0}
         self.left_with: list[str] = []  # the kind of error each one ended with who did not take the certificate
         super().__init__(("127.0.0.1", 0), _Handler)
-        self.port: int = self.server_address[1]
+        self.port: int = self.server_port
         self._thread = threading.Thread(target=self.serve_forever, name="home-made-server", daemon=True)
         self._thread.start()
+
+    def server_bind(self) -> None:
+        # Not the way Python's own HTTP server does it: that one also asks
+        # the system what this computer is called in full (socket.getfqdn),
+        # for a name nobody here reads - and a system that has to go and
+        # find out can sit on that question for seconds, every time a
+        # server is started.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
 
     def count(self, what: str) -> None:
         with self._lock:
@@ -246,11 +285,12 @@ def run_program(command: list[str], folder: Path, runs_for_s: float = RUNS_FOR_S
     return code, out.read_text("utf-8", "replace"), err.read_text("utf-8", "replace")
 
 
-def check(command: list[str], runs_for_s: float = RUNS_FOR_S) -> str:
+def check(command: list[str], runs_for_s: float = RUNS_FOR_S, clock=time.monotonic) -> str:
     """Run ``command`` + ``httpscheck --refuse-port <port>`` against a home-made server.
 
     Gives the program's own line if all is as it must be; raises ``CheckFailed`` if not.
     """
+    seconds = Seconds(clock)
     # (ignore_cleanup_errors: a program that had to be ended may still hold its files, on Windows.)
     if Path(command[0]).is_file():
         # Its whole path, whatever folder this is run from. (Not "resolved":
@@ -259,39 +299,54 @@ def check(command: list[str], runs_for_s: float = RUNS_FOR_S) -> str:
     with tempfile.TemporaryDirectory(prefix="walka-https-", ignore_cleanup_errors=True) as temp:
         folder = Path(temp)
         certificate, key = make_certificate(folder)
+        say(f"a key and a certificate were made in {seconds.of('the certificate'):.1f} s")
         try:
             server = HomeMadeServer(certificate, key)
         except OSError as exc:  # (ssl's errors are OSErrors)
             raise CheckFailed(f"the home-made server could not be started ({type(exc).__name__}: {exc})") from None
+        started_in = seconds.of("the start of the server")
+        say(f"the home-made server was started on 127.0.0.1:{server.port} in {started_in:.1f} s")
         try:
             # First: this server does answer. Without that, a server that
             # is simply broken would pass for a certificate refused.
             status = ask_trusting(server)
+            asked_in = seconds.of("one who trusts it")
             before = server.counts()
             if status != 200 or before != {"connections": 1, "handshakes": 1, "requests": 1}:
                 raise CheckFailed(f"the home-made server is not working as it should (status {status}, {before})")
-            print(f"the home-made server on 127.0.0.1:{server.port} answers one who trusts its certificate")
+            say(
+                f"the home-made server on 127.0.0.1:{server.port} answers one who trusts its certificate "
+                f"(asked in {asked_in:.1f} s, counted in {seconds.of('the count before'):.1f} s)"
+            )
 
-            code, out, err = run_program([*command, "httpscheck", "--refuse-port", str(server.port)], folder, runs_for_s)
+            program = [*command, "httpscheck", "--refuse-port", str(server.port)]
+            say(f"> {' '.join(program)}")
+            code, out, err = run_program(program, folder, runs_for_s)
+            ran_for = seconds.of("the program")
+            ended = "it had to be ended" if code is None else f"exit code {code}"
+            say(f"the program ran for {ran_for:.1f} s ({ended}), and said:")
+            say(out.rstrip())
+            if err.strip():
+                say(err.rstrip())
             after = server.counts()
+            counted_in = seconds.of("the count after")
             left_with = list(server.left_with)
         finally:
             server.stop()
-    print(f"> {' '.join(command)} httpscheck --refuse-port {server.port}  (exit code {code})")
-    print(out.rstrip())
-    if err.strip():
-        print(err.rstrip())
+            seconds.of("the end of the server")
+            # (In every case: a check that fails for being slow says where it was slow.)
+            say(f"seconds, part by part: {seconds.said()}")
     if code is None:
         raise CheckFailed(f"the program was still running after {runs_for_s:.0f} seconds")
     came = after["connections"] - before["connections"]
-    print(
+    say(
         f"the home-made server saw from the program: {came} connection(s), "
         f"{after['handshakes'] - before['handshakes']} that took its certificate, "
-        f"{after['requests'] - before['requests']} request(s)"
+        f"{after['requests'] - before['requests']} request(s) (counted in {counted_in:.1f} s)"
     )
     if left_with:
         # (Only the kind of error: it tells a refusal from a line that broke, should the count ever be doubted.)
-        print(f"whoever did not take it left the server with: {', '.join(left_with)}")
+        say(f"whoever did not take it left the server with: {', '.join(left_with)}")
     if after["requests"] != before["requests"] or after["handshakes"] != before["handshakes"]:
         raise CheckFailed("the program took a certificate that nobody vouches for")
     lines = [line for line in out.splitlines() if line.startswith("httpscheck OK")]
@@ -304,7 +359,7 @@ def check(command: list[str], runs_for_s: float = RUNS_FOR_S) -> str:
 
 def main() -> int:
     if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
-        print(__doc__)
+        say(__doc__)
         return 2
     for stream in (sys.stdout, sys.stderr):
         # What the program wrote is shown here as it came. A letter that the
@@ -314,9 +369,9 @@ def main() -> int:
     try:
         check(sys.argv[1:])
     except CheckFailed as failed:
-        print(f"HTTPS in the program: FAILED - {failed}.")
+        say(f"HTTPS in the program: FAILED - {failed}.")
         return 1
-    print("The program checks certificates: it reached walka.dev, and it asked the home-made server nothing.")
+    say("The program checks certificates: it reached walka.dev, and it asked the home-made server nothing.")
     return 0
 
 

@@ -11,9 +11,12 @@ from __future__ import annotations
 import ast
 import asyncio
 import importlib.util
+import itertools
+import os
 import re
 import socket
 import ssl
+import subprocess
 import sys
 from pathlib import Path
 
@@ -117,6 +120,9 @@ def test_httpscheck_says_ok_when_the_page_answers(capsys, monkeypatch):
     assert re.search(r"[1-9]\d* root certificates from ", line)
     assert "https://walka.dev/ answered (200) on a checked connection" in line
     assert "127.0.0.1" not in line
+    # ... and, for whoever reads the build's log, on which try and how long everything took.
+    assert re.search(r" root certificates from [^;]+, read in \d+\.\d s; ", line)
+    assert re.search(r"on a checked connection, on try 1 \(\d+\.\d s\); \d+\.\d s in all$", line)
     # One request: a GET of the front page, with no key, no bearer, no query and no body.
     assert asked.calls == [(PAGE, "GET", "/", {"timeout_s": cli.HTTPSCHECK_TRY_S})]
 
@@ -184,12 +190,60 @@ def test_a_page_that_does_not_answer_is_tried_three_times(capsys, monkeypatch):
     assert one_line(capsys).startswith("httpscheck FAILED: ") and asked.who == [PAGE]
 
 
+def slow(monkeypatch, now: list[float], *takes: float) -> None:
+    """Each request to the stand-in takes that long, by a clock that only this moves."""
+    stand_in, left = https.Client.request, list(takes)
+
+    async def request(self, method: str, path: str, **how) -> Answer:
+        now[0] += left.pop(0)
+        return await stand_in(self, method, path, **how)
+
+    monkeypatch.setattr(https.Client, "request", request)
+
+
+def test_the_line_says_every_try_and_how_long_each_part_took(monkeypatch):
+    """Three tries hide a page that answers only at the last one, and a
+    limit of the build hides nothing but its end. So every try is in the
+    line with its seconds, and each part of the check with its own - by a
+    clock that is handed in."""
+    now = [5000.0]
+    Asked(
+        monkeypatch,
+        walka_dev=[NetError("no_answer"), NetError("no_answer"), Answer(200, None, b"")],
+        **{"127_0_0_1": [NetError("certificate")]},
+    )
+    slow(monkeypatch, now, 10.0, 10.04, 7.94, 0.26)
+    said = asyncio.run(cli._httpscheck_steps(8443, mono=lambda: now[0]))
+    assert len(said) == 5 and said[1].endswith(", read in 0.0 s")
+    assert said[2] == (
+        "https://walka.dev/ answered (200) on a checked connection, on try 3 (10.0 s no answer, 10.0 s no answer, 7.9 s)"
+    )
+    assert said[3] == "the home-made certificate on 127.0.0.1:8443 was refused, and nothing was asked there (0.3 s)"
+    assert said[4] == "28.2 s in all"
+
+    # At once, and nobody else asked: one try, and no word of a second server.
+    Asked(monkeypatch, walka_dev=[NetError("too_big")])
+    slow(monkeypatch, now, 0.44)
+    said = asyncio.run(cli._httpscheck_steps(None, mono=lambda: now[0]))
+    assert said[2:] == ["https://walka.dev/ answered on a checked connection, on try 1 (0.4 s)", "0.4 s in all"]
+
+    # A page that never answers: the seconds of every try are in what is said of the failure.
+    Asked(monkeypatch, walka_dev=[NetError("no_answer")] * 3)
+    slow(monkeypatch, now, 10.0, 0.02, 10.0)
+    with pytest.raises(cli._HttpsCheckFailed) as caught:
+        asyncio.run(cli._httpscheck_steps(None, mono=lambda: now[0]))
+    assert str(caught.value) == (
+        "https://walka.dev/ did not answer (3 tries): 10.0 s no answer, 0.0 s no answer, 10.0 s no answer"
+    )
+
+
 def test_the_home_made_certificate_must_be_refused(capsys, monkeypatch):
     there = Origin("https", "127.0.0.1", 8443)
     asked = Asked(monkeypatch, walka_dev=[Answer(200, None, b"")], **{"127_0_0_1": [NetError("certificate")]})
     assert cli.main(["httpscheck", "--refuse-port", "8443"]) == 0
     line = one_line(capsys)
     assert line.startswith("httpscheck OK: ") and "certificate on 127.0.0.1:8443 was refused" in line
+    assert re.search(r"; the home-made certificate on [^;]+ asked there \(\d+\.\d s\); \d+\.\d s in all$", line)
     assert asked.calls == [
         (PAGE, "GET", "/", {"timeout_s": cli.HTTPSCHECK_TRY_S}),
         (there, "GET", "/", {"timeout_s": cli.HTTPSCHECK_TRY_S}),
@@ -557,10 +611,121 @@ def test_the_helper_passes_walka_itself(tool, tmp_path: Path, capsys):
     build runs them - with only the look at walka.dev faked."""
     line = tool.check(program(tmp_path, WALKA_WITH_THE_PAGE_FAKED.format(src=str(SRC))))
     assert line.startswith("httpscheck OK: ") and "was refused" in line
+    assert re.search(r"on try 1 \(\d+\.\d s\); .* was refused, .* \(\d+\.\d s\); \d+\.\d s in all$", line)
     said = capsys.readouterr().out
     assert "1 connection(s), 0 that took its certificate, 0 request(s)" in said
     # ... and with which kind of error the server was left, for whoever reads the build's log.
     assert "whoever did not take it left the server with: " in said
+
+
+def test_the_helper_says_how_long_each_part_took(tool, tmp_path: Path, capsys):
+    """One look at the build's log must say where the time of this step
+    went: making the certificate, starting the server, the one who trusts
+    it, each count, the program, the end. (By a clock that is handed in:
+    here every part takes one second of it.)"""
+    ticks = itertools.count(100)
+    line = tool.check(program(tmp_path, WALKA_WITH_THE_PAGE_FAKED.format(src=str(SRC))), clock=lambda: float(next(ticks)))
+    assert line.startswith("httpscheck OK: ")
+    said = capsys.readouterr().out.splitlines()
+    assert said[0] == "a key and a certificate were made in 1.0 s"
+    assert re.fullmatch(r"the home-made server was started on 127\.0\.0\.1:\d+ in 1\.0 s", said[1])
+    assert said[2].endswith(" answers one who trusts its certificate (asked in 1.0 s, counted in 1.0 s)")
+    # The program's own line is between what is said before it is started and after it has ended.
+    assert said[3].startswith("> ") and said[3].endswith(f" httpscheck --refuse-port {said[1].split(':')[1].split()[0]}")
+    assert said[4] == "the program ran for 1.0 s (exit code 0), and said:" and said[5] == line
+    assert (
+        "seconds, part by part: the certificate 1.0, the start of the server 1.0, one who trusts it 1.0, "
+        "the count before 1.0, the program 1.0, the count after 1.0, the end of the server 1.0"
+    ) in said
+    assert any(text.endswith("0 request(s) (counted in 1.0 s)") for text in said)
+
+    # A program that had to be ended: the seconds are said all the same - it is then that they are wanted.
+    with pytest.raises(tool.CheckFailed):
+        tool.check(program(tmp_path, NEVER_ENDS), runs_for_s=0.5)
+    said = capsys.readouterr().out
+    assert "(it had to be ended), and said:" in said and "seconds, part by part: the certificate " in said
+
+
+WAITS_TO_BE_TOLD = """\
+import sys
+import time
+from pathlib import Path
+
+told, gives_up = Path(sys.argv[1]), time.monotonic() + 15
+while not told.exists():
+    if time.monotonic() > gives_up:
+        print("httpscheck FAILED: nobody said a word while this was running")
+        sys.exit(1)
+    time.sleep(0.05)
+print("httpscheck FAILED: was told while it was still running")
+sys.exit(1)
+"""
+
+
+def test_the_helper_says_each_thing_the_moment_it_happens(tool, repo_root: Path, tmp_path: Path):
+    """A build's log stamps each line with the moment it arrives. Python
+    keeps what is printed to a log until it ends: every line of this step
+    then carried the same time, the end's, and where half a minute went
+    could not be read. So the line that says the program is being started
+    is out while the program still runs - here the program waits to be
+    told so, by whoever reads that line."""
+    script, told = tmp_path / "program.py", tmp_path / "told"
+    script.write_text(WAITS_TO_BE_TOLD, "utf-8")
+    helper = subprocess.Popen(
+        [sys.executable, str(repo_root / "tools" / "check_https.py"), sys.executable, str(script), str(told)],
+        # (As on a build machine: nothing in the environment makes Python write at once.)
+        env={name: value for name, value in os.environ.items() if name != "PYTHONUNBUFFERED"},
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    lines = []
+    try:
+        for raw in helper.stdout:
+            lines.append(raw.decode("utf-8", "replace").rstrip())
+            if lines[-1].startswith("> "):
+                told.write_text("")
+        helper.wait(60)
+    finally:
+        if helper.poll() is None:
+            helper.kill()
+            helper.wait()
+        helper.stdout.close()
+    assert "httpscheck FAILED: was told while it was still running" in lines, lines
+    assert helper.returncode == 1 and lines[-1].startswith("HTTPS in the program: FAILED - ")
+
+
+def test_whatever_the_builds_helpers_print_is_printed_at_once(repo_root: Path):
+    for name in ("check_https.py", "check_no_account.py"):
+        tree = ast.parse((repo_root / "tools" / name).read_text("utf-8"))
+        prints = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "print"
+        ]
+        assert len(prints) == 1, name  # the one in say()
+        for call in prints:
+            flush = [keyword.value for keyword in call.keywords if keyword.arg == "flush"]
+            assert len(flush) == 1 and isinstance(flush[0], ast.Constant) and flush[0].value is True, name
+
+
+def test_starting_the_home_made_server_asks_nobody_what_this_computer_is_called(tool, tmp_path: Path, monkeypatch):
+    """Python's own HTTP server asks the system for this computer's full
+    name each time one is started, and reads the answer nowhere. A system
+    that has to go and find out can take seconds over it - on every start,
+    in a build step that has a limit. The home-made server does not ask."""
+    asked: list[tuple] = []
+    for name in ("getfqdn", "gethostbyaddr", "gethostname", "gethostbyname", "gethostbyname_ex"):
+        monkeypatch.setattr(socket, name, lambda *args, name=name: asked.append((name, *args)) or "nobody.example")
+    server = tool.HomeMadeServer(*tool.make_certificate(tmp_path))
+    try:
+        assert asked == []
+        assert (server.server_name, server.server_port) == ("127.0.0.1", server.port) and server.port > 0
+        assert tool.ask_trusting(server) == 200  # ... and it is a server all the same
+        assert server.counts() == {"connections": 1, "handshakes": 1, "requests": 1}
+    finally:
+        server.stop()
+    assert asked == []
 
 
 @pytest.mark.parametrize(
@@ -637,9 +802,6 @@ def test_the_helper_shows_whatever_the_program_wrote(tool, repo_root: Path, tmp_
     """A build machine's console for Windows cannot show every letter.
     What the program wrote is shown all the same, and the check ends with
     its own sentence - not with an error about a letter."""
-    import os
-    import subprocess
-
     script = tmp_path / "program.py"
     script.write_text(WRITES_WHAT_A_CONSOLE_CANNOT_SHOW, "utf-8")
     ran = subprocess.run(
@@ -693,3 +855,12 @@ def test_both_builds_try_https_in_the_packed_program(repo_root: Path):
     assert "continue-on-error" not in text
     # Where the accounts are is no business of a workflow: the check asks walka.dev and this machine.
     assert "supabase" not in text.lower() and "WALKA_ACCOUNT" not in text and "sb_publishable" not in text
+
+
+def test_the_test_job_names_its_slowest_tests(repo_root: Path):
+    """What is slow on one kind of build machine only - a look-up, a
+    server's start - shows nowhere else: each run of the tests says which
+    fifteen took longest, on each of the three."""
+    text = (repo_root / ".github" / "workflows" / "ci.yml").read_text("utf-8")
+    assert "        run: python -m pytest -q -rs --durations=15\n" in job(text, "test")
+    assert text.count("python -m pytest") == 1
