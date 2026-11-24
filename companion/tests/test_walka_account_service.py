@@ -22,8 +22,10 @@ import pytest
 
 import walka_account_rig
 from walka.walka_account import calls, ledger, sender, service, signin
-from walka.walka_account.service import LAST_WORDS, PROBLEMS, QUESTION_GOOD_FOR_S, WalkaAccount
-from walka_account_rig import OK, Rig, run, strings_in
+from walka.walka_account.keystore import THREAD_NAME as STORE_THREAD
+from walka.walka_account.keystore import Keys
+from walka.walka_account.service import LAST_WORDS, LEFT, PROBLEMS, QUESTION_GOOD_FOR_S, WalkaAccount
+from walka_account_rig import OK, LatestFirst, Rig, run, strings_in
 
 
 @pytest.fixture(autouse=True)
@@ -34,6 +36,7 @@ def nothing_outside_the_list_and_nothing_told(caplog):
 
 
 NOT_AN_ANSWER = (400, {"ok": False, "error": "not an answer to the question"})
+THERE = {"state": "there", "row": None, "deleted": False}
 CLOSING = (409, {"ok": False, "error": "closing"})
 NOT_SIGNED_IN = (409, {"ok": False, "error": "not signed in"})
 
@@ -43,6 +46,7 @@ SNAPSHOT_KEYS = {
     "store",
     "problem",
     "notice",
+    "left_in_store",
     "email",
     "way",
     "first_step",
@@ -73,6 +77,20 @@ def refreshes(rig: Rig) -> int:
 
 def bearer(seen) -> str:
     return (seen.header("Authorization") or "")[len("Bearer ") :]
+
+
+async def until(holds, limit: float = 10.0) -> None:
+    """Wait (in real time, for what a thread does) until it holds."""
+    loop = asyncio.get_running_loop()
+    give_up = loop.time() + limit
+    while not holds():
+        assert loop.time() < give_up
+        await asyncio.sleep(0.005)
+
+
+def store_threads() -> int:
+    """How many calls of the store for secrets are under way, or wait for their turn."""
+    return sum(1 for thread in threading.enumerate() if thread.name == STORE_THREAD)
 
 
 # ---- signing in --------------------------------------------------------------------------------
@@ -121,8 +139,10 @@ def test_a_whole_sign_in_through_the_browser(tmp_path):
                 "email": "walker@mail.example",
                 "sending": False,
                 "chosen": None,
+                "gone": False,
                 "walks": {},
             }
+            assert place["left_in_store"] is False
             assert stored not in rig.files_text()
             # The stored key is the one the accounts will take.
             assert (await calls.refresh(rig.account.client, rig.fake.key, refresh_token=stored)).user_id == user
@@ -312,6 +332,8 @@ def test_signing_out_forgets_first_says_so_at_once_and_then_tells_the_accounts(t
             place = rig.book()["addresses"][rig.origin.text]
             assert place["signed_in"] is None and place["notice"] is None
             assert place["accounts"][user]["sending"] is False
+            # The store said that the sign-in is gone: nothing says that it may still be there.
+            assert place["left_in_store"] is False and rig.snapshot()["left_in_store"] == ""
             # The courtesy: this sign-in only, with the token that was taken into a variable.
             (logout,) = rig.fake.requests[before:]
             assert (logout.method, logout.path, logout.query) == ("POST", "/auth/v1/logout", [("scope", "local")])
@@ -372,10 +394,15 @@ def test_signing_out_reaches_the_file_though_the_store_sits_on_its_answer(tmp_pa
             place = rig.book()["addresses"][rig.origin.text]
             assert place["signed_in"] is None and place["accounts"][user]["sending"] is False
             assert len(rig.keystore.secrets()) == 1 and ("delete", rig.entry) in rig.keystore.calls
+            # ... and with it, that the sign-in may still be in the store: were Walka closed now, the
+            # next start would say so. The card does not say it while the store is still being asked.
+            assert place["left_in_store"] is True and rig.snapshot()["left_in_store"] == ""
             gate.set()
             del rig.keystore.block["delete"]
             await rig.idle()
             assert rig.keystore.secrets() == []
+            assert rig.book()["addresses"][rig.origin.text]["left_in_store"] is False
+            assert rig.snapshot()["left_in_store"] == ""
 
     run(scenario)
 
@@ -425,6 +452,41 @@ def test_sign_out_while_a_refresh_answer_is_held_leaves_the_store_empty(tmp_path
     run(scenario)
 
 
+def test_sign_out_while_a_refresh_answer_is_on_its_way_and_the_file_is_slow_writes_no_key(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path, start=False) as rig:
+            rig.person()
+            await rig.sign_in()
+            await rig.switch_on("all")
+            rig.walk(3600)
+            rig.clock.advance(3700)
+            gate = rig.fake.hold("/auth/v1/token", after=True)
+            going = asyncio.ensure_future(rig.account.sender.one_pass())
+            await gate.arrived.wait()
+            # The file is slow to take "signed out": for a while it still says that somebody is signed in.
+            real, slow = rig.account._ledger.change, threading.Event()
+
+            def change_late(fn):
+                slow.wait(10)
+                return real(fn)
+
+            rig.account._ledger.change = change_late
+            assert rig.account.sign_out() == OK
+            gate.release()  # the renewed key arrives after the sign-out, and before the file says so
+            assert await going == "dropped"
+            await until(lambda: ("delete", rig.entry) in rig.keystore.calls)
+            await until(lambda: store_threads() == 0)
+            # Who is signed in HERE is what counts inside the store's thread: the key was never written.
+            assert rig.keystore.calls.count(("write", rig.entry)) == 1  # (the one of the sign-in)
+            assert rig.keystore.secrets() == []
+            assert rig.keystore.calls.count(("delete", rig.entry)) == 1  # (the sign-out's own: nobody asks twice)
+            slow.set()
+            await rig.idle()
+            assert rig.book()["addresses"][rig.origin.text]["signed_in"] is None
+
+    run(scenario)
+
+
 def test_sign_out_and_sign_in_as_another_account_sends_nothing_until_the_question_is_answered_again(tmp_path):
     async def scenario():
         async with Rig(tmp_path) as rig:
@@ -448,6 +510,9 @@ def test_sign_out_and_sign_in_as_another_account_sends_nothing_until_the_questio
             assert rig.fake.walks(second) == [] and len(rig.fake.walks(first)) == 1
             assert shown["counts"]["waiting"] == 2 and shown["counts"]["sent"] == 0
             assert rig.account.in_account(old.id, old.start) is False  # not in THIS account
+            # ... but a copy is in the first one, and stays there: that is said too (decision 8).
+            assert rig.account.in_other_account(old.id, old.start) is True
+            assert rig.account.in_other_account(new.id, new.start) is False
 
             # Only the question, answered again for THIS account, sends - and it says how many would go.
             question = await rig.question()
@@ -456,6 +521,9 @@ def test_sign_out_and_sign_in_as_another_account_sends_nothing_until_the_questio
             await rig.idle()
             assert {walk["client_id"] for walk in rig.fake.walks(second)} == {old.id, new.id}
             assert len(rig.fake.walks(first)) == 1
+            # Now the old walk has a copy in both, and the new one in the Walka account that is signed in.
+            assert rig.account.in_account(old.id, old.start) and rig.account.in_other_account(old.id, old.start)
+            assert rig.account.in_account(new.id, new.start) and not rig.account.in_other_account(new.id, new.start)
             # Two accounts never get the same row id.
             assert not {walk["id"] for walk in rig.fake.walks(first)} & {walk["id"] for walk in rig.fake.walks(second)}
 
@@ -765,6 +833,9 @@ def test_the_other_walka_signs_in_as_another_account_and_nothing_goes_until_the_
             assert await a_pass(rig) == "nothing"
             assert len(rig.fake.requests) == before
             assert rig.account.in_account(old.id, old.start) is False  # not in the account that is signed in now
+            # (Its copy is in the Walka account the OTHER Walka signed out of: that is known here too.)
+            assert rig.account.in_other_account(old.id, old.start) is True
+            assert rig.account.in_other_account(new.id, new.start) is False
 
             # Only the question, answered here, sends - to the account that is signed in now, with its own key.
             question = await rig.question()
@@ -1091,6 +1162,9 @@ def test_a_sign_in_that_was_ended_elsewhere_ends_here_when_the_accounts_say_so(t
             assert rig.account.look_again() == OK
             await rig.idle()
             assert (rig.snapshot()["state"], rig.snapshot()["notice"]) == ("signed_out", "ended")
+            # The sign-in was ended; the Walka account is there. Nothing says that it is gone.
+            # (Asked "who is there?" twice: after signing in - somebody - and now: nobody.)
+            assert len(rig.asked("/auth/v1/user")) == 2 and rig.account_in_book(user)["gone"] is False
 
     run(scenario)
 
@@ -1232,12 +1306,18 @@ def test_a_new_sign_in_takes_the_notice_away(tmp_path):
 # ---- closing -----------------------------------------------------------------------------------
 
 
+# How long closing may take here, in real seconds: "at once", on a busy build machine too. That close()
+# did not run into its own time limit - a second - is told by the log, which says so when it does.
+CLOSES_WITHIN_S = 3.0
+RAN_OUT_OF_TIME = "did not close in time"
+
+
 def our_tasks() -> list[str]:
     mine = asyncio.current_task()
     return [task.get_name() for task in asyncio.all_tasks() if task is not mine and "walka" in task.get_name()]
 
 
-def test_closing_while_a_request_is_held_takes_no_time_leaves_no_task_and_sends_nothing(tmp_path):
+def test_closing_while_a_request_is_held_takes_no_time_leaves_no_task_and_sends_nothing(tmp_path, caplog):
     async def scenario():
         async with Rig(tmp_path) as rig:
             user = rig.person()
@@ -1254,7 +1334,7 @@ def test_closing_while_a_request_is_held_takes_no_time_leaves_no_task_and_sends_
             rig.account.cancel()  # before the walk is saved: synchronous
             await rig.account.close()  # after it
 
-            assert loop.time() - began < 1.0
+            assert loop.time() - began < CLOSES_WITHIN_S and RAN_OUT_OF_TIME not in caplog.text
             assert our_tasks() == [] and rig.account._tasks == set()
             await asyncio.wait_for(gate.left.wait(), 5)  # whoever asked has gone away
             gate.release()
@@ -1286,7 +1366,7 @@ def test_closing_while_a_request_is_held_takes_no_time_leaves_no_task_and_sends_
     run(scenario)
 
 
-def test_closing_in_the_middle_of_a_sign_in_takes_the_listener_down_and_keeps_nothing(tmp_path):
+def test_closing_in_the_middle_of_a_sign_in_takes_the_listener_down_and_keeps_nothing(tmp_path, caplog):
     async def scenario():
         async with Rig(tmp_path) as rig:
             rig.person()
@@ -1301,7 +1381,7 @@ def test_closing_in_the_middle_of_a_sign_in_takes_the_listener_down_and_keeps_no
             await asyncio.wait_for(asyncio.gather(*rig._browsers), 5)
             assert signin.PAGE_FAILED in rig.pages[0][2]
             await rig.account.close()
-            assert loop.time() - began < 1.0
+            assert loop.time() - began < CLOSES_WITHIN_S and RAN_OUT_OF_TIME not in caplog.text
             assert our_tasks() == [] and rig.account._tasks == set()
             assert rig.keystore.calls == [] and not (rig.dir / ledger.FILE_NAME).exists()
             back = dict(parse_qsl(urlsplit(rig.opened[0]).query))["redirect_to"]
@@ -1347,6 +1427,7 @@ def test_closing_right_after_sign_out_still_takes_the_key_out_of_the_store(tmp_p
             await rig.account.close()
             assert rig.keystore.secrets() == []
             assert ledger.signed_in(rig.book(), rig.origin) is None
+            assert ledger.is_left_in_store(rig.book(), rig.origin) is False  # the store's "gone" is written down too
             assert our_tasks() == []
             # The courtesy to the accounts is left out: closing never waits for the network.
             await asyncio.sleep(0.05)
@@ -1509,6 +1590,7 @@ def test_the_snapshots_shape_is_exactly_this_and_it_never_holds_a_key_or_the_acc
                 assert shown["store"] in ("lasting", "until_closed")
                 assert shown["problem"] in PROBLEMS and shown["last"]["word"] in LAST_WORDS
                 assert shown["notice"] in ("", "ended") and shown["chosen"] in ("", "all", "from")
+                assert shown["left_in_store"] in LEFT
                 assert shown["first_step"] in ("unknown", "taken", "not_taken")
                 assert shown["busy"] in ("", "asking", "sending")
                 assert type(shown["can_send"]) is bool and type(shown["sending"]) is bool
@@ -1526,6 +1608,7 @@ def test_the_snapshots_shape_is_exactly_this_and_it_never_holds_a_key_or_the_acc
                 "store": "lasting",
                 "problem": "",
                 "notice": "",
+                "left_in_store": "",
                 "email": "",
                 "way": "",
                 "first_step": "unknown",
@@ -1580,13 +1663,264 @@ def test_in_account_says_whether_a_copy_is_in_the_account_that_is_signed_in(tmp_
             assert rig.account.in_account(record.id, record.start + 1) is False  # the same id, another walk
             for junk in ((None, None), (record.id, "x"), (7, 7.0), (record.id, float("nan")), (record.id, 10**400)):
                 assert rig.account.in_account(*junk) is False
+            # While it is in the Walka account that is signed in, it is not said to be in another one.
+            assert rig.account.in_other_account(record.id, record.start) is False
             # An entry stays when its walk is deleted on the computer - and is found again after a start.
             rig.store.delete(record.id)
             await rig.restart()
             assert rig.account.in_account(record.id, record.start) is True
             assert rig.snapshot()["counts"]["sent"] == 0  # (it counts the walks that are still here)
             assert rig.account.sign_out() == OK
+            # Nobody is signed in: so it is not "in the Walka account that is signed in" ...
             assert rig.account.in_account(record.id, record.start) is False
+            # ... but its copy stays where it was sent, and that is still known - at once.
+            assert rig.account.in_other_account(record.id, record.start) is True
+
+    run(scenario)
+
+
+# ---- a copy that stays in a Walka account that is not signed in now (decision 8) -----------------
+
+
+def elsewhere(rig: Rig, *records) -> list[bool]:
+    return [rig.account.in_other_account(record.id, record.start) for record in records]
+
+
+def here(rig: Rig, *records) -> list[bool]:
+    return [rig.account.in_account(record.id, record.start) for record in records]
+
+
+def test_after_signing_out_a_sent_walk_is_still_known_to_have_a_copy_in_a_walka_account(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            user = rig.person()
+            sent, gone_there = rig.walk(7200), rig.walk(5400)
+            await rig.sign_in()
+            await rig.switch_on("all")
+            waits = rig.walk(60)  # (nobody woke the sender: it was never sent)
+            assert here(rig, sent, gone_there, waits) == [True, True, False]
+            assert elsewhere(rig, sent, gone_there, waits) == [False, False, False]
+            rev = rig.snapshot()["rev"]
+            rig.clock.advance(3700)  # (the access token has run out: signing out asks nobody)
+            before, store_calls = len(rig.fake.requests), len(rig.keystore.calls)
+
+            assert rig.account.sign_out() == OK
+            # At once, before the file is written - and from memory: no file is read for it.
+            assert here(rig, sent, gone_there, waits) == [False, False, False]
+            assert elsewhere(rig, sent, gone_there, waits) == [True, True, False]
+            assert rig.snapshot()["rev"] > rev  # (History asks for its list again when this moves)
+            await rig.idle()
+            assert elsewhere(rig, sent, gone_there, waits) == [True, True, False]
+
+            # After a start it is read off the file, with nothing asked of anybody and no look into the store.
+            rig.keystore.calls.clear()
+            await rig.restart()
+            assert rig.snapshot()["state"] == "signed_out"
+            assert elsewhere(rig, sent, gone_there, waits) == [True, True, False]
+            reads = []
+            rig.account._ledger.read = lambda: reads.append(1)  # (the route asks this for every walk in the list)
+            for _ in range(3):
+                assert elsewhere(rig, sent, gone_there, waits) == [True, True, False]
+            assert reads == [] and rig.keystore.calls == [] and len(rig.fake.requests) == before
+            assert len(rig.keystore.calls) <= store_calls
+            del rig.account._ledger.read
+            # Neither a made-up start nor junk is such a walk.
+            assert rig.account.in_other_account(sent.id, sent.start + 1) is False
+            for junk in ((None, None), (sent.id, "x"), (7, 7.0), (sent.id, float("nan")), (sent.id, 10**400)):
+                assert rig.account.in_other_account(*junk) is False
+
+            # Signed in again to the same Walka account: it is "in the Walka account that is signed in" again -
+            # from the moment the sign-in is kept, before anything is asked of that Walka account.
+
+            async def not_now(_epoch: int) -> None:
+                return None
+
+            rig.account._look = not_now  # (the look that follows a sign-in reads the file once more: not here)
+            asked_before = len(rig.asked("/rest/v1/profiles"))
+            await rig.sign_in(user)
+            del rig.account._look
+            assert len(rig.asked("/rest/v1/profiles")) == asked_before
+            assert here(rig, sent, gone_there, waits) == [True, True, False]
+            assert elsewhere(rig, sent, gone_there, waits) == [False, False, False]
+            # A walk that is known to be deleted THERE has no copy anywhere: said neither way.
+            key = ledger.walk_key(gone_there.id, gone_there.start)
+            await rig.account.note(user, {key: {"state": "there", "row": None, "deleted": True}})
+            assert here(rig, gone_there) == [False]
+            assert rig.account.sign_out() == OK
+            await rig.idle()
+            assert elsewhere(rig, sent, gone_there, waits) == [True, False, False]
+            # A walk whose send was under way when "Sign out" was pressed went all the same, and is
+            # written down for that Walka account: its copy is known too.
+            key = ledger.walk_key(waits.id, waits.start)
+            row = "5c0a7e1e-3b1d-4d8a-9c55-0e2f4a6b8c10"
+            await rig.account.note(user, {key: {"state": "added", "row": row, "at": rig.clock.wall()}})
+            assert here(rig, waits) == [False] and elsewhere(rig, sent, gone_there, waits) == [True, False, True]
+
+    run(scenario)
+
+
+def test_somebody_who_never_signed_in_has_no_walk_with_a_copy_anywhere_and_nothing_is_made_or_asked(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            records = [rig.walk(7200), rig.walk(3600)]
+            await rig.saved()
+            await rig.restart()
+            assert here(rig, *records) == [False, False] and elsewhere(rig, *records) == [False, False]
+            assert rig.keystore.calls == [] and rig.fake.requests == []
+            assert not (rig.dir / ledger.FILE_NAME).exists() and not (rig.dir / ledger.LOCK_NAME).exists()
+
+    run(scenario)
+
+
+def test_a_sign_in_that_ended_leaves_the_copies_known_unless_the_walka_account_is_known_to_be_gone(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            user = rig.person()
+            record = rig.walk(7200)
+            await rig.sign_in()
+            await rig.switch_on("all")
+            # The sign-in is ended elsewhere, and a refresh is refused: that cannot tell whether the
+            # Walka account is still there. So the copy counts - it may well be on a public page.
+            rig.fake.sign_out_everywhere(user)
+            await rig.advance(3700)
+            rig.walk(60)
+            await rig.saved()
+            assert (rig.snapshot()["state"], rig.snapshot()["notice"]) == ("signed_out", "ended")
+            assert here(rig, record) == [False] and elsewhere(rig, record) == [True]
+            assert rig.account_in_book(user)["gone"] is False
+            await rig.restart()
+            assert elsewhere(rig, record) == [True]
+
+    run(scenario)
+
+
+@pytest.mark.parametrize("how", ["a button that asks", "the sender"])
+def test_a_walka_account_that_the_accounts_say_is_gone_has_no_copies_any_more(tmp_path, how):
+    async def scenario():
+        async with Rig(tmp_path, start=False) as rig:
+            user = rig.person()
+            record = rig.walk(7200)
+            await rig.sign_in()
+            await rig.switch_on("all")
+            assert await a_pass(rig) == "sent"
+            assert here(rig, record) == [True]
+            rig.fake.delete_user(user)  # the Walka account is deleted: its walks went with it
+            if how == "the sender":
+                rig.walk(60)
+                assert await a_pass(rig) == "over"  # "Walka is for adults." - and then: who is there? Nobody.
+            else:
+                assert rig.account.look_again() == OK
+                await rig.idle()
+            assert len(rig.asked("/auth/v1/user")) == 1
+            assert (rig.snapshot()["state"], rig.snapshot()["notice"]) == ("signed_out", "ended")
+            # Walka LEARNED that it is gone, and wrote that down: "a copy stays there" would be untrue.
+            assert here(rig, record) == [False] and elsewhere(rig, record) == [False]
+            assert rig.account_in_book(user)["gone"] is True
+            assert rig.entry_of(user, record)["state"] == "added"  # (what was written down of the walk stays)
+            await rig.restart(start=False)
+            assert elsewhere(rig, record) == [False]
+            # Another Walka account signs in: the one that is gone stays gone.
+            other = rig.person("other@mail.example")
+            await rig.sign_in(other)
+            assert here(rig, record) == [False] and elsewhere(rig, record) == [False]
+            assert rig.account_in_book(user)["gone"] is True
+            assert user not in json.dumps(rig.snapshot())
+
+    run(scenario)
+
+
+def test_a_stored_sign_in_that_is_lost_leaves_the_copies_known(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path, start=False) as rig:
+            rig.person()
+            record = rig.walk(7200)
+            await rig.sign_in()
+            await rig.switch_on("all")
+            assert await a_pass(rig) == "sent"
+            rig.keystore._entries.clear()  # the data folder came from another computer, say
+            rig.walk(60)
+            rig.clock.advance(3700)
+            assert await a_pass(rig) == "over"
+            assert (rig.snapshot()["state"], rig.snapshot()["problem"]) == ("signed_out", "no_stored_sign_in")
+            assert here(rig, record) == [False] and elsewhere(rig, record) == [True]
+
+    run(scenario)
+
+
+def test_without_a_lasting_store_the_copies_are_still_known_after_walka_was_closed(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path, lasting=False) as rig:
+            rig.person()
+            record = rig.walk(7200)
+            await rig.sign_in()
+            await rig.switch_on("all")
+            waits = rig.walk(60)
+            assert here(rig, record, waits) == [True, False]
+            before = len(rig.fake.requests)
+            # On such a computer every start is "signed out": the ordinary state, not a corner.
+            await rig.restart()
+            assert rig.snapshot()["state"] == "signed_out"
+            assert here(rig, record, waits) == [False, False] and elsewhere(rig, record, waits) == [True, False]
+            assert len(rig.fake.requests) == before
+
+    run(scenario)
+
+
+def test_what_the_other_walka_sent_to_a_walka_account_it_signed_out_of_is_known_here_before_the_next_request(
+    tmp_path,
+):
+    async def scenario():
+        async with Rig(tmp_path, start=False) as rig:
+            mine = rig.person("mine@mail.example")
+            await rig.sign_in(mine)
+            await rig.switch_on("all")
+            record = rig.walk(3600)
+            # The other Walka on this data folder noted the walk for a Walka account that is not signed in.
+            other = "0b6f0a52-6d6f-4a8e-9d1c-3a1f0e5b7c21"
+            key = ledger.walk_key(record.id, record.start)
+            ledger.Ledger(rig.dir).change(lambda book: ledger.note_walks(book, rig.origin, other, {key: THERE}))
+            assert elsewhere(rig, record) == [False]
+            rev = rig.snapshot()["rev"]
+            await rig.account.still(rig.account.epoch)  # the look at the file that stands before every request
+            assert here(rig, record) == [False] and elsewhere(rig, record) == [True]
+            assert rig.snapshot()["rev"] > rev  # (History asks for its list again when this moves)
+            rev = rig.snapshot()["rev"]
+            await rig.account.still(rig.account.epoch)
+            assert rig.snapshot()["rev"] == rev  # ... and only then
+            assert await a_pass(rig) == "sent"
+            assert here(rig, record) == [True] and elsewhere(rig, record) == [True]
+
+    run(scenario)
+
+
+@pytest.mark.parametrize("how", ["the sign-in ended", "the Walka account is gone", "the stored sign-in is lost"])
+def test_what_is_known_of_the_copies_does_not_hang_on_the_file_being_written(tmp_path, monkeypatch, how):
+    async def scenario():
+        async with Rig(tmp_path, start=False) as rig:
+            user = rig.person()
+            record = rig.walk(7200)
+            await rig.sign_in()
+            await rig.switch_on("all")
+            assert await a_pass(rig) == "sent"
+            if how == "the sign-in ended":
+                rig.fake.sign_out_everywhere(user)
+            elif how == "the Walka account is gone":
+                rig.fake.delete_user(user)
+            else:
+                rig.keystore._entries.clear()
+            if how != "the Walka account is gone":
+                rig.clock.advance(3700)  # (the access token has run out: the next request needs a new one)
+
+            def full_disk(self, fn):
+                raise ledger.LedgerError("cannot_write")
+
+            monkeypatch.setattr(ledger.Ledger, "change", full_disk)
+            assert rig.account.look_again() == OK
+            await rig.idle()
+            monkeypatch.undo()
+            assert rig.snapshot()["state"] == "signed_out" and here(rig, record) == [False]
+            # In memory it is so all the same: the copy counts - unless Walka learned that it is gone.
+            assert elsewhere(rig, record) == [how != "the Walka account is gone"]
 
     run(scenario)
 
@@ -1694,11 +2028,12 @@ def test_the_other_walka_signs_out_while_this_one_renews_the_key_and_no_key_is_l
             # The other Walka on this data folder signs out: the file says so, and the entry leaves the store.
             ledger.Ledger(rig.dir).change(lambda book: ledger.sign_out(book, rig.origin))
             rig.keystore.delete(rig.entry)
+            writes = rig.keystore.calls.count(("write", rig.entry))
             gate.release()
             assert await going == "dropped"
             await rig.idle()
-            # This Walka had just written the renewed key: it takes it out again.
-            assert rig.keystore.secrets() == []
+            # The renewed key is not written at all: the file is looked at inside the store's thread.
+            assert rig.keystore.secrets() == [] and rig.keystore.calls.count(("write", rig.entry)) == writes
             assert rig.pushes() == [] and rig.fake.walks(user) == []
             assert rig.snapshot()["state"] == "signed_out" and rig.account.access_token() is None
 
@@ -1722,6 +2057,7 @@ def test_a_file_that_cannot_be_written_means_no_sign_in_and_the_key_leaves_the_s
             assert (shown["state"], shown["problem"]) == ("signed_out", "no_store")
             assert rig.keystore.secrets() == [] and rig.account.access_token() is None
             assert [what for what, _name in rig.keystore.calls] == ["write", "delete"]
+            assert shown["left_in_store"] == ""  # (the store said that the key is out again)
 
     run(scenario)
 
@@ -1743,3 +2079,1019 @@ def test_a_file_that_says_sending_is_on_for_an_account_without_an_e_mail_address
             assert len(rig.fake.requests) == before and rig.fake.walks(user) == []
 
     run(scenario)
+
+
+# ---- what the final review found ------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("button", ["the question", "look again"])
+def test_a_read_of_the_file_that_began_before_switching_on_does_not_undo_it(tmp_path, button):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            user = rig.person()
+            rig.walk(7200), rig.walk(3600)
+            await rig.sign_in()
+            question = await rig.question()
+            before = rig.book()  # the file as a read finds it that begins this instant
+            real, held, go = rig.account._ledger.read, threading.Event(), threading.Event()
+
+            def read_before_the_write() -> dict:
+                rig.account._ledger.read = real  # (this one read only)
+                held.set()
+                go.wait(10)
+                return before
+
+            assert rig.account.switch_on(question["id"], "all") == OK
+            # In the same breath a second button (another tab, or a program on this computer). Its
+            # look at the file is held until "on" is written and taken over.
+            rig.account._ledger.read = read_before_the_write
+            press = rig.account.prepare_question if button == "the question" else rig.account.look_again
+            assert press() == OK
+            await until(held.is_set)
+            await until(lambda: rig.account.view.sending)
+            go.set()
+            await rig.idle()
+
+            # The card and the file agree: sending is on, as the person answered - and the walks go in this run.
+            shown, written = rig.snapshot(), rig.account_in_book(user)
+            assert (shown["sending"], shown["chosen"]) == (True, "all")
+            assert written["sending"] is True and written["chosen"]["what"] == "all"
+            assert len(rig.fake.walks(user)) == 2 and shown["counts"]["sent"] == 2
+
+    run(scenario)
+
+
+def test_a_read_of_the_file_that_began_before_a_walk_was_noted_does_not_take_the_note_back(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            user = rig.person()
+            await rig.sign_in()
+            await rig.switch_on("all")
+            record = rig.walk(3600)
+            sending = rig.fake.hold("/rest/v1/walks", method="POST", after=True)
+            rig.account.walk_saved()
+            await sending.arrived.wait()  # the walk is in the Walka account; the answer is on its way
+            before = rig.book()
+            real, held, go = rig.account._ledger.read, threading.Event(), threading.Event()
+
+            def read_before_the_write() -> dict:
+                rig.account._ledger.read = real
+                held.set()
+                go.wait(10)
+                return before
+
+            rig.account._ledger.read = read_before_the_write
+            assert rig.account.look_again() == OK  # a button, meanwhile: it looks at the file first
+            await until(held.is_set)
+            sending.release()
+            await until(lambda: rig.account.in_account(record.id, record.start))  # noted, in the file and in memory
+            go.set()
+            await rig.idle()
+
+            assert rig.entry_of(user, record)["state"] == "added"
+            assert rig.account.in_account(record.id, record.start) is True  # ... and it stays so
+            counts = rig.snapshot()["counts"]
+            assert (counts["sent"], counts["waiting"]) == (1, 0)
+
+    run(scenario)
+
+
+@pytest.mark.parametrize("unreadable_too", [False, True])
+def test_answering_the_question_when_the_file_cannot_be_written_switches_nothing_on(
+    tmp_path, monkeypatch, unreadable_too
+):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            user = rig.person()
+            await rig.sign_in()
+            rig.walk(3600)
+            question = await rig.question()
+            assert question is not None
+
+            def full_disk(self, fn):
+                raise ledger.LedgerError("cannot_write")
+
+            def no_read(self):
+                raise ledger.LedgerError("cannot_read")
+
+            monkeypatch.setattr(ledger.Ledger, "change", full_disk)
+            if unreadable_too:
+                monkeypatch.setattr(ledger.Ledger, "read", no_read)
+            assert rig.account.switch_on(question["id"], "all") == OK
+            await rig.idle()
+            shown = rig.snapshot()
+            monkeypatch.undo()  # (before anything here reads the file itself)
+            # Not written: then it is not on - and the card says that it did not work.
+            assert shown["sending"] is False and shown["chosen"] == ""
+            assert shown["last"]["word"] == "stopped"
+            assert rig.pushes() == [] and rig.fake.walks(user) == []
+            assert rig.account_in_book(user)["sending"] is False
+            await rig.saved()
+            assert rig.pushes() == []
+            await rig.restart()
+            await rig.saved()
+            assert rig.snapshot()["sending"] is False and rig.pushes() == [] and rig.fake.walks(user) == []
+
+    run(scenario)
+
+
+@pytest.mark.parametrize("how", ["a newer Walka's file", "read says newer", "read says cannot be read"])
+def test_a_file_that_cannot_be_read_any_more_stops_the_send_before_the_next_request(tmp_path, monkeypatch, how):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            user = rig.person()
+            await rig.sign_in()
+            await rig.switch_on("all")
+            rig.walk(3600)
+            gate = rig.fake.hold("/rest/v1/rpc/schema_version")
+            rig.account.walk_saved()
+            await gate.arrived.wait()  # the send is under way: the version of the rules is being asked
+            newer = json.dumps({"version": 2, "addresses": {}, "something": "new"}).encode("utf-8")
+            if how == "a newer Walka's file":
+                (rig.dir / ledger.FILE_NAME).write_bytes(newer)
+            else:
+                code = "newer" if how == "read says newer" else "cannot_read"
+
+                def unreadable(self):
+                    raise ledger.LedgerError(code)
+
+                monkeypatch.setattr(ledger.Ledger, "read", unreadable)
+            before = len(rig.asked())
+            gate.release()
+            await rig.idle()
+            shown = rig.snapshot()
+            monkeypatch.undo()
+            # The look at the file before EVERY request: not to be read, so nothing is sent - not one walk.
+            assert rig.pushes_seen() == [] and rig.fake.walks(user) == []
+            assert rig.asked()[before:] == []
+            assert shown["last"]["word"] == "stopped"
+            if how == "a newer Walka's file":
+                assert (rig.dir / ledger.FILE_NAME).read_bytes() == newer  # and it is left as it is
+
+    run(scenario)
+
+
+async def signed_in_with_a_store_that_sits_on_the_next_write(rig: Rig, timeout_s: float) -> threading.Event:
+    """Somebody is signed in, the access token has run out, and the store will sit on the next write
+    (that of the renewed key) until the event that is given back is set."""
+    rig.person()
+    rig.account = rig.build(keystore=Keys(rig.keystore, timeout_s=timeout_s))
+    rig.account.start()
+    await rig.sign_in()
+    rig.clock.advance(4000)
+    rig.fake.expire_access_tokens()
+    gate = threading.Event()
+    rig.keystore.block["write"] = gate
+    return gate
+
+
+def test_signing_out_while_the_store_sits_on_a_write_takes_the_key_away_when_the_store_comes_back(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path, start=False) as rig:
+            gate = await signed_in_with_a_store_that_sits_on_the_next_write(rig, 0.3)
+            assert rig.account.look_again() == OK  # a button that asks: the key is renewed first ...
+            await until(lambda: rig.keystore.calls.count(("write", rig.entry)) == 2)  # ... and the store sits on it
+            assert rig.account.sign_out() == OK
+            await rig.idle()  # every time limit has run out: nobody waits for the store any more
+            assert rig.snapshot()["state"] == "signed_out"
+            assert ("delete", rig.entry) not in rig.keystore.calls  # the delete waits for its turn - it has not given up
+            gate.set()  # the store comes back: the write lands, and the delete after it
+            await until(lambda: store_threads() == 0)
+            await rig.idle()
+            assert rig.keystore.secrets() == []  # no key of the sign-in outlives the sign-out
+            assert [what for what, _name in rig.keystore.calls][-2:] == ["write", "delete"]
+            assert rig.book()["addresses"][rig.origin.text]["signed_in"] is None
+            # Walka was told "no answer" and never hears of the late delete: the card goes on saying
+            # that it could not make sure, until its button finds the entry gone.
+            assert left_in(rig) == ("sign_in", True)
+            assert rig.account.sign_out() == OK
+            await rig.idle()
+            assert left_in(rig) == ("", False) and rig.keystore.calls[-1] == ("delete", rig.entry)
+
+    run(scenario)
+
+
+def test_a_renewed_key_the_store_sits_on_for_too_long_is_taken_out_again_when_the_store_comes_back(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path, start=False) as rig:
+            gate = await signed_in_with_a_store_that_sits_on_the_next_write(rig, 0.3)
+            assert rig.account.look_again() == OK
+            await until(lambda: rig.keystore.calls.count(("write", rig.entry)) == 2)
+            await rig.idle()  # the write's time limit, then the delete's: both run out
+            shown = rig.snapshot()
+            # A key that could not be kept is no sign-in: "not signed in" - and nobody signed out. The
+            # store did not say that the key is out again either. So the card does not say "the sign-in
+            # is not on this computer any more" (more than Walka knows), but that it may still be there.
+            assert (shown["state"], shown["problem"], shown["notice"]) == ("signed_out", "", "")
+            assert left_in(rig) == ("sign_in", True)
+            gate.set()
+            await until(lambda: store_threads() == 0)
+            await rig.idle()
+            assert rig.keystore.secrets() == []  # the card says "not signed in": then no key stays behind either
+            assert [what for what, _name in rig.keystore.calls][-2:] == ["write", "delete"]
+
+    run(scenario)
+
+
+def test_a_sign_outs_late_delete_does_not_take_out_the_key_of_the_sign_in_that_followed(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path, start=False) as rig:
+            gate = await signed_in_with_a_store_that_sits_on_the_next_write(rig, 1.0)
+            rig.account.keys._lock = lock = LatestFirst()  # of those who wait for the store, the last goes first
+            assert rig.account.look_again() == OK
+            await until(lambda: rig.keystore.calls.count(("write", rig.entry)) == 2)  # the store sits on this write
+            assert rig.account.sign_out() == OK
+            await rig.idle()  # its delete waits on; whoever asked for it has gone
+            assert len(lock.waiting) == 1 and rig.snapshot()["state"] == "signed_out"
+            # The person signs in again. That sign-in's key is asked to be written AFTER the delete ...
+            del rig.keystore.block["write"]
+            assert rig.account.sign_in("github") == OK
+            await until(lambda: len(lock.waiting) == 2)
+            gate.set()  # ... and gets its turn BEFORE it, when the store comes back.
+            await rig.idle()
+            await until(lambda: store_threads() == 0)
+            assert rig.snapshot()["state"] == "signed_in"
+            assert ("delete", rig.entry) not in rig.keystore.calls  # the delete stood down: that key is not its to remove
+            assert len(rig.keystore.secrets()) == 1
+            assert left_in(rig) == ("", False)  # (the new sign-in's key is the entry: nothing is left behind)
+            # And the key that stayed is the new sign-in's: it is renewed without a word.
+            rig.clock.advance(4000)
+            rig.fake.expire_access_tokens()
+            assert rig.account.look_again() == OK
+            await rig.idle()
+            shown = rig.snapshot()
+            assert (shown["state"], shown["first_step"], shown["problem"], shown["notice"]) == ("signed_in", "taken", "", "")
+
+    run(scenario)
+
+
+def test_the_renewed_key_is_kept_though_sending_was_switched_off_while_it_was_on_its_way(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            user = rig.person()
+            rig.walk(7200)
+            await rig.sign_in()
+            await rig.switch_on("all")
+            await rig.restart(start=False)  # Walka is started again: there is no access token in memory
+            rig.walk(3600)
+            spent, issued = rig.keystore.secrets(), len(rig.fake.secrets_issued())
+            gate = rig.fake.hold("/auth/v1/token", after=True)  # the accounts have made the new keys; the answer waits
+            rig.account.start()
+            await gate.arrived.wait()
+            assert rig.account.switch_off() == OK  # nobody signed out: only sending was stopped
+            gate.release()
+            await rig.idle()
+            # The key that came is in the store, and the spent one is not: every refresh gives a new
+            # one, to be written at once (the brief's 5.2) - whatever became of the work that asked.
+            kept = rig.keystore.secrets()
+            assert kept != spent and len(kept) == 1 and kept[0] in rig.fake.secrets_issued()[issued:]
+            # That work itself is over: nothing was sent with what came back.
+            shown = rig.snapshot()
+            assert (shown["state"], shown["sending"]) == ("signed_in", False)
+            assert len(rig.pushes()) == 1 and len(rig.fake.walks(user)) == 1  # (the one walk from before)
+
+    run(scenario)
+
+
+def test_the_other_walka_signs_in_to_another_account_while_this_one_renews_the_key_and_its_key_stays(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            first, second = rig.person("first@mail.example"), rig.person("second@mail.example")
+            one = rig.account
+            await rig.sign_in(first)
+            other = rig.build()  # a second Walka on the same data folder, with the same store behind it
+            other.start()
+            await other.idle()
+            assert other.snapshot()["email"] == "first@mail.example"
+            gate = rig.fake.hold("/auth/v1/token", after=True)
+            assert other.look_again() == OK  # it has no access token of its own: the key is renewed ...
+            await gate.arrived.wait()  # ... and the answer is held on its way
+            # Meanwhile, in the first Walka: sign out, and sign in to another Walka account.
+            assert one.sign_out() == OK
+            await rig.idle()
+            await rig.sign_in(second)
+            assert one.snapshot()["email"] == "second@mail.example"
+            theirs = rig.keystore.secrets()
+            writes = rig.keystore.calls.count(("write", rig.entry))
+            gate.release()
+            await other.idle()
+            # The key that came back late is the first account's. It is not written over the new sign-in's.
+            assert rig.keystore.secrets() == theirs and rig.keystore.calls.count(("write", rig.entry)) == writes
+            shown = other.snapshot()
+            assert (shown["state"], shown["email"], shown["sending"]) == ("signed_in", "second@mail.example", False)
+            assert shown["notice"] == "" and shown["problem"] == ""
+            # So the first Walka's own sign-in goes on working when its token runs out.
+            rig.clock.advance(4000)
+            rig.fake.expire_access_tokens()
+            assert one.look_again() == OK
+            await rig.idle()
+            shown = one.snapshot()
+            assert (shown["state"], shown["email"], shown["notice"], shown["problem"]) == (
+                "signed_in",
+                "second@mail.example",
+                "",
+                "",
+            )
+            assert rig.fake.walks(first) == [] and rig.fake.walks(second) == []
+
+    run(scenario)
+
+
+@pytest.mark.parametrize(
+    ("what", "word", "stands"),
+    [("a gateway's page", "stopped", False), ("the account is full", "full", True)],
+)
+def test_stopping_sending_takes_the_last_word_about_a_try_away_and_leaves_what_is_true_of_the_account(
+    tmp_path, what, word, stands
+):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            rig.person()
+            await rig.sign_in()
+            await rig.switch_on("all")
+            rig.walk(3600)
+            if what == "a gateway's page":
+                rig.fake.fail_next("/rest/v1/walks", 403, b"<html>the gateway's own page</html>", method="POST")
+            else:
+                rig.fake.full_at = 0
+            await rig.saved()
+            assert rig.snapshot()["last"]["word"] == word
+            assert rig.account.switch_off() == OK
+            await rig.idle()
+            # A page loaded afresh now must not show "That did not work just now" of a button nobody
+            # pressed. That the Walka account is full stays true, and stays said.
+            last = rig.snapshot()["last"]
+            assert last["word"] == (word if stands else "")
+            if not stands:
+                assert last == {"word": "", "at": 0.0, "added": 0}
+
+    run(scenario)
+
+
+def test_switching_off_when_the_file_cannot_be_written_is_not_undone_by_a_key_that_was_on_its_way(
+    tmp_path, monkeypatch
+):
+    async def scenario():
+        async with Rig(tmp_path, start=False) as rig:
+            user = rig.person()
+            await rig.sign_in()
+            await rig.switch_on("all")
+            rig.walk(3600)
+            rig.clock.advance(3700)
+            gate = rig.fake.hold("/auth/v1/token", after=True)  # the key is renewed over there; the answer waits
+            going = asyncio.ensure_future(rig.account.sender.one_pass())
+            await gate.arrived.wait()
+
+            def full_disk(self, fn):
+                raise ledger.LedgerError("cannot_write")
+
+            monkeypatch.setattr(ledger.Ledger, "change", full_disk)
+            assert rig.account.switch_off() == OK
+            await rig.idle()  # "off" could not be written: so the sign-in itself went, out of the store
+            assert rig.keystore.secrets() == []
+            gate.release()  # ... and now the renewed key arrives. The file still says "signed in, sending on".
+            assert await going == "dropped"
+            await rig.idle()
+            monkeypatch.undo()
+            # It is not written back: with it in the store, the walks would go at the next start.
+            assert rig.keystore.secrets() == []
+            assert rig.pushes() == [] and rig.fake.walks(user) == []
+            assert rig.account_in_book(user)["sending"] is True  # (what could not be changed)
+            await rig.restart()
+            assert rig.pushes() == [] and rig.snapshot()["state"] == "signed_out"
+
+    run(scenario)
+
+
+def test_a_file_that_is_lost_while_the_key_is_renewed_leaves_nobody_signed_in_and_no_key_behind(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path, start=False) as rig:
+            user = rig.person()
+            await rig.sign_in()
+            await rig.switch_on("all")
+            rig.walk(3600)
+            rig.clock.advance(3700)
+            gate = rig.fake.hold("/auth/v1/token", after=True)
+            going = asyncio.ensure_future(rig.account.sender.one_pass())
+            await gate.arrived.wait()
+            (rig.dir / ledger.FILE_NAME).unlink()  # lost: sending is off, and nobody is signed in by it
+            writes = rig.keystore.calls.count(("write", rig.entry))
+            gate.release()
+            assert await going == "dropped"
+            await rig.idle()
+            shown = rig.snapshot()
+            assert (shown["state"], shown["sending"], shown["notice"]) == ("signed_out", False, "")
+            # The renewed key is not written, and the one before it - which the accounts would still
+            # take once more - does not stay in the store under a card that says "not signed in".
+            assert rig.keystore.calls.count(("write", rig.entry)) == writes and rig.keystore.secrets() == []
+            assert rig.pushes() == [] and rig.fake.walks(user) == []
+
+    run(scenario)
+
+
+# ---- a sign-in that may still be in the system's store after signing out -------------------------
+
+
+def left_in(rig: Rig) -> tuple[str, bool]:
+    """What the card is told, and what the file says: may the sign-in still be in the store?"""
+    return rig.snapshot()["left_in_store"], ledger.is_left_in_store(rig.book(), rig.origin)
+
+
+def store_calls(rig: Rig) -> list[str]:
+    return [what for what, _name in rig.keystore.calls]
+
+
+async def signed_in_long_ago(rig: Rig) -> str:
+    """Somebody is signed in, sending is on, a walk was sent - and the access token has run out since
+    (the usual state of a Walka that has been open for a while): signing out then asks nobody."""
+    user = rig.person()
+    rig.walk(7200)
+    await rig.sign_in()
+    await rig.switch_on("all")
+    rig.clock.advance(4000)
+    rig.fake.expire_access_tokens()
+    return user
+
+
+@pytest.mark.parametrize("word", ["refused", "timeout", "failed"])
+def test_a_store_that_will_not_let_the_sign_in_go_is_said_in_the_card_and_tried_again_only_on_a_press(tmp_path, word):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            user = await signed_in_long_ago(rig)
+            (stored,) = rig.keystore.secrets()
+            before = len(rig.fake.requests)
+            rig.keystore.refuse["delete"] = word  # a Mac's keychain that is locked, say
+
+            # Signing out never waits and never fails: "signed out" at once, as ever.
+            assert rig.account.sign_out() == OK
+            shown = rig.snapshot()
+            assert (shown["state"], shown["email"], shown["sending"]) == ("signed_out", "", False)
+            assert shown["left_in_store"] == ""  # (the store has not answered yet)
+            await rig.idle()
+            # The store said no. The key of the whole Walka account is still in it, and still good ...
+            assert rig.keystore.secrets() == [stored] and store_calls(rig)[-1] == "delete"
+            assert len(rig.fake.requests) == before  # (no courtesy with a token that ran out: nobody was asked)
+            # ... and the card says so, with a ready-made word - beside "signed out", not instead of it.
+            shown = rig.snapshot()
+            assert (shown["state"], shown["problem"], shown["notice"]) == ("signed_out", "", "")
+            assert left_in(rig) == ("sign_in", True)
+            place = rig.book()["addresses"][rig.origin.text]
+            assert place["signed_in"] is None and place["accounts"][user]["sending"] is False
+            assert stored not in rig.files_text()
+
+            # It survives a start - read off the file. A start does not touch the store, and asks nobody.
+            del rig.keystore.refuse["delete"]  # (the keychain is unlocked by now - and still nothing tries by itself)
+            rig.keystore.calls.clear()
+            waits = rig.wait.mark()
+            await rig.restart()
+            rig.walk(60)
+            await rig.saved()
+            await rig.advance(7200)
+            assert left_in(rig) == ("sign_in", True) and rig.snapshot()["state"] == "signed_out"
+            assert rig.keystore.calls == [] and len(rig.fake.requests) == before
+            assert rig.wait.limits(waits) == [] and rig.keystore.secrets() == [stored]  # (no timer either)
+
+            # The store still says no: the press is ONE delete - no read, no request - and the word stands.
+            rig.keystore.refuse["delete"] = word
+            assert rig.account.sign_out() == OK
+            await rig.idle()
+            assert rig.keystore.calls == [("delete", rig.entry)] and len(rig.fake.requests) == before
+            assert left_in(rig) == ("sign_in", True) and rig.snapshot()["state"] == "signed_out"
+
+            # Now it lets go: the press takes the entry out, and the word goes - from the card and the file.
+            del rig.keystore.refuse["delete"]
+            rev = rig.snapshot()["rev"]
+            assert rig.account.sign_out() == OK
+            await rig.idle()
+            assert rig.keystore.calls == [("delete", rig.entry)] * 2 and rig.keystore.secrets() == []
+            assert left_in(rig) == ("", False) and rig.snapshot()["rev"] > rev
+            assert len(rig.fake.requests) == before
+            # With the word gone the button is gone, and "Sign out" with nobody signed in touches nothing again.
+            assert rig.account.sign_out() == OK
+            await rig.idle()
+            assert rig.keystore.calls == [("delete", rig.entry)] * 2
+            await rig.restart()
+            assert left_in(rig) == ("", False) and rig.keystore.calls == [("delete", rig.entry)] * 2
+
+    run(scenario)
+
+
+def test_an_entry_that_is_gone_already_counts_as_taken_out(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            await signed_in_long_ago(rig)
+            rig.keystore.refuse["delete"] = "timeout"
+            assert rig.account.sign_out() == OK
+            await rig.idle()
+            assert left_in(rig) == ("sign_in", True)
+            # The store only sat on the delete, and made it after all (or the entry was deleted by hand).
+            rig.keystore._entries.clear()
+            del rig.keystore.refuse["delete"]
+            assert rig.account.sign_out() == OK
+            await rig.idle()
+            assert left_in(rig) == ("", False)
+
+    run(scenario)
+
+
+def test_a_new_sign_in_takes_the_word_away_for_its_key_is_written_over_the_entry(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            user = await signed_in_long_ago(rig)
+            (old,) = rig.keystore.secrets()
+            rig.keystore.refuse["delete"] = "refused"
+            assert rig.account.sign_out() == OK
+            await rig.idle()
+            assert left_in(rig) == ("sign_in", True)
+            del rig.keystore.refuse["delete"]
+
+            # While a new sign-in waits for the browser the word still stands (the page does not show it then).
+            rig.browser_comes = False
+            assert rig.account.sign_in("github") == OK
+            await rig.idle()
+            assert rig.snapshot()["state"] == "signing_in" and left_in(rig) == ("sign_in", True)
+            # "Stop waiting" is the same route as the card's "Try again": it ends the sign-in and that is all.
+            calls_before = list(rig.keystore.calls)
+            assert rig.account.sign_out() == OK
+            await rig.idle()
+            assert rig.keystore.calls == calls_before and left_in(rig) == ("sign_in", True)
+
+            rig.browser_comes = True
+            await rig.sign_in(user)
+            assert rig.snapshot()["state"] == "signed_in" and left_in(rig) == ("", False)
+            (new,) = rig.keystore.secrets()
+            assert new != old and "delete" not in store_calls(rig)[len(calls_before) :]
+            await rig.restart()
+            assert left_in(rig) == ("", False)
+            # And signing out of it is an ordinary sign-out again.
+            assert rig.account.sign_out() == OK
+            await rig.idle()
+            assert rig.keystore.secrets() == [] and left_in(rig) == ("", False)
+
+    run(scenario)
+
+
+def test_the_word_stands_beside_the_notice_that_the_sign_in_ended_and_each_goes_by_its_own_button(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            user = await signed_in_long_ago(rig)
+            rig.fake.sign_out_everywhere(user)
+            rig.keystore.refuse["delete"] = "refused"
+            rig.walk(60)
+            await rig.saved()  # the refresh is refused for good: decision 11
+            shown = rig.snapshot()
+            assert (shown["state"], shown["notice"], shown["left_in_store"]) == ("signed_out", "ended", "sign_in")
+            place = rig.book()["addresses"][rig.origin.text]
+            assert (place["signed_in"], place["notice"], place["left_in_store"]) == (None, "ended", True)
+
+            rig.keystore.calls.clear()
+            before = len(rig.fake.requests)
+            await rig.restart()
+            shown = rig.snapshot()
+            assert (shown["state"], shown["notice"], shown["left_in_store"]) == ("signed_out", "ended", "sign_in")
+            assert rig.keystore.calls == [] and len(rig.fake.requests) == before
+
+            # "OK" takes the notice away and leaves the word; "Try again" the other way round.
+            assert rig.account.notice_ok() == OK
+            await rig.idle()
+            assert rig.snapshot()["notice"] == "" and left_in(rig) == ("sign_in", True)
+            assert rig.keystore.calls == []
+            del rig.keystore.refuse["delete"]
+            assert rig.account.sign_out() == OK
+            await rig.idle()
+            assert left_in(rig) == ("", False) and rig.keystore.calls == [("delete", rig.entry)]
+            assert rig.keystore.secrets() == [] and len(rig.fake.requests) == before
+
+    run(scenario)
+
+
+def test_walka_closed_before_the_store_answered_and_the_next_start_says_that_the_sign_in_may_still_be_there(
+    tmp_path,
+):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            await signed_in_long_ago(rig)
+            (stored,) = rig.keystore.secrets()
+            gate = threading.Event()
+            rig.keystore.block["delete"] = gate  # the store sits on the delete, as a Mac's keychain can
+            rig.account.keys._timeout_s = 0.2
+            assert rig.account.sign_out() == OK
+            await until(lambda: ledger.signed_in(rig.book(), rig.origin) is None)
+            # "It may still be there" was written WITH "signed out", before the store answered ...
+            assert ledger.is_left_in_store(rig.book(), rig.origin) is True
+            assert rig.snapshot()["left_in_store"] == ""  # (nothing is said while the store is still being asked)
+            rig.account.cancel()
+            await rig.account.close()  # ... so it stands when Walka is closed in between.
+            assert ledger.is_left_in_store(rig.book(), rig.origin) is True
+            rig.keystore.refuse["delete"] = "refused"  # (and the delete that was on its way came to nothing)
+            gate.set()
+            del rig.keystore.block["delete"]
+            await until(lambda: store_threads() == 0)
+            assert rig.keystore.secrets() == [stored]
+
+            rig.keystore.calls.clear()
+            before = len(rig.fake.requests)
+            await rig.restart()
+            assert left_in(rig) == ("sign_in", True) and rig.snapshot()["state"] == "signed_out"
+            assert rig.keystore.calls == [] and len(rig.fake.requests) == before
+            del rig.keystore.refuse["delete"]
+            assert rig.account.sign_out() == OK
+            await rig.idle()
+            assert left_in(rig) == ("", False) and rig.keystore.secrets() == []
+            assert rig.keystore.calls == [("delete", rig.entry)]
+
+    run(scenario)
+
+
+def test_with_a_store_in_memory_nothing_is_ever_said_to_be_left_in_it(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path, lasting=False) as rig:
+            await signed_in_long_ago(rig)
+            rig.keystore.refuse["delete"] = "failed"  # (a store in memory never says this: what if it did)
+            assert rig.account.sign_out() == OK
+            await rig.idle()
+            assert left_in(rig) == ("", False)
+            calls_before = list(rig.keystore.calls)
+            assert rig.account.sign_out() == OK
+            await rig.idle()
+            assert rig.keystore.calls == calls_before
+            # A file that says so all the same (the data folder came from another computer): not said here.
+            ledger.Ledger(rig.dir).change(lambda book: ledger.sign_in_left(book, rig.origin, True))
+            await rig.restart()
+            assert rig.snapshot()["left_in_store"] == "" and rig.account.sign_out() == OK
+            await rig.idle()
+            assert rig.keystore.calls == calls_before
+
+    run(scenario)
+
+
+def test_try_again_is_one_delete_at_a_time_however_often_it_is_pressed(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            await signed_in_long_ago(rig)
+            rig.keystore.refuse["delete"] = "refused"
+            assert rig.account.sign_out() == OK
+            await rig.idle()
+            rig.keystore.calls.clear()
+            gate = threading.Event()
+            rig.keystore.block["delete"] = gate
+            for _ in range(5):
+                assert rig.account.sign_out() == OK  # each answers at once
+            await until(lambda: rig.keystore.calls == [("delete", rig.entry)])
+            await asyncio.sleep(0.05)
+            assert rig.keystore.calls == [("delete", rig.entry)] and store_threads() == 1
+            del rig.keystore.refuse["delete"]
+            gate.set()
+            del rig.keystore.block["delete"]
+            await rig.idle()
+            assert left_in(rig) == ("", False) and rig.keystore.calls == [("delete", rig.entry)]
+
+    run(scenario)
+
+
+def test_try_again_refuses_like_every_button_while_walka_closes(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            await signed_in_long_ago(rig)
+            rig.keystore.refuse["delete"] = "refused"
+            assert rig.account.sign_out() == OK
+            await rig.idle()
+            rig.keystore.calls.clear()
+            rig.account.cancel()
+            assert rig.account.sign_out() == CLOSING
+            await rig.account.close()
+            assert rig.keystore.calls == [] and ledger.is_left_in_store(rig.book(), rig.origin) is True
+
+    run(scenario)
+
+
+def test_a_sign_in_whose_key_may_have_been_written_after_all_and_cannot_be_taken_out_is_said_too(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            rig.person()
+            # The store did not answer the write in time - it may be written all the same - and says no to the delete.
+            rig.keystore.refuse["write"] = "timeout"
+            rig.keystore.refuse["delete"] = "refused"
+            assert rig.account.sign_in("github") == OK
+            await rig.idle()
+            shown = rig.snapshot()
+            assert (shown["state"], shown["problem"]) == ("signed_out", "no_store")
+            assert left_in(rig) == ("sign_in", True) and store_calls(rig) == ["write", "delete"]
+            assert rig.asked("/rest/v1/") == []
+            del rig.keystore.refuse["delete"]
+            assert rig.account.sign_out() == OK
+            await rig.idle()
+            assert left_in(rig) == ("", False)
+
+    run(scenario)
+
+
+@pytest.mark.parametrize("word", ["refused", "unavailable", "failed"])
+def test_a_store_that_said_no_to_the_write_outright_holds_nothing_new_and_nothing_is_said(tmp_path, word):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            rig.person()
+            rig.keystore.refuse["write"] = word
+            rig.keystore.refuse["delete"] = word
+            assert rig.account.sign_in("github") == OK
+            await rig.idle()
+            shown = rig.snapshot()
+            assert (shown["state"], shown["problem"], shown["left_in_store"]) == ("signed_out", "no_store", "")
+            assert not (rig.dir / ledger.FILE_NAME).exists()
+
+    run(scenario)
+
+
+def test_a_key_that_was_stored_for_a_sign_in_the_file_could_not_take_and_will_not_leave_the_store_is_said(
+    tmp_path, monkeypatch
+):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            rig.person()
+            rig.keystore.refuse["delete"] = "refused"
+            real = ledger.Ledger.change
+            calls_made = []
+
+            def full_disk_once(self, fn):
+                calls_made.append(1)
+                if len(calls_made) == 1:
+                    raise ledger.LedgerError("cannot_write")
+                return real(self, fn)
+
+            monkeypatch.setattr(ledger.Ledger, "change", full_disk_once)
+            assert rig.account.sign_in("github") == OK
+            await rig.idle()
+            monkeypatch.undo()
+            shown = rig.snapshot()
+            assert (shown["state"], shown["problem"]) == ("signed_out", "no_store")
+            # A live key is in the store, and nobody is signed in: the card says so, and the file.
+            assert len(rig.keystore.secrets()) == 1 and left_in(rig) == ("sign_in", True)
+
+    run(scenario)
+
+
+def test_a_sign_in_cut_off_while_it_was_kept_whose_key_will_not_leave_the_store_is_said(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            rig.person()
+            gate = threading.Event()
+            rig.keystore.block["write"] = gate
+            rig.keystore.refuse["delete"] = "refused"
+            assert rig.account.sign_in("github") == OK
+            await until(lambda: ("write", rig.entry) in rig.keystore.calls)
+            assert rig.account.sign_out() == OK  # "Stop waiting", while the key is on its way into the store
+            gate.set()
+            del rig.keystore.block["write"]
+            await rig.idle()
+            await until(lambda: store_threads() == 0)
+            await rig.idle()
+            # The write had reached the store and landed when the store came back; the delete behind it
+            # was refused. So a live key is in the store with nobody signed in - and the card says so.
+            assert rig.snapshot()["state"] == "signed_out" and len(rig.keystore.secrets()) == 1
+            assert store_calls(rig) == ["write", "delete"] and left_in(rig) == ("sign_in", True)
+
+    run(scenario)
+
+
+def test_the_other_walka_signs_out_and_the_key_this_one_then_cannot_take_out_is_said(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path, start=False) as rig:
+            rig.person()
+            await rig.sign_in()
+            await rig.switch_on("all")
+            rig.walk(3600)
+            rig.clock.advance(3700)
+            gate = rig.fake.hold("/auth/v1/token", after=True)
+            going = asyncio.ensure_future(rig.account.sender.one_pass())
+            await gate.arrived.wait()
+            # The other Walka on this data folder signs out - and its own delete came to nothing.
+            ledger.Ledger(rig.dir).change(lambda book: ledger.sign_out(book, rig.origin))
+            rig.keystore.refuse["delete"] = "refused"
+            gate.release()
+            assert await going == "dropped"
+            await rig.idle()
+            assert rig.snapshot()["state"] == "signed_out" and len(rig.keystore.secrets()) == 1
+            assert left_in(rig) == ("sign_in", True)
+
+    run(scenario)
+
+
+def test_a_word_from_an_earlier_sign_out_does_not_come_back_when_the_next_sign_in_is_lost(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path, start=False) as rig:
+            await signed_in_long_ago(rig)
+            rig.keystore.refuse["delete"] = "refused"
+            assert rig.account.sign_out() == OK
+            await rig.idle()
+            assert left_in(rig) == ("sign_in", True)
+            del rig.keystore.refuse["delete"]
+            await rig.sign_in()
+            assert left_in(rig) == ("", False)
+            # That sign-in is then simply not in the store any more (the entry was deleted by hand, say).
+            rig.keystore._entries.clear()
+            rig.clock.advance(4000)
+            rig.fake.expire_access_tokens()
+            assert rig.account.look_again() == OK
+            await rig.idle()
+            shown = rig.snapshot()
+            assert (shown["state"], shown["problem"]) == ("signed_out", "no_stored_sign_in")
+            assert left_in(rig) == ("", False)  # nothing was taken out, and nothing is said to be left
+
+    run(scenario)
+
+
+def test_try_again_never_takes_out_the_key_of_somebody_who_is_signed_in(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            rig.person()
+            await rig.sign_in()
+            (stored,) = rig.keystore.secrets()
+            rig.keystore.calls.clear()
+            # However its work comes to run (it waits its turn behind whatever changes who is signed in):
+            await rig.account._take_out_again()
+            assert rig.keystore.calls == [] and rig.keystore.secrets() == [stored]
+            # And the button's route, with somebody signed in, is "Sign out" and nothing else.
+            assert rig.snapshot()["left_in_store"] == ""
+
+    run(scenario)
+
+
+@pytest.mark.parametrize("since", ["signed in", "taken it out", "nothing, and the file is lost"])
+def test_try_again_leaves_the_entry_alone_when_somebody_has_signed_in_in_the_other_walka_since(tmp_path, since):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            await signed_in_long_ago(rig)
+            rig.keystore.refuse["delete"] = "refused"
+            assert rig.account.sign_out() == OK
+            await rig.idle()
+            assert left_in(rig) == ("sign_in", True)
+            del rig.keystore.refuse["delete"]
+            first = rig.account
+            # The other Walka on this data folder is started (it reads the same word off the file) ...
+            rig.account = other = rig.build()
+            other.start()
+            await rig.idle()
+            assert other.snapshot()["left_in_store"] == "sign_in"
+            if since == "signed in":
+                # ... and somebody signs in there: the entry, named after the address, is THAT sign-in's key now.
+                await rig.sign_in()
+                assert other.snapshot()["state"] == "signed_in"
+                assert ledger.is_left_in_store(rig.book(), rig.origin) is False
+            elif since == "taken it out":
+                # ... and its own "Try again" works.
+                assert other.sign_out() == OK
+                await rig.idle()
+                assert other.snapshot()["left_in_store"] == ""
+                assert ledger.is_left_in_store(rig.book(), rig.origin) is False
+            else:
+                # ... and does nothing. But the file is deleted by hand: it says nothing of anybody any more.
+                (rig.dir / ledger.FILE_NAME).unlink()
+            stored = rig.keystore.secrets()
+            assert len(stored) == (0 if since == "taken it out" else 1)
+
+            # The first Walka has heard nothing: its card still says so, and still has the button.
+            rig.account = first
+            assert first.snapshot()["left_in_store"] == "sign_in"
+            rig.keystore.calls.clear()
+            rev, before = first.snapshot()["rev"], len(rig.fake.requests)
+            assert first.sign_out() == OK
+            await rig.idle()
+            shown = first.snapshot()
+            assert (shown["state"], shown["left_in_store"]) == ("signed_out", "") and shown["rev"] > rev
+            assert len(rig.fake.requests) == before
+            if since == "signed in":
+                # The press looks at the file first, finds somebody signed in - and the store is not touched.
+                assert rig.keystore.calls == [] and rig.keystore.secrets() == stored
+                # The other Walka's sign-in is whole: its key is renewed without a word.
+                rig.account = other
+                rig.clock.advance(4000)
+                rig.fake.expire_access_tokens()
+                assert other.look_again() == OK
+                await rig.idle()
+                shown = other.snapshot()
+                assert (shown["state"], shown["problem"], shown["notice"]) == ("signed_in", "", "")
+            else:
+                # Nobody is signed in by the file: the press is the one delete it always was, and no key
+                # stays behind a card that has stopped saying so.
+                assert rig.keystore.calls == [("delete", rig.entry)] and rig.keystore.secrets() == []
+            rig.account = first
+            rig.keystore.calls.clear()
+            assert first.sign_out() == OK  # (the word is gone, and with it the button: nothing again)
+            await rig.idle()
+            assert rig.keystore.calls == []
+
+    run(scenario)
+
+
+def test_try_again_goes_by_the_file_only_when_the_sign_out_reached_it(tmp_path, monkeypatch):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            user = await signed_in_long_ago(rig)
+            rig.keystore.refuse["delete"] = "refused"
+
+            def full_disk(self, fn):
+                raise ledger.LedgerError("cannot_write")
+
+            # Signing out with a disk that is full AND a store that says no: neither took it.
+            monkeypatch.setattr(ledger.Ledger, "change", full_disk)
+            assert rig.account.sign_out() == OK
+            await rig.idle()
+            monkeypatch.undo()
+            found = ledger.signed_in(rig.book(), rig.origin)
+            assert found is not None and found[0] == user  # the file still says "signed in" ...
+            shown = rig.snapshot()
+            assert (shown["state"], shown["left_in_store"]) == ("signed_out", "sign_in")  # ... the card does not
+            assert len(rig.keystore.secrets()) == 1
+            # This Walka knows that its word never reached the file. So a file without the word tells
+            # it nothing (it is its own sign-in that still stands there, not the other Walka's), and
+            # the press deletes.
+            del rig.keystore.refuse["delete"]
+            rig.keystore.calls.clear()
+            assert rig.account.sign_out() == OK
+            await rig.idle()
+            assert rig.keystore.calls == [("delete", rig.entry)] and rig.keystore.secrets() == []
+            assert rig.snapshot()["left_in_store"] == ""
+
+    run(scenario)
+
+
+def test_try_again_deletes_when_the_file_cannot_be_read_just_then(tmp_path, monkeypatch):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            await signed_in_long_ago(rig)
+            rig.keystore.refuse["delete"] = "refused"
+            assert rig.account.sign_out() == OK
+            await rig.idle()
+            assert left_in(rig) == ("sign_in", True)
+            del rig.keystore.refuse["delete"]
+
+            def locked_away(self):
+                raise ledger.LedgerError("cannot_read")
+
+            monkeypatch.setattr(ledger.Ledger, "read", locked_away)
+            assert rig.account.sign_out() == OK
+            await rig.idle()
+            monkeypatch.undo()
+            # Nothing says that the entry is anybody else's: the person asked, and the key goes.
+            assert rig.keystore.secrets() == [] and left_in(rig) == ("", False)
+
+    run(scenario)
+
+
+def test_a_sign_in_cut_off_by_closing_while_the_store_sits_on_its_key_is_said_at_the_next_start(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            rig.person()
+            gate = threading.Event()
+            rig.keystore.block["write"] = gate  # the store sits on the write of the new key ...
+            assert rig.account.sign_in("github") == OK
+            await until(lambda: ("write", rig.entry) in rig.keystore.calls)
+            rig.account.cancel()  # ... and Walka is closed.
+            # "It may still be there" reaches the file at once - not after the store has answered the
+            # delete that waits behind that write (it may never, as far as this Walka lives to see).
+            await until(lambda: ledger.is_left_in_store(rig.book(), rig.origin), 3.0)
+            assert store_calls(rig) == ["write"] and store_threads() == 2
+            rig.keystore.refuse["delete"] = "refused"
+            gate.set()  # The store comes back: the key lands after all, and the delete comes to nothing.
+            del rig.keystore.block["write"]
+            await rig.account.close()
+            await until(lambda: store_threads() == 0)
+            assert len(rig.keystore.secrets()) == 1 and store_calls(rig) == ["write", "delete"]
+
+            rig.keystore.calls.clear()
+            await rig.restart()
+            assert rig.snapshot()["state"] == "signed_out" and left_in(rig) == ("sign_in", True)
+            assert rig.keystore.calls == []  # (read off the file: a start does not touch the store)
+            del rig.keystore.refuse["delete"]
+            assert rig.account.sign_out() == OK
+            await rig.idle()
+            assert rig.keystore.secrets() == [] and left_in(rig) == ("", False)
+
+    run(scenario)
+
+
+@pytest.mark.parametrize("how", ["a button that asks", "the sender"])
+def test_a_sign_in_that_was_ended_elsewhere_is_not_a_walka_account_that_is_gone(tmp_path, how):
+    async def scenario():
+        async with Rig(tmp_path, start=False) as rig:
+            user = rig.person()
+            record = rig.walk(7200)
+            await rig.sign_in()
+            await rig.switch_on("all")
+            assert await a_pass(rig) == "sent"
+            rig.fake.sign_out_everywhere(user)  # the sign-in ended: the access token runs on for a while
+            if how == "the sender":
+                rig.fake._users[user].profile["adult_confirmed_at"] = None  # ... and the first step is taken back
+                rig.walk(60)
+                assert await a_pass(rig) == "over"  # "Walka is for adults." - so: who is there?
+            else:
+                rig.fake._users[user].profile = None  # ... and its row is not there, as for a Walka account that is gone
+                assert rig.account.look_again() == OK
+                await rig.idle()
+            assert len(rig.asked("/auth/v1/user")) == 1  # this sign-in is over - the Walka account is not gone
+            assert (rig.snapshot()["state"], rig.snapshot()["notice"]) == ("signed_out", "ended")
+            assert rig.account_in_book(user)["gone"] is False
+            assert here(rig, record) == [False] and elsewhere(rig, record) == [True]
+
+    run(scenario)
+

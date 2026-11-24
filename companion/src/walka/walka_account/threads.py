@@ -5,6 +5,12 @@ Python waits for those when the program closes - a look into the Mac's
 keychain that is waiting for a click, or a look-up of a name that never
 answers, would then keep Walka from quitting. A daemon thread of its own
 is simply left behind.
+
+And the waits of this part that have a time limit. Not ``asyncio.wait_for``:
+before Python 3.12 it keeps a cancellation to itself when what it waits
+for is done in the same turn of the loop. A task of this part that is
+cancelled must end - Walka is closing, and closing waits for nobody.
+``asyncio.wait`` always lets a cancellation through.
 """
 
 from __future__ import annotations
@@ -49,10 +55,34 @@ async def off_loop(fn: Callable[..., T], *args: Any, timeout: float | None = Non
 
     threading.Thread(target=work, name=name, daemon=True).start()
     try:
-        await asyncio.wait_for(done, timeout)
-    except asyncio.TimeoutError:
-        raise OffLoopTimeout() from None
+        # (asyncio.wait: a cancellation that comes in the same turn as the answer still ends the caller.)
+        finished, _ = await asyncio.wait({done}, timeout=timeout)
+    finally:
+        done.cancel()  # (nothing, if it is done. Else: nobody waits any more, and wake() finds it so)
+    if not finished:
+        raise OffLoopTimeout()
     ok, value = box[0]
     if ok:
         return value
     raise value
+
+
+async def wait_for_event(event: asyncio.Event, seconds: float | None) -> bool:
+    """Wait for ``event``, ``seconds`` at most (None: for as long as it takes). Did it come?
+
+    A cancellation of the caller always passes, whatever comes with it in
+    the same turn of the loop; and no task is left behind.
+    """
+    if event.is_set():
+        return True
+    if seconds is None:
+        await event.wait()
+        return True
+    waiter = asyncio.ensure_future(event.wait())
+    try:
+        finished, _ = await asyncio.wait({waiter}, timeout=seconds)
+        # (It came, though somebody may have cleared it again before this task got its turn.)
+        return bool(finished) or event.is_set()
+    finally:
+        waiter.cancel()
+        await asyncio.gather(waiter, return_exceptions=True)  # (gone before this returns: no task is left)

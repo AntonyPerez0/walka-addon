@@ -444,7 +444,9 @@ touched.
   `walka.log`: what Walka used to write in its console window - what it
   connected to, what went wrong. It can hold your treadmill's name and
   Bluetooth address, and it stays on your computer unless you send it to
-  somebody. Once you have signed in to
+  somebody. There is also `active-session.lock`, an empty file: through
+  it one Walka tells another that it is recording a walk. Once you have
+  signed in to
   [your Walka account](#your-walka-account-on-walkadev) there is also
   `walka-account.json` (with an empty `walka-account.lock` beside it). It
   holds which Walka account is signed in on this computer (the address
@@ -452,11 +454,14 @@ touched.
   you signed in with Discord, GitHub or Google), whether sending is
   switched on and what you chose when you switched it on, and what became
   of each walk: sent, there already, or not taken, with the reason that
-  was given. It stays when you sign out, and so does the e-mail address
-  in it. The sign-in itself is not in that folder, nor in any file of
-  Walka's: it is kept in Windows' Credential Manager or in your Mac's
-  keychain. Neither the sign-in nor that e-mail address is ever written
-  to `walka.log`.
+  was given. It also notes that a sign-in ended (until you press *OK*),
+  that a sign-in may still be in Windows' Credential Manager or in your
+  Mac's keychain after you signed out (until it is taken out), and that a
+  Walka account was found to be deleted. It stays when you sign out, and
+  so does the e-mail address in it. The sign-in itself is not in that
+  folder, nor in any file of Walka's: it is kept in Windows' Credential
+  Manager or in your Mac's keychain. Neither the sign-in nor that e-mail
+  address is ever written to `walka.log`.
 * **Typing a command** (`Walka.exe probe`, `Walka.exe beacon`) on Windows:
   open the folder `Walka.exe` is in, click the address bar at the top of
   that window, type `cmd` and press Enter. A command prompt opens in that
@@ -658,8 +663,11 @@ there, make your page public and delete the Walka account.
   keychain - never in a file of Walka's. On a system that has neither
   (Linux, from source) it is kept in memory, and you are signed in until
   Walka is closed.
-* **Signing out in Walka removes it.** Deleting `Walka.exe` (or `Walka`
-  on a Mac) does not: sign out first. (If Walka is gone already, the
+* **Signing out in Walka removes it.** If Windows or your Mac does not
+  let Walka take it out, Walka says so under *Walka account*, with a
+  button that tries again: until that works, the sign-in may still be
+  there. Deleting `Walka.exe` (or `Walka` on a Mac) does not remove it:
+  sign out first. (If Walka is gone already, or cannot take it out, the
   entry can be deleted by hand, in Windows' Credential Manager or in
   Keychain Access on a Mac: its name begins `Walka account`.)
 * **"Sign out" on walka.dev does not sign this computer out.** A computer

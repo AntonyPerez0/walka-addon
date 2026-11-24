@@ -3,7 +3,8 @@
 ``WalkaAccount`` holds what the part knows - who is signed in, whether
 sending is on, what became of each walk - and does what the buttons of
 the Walka-account card ask for. The ``App`` calls ``attach``, ``start``,
-``walk_saved``, ``snapshot``, ``in_account``, ``cancel`` and ``close``;
+``walk_saved``, ``snapshot``, ``in_account``, ``in_other_account``,
+``cancel`` and ``close``;
 the dashboard's routes call the actions (``sign_in``, ``sign_out``,
 ``look_again``, ``prepare_question``, ``switch_on``, ``switch_off``,
 ``notice_ok``).
@@ -22,15 +23,37 @@ The rules it keeps, each with its reason:
   the sign-in ends, or sending is switched on or off. Every piece of work
   remembers the number it began under and looks at it again after every
   wait, before every request, and - inside the thread, under the store's
-  own lock - before a key is written. Work that began under an older
-  number does nothing more: no walk goes to a Walka account that was signed
-  out of a moment ago.
+  own lock - before the key of a new sign-in is written. Work that began
+  under an older number does nothing more: no walk goes to a Walka account
+  that was signed out of a moment ago.
+- One thing does not go by that number: a refresh token the accounts have
+  just renewed. The old one is spent, so the new one is written to the
+  store whenever its sign-in still stands - also when the work that asked
+  for it is not wanted any more, because sending was switched off
+  meanwhile. Only a sign-out, or another sign-in, makes that key unwanted
+  (looked at inside the thread, under the store's lock, in memory and in
+  the file).
 - The access token lives in memory, with the moment it runs out by the
   monotonic clock (the wall clock of a computer may be wrong). The
   refresh token is read from the system's store for secrets immediately
   before each refresh and written back at once: none is kept here.
 - Signing in never switches sending on. Only the question does, and the
   question belongs to one Walka account and one sign-in.
+- Signing out says "signed out" at once and never fails. Whether the
+  sign-in then really left the system's store is another matter: the
+  file says "it may still be there" from before the store is asked until
+  the store has said that it is gone. When the store says no - or Walka
+  was closed before it answered - the card says so, with a button that
+  tries once more. Nothing tries by itself, and a start never touches
+  the store: the entry is named after the address, not the data folder,
+  and may by then be the sign-in of another one. For the same reason the
+  button looks at the file before it deletes: the other Walka on this
+  data folder may have signed in since.
+- A copy of a walk stays in the Walka account it was sent to, whoever
+  is signed in afterwards. Which walks have a copy in a Walka account of
+  this address that is not the one signed in now is kept in memory,
+  from the file as it was last read or written - so that the question
+  before a walk is deleted can say so without asking anybody.
 - What went wrong is said with a word from a fixed list, never with an
   error's own text: that could hold an address or a key.
 - Nothing here writes to the Live view or names the Walka account, its
@@ -58,7 +81,7 @@ from .keystore import Keys, KeyStoreError, entry_name
 from .ledger import Ledger, LedgerError
 from .sender import MADE_UP, Halt, Sender, Walk, halt_of, read_walks
 from .signin import SignIn
-from .threads import off_loop
+from .threads import off_loop, wait_for_event
 
 log = logging.getLogger(__name__)
 
@@ -76,6 +99,9 @@ THREAD_NAME = "walka-account-file"
 
 # What the snapshot can say of the last piece of work. Nothing else is ever said.
 LAST_WORDS = ("", "sent", "nothing", "later", "stopped", "too_old", "full", "not_open", "certificate", "no_answer")
+# Those of them that are true of the Walka account itself, whoever asked and whenever: they stay
+# said when sending is stopped. (The others are about one try, and go with it.)
+STANDS = ("too_old", "full")
 # What it can say of the last try to sign in, or of the stored sign-in.
 PROBLEMS = (
     "",
@@ -88,6 +114,9 @@ PROBLEMS = (
     "no_stored_sign_in",
     "store_refused",
 )
+# What it can say of a sign-in that this Walka took out of the system's store: "sign_in" - it may
+# still be there.
+LEFT = ("", "sign_in")
 # How a sign-in ended -> the word for the card.
 _PROBLEM_OF = {
     "signed_in": "",
@@ -107,14 +136,7 @@ Wait = Callable[[asyncio.Event, "float | None"], Awaitable[bool]]
 
 async def _wait(event: asyncio.Event, limit_s: float | None) -> bool:
     """Wait for the event, for at most ``limit_s`` seconds (None: for as long as it takes). True: it came."""
-    if limit_s is None:
-        await event.wait()
-        return True
-    try:
-        await asyncio.wait_for(event.wait(), limit_s)
-    except asyncio.TimeoutError:
-        return False
-    return True
+    return await wait_for_event(event, limit_s)
 
 
 class _Stale(Exception):
@@ -149,6 +171,11 @@ def _view_of(book: dict, origin_text: str) -> View:
     # walks go to: then sending is off, whatever the file says.
     sending = account.get("sending") is True and chosen is not None and bool(email)
     return View(user, way, email, sending, chosen, "", walks)
+
+
+def _copies_of(view: View) -> frozenset[str]:
+    """The walks of which a copy is in the Walka account this view is of."""
+    return frozenset(key for key, entry in view.walks.items() if ledger.a_copy(entry))
 
 
 def _choice(view: View) -> tuple[Any, Any] | None:
@@ -213,6 +240,13 @@ class WalkaAccount:
         # For the sender (and nobody else outside this file):
         self.view = View()
         self.epoch = 0
+        # Which sign-in this is: it goes up whenever who is signed in here changes (somebody signs in or
+        # out, the sign-in ends or is lost) - and not when sending is switched. A key that was renewed
+        # for an earlier sign-in is not written to the store; one for this sign-in always is.
+        self._sign_in_no = 0
+        # How many changes of the file this Walka has made: a read of the file that was under way
+        # while one of them was written may show the file as it was before, and is made again.
+        self._wrote = 0
         self.stopping = False
         self.latch = ""  # "stop this run": the word why, until Walka is started again
         self.schema_known = False  # the database's version was asked in this run
@@ -224,6 +258,13 @@ class WalkaAccount:
         self._question: dict | None = None
         self._first = "unknown"
         self._problem = ""
+        # A sign-in that this Walka took out of the system's store may still be in it: "sign_in".
+        # Said in the card, from the file at a start and from the store's own answer afterwards.
+        self._left = ""
+        self._marked = False  # the file says so, as far as this Walka knows
+        self._trying_again = False  # the card's "Try again" is at work: one delete at a time
+        # The walks of which a copy is in a Walka account of this address that is not signed in now.
+        self._elsewhere: frozenset[str] = frozenset()
         self._asking = 0
         self._sending = False
         self._last: dict[str, Any] = {"word": "", "at": 0.0, "added": 0}
@@ -259,6 +300,12 @@ class WalkaAccount:
                 pass  # in memory it is so all the same
             view = View()
         self.view = view
+        # Read off the file, and no more: the store is not asked whether the entry is still there.
+        # (A store in memory holds nothing of a Walka that was closed: there the word says nothing.)
+        self._marked = ledger.is_left_in_store(book, self.origin)
+        if self._marked and view.user is None and self.keys.lasting:
+            self._left = "sign_in"
+        self._elsewhere = ledger.copies_elsewhere(book, self.origin, but=view.user)
 
     # ---- what the App calls ------------------------------------------------------------------
 
@@ -328,10 +375,18 @@ class WalkaAccount:
     def in_account(self, walk_id: str, start: float) -> bool:
         """Is this walk in the Walka account that is signed in - added by this Walka, or there already and not deleted there?"""
         key = walk_key(walk_id, start)
-        entry = self.view.walks.get(key) if key is not None else None
-        if not isinstance(entry, dict):
-            return False
-        return entry.get("state") == "added" or (entry.get("state") == "there" and entry.get("deleted") is not True)
+        return key is not None and ledger.a_copy(self.view.walks.get(key))
+
+    def in_other_account(self, walk_id: str, start: float) -> bool:
+        """Was a copy of this walk sent from this computer to a Walka account that is NOT the one signed in now?
+
+        Any Walka account of this address counts - one that was signed
+        out of, one whose sign-in ended, another one than is signed in -
+        but for one the accounts said was deleted: its copies went with
+        it. Answered from memory: no file is read and nobody is asked.
+        """
+        key = walk_key(walk_id, start)
+        return key is not None and key in self._elsewhere
 
     def snapshot(self) -> dict:
         """What the card shows: ready-made words and numbers. Never a key, never the Walka account's id.
@@ -389,10 +444,17 @@ class WalkaAccount:
             self._bump()  # (a sign-in that is being finished this instant must not sign anybody in)
         view = self.view
         if view.user is None:
-            return _OK  # nobody was signed in: the store for secrets is not touched
+            # Nobody was signed in: the store for secrets is not touched - unless the card says
+            # that a sign-in may still be in it, and this is its button "Try again".
+            if self._left and attempt is None and not self._trying_again:
+                self._trying_again = True
+                self._spawn(self._take_out_again, forgets=True)
+            return _OK
         held, self._access = self._access, None
         self._bump()
+        self._sign_in_no += 1
         self.view = View()
+        self._elsewhere |= _copies_of(view)  # (the copies stay in that Walka account)
         self._first = "unknown"
         self._problem = ""
         self._last = {"word": "", "at": 0.0, "added": 0}
@@ -458,6 +520,10 @@ class WalkaAccount:
         view = self.view
         self._bump()
         self.view = replace(view, sending=False)
+        if self._last["word"] not in STANDS:
+            # What the last pass or the last button came to is not said of a card on which
+            # sending was stopped since: a page loaded afresh would show it as news.
+            self._last = {"word": "", "at": 0.0, "added": 0}
         # (Let run on while Walka closes, like forgetting a sign-in: "off" must reach the file.)
         self._spawn(self._switch_off, view.user, self.epoch, forgets=True)
         self._wake_up()
@@ -544,8 +610,11 @@ class WalkaAccount:
         async with self._lock("order"):
             if self.view.user is not None:
                 return  # (somebody has signed in since: that key is theirs)
-            await self.keys.delete(self._entry)
-            await self._change(lambda book: ledger.sign_out(book, self.origin))
+            # (Both at once, and the file says "it may still be in the store" until the store has said
+            # that it is gone - as when signing out: Walka may be closing, and not wait for the store.)
+            taken, book = await asyncio.gather(self.keys.delete(self._entry), self._change(self._signs_out()))
+            self._mark_went(book)
+            await self._store_said(taken)
 
     async def _keep(self, signed: Signed, way: str, epoch: int, got: float, begun: list[bool]) -> bool:
         if self._stale(epoch):
@@ -559,8 +628,11 @@ class WalkaAccount:
                 written = await self.keys.write(
                     self._entry, signed.refresh_token, if_still=lambda: not self._stale(epoch)
                 )
-            except KeyStoreError:
-                await self.keys.delete(self._entry)  # (after a timeout it may be written all the same)
+            except KeyStoreError as error:
+                taken = await self.keys.delete(self._entry)  # (after a timeout it may be written all the same)
+                if taken or error.code == "timeout":
+                    # (A store that said no outright wrote nothing: what it holds is what it held before.)
+                    await self._store_said(taken)
                 return False
             if not written:
                 return False
@@ -571,15 +643,18 @@ class WalkaAccount:
 
             book = await self._change(signs_in, only_if=epoch)
             if book is None or self._stale(epoch):
-                await self.keys.delete(self._entry)
+                taken = await self.keys.delete(self._entry)
                 if book is not None:
                     await self._change(lambda book: ledger.sign_out(book, self.origin))
+                await self._store_said(taken)
                 return False
             self._bump()
+            self._sign_in_no += 1
             self._access = (signed.access_token, got + signed.lifetime_s - ACCESS_MARGIN_S)
             self._apply(book)
             self._first = "unknown"
             self._problem = ""
+            self._left, self._marked = "", False  # (this sign-in's key was written over the entry)
             self.latch = ""
             self._last = {"word": "", "at": 0.0, "added": 0}
         # Straight after signing in: has this Walka account taken its first step? (Decision 4.)
@@ -591,12 +666,16 @@ class WalkaAccount:
         async with self._lock("order"):
             # Both at once: a store that sits on its answer (a Mac's keychain can) must not keep
             # "signed out, sending off" from the file - Walka may be closed before the store answers.
-            _gone, book = await asyncio.gather(
+            # And with them the file says that the sign-in may still be in the store: that stands
+            # until the store has said that it is gone.
+            taken, book = await asyncio.gather(
                 self.keys.delete(self._entry),
-                self._change(lambda book: ledger.sign_out(book, self.origin)),
+                self._change(self._signs_out()),
             )
+            self._mark_went(book)
             if book is not None and self.epoch == epoch and not self.stopping:
                 self._apply(book)
+            await self._store_said(taken)
         # A courtesy to the accounts, with a short time limit, and only with
         # a token that has not run out: nobody refreshes in order to sign out.
         if held is not None and self.mono() < held[1] and not self.stopping:
@@ -605,44 +684,142 @@ class WalkaAccount:
     async def _courtesy(self, token: str) -> None:
         await calls.logout(self.client, self.key, access_token=token)
 
-    async def sign_in_ended(self, epoch: int) -> None:
+    def _signs_out(self, *, notice: str | None = None, gone: str | None = None) -> Callable[[dict], None]:
+        """The change of the file for a sign-out that also takes the sign-in out of the store."""
+        lasting = self.keys.lasting  # (a store in memory is gone with Walka: nothing can be left in it)
+        if lasting:
+            self._marked = True
+
+        def signs_out(book: dict) -> None:
+            ledger.sign_out(book, self.origin, notice=notice, left_in_store=lasting, gone=gone)
+
+        return signs_out
+
+    def _mark_went(self, book: dict | None) -> None:
+        """``book``: what came of the change that ``_signs_out`` made. Not written: the file does not say so."""
+        if book is None:
+            self._marked = False
+
+    async def _store_said(self, taken: bool) -> None:
+        """What the store answered when a sign-in was taken out of it. (Under the "order" lock.)
+
+        Gone: the file no longer says that it may be there. Not gone, as
+        far as anybody knows (the store said no, or did not answer in
+        time): the file says so, and the card - when nobody is signed
+        in. With a store in memory there is nothing to say.
+        """
+        if not self.keys.lasting:
+            return
+        if taken:
+            if self._marked:
+                await self._change(lambda book: ledger.sign_in_left(book, self.origin, False))
+                self._marked = False
+            left = ""
+        else:
+            book = await self._change(lambda book: ledger.sign_in_left(book, self.origin, True))
+            if book is not None:
+                self._marked = ledger.is_left_in_store(book, self.origin)
+            left = "sign_in" if self.view.user is None else ""
+        if left != self._left:
+            self._left = left
+            self._touch()
+
+    async def _take_out_again(self) -> None:
+        """The card's "Try again": ONE delete. Nothing is read from the store, and nobody is asked.
+
+        The file is looked at first. The entry is named after the
+        address, so the OTHER Walka on this data folder shares it: if
+        somebody has signed in there since, the entry is that sign-in's
+        key by now, and wanted. The file then says that somebody is
+        signed in - and nothing is deleted here; the word goes from this
+        card. Only a Walka that knows its own sign-out reached the file
+        goes by the file: otherwise the sign-in that stands there is its
+        own, written before a sign-out that the file never took. (What
+        stays: the instant between this look and the delete.)
+        """
+        try:
+            async with self._lock("order"):
+                if self.view.user is not None:
+                    return  # (somebody has signed in since: that key is wanted)
+                if self._marked and await self._signed_in_by_the_file():
+                    self._marked = False
+                    if self._left:
+                        self._left = ""
+                        self._touch()
+                    return
+                await self._store_said(await self.keys.delete(self._entry))
+        finally:
+            self._trying_again = False
+
+    async def _signed_in_by_the_file(self) -> bool:
+        """Does the file say that somebody is signed in at this address? (Not to be read just now: no.)"""
+        try:
+            book = await off_loop(self._ledger.read, name=THREAD_NAME)
+        except LedgerError:
+            return False
+        return ledger.signed_in(book, self.origin) is not None
+
+    async def sign_in_ended(self, epoch: int, *, gone: bool = False) -> None:
         """The sign-in is over - a refresh was refused for good, or the Walka account is gone (decision 11).
 
         Forget the keys, switch sending off, keep everything on the
         computer, and say so once, in the card, until "OK" is pressed.
+
+        ``gone``: the accounts said that the Walka account was deleted.
+        That is written down for it: the copies of its walks are gone
+        too. (A refresh that was refused cannot tell: then they count.)
         """
         if self._stale(epoch):
             return
+        was = self.view
         self._access = None
         self._bump()
+        self._sign_in_no += 1
         mine = self.epoch
         self.view = View(notice="ended")
+        if not gone:
+            self._elsewhere |= _copies_of(was)
         self._first = "unknown"
         async with self._lock("order"):
             # (Both at once, as when signing out: the file does not wait for the store.)
-            _gone, book = await asyncio.gather(
+            taken, book = await asyncio.gather(
                 self.keys.delete(self._entry),
-                self._change(lambda book: ledger.sign_out(book, self.origin, notice="ended")),
+                self._change(self._signs_out(notice="ended", gone=was.user if gone else None)),
             )
+            self._mark_went(book)
             if book is not None and self.epoch == mine and not self.stopping:
                 self._apply(book)
+            await self._store_said(taken)
 
-    async def _lost_sign_in(self, epoch: int, problem: str) -> None:
+    async def _lost_sign_in(self, epoch: int, problem: str, *, taken: bool | None = None) -> None:
         """The stored sign-in is not there, or is not this folder's: quietly "not signed in". Not decision 11:
         nobody signed out and no Walka account was deleted. The entry in the store is left alone - it may be
-        another data folder's."""
+        another data folder's.
+
+        ``taken``: whoever calls did take the entry out, because its key
+        could not be kept - and this is what the store answered."""
         if self._stale(epoch):
             return
+        was = self.view
         self._access = None
         self._bump()
+        self._sign_in_no += 1
         mine = self.epoch
         self.view = View()
+        self._elsewhere |= _copies_of(was)  # (the Walka account is there as before, and so are the copies)
         self._first = "unknown"
         self._problem = problem
         async with self._lock("order"):
             book = await self._change(lambda book: ledger.sign_out(book, self.origin))
             if book is not None and self.epoch == mine and not self.stopping:
                 self._apply(book)
+            if taken is not None:
+                await self._store_said(taken)
+                if self._left and self._problem == problem:
+                    # ("Not on this computer any more" would be more than Walka knows: the card
+                    # says that the sign-in may still be in the store, and that says enough.)
+                    self._problem = ""
+                    self._touch()
 
     # ---- keys --------------------------------------------------------------------------------
 
@@ -662,12 +839,17 @@ class WalkaAccount:
         if self._access is not None and self._access[0] == token:
             self._access = None
 
-    async def fresh_token(self, epoch: int) -> str:
+    async def fresh_token(self, epoch: int, *, wanted: Callable[[], bool] | None = None) -> str:
         """An access token to make a request with - a new one if the old one has run out.
 
+        ``wanted`` (the sender's: is there still a walk to send?) is asked
+        on the loop, without waiting, as the last thing before the store
+        for secrets is read and again before the request for a new token
+        is made. When it says no, neither happens: ``Halt("nothing")``.
+
         Raises ``Halt`` ("over": nobody is signed in any more; "dropped";
-        "stopped": the store could not be asked) and ``CallError`` (the
-        refresh got no answer, or one that says nothing).
+        "stopped": the store could not be asked; "nothing") and
+        ``CallError`` (the refresh got no answer, or one that says nothing).
         """
         token = self.access_token()
         if token is not None:
@@ -677,9 +859,12 @@ class WalkaAccount:
             token = self.access_token()
             if token is not None:
                 return token
-            return await self._refresh(epoch)
+            return await self._refresh(epoch, wanted)
 
-    async def _refresh(self, epoch: int) -> str:
+    async def _refresh(self, epoch: int, wanted: Callable[[], bool] | None = None) -> str:
+        user, sign_in_no = self.view.user, self._sign_in_no
+        if wanted is not None and not wanted():
+            raise Halt("nothing")  # no walk is left to send: the store is not looked into
         # The refresh token is read from the store immediately before it is
         # used and never kept: two Walkas can run on one data folder, and
         # an old one used again later ends the whole sign-in.
@@ -697,6 +882,8 @@ class WalkaAccount:
         if stored is None:
             await self._lost_sign_in(epoch, "no_stored_sign_in")
             raise Halt("over")
+        if wanted is not None and not wanted():
+            raise Halt("nothing")  # the walk was deleted while the store was read: nothing is asked
         over = False
         try:
             signed = await calls.refresh(self.client, self.key, refresh_token=stored)
@@ -708,29 +895,59 @@ class WalkaAccount:
             await self.sign_in_ended(epoch)
             raise Halt("over")
         got = self.mono()
+
+        def still_this_sign_in() -> bool:
+            # Inside the store's thread, under its lock, as the last thing before the key is written.
+            if self._sign_in_no != sign_in_no:
+                return False  # somebody signed out here meanwhile, or signed in: the entry is not this key's
+            # And the file: the OTHER Walka on this data folder may have signed out, or signed in to
+            # another Walka account, while the key was renewed. (A plain read: it takes no lock and
+            # waits for nothing of the loop's. What stays is the instant between this look and the
+            # write, in which the other Walka can still do both.)
+            try:
+                found = ledger.signed_in(self._ledger.read(), self.origin)
+            except LedgerError:
+                return True  # not to be read just now: the key is this sign-in's as far as anybody knows
+            return found is not None and found[0] == user
+
         # The NEW refresh token goes to the store before the access token is
-        # used for anything. Whether it is still wanted is looked at inside
-        # the store's thread, under its lock: a sign-out that came meanwhile
-        # deletes the entry, and this write must not bring it back.
+        # used for anything, and at once: the old one is spent. It is written
+        # whenever this sign-in still stands - also when the work that asked
+        # for it is not wanted any more (sending was switched off meanwhile,
+        # or Walka is closing): only a sign-out, or another sign-in, makes
+        # the key unwanted, and a sign-out's delete must not be undone by it.
         try:
-            written = await self.keys.write(self._entry, signed.refresh_token, if_still=lambda: not self._stale(epoch))
+            written = await self.keys.write(self._entry, signed.refresh_token, if_still=still_this_sign_in)
         except KeyStoreError:
             # A sign-in whose key cannot be kept is no sign-in: never in memory instead.
             if self._stale(epoch):
                 raise Halt("dropped") from None
-            await self.keys.delete(self._entry)
-            await self._lost_sign_in(epoch, "no_stored_sign_in")
+            taken = await self.keys.delete(self._entry)
+            await self._lost_sign_in(epoch, "no_stored_sign_in", taken=taken)
             raise Halt("over") from None
         if not written:
+            # The key is not this sign-in's to write any more, and the access token that came with it is
+            # dropped. Somebody signed out HERE: that sign-out takes the entry away itself. Or the file
+            # says so (the other Walka signed out, or the file is lost): then what it says is taken
+            # over now, and if nobody is signed in by it, the old key does not stay in the store.
+            here = self._sign_in_no != sign_in_no
+            try:
+                await self.still(epoch)
+            except Halt:
+                if not here and self.view.user is None and not self.stopping:
+                    await self._take_out_late()
+                raise
             raise Halt("dropped")
-        # The file once more. The OTHER Walka on this data folder may have
-        # signed out while the key was renewed: its sign-out took the entry
-        # out of the store, and the write above has just put one back.
+        # Whether the ACCESS token is used goes by the epoch, as everything does: work that began before
+        # sending was switched off uses nothing (the key above is kept all the same, for the next refresh).
+        # And the file once more. The OTHER Walka on this data folder may have signed out in the
+        # instant between the look inside the store's thread and the write: its sign-out took the
+        # entry out of the store, and the write above has just put one back.
         try:
             await self.still(epoch)
         except Halt:
             if self.view.user is None and not self.stopping:
-                await self.keys.delete(self._entry)
+                await self._take_out_late()
             raise
         if signed.user_id != self.view.user:
             # The entry in the store is another data folder's sign-in. Its
@@ -739,6 +956,12 @@ class WalkaAccount:
             raise Halt("over")
         self._access = (signed.access_token, got + signed.lifetime_s - ACCESS_MARGIN_S)
         return signed.access_token
+
+    async def _take_out_late(self) -> None:
+        """The file says that nobody is signed in any more, and a key is in the store all the same: it goes."""
+        async with self._lock("order"):
+            if self.view.user is None:
+                await self._store_said(await self.keys.delete(self._entry))
 
     # ---- asking, for the sender and for the buttons ------------------------------------------
 
@@ -757,13 +980,20 @@ class WalkaAccount:
         switched sending off: that counts here too, at once. Nothing read
         from the file switches sending ON in a Walka that is running.
         """
-        self.check(epoch)
-        try:
-            book = await off_loop(self._ledger.read, name=THREAD_NAME)
-        except LedgerError:
+        while True:
             self.check(epoch)
-            raise Halt("stopped", "stopped") from None  # not to be read: then nothing is sent
-        self.check(epoch)
+            wrote = self._wrote
+            try:
+                book = await off_loop(self._ledger.read, name=THREAD_NAME)
+            except LedgerError:
+                self.check(epoch)
+                raise Halt("stopped", "stopped") from None  # not to be read: then nothing is sent
+            self.check(epoch)
+            if self._wrote == wrote:
+                break
+            # This Walka changed the file itself while it was being read (sending was switched on, a
+            # walk was noted): the picture may be the older one, and what was just written must not be
+            # undone by it. Read again - the look before a request is not skipped.
         seen, mine = _view_of(book, self.origin.text), self.view
         if seen.user == mine.user:
             adopted = replace(seen, sending=seen.sending and mine.sending)
@@ -773,25 +1003,34 @@ class WalkaAccount:
             if adopted.walks != mine.walks:
                 self.view = replace(mine, walks=adopted.walks)
                 self._touch()
+            self._see_copies(book)
             return
         if adopted.user != mine.user:
             self._access = None
             self._first = "unknown"
+            self._sign_in_no += 1
         self.view = adopted
+        self._see_copies(book)
         self._bump()
         raise Halt("dropped")
 
-    async def ask(self, epoch: int, call: Callable[..., Awaitable[Any]], **said: Any) -> Any:
+    async def ask(
+        self, epoch: int, call: Callable[..., Awaitable[Any]], *, wanted: Callable[[], bool] | None = None, **said: Any
+    ) -> Any:
         """One request that bears the person's access token: ``call`` is a function of ``calls``.
 
         Before it the file is read again. A token that ran out is made
-        anew once - never twice for one request. Raises ``CallError`` and ``Halt``.
+        anew once - never twice for one request. ``wanted``: see
+        ``fresh_token``; it is asked once more as the last thing before
+        the request itself. Raises ``CallError`` and ``Halt``.
         """
         for again in (False, True):
             await self.still(epoch)
             held = self.access_token()
-            token = await self.fresh_token(epoch)
+            token = await self.fresh_token(epoch, wanted=wanted)
             self.check(epoch)
+            if wanted is not None and not wanted():
+                raise Halt("nothing")
             try:
                 return await call(self.client, self.key, access_token=token, **said)
             except CallError as error:
@@ -810,6 +1049,7 @@ class WalkaAccount:
         seen = _view_of(book, self.origin.text)
         if seen.user == user and self.view.user == user:
             self.view = replace(self.view, walks=seen.walks)
+        self._see_copies(book)
         self._touch()
 
     async def _first_step(self, epoch: int) -> bool:
@@ -823,7 +1063,7 @@ class WalkaAccount:
             there = await self.ask(epoch, calls.who)
             self.check(epoch)
             if there != "there":
-                await self.sign_in_ended(epoch)
+                await self.sign_in_ended(epoch, gone=there == "gone")
                 raise Halt("over")
         self.first_step_is(taken is True)
         return taken is True
@@ -918,6 +1158,7 @@ class WalkaAccount:
                 # again at the next start. So the sign-in itself goes: then
                 # nothing can be sent, whatever the file says.
                 self._access = None
+                self._sign_in_no += 1  # (a key that is being renewed this instant is not written back either)
                 await self.keys.delete(self._entry)
                 return
             if self.epoch == epoch and not self.stopping:
@@ -957,10 +1198,22 @@ class WalkaAccount:
         except ValueError:
             # (The other Walka signed out meanwhile, say: then the change does not fit, and is not made.)
             return None
+        finally:
+            # On the loop, the moment the write is back, whatever came of it - and nothing is waited
+            # for between this and the caller taking the new book over. See ``still``.
+            self._wrote += 1
 
     def _apply(self, book: dict) -> None:
         self.view = _view_of(book, self.origin.text)
+        self._see_copies(book)
         self._touch()
+
+    def _see_copies(self, book: dict) -> None:
+        """Which walks have a copy in a Walka account that is not signed in now: from the file, as it is here."""
+        found = ledger.copies_elsewhere(book, self.origin, but=self.view.user)
+        if found != self._elsewhere:
+            self._elsewhere = found
+            self._touch()  # (History looks again when the part's number moves)
 
     # ---- for the sender ----------------------------------------------------------------------
 
@@ -1237,6 +1490,7 @@ class WalkaAccount:
             "store": "lasting" if self.keys.lasting else "until_closed",
             "problem": self._problem if usable and self._problem in PROBLEMS else "",
             "notice": view.notice if view.notice in ledger.NOTICES else "",
+            "left_in_store": self._left if usable and view.user is None and self._left in LEFT else "",
             "email": view.email,
             "way": view.way,
             "first_step": self._first if view.user is not None else "unknown",

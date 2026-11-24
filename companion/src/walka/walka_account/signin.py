@@ -52,6 +52,7 @@ from aiohttp import web
 from . import calls
 from .calls import CallError, Signed
 from .https import Client, Origin
+from .threads import wait_for_event
 
 log = logging.getLogger(__name__)
 
@@ -144,11 +145,7 @@ def _listening_socket(
 
 async def _wait_for(event: asyncio.Event, seconds: float | None) -> bool:
     """Wait for ``event``, ``seconds`` at most. Did it come?"""
-    try:
-        await asyncio.wait_for(event.wait(), seconds)
-    except asyncio.TimeoutError:
-        return False
-    return True
+    return await wait_for_event(event, seconds)
 
 
 def _this_task() -> asyncio.Task[Any] | None:

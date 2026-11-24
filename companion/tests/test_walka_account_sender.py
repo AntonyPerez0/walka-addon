@@ -124,7 +124,9 @@ def test_a_row_is_exactly_the_sixteen_keys_and_nothing_of_what_stays_here(tmp_pa
             assert sent["client_id"] == record.id and sent["origin"] == "walka"
             assert sent["started_at"] == utc_text(record.start)[:19] + ".000Z"
             assert sent["session"] == "wow" and type(sent["steps"]) is int
-            body = push.body.decode("utf-8")
+            # (Looked for in the row without its id: that one is random, and one in two hundred holds "158".
+            # The row is the whole request - see "(sent,) = push.json" - and its keys are exactly the sixteen.)
+            body = json.dumps({name: value for name, value in sent.items() if name != "id"})
             # The treadmill's name, the heart rate, the top speed and the samples stay on the computer.
             for stays in (PAD, "treadmill", "samples", "max_kmh", "avg_hr", "max_hr", "131.5", "158", "beacon"):
                 assert stays not in body
@@ -276,6 +278,27 @@ def test_an_account_that_is_gone_is_told_from_one_that_is_new_and_the_sign_in_en
     run(scenario)
 
 
+def test_walka_is_for_adults_from_a_sign_in_that_was_ended_elsewhere_ends_the_sign_in_here(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path, start=False) as rig:
+            user = await sending(rig)
+            rig.walk(3600)
+            files = rig.walk_files()
+            rig.fake._users[user].profile["adult_confirmed_at"] = None  # the first step is taken back ...
+            rig.fake.sign_out_everywhere(user)  # ... and the sign-in was ended: the access token runs on for a while
+            assert await a_pass(rig) == "over"
+            assert rig.asked("/rest/v1/walks", method="POST")[0].json  # it was refused: "Walka is for adults."
+            assert len(rig.asked("/auth/v1/user")) == 1  # who is there? Nobody: this sign-in is over
+            shown = rig.snapshot()
+            assert (shown["state"], shown["notice"], shown["sending"]) == ("signed_out", "ended", False)
+            assert shown["first_step"] == "unknown"  # not "no Walka account yet": nobody is signed in
+            assert shown["last"]["word"] != "not_open"
+            assert rig.keystore.secrets() == []
+            assert rig.walk_files() == files
+
+    run(scenario)
+
+
 def test_a_full_account_stops_the_run(tmp_path):
     async def scenario():
         async with Rig(tmp_path, start=False) as rig:
@@ -331,12 +354,149 @@ def test_one_bad_row_in_a_batch_is_found_one_by_one_and_set_aside(tmp_path, monk
             assert len(rig.fake.requests) == before
             assert rig.snapshot()["counts"]["aside"] == 1
 
-            # Another version of Walka tries it again.
+            # Another version of Walka tries it again - and sets it aside again. Nothing went: not "sent".
             await rig.restart(start=False, version="9.9.9")
             assert rig.snapshot()["counts"]["waiting"] == 1
-            assert await a_pass(rig) == "sent"
+            assert await a_pass(rig) == "nothing"
             assert [len(rows) for rows in rig.pushes()][4:] == [1]  # alone, so it is not asked twice
             assert rig.entry_of(user, bad)["version"] == "9.9.9"
+            assert rig.snapshot()["last"]["word"] == "nothing"
+
+    run(scenario)
+
+
+def test_a_pass_that_only_sets_a_walk_aside_does_not_say_sent(tmp_path, monkeypatch):
+    async def scenario():
+        monkeypatch.setattr(row_part, "outside", lambda row, now_ms: None)
+        async with Rig(tmp_path) as rig:
+            user = await sending(rig)
+            # The ordinary case: one walk is saved, and the Walka account does not take it.
+            bad = rig.walk(3600, distance_m=250_000.0)
+            await rig.saved()
+            assert [len(rows) for rows in rig.pushes()] == [1]
+            assert rig.entry_of(user, bad)["state"] == "aside" and rig.fake.walks(user) == []
+            shown = rig.snapshot()
+            # Nothing is in the Walka account: the card must not say "Sent." above "0 sent".
+            assert shown["last"]["word"] != "sent" and shown["last"] == {"word": "nothing", "at": rig.clock.wall(), "added": 0}
+            assert (shown["counts"]["sent"], shown["counts"]["aside"], shown["counts"]["waiting"]) == (0, 1, 0)
+            assert [told["id"] for told in shown["aside"]] == [bad.id]
+
+            # A walk that is there already did go, as far as the person is concerned: that is "sent", though none was added.
+            there = rig.walk(1800)
+            rig.fake.add_walk(user, utc_text(there.start))
+            await rig.saved()
+            assert rig.snapshot()["last"] == {"word": "sent", "at": rig.clock.wall(), "added": 0}
+
+    run(scenario)
+
+
+# ---- one by one: what each single request can be answered ------------------------------------------
+
+
+def test_one_by_one_a_walk_that_is_there_already_is_written_as_there_and_looked_up_once(tmp_path, monkeypatch):
+    async def scenario():
+        monkeypatch.setattr(row_part, "outside", lambda row, now_ms: None)
+        async with Rig(tmp_path, start=False) as rig:
+            user = await sending(rig)
+            there, bad, fine = rig.walk(10800), rig.walk(7200, distance_m=250_000.0), rig.walk(3600)
+            row_there = rig.fake.add_walk(user, utc_text(there.start))  # from the website, say
+            assert await a_pass(rig) == "sent"
+            assert [len(rows) for rows in rig.pushes()] == [3, 1, 1, 1]  # refused whole, then one by one
+            assert rig.entry_of(user, there) == {"state": "there", "row": row_there, "deleted": False}
+            assert rig.entry_of(user, bad)["state"] == "aside"
+            assert rig.entry_of(user, fine)["state"] == "added"
+            assert len(rig.asked("/rest/v1/walks", method="GET")) == 1  # one look-up, for the one that did not come back
+            shown = rig.snapshot()
+            assert shown["counts"]["aside"] == 1 and shown["counts"]["sent"] == 2
+            assert shown["last"]["added"] == 1
+
+    run(scenario)
+
+
+def test_one_by_one_a_walk_that_is_there_already_is_not_shown_as_set_aside_when_the_look_up_fails(
+    tmp_path, monkeypatch
+):
+    async def scenario():
+        monkeypatch.setattr(row_part, "outside", lambda row, now_ms: None)
+        async with Rig(tmp_path, start=False) as rig:
+            user = await sending(rig)
+            there, bad, _fine = rig.walk(10800), rig.walk(7200, distance_m=250_000.0), rig.walk(3600)
+            rig.fake.add_walk(user, utc_text(there.start))
+            rig.fake.fail_next("/rest/v1/walks", 500, None, method="GET")
+            assert await a_pass(rig) == "sent"
+            # What the single request said stands by itself: "there", its row unknown - never "the account did not take it".
+            assert rig.entry_of(user, there) == {"state": "there", "row": None, "deleted": False}
+            shown = rig.snapshot()
+            assert shown["counts"]["aside"] == 1
+            assert [told["id"] for told in shown["aside"]] == [bad.id]
+
+    run(scenario)
+
+
+@pytest.mark.parametrize(
+    ("kind", "word", "limits"),
+    [("500", "later", [PAUSES_S[0]]), ("no answer", "later", [PAUSES_S[0]]), ("a gateway's page", "stopped", [])],
+)
+def test_one_by_one_a_single_request_that_fails_ends_the_pass_and_sets_nothing_more_aside(
+    tmp_path, monkeypatch, kind, word, limits
+):
+    async def scenario():
+        monkeypatch.setattr(row_part, "outside", lambda row, now_ms: None)
+        async with Rig(tmp_path) as rig:
+            user = await sending(rig)
+            bad, good, fine = rig.walk(10800, distance_m=250_000.0), rig.walk(7200), rig.walk(3600)
+            mark = rig.wait.mark()
+            # Each request is held when it arrives, so that the next one's answer can be set before it is asked.
+            batch = rig.fake.hold("/rest/v1/walks", method="POST")
+            rig.account.walk_saved()
+            await batch.arrived.wait()  # the three together: refused whole
+            first = rig.fake.hold("/rest/v1/walks", method="POST")
+            batch.release()
+            await first.arrived.wait()  # the bad one, alone: refused, set aside
+            second = rig.fake.hold("/rest/v1/walks", method="POST")
+            first.release()
+            await second.arrived.wait()  # a good one, alone - and this request fails
+            if kind == "500":
+                rig.fake.fail_next("/rest/v1/walks", 500, refusal("XX000", "internal error"), method="POST")
+            elif kind == "no answer":
+                rig.fake.drop_next("/rest/v1/walks", method="POST")
+            else:
+                rig.fake.fail_next("/rest/v1/walks", 403, b"<html>the gateway's own page</html>", method="POST")
+            second.release()
+            await rig.idle()
+
+            assert [len(rows) for rows in rig.pushes()] == [3, 1, 1]  # the pass ends there: the third is not asked
+            assert rig.entry_of(user, bad)["state"] == "aside"
+            assert rig.entry_of(user, good) is None and rig.entry_of(user, fine) is None  # they wait
+            assert rig.fake.walks(user) == []
+            shown = rig.snapshot()
+            assert shown["last"]["word"] == word  # never "sent": nothing went
+            assert (shown["counts"]["aside"], shown["counts"]["waiting"]) == (1, 2)
+            assert rig.wait.limits(mark) == limits  # "later" waits for another try; "stopped" does not
+
+    run(scenario)
+
+
+def test_one_by_one_a_walk_deleted_meanwhile_is_not_sent_and_not_looked_up(tmp_path, monkeypatch):
+    async def scenario():
+        monkeypatch.setattr(row_part, "outside", lambda row, now_ms: None)
+        async with Rig(tmp_path, start=False) as rig:
+            user = await sending(rig)
+            _bad, gone, fine = rig.walk(10800, distance_m=250_000.0), rig.walk(7200), rig.walk(3600)
+            batch = rig.fake.hold("/rest/v1/walks", method="POST")
+            going = asyncio.ensure_future(rig.account.sender.one_pass())
+            await batch.arrived.wait()
+            first = rig.fake.hold("/rest/v1/walks", method="POST")
+            batch.release()
+            await first.arrived.wait()  # the bad one, alone
+            assert rig.store.delete(gone.id) is True  # on the dashboard, before its own turn comes
+            first.release()
+            assert await going == "sent"
+            await rig.idle()
+            assert [len(rows) for rows in rig.pushes()] == [3, 1, 1]  # no request for the deleted one
+            assert rig.asked("/rest/v1/walks", method="GET") == []  # and the Walka account is not asked about it
+            assert [walk["client_id"] for walk in rig.fake.walks(user)] == [fine.id]
+            assert rig.entry_of(user, gone) is None
 
     run(scenario)
 
@@ -1122,6 +1282,184 @@ def test_a_walk_deleted_while_its_send_waits_is_not_sent(tmp_path):
             gate.release()
             assert await going == "nothing"
             assert len(rig.fake.walks(user)) == 1
+
+    run(scenario)
+
+
+def test_the_only_walk_deleted_while_the_file_is_read_again_means_no_new_key_and_no_request(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path, start=False) as rig:
+            user = await sending(rig)
+            rig.walk(7200)
+            assert await a_pass(rig) == "sent"  # (the version of the rules is known from here on)
+            only = rig.walk(60)
+            rig.clock.advance(3700)  # the access token has run out: the next request would need a new one
+            real = rig.account.still
+
+            async def still_and_deleted(epoch):
+                await real(epoch)
+                rig.store.delete(only.id)  # on the dashboard, while the file was read again
+
+            rig.account.still = still_and_deleted
+            before = len(rig.fake.requests)
+            rig.keystore.calls.clear()
+            assert await a_pass(rig) == "nothing"
+            # No walk is left to send: so no request - not for a new key either - and no look into the store.
+            assert rig.fake.requests[before:] == [] and rig.keystore.calls == []
+            assert len(rig.fake.walks(user)) == 1
+
+    run(scenario)
+
+
+def test_the_only_walk_deleted_while_the_store_is_read_means_no_request_for_a_new_key(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path, start=False) as rig:
+            user = await sending(rig)
+            rig.walk(7200)
+            assert await a_pass(rig) == "sent"
+            only = rig.walk(60)
+            rig.clock.advance(3700)
+            real = rig.account.keys.read
+
+            async def read_and_deleted(name):
+                stored = await real(name)
+                rig.store.delete(only.id)  # on the dashboard, while the store for secrets was read
+                return stored
+
+            rig.account.keys.read = read_and_deleted
+            before = len(rig.fake.requests)
+            rig.keystore.calls.clear()
+            assert await a_pass(rig) == "nothing"
+            assert rig.fake.requests[before:] == []  # the look into the store was the last of it
+            assert rig.keystore.calls == [("read", rig.entry)]
+            assert len(rig.fake.walks(user)) == 1 and rig.snapshot()["state"] == "signed_in"
+
+    run(scenario)
+
+
+@pytest.mark.parametrize("token", ["still good", "run out"])
+def test_the_only_walk_deleted_before_the_first_send_of_a_run_means_the_rules_are_not_asked(tmp_path, token):
+    async def scenario():
+        async with Rig(tmp_path, start=False) as rig:
+            user = await sending(rig)
+            only = rig.walk(60)
+            if token == "run out":
+                rig.clock.advance(3700)
+            rig.keystore.calls.clear()
+            real = rig.account.still
+
+            async def still_and_deleted(epoch):
+                await real(epoch)
+                rig.store.delete(only.id)
+
+            rig.account.still = still_and_deleted
+            before = len(rig.fake.requests)
+            assert await a_pass(rig) == "nothing"
+            assert rig.fake.requests[before:] == []  # not even which version of its rules the database is at
+            assert rig.keystore.calls == []  # and no key was made anew for that question
+            assert rig.fake.walks(user) == [] and rig.account.schema_known is False
+
+    run(scenario)
+
+
+def test_a_walk_deleted_while_the_store_is_read_does_not_end_the_pass_for_the_walks_behind_it(tmp_path, monkeypatch):
+    async def scenario():
+        monkeypatch.setattr(row_part, "outside", lambda row, now_ms: None)
+        async with Rig(tmp_path, start=False) as rig:
+            user = await sending(rig)
+            bad, gone, fine = rig.walk(10800, distance_m=250_000.0), rig.walk(7200), rig.walk(3600)
+            batch = rig.fake.hold("/rest/v1/walks", method="POST")
+            going = asyncio.ensure_future(rig.account.sender.one_pass())
+            await batch.arrived.wait()
+            first = rig.fake.hold("/rest/v1/walks", method="POST")
+            batch.release()  # refused whole: one by one from here
+            await first.arrived.wait()  # the bad one, alone
+            # By this computer's clock the access token runs out before the next one's turn. (Not by
+            # the accounts' clock, which is left where it was: the request that waits is still taken.)
+            rig.clock.advance(3700)
+            rig.accounts_behind_s = 3700.0
+            real = rig.account.keys.read
+
+            async def read_and_deleted(name):
+                stored = await real(name)
+                rig.store.delete(gone.id)  # ... and that one is deleted while the store is read for a new key
+                return stored
+
+            rig.account.keys.read = read_and_deleted
+            first.release()
+            assert await going == "sent"
+            await rig.idle()
+            # Nothing was asked for the deleted walk - and the one behind it went all the same.
+            assert [[sent["client_id"] for sent in rows] for rows in rig.pushes()][1:] == [[bad.id], [fine.id]]
+            # (One look into the store that ended there, and one for the key the last walk went with.)
+            assert refreshes(rig) == 1 and rig.keystore.calls.count(("read", rig.entry)) == 2
+            assert [walk["client_id"] for walk in rig.fake.walks(user)] == [fine.id]
+            assert rig.entry_of(user, bad)["state"] == "aside" and rig.entry_of(user, gone) is None
+
+    run(scenario)
+
+
+def test_walks_deleted_before_a_later_batch_do_not_take_the_word_sent_from_the_ones_that_went(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path, start=False) as rig:
+            user = await sending(rig)
+            walks = [rig.walk(86400.0 - number * 60) for number in range(BATCH + 1)]
+            real = rig.account.keys.read
+
+            async def read_and_deleted(name):
+                stored = await real(name)
+                rig.store.delete(walks[-1].id)  # the one walk of the second batch, while the store was read
+                return stored
+
+            rig.account.keys.read = read_and_deleted
+            gate = rig.fake.hold("/rest/v1/walks", method="POST", after=True)
+            going = asyncio.ensure_future(rig.account.sender.one_pass())
+            await gate.arrived.wait()
+            rig.clock.advance(3700)  # the answer is slow: the access token has run out when the second batch is due
+            rig.keystore.calls.clear()
+            gate.release()
+            assert await going == "sent"
+            assert [len(rows) for rows in rig.pushes()] == [BATCH]
+            assert refreshes(rig) == 0 and rig.keystore.calls == [("read", rig.entry)]
+            assert len(rig.fake.walks(user)) == BATCH
+            assert rig.snapshot()["last"] == {"word": "sent", "at": rig.clock.wall(), "added": BATCH}
+
+    run(scenario)
+
+
+def test_the_task_ends_by_itself_when_walka_is_closing(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            await sending(rig)
+            task = rig.account._sender_task
+            assert task is not None and not task.done()
+            # Closing, as far as the task can see - but nobody cancels it (before Python 3.12 a
+            # cancellation could be lost on the way: then it must still not wait for ever).
+            rig.account.stopping = True
+            rig.account.wake.set()
+            for _ in range(200):
+                if task.done():
+                    break
+                await asyncio.sleep(0)
+            assert task.done() and not task.cancelled() and task.exception() is None
+
+    run(scenario)
+
+
+def test_the_task_ends_by_itself_after_a_pass_that_walka_closed_under(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path) as rig:
+            user = await sending(rig)
+            rig.walk(3600)
+            task = rig.account._sender_task
+            gate = rig.fake.hold("/rest/v1/rpc/schema_version")
+            rig.account.walk_saved()
+            await gate.arrived.wait()  # a pass is under way ...
+            rig.account.stopping = True  # ... when Walka closes (and, again, nobody cancels the task)
+            gate.release()
+            await asyncio.wait({task}, timeout=10)
+            assert task.done() and not task.cancelled() and task.exception() is None
+            assert rig.pushes() == [] and rig.fake.walks(user) == []  # and nothing more was asked
 
     run(scenario)
 

@@ -9,7 +9,9 @@
 // The rules this file keeps:
 //   - Without that part of the snapshot there is no card, and the page is as it
 //     always was. While nobody is signed in the card is quiet - no lamp, no
-//     badge - and nothing outside it says a word about a Walka account.
+//     badge - and nothing outside it says a word about a Walka account. One
+//     thing does, for somebody who signed in before: the question before a walk
+//     is deleted, if a copy of that walk was sent from this computer.
 //   - Every sentence is one of this file's own. Of the snapshot only the e-mail
 //     address, the address Walka asks, the numbers, and what the Walka account
 //     said of a walk are shown, and always as text: nothing from it is ever read
@@ -68,7 +70,7 @@ const PROBLEM = {
   failed: "Walka could not finish signing in. Try again.",
   timed_out: "Nobody came back from the browser. Try again.",
   no_store: "Walka could not keep the sign-in on this computer, so nothing was signed in.",
-  certificate: "Walka could not check that it is talking to your account's server, so it asked nothing.",
+  certificate: "Walka could not check that it is talking to your Walka account's server, so it asked nothing.",
   no_answer: "There was no answer. Try again later.",
   no_stored_sign_in: "The sign-in is not on this computer any more. Nothing is sent.",
   // (store_refused: see problemSentence - the sentence names the system.)
@@ -79,11 +81,11 @@ const LAST_ON = {
   sent: "Sent.",
   later: "No answer - Walka tries again later.",
   no_answer: "There was no answer. Try again later.",
-  too_old: "This Walka is too old for the account as it is now: get the newest Walka.",
-  full: "The account is full: it has room for 20,000 walks.",
+  too_old: "This Walka is too old for your Walka account as it is now: get the newest Walka.",
+  full: "Your Walka account is full: it has room for 20,000 walks.",
   stopped: "Walka stopped for now and tries again when it is next started.",
   not_open: "Walka stopped for now and tries again when it is next started.",
-  certificate: "Walka could not check that it is talking to your account's server, so it sent nothing.",
+  certificate: "Walka could not check that it is talking to your Walka account's server, so it sent nothing.",
 };
 // ... and while it is off: then the word is about a button of this card. It is said until such a
 // button is pressed again - the companion keeps its last word, and what was true of one try
@@ -91,7 +93,7 @@ const LAST_ON = {
 const LAST_ASKED = {
   no_answer: "There was no answer. Try again later.",
   stopped: "That did not work just now. Try again later.",
-  certificate: "Walka could not check that it is talking to your account's server, so it asked nothing.",
+  certificate: "Walka could not check that it is talking to your Walka account's server, so it asked nothing.",
 };
 // What stays true of the Walka account, whoever asked and whenever.
 const LAST_STANDS = {
@@ -138,18 +140,27 @@ const unnamedLine = (n) =>
     : `${walks(n)} do not say which treadmill made them, and are not sent.`;
 const heldLine = (n) =>
   n === 1
-    ? "1 walk is outside what the account takes, and stays here."
-    : `${walks(n)} are outside what the account takes, and stay here.`;
+    ? "1 walk is outside what your Walka account takes, and stays here."
+    : `${walks(n)} are outside what your Walka account takes, and stay here.`;
 const asideLine = (n) =>
-  n === 1 ? "The account did not take 1 walk. It stays here." : `The account did not take ${walks(n)}. They stay here.`;
+  n === 1
+    ? "Your Walka account did not take 1 walk. It stays here."
+    : `Your Walka account did not take ${walks(n)}. They stay here.`;
 const unreadableLine = (n) =>
   n === 1 ? "1 walk could not be read, and is not sent." : `${walks(n)} could not be read, and are not sent.`;
 
+/** Sending is off: what Walka has done with the walks on this computer - not what the Walka account
+    holds. Walka has not asked it (nothing is asked while sending is off), and a walk that was put
+    in on the website is there all the same. "To your Walka account": a walk that Walka sent to
+    another Walka account, signed in here before, counts as not sent to this one. "Were ...
+    already" is also true of a walk that was deleted there since. */
 function notSentLine(waiting, sent) {
-  if (waiting === 1) return "Nothing is sent. 1 walk on this computer is not in your Walka account.";
-  if (waiting) return `Nothing is sent. ${walks(waiting)} on this computer are not in your Walka account.`;
-  if (sent === 1) return "Nothing is sent. 1 walk on this computer is in your Walka account already.";
-  if (sent) return `Nothing is sent. ${walks(sent)} on this computer are in your Walka account already.`;
+  if (waiting === 1) return "Nothing is sent. Walka has not sent 1 walk on this computer to your Walka account.";
+  if (waiting) return `Nothing is sent. Walka has not sent ${walks(waiting)} on this computer to your Walka account.`;
+  if (sent === 1)
+    return "Nothing is sent. 1 walk on this computer was sent before, or was in your Walka account already.";
+  if (sent)
+    return `Nothing is sent. ${walks(sent)} on this computer were sent before, or were in your Walka account already.`;
   return "Nothing is sent.";
 }
 
@@ -180,6 +191,19 @@ function problemSentence(problem, where) {
     return "The computer that runs Walka did not let it read the stored sign-in. Sign in again.";
   }
   return PROBLEM[problem] || "";
+}
+
+/** Signing out took the sign-in out of the system's store - and the store did not say that it is
+    gone (snapshot.walka_account.left_in_store). Said in the card, with a button that tries once more.
+    The entry is named after the address Walka asks; "Walka account" is how its name begins on both
+    systems. It invites nobody to sign in: the Walka account may be gone. */
+function leftSentence(where) {
+  const named = 'its name begins "Walka account".';
+  if (where === "windows")
+    return `Walka could not make sure that your sign-in was taken out of Windows' Credential Manager. Try again, or delete the entry there by hand: ${named}`;
+  if (where === "mac")
+    return `Walka could not make sure that your sign-in was taken out of your Mac's keychain. Try again, or delete the entry by hand in Keychain Access: ${named}`;
+  return `Walka could not make sure that your sign-in was taken out of the password store of the computer that runs Walka. Try again, or delete the entry there by hand: ${named}`;
 }
 
 // ---- the page's own memory (gone when the page is closed: nothing is stored) -----------------
@@ -268,6 +292,9 @@ function modelOf(a) {
 
   const model = { head: "", tone: "idle" };
   model.notice = a.notice === "ended" ? { kind: "ended" } : null;
+  // Beside that sentence where it stands, not instead of it. (Not while a new sign-in waits for
+  // the browser: its key is written over the entry.)
+  model.left = a.left_in_store === "sign_in" && a.state === "signed_out" ? { where } : null;
   model.intro = signedIn ? null : { quiet: true };
 
   if (a.state === "signing_in") {
@@ -305,8 +332,10 @@ function modelOf(a) {
     } else {
       model.sending = {
         kind: "off",
-        waiting: count(counts.waiting),
-        sent: count(counts.sent),
+        // No count while the first step is not taken: the card says just above that this sign-in
+        // has no Walka account yet, and a number of walks beside that would speak of one.
+        waiting: notTaken ? 0 : count(counts.waiting),
+        sent: notTaken ? 0 : count(counts.sent),
         // No button while the first step is not taken, while the question is open, or just after it was answered.
         button: !notTaken && !question && !switching,
         asking,
@@ -336,7 +365,10 @@ function modelOf(a) {
     : null;
 
   model.lists = null;
-  if (signedIn) {
+  // (Nor are walks listed while the first step is not taken: "your Walka account did not take ..."
+  // beside "no Walka account yet". The companion may still know such walks from the question of a
+  // Walka account that was signed in before.)
+  if (signedIn && !notTaken) {
     const list = (items, last) =>
       (Array.isArray(items) ? items : [])
         .filter((item) => item && typeof item === "object")
@@ -371,6 +403,15 @@ function button(acts, name, text, onPress, props) {
 function buildNotice(model, acts) {
   const ok = button(acts, "ok", "OK", (el) => press(el, "/api/walka-account/notice/ok"));
   return [h("div", { class: "walka-account-panel" }, line(SIGN_IN_ENDED), h("div", { class: "btn-row" }, ok))];
+}
+
+function buildLeft(model, acts) {
+  // The same route as "Sign out": the companion then asks the system's store once more to take
+  // the entry out. It reads nothing there and asks nobody else.
+  const again = button(acts, "try-again", "Try again", (el) => press(el, "/api/walka-account/sign-out"));
+  return [
+    h("div", { class: "walka-account-panel" }, line(leftSentence(model.where)), h("div", { class: "btn-row" }, again)),
+  ];
 }
 
 function buildIntro() {
@@ -611,6 +652,7 @@ function buildLists(model) {
 // The parts, top to bottom. `live`: a place for short sentences that are read out when they change.
 const PARTS = [
   ["notice", buildNotice, true],
+  ["left", buildLeft, true],
   ["intro", buildIntro, false],
   ["told", buildSaid, true],
   ["who", buildWho, false],
@@ -694,7 +736,7 @@ export function updateWalkaAccount(s) {
   const there = !!a;
   gate(a);
   if (!there) {
-    // Nothing of an account stays behind in the page - not its e-mail address either.
+    // Nothing of a Walka account stays behind in the page - not its e-mail address either.
     forget();
     setText(headState, "");
     setAttr(card, "data-tone", null);
@@ -738,12 +780,30 @@ export function updateFeet(s) {
   else updateWalkaAccount(s);
 }
 
-/** Deleting a walk that is in the Walka account: its copy stays there, and the question says where. */
-export function sentWalkWords() {
+/** Deleting a walk that is in the Walka account: its copy stays there, and the question says where.
+    `elsewhereToo`: a copy was also sent to a Walka account that is not the one signed in now. */
+export function sentWalkWords(elsewhereToo = false) {
+  const question = [
+    "Delete this walk from this computer? It disappears from your totals here and from the addon's history. This cannot be undone. It stays in your account, and on your public page if you have one, until you delete it there: ",
+    outside("walks"),
+  ];
+  if (elsewhereToo)
+    question.push(
+      ". Another copy was sent to a different Walka account from this computer. Deleting the walk here does not delete that copy either.",
+    );
+  return { question, button: "Delete from this computer", toast: "Walk deleted from this computer." };
+}
+
+/** Deleting a walk of which a copy was sent, from this computer, to a Walka account that is not the
+    one signed in now - after signing out, say, or with another Walka account signed in. The copy
+    stays there too. The words promise nothing that Walka cannot know (whether that Walka account
+    is still there), name nobody, and do not say "your". */
+export function otherAccountWalkWords() {
   return {
     question: [
-      "Delete this walk from this computer? It disappears from your totals here and from the addon's history. This cannot be undone. It stays in your account, and on your public page if you have one, until you delete it there: ",
+      "Delete this walk from this computer? It disappears from your totals here and from the addon's history. This cannot be undone. A copy of this walk was sent to a Walka account from this computer. Deleting it here does not delete that copy: that is done on ",
       outside("walks"),
+      ", signed in to that Walka account.",
     ],
     button: "Delete from this computer",
     toast: "Walk deleted from this computer.",

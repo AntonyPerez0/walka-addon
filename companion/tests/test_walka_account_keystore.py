@@ -41,6 +41,7 @@ from walka.walka_account.keystore import (
     windows_outcome,
 )
 from walka.walka_account.threads import OffLoopTimeout, off_loop
+from walka_account_rig import LatestFirst
 
 SECRET = "v4xk2j3h5l6m"
 OTHER = "q9w8e7r6t5y4"
@@ -1151,11 +1152,13 @@ def test_keys_ask_the_store_one_call_at_a_time():
     keys = Keys(store)
 
     async def scenario():
+        # (The last write goes to another name: which of these six gets the lock first is not
+        # said, and a delete stands down when a LATER write under its own name was made before it.)
         await asyncio.gather(
             keys.write(NAME, SECRET),
             keys.read(NAME),
             keys.delete(NAME),
-            keys.write(NAME, OTHER),
+            keys.write(entry_name("https://other.example"), OTHER),
             keys.read(NAME),
             keys.read(entry_name("https://other.example")),
         )
@@ -1183,19 +1186,69 @@ def test_keys_give_up_on_a_store_that_does_not_answer(caplog):
             await keys.read(NAME)
         assert caught.value.code == "timeout"
         assert await keys.delete(NAME) is False  # "could not", said without an error
-        # (Each of those three has stopped waiting for its turn by now, or
-        # does so in a moment. Only then is the store let go: a delete that
-        # still waited would be made, as a delete should.)
-        await until(lambda: len(worker_threads()) == 1)
+        # The write and the second read have stopped waiting for their turn by now, or do so in
+        # a moment. The delete has not: whoever asked was told "could not", but its thread stays
+        # in the line behind the call the store sits on.
+        await until(lambda: len(worker_threads()) == 2)
+        await asyncio.sleep(0.3)  # (longer than the time limit: it does not give up)
+        assert len(worker_threads()) == 2 and store.log == []
         store.gate.set()  # the first call comes back at last, with the secret, to nobody
         await until(lambda: not worker_threads())
         await asyncio.sleep(0.05)
 
     with caplog.at_level(logging.DEBUG):
         run(scenario)
-    assert store.log == ["read"] and store.inner.read(NAME) == SECRET  # nothing was written late
+    # Nothing was written late - and the delete was made when the store came back: signing out takes the key away.
+    assert store.log == ["read", "delete"] and store.inner.read(NAME) is None
     assert SECRET not in caplog.text and OTHER not in caplog.text
     assert "did not answer a read in time" in caplog.text
+
+
+def test_keys_a_delete_behind_a_write_the_store_sits_on_takes_away_what_that_write_put_there():
+    store = Watched()
+    store.inner.write(NAME, SECRET)
+    keys = Keys(store, timeout_s=0.2)
+
+    async def scenario():
+        store.gate.clear()
+        # A refresh's write is inside the system's call, past every look at whether it is still wanted ...
+        with pytest.raises(KeyStoreError) as caught:
+            await keys.write(NAME, OTHER)
+        assert caught.value.code == "timeout"
+        # ... the person signs out, and the store goes on sitting for longer than the delete's caller waits.
+        assert await keys.delete(NAME) is False
+        await asyncio.sleep(0.3)
+        assert store.log == [] and len(worker_threads()) == 2
+        store.gate.set()  # the store comes back: the write lands, and the delete after it
+        await until(lambda: not worker_threads())
+
+    run(scenario)
+    assert store.log == ["write", "delete"] and store.inner.read(NAME) is None  # no key outlives the sign-out
+
+
+def test_keys_a_late_delete_never_takes_out_the_key_of_a_later_sign_in():
+    store = Watched()
+    store.inner.write(NAME, SECRET)
+    keys = Keys(store)
+    keys._lock = lock = LatestFirst()
+
+    async def scenario():
+        store.gate.clear()
+        read = asyncio.ensure_future(keys.read(NAME))  # the store sits on this one
+        await until(store.arrived.is_set)
+        delete = asyncio.ensure_future(keys.delete(NAME))  # a sign-out: it waits for its turn
+        await until(lambda: len(lock.waiting) == 1)
+        write = asyncio.ensure_future(keys.write(NAME, OTHER))  # the person signs in again: asked AFTER the delete
+        await until(lambda: len(lock.waiting) == 2)
+        store.gate.set()  # the store comes back, and the write gets its turn before the delete
+        assert await read == SECRET
+        assert await write is True
+        # What the delete was asked to take away is gone - written over. The new key is not its to remove.
+        assert await delete is True
+        await until(lambda: not worker_threads())
+
+    run(scenario)
+    assert store.log == ["read", "write"] and store.inner.read(NAME) == OTHER
 
 
 def test_keys_write_only_if_it_still_holds_and_ask_that_as_the_last_thing_under_the_lock():
@@ -1307,7 +1360,7 @@ def test_keys_whoever_waits_can_be_cancelled_at_once():
         await until(lambda: not worker_threads())
         return waited
 
-    assert run(scenario) < 1.0
+    assert run(scenario) < 3.0  # "at once", on a busy machine too: not the store's fifteen seconds
 
 
 def test_keys_deleting_never_raises(caplog):

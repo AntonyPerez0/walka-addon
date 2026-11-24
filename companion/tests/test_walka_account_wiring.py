@@ -158,6 +158,7 @@ PART_KEYS = {
     "store",
     "problem",
     "notice",
+    "left_in_store",
     "email",
     "way",
     "first_step",
@@ -375,7 +376,8 @@ def test_without_the_part_every_route_answers_404_and_nothing_else_happens(tmp_p
                 assert set(await shown(client)) == SNAPSHOT_KEYS
                 assert set(app.snapshot()) == SNAPSHOT_KEYS
                 (walk,) = await walks_shown(client)
-                assert "in_walka_account" not in walk
+                assert "in_walka_account" not in walk and "in_other_walka_account" not in walk
+                assert of_the_part(names_in(walk)) == set()
                 assert of_the_part(names_in(await (await client.get("/api/config")).json())) == set()
                 await app.tick()
             assert quiet(rig) and parts_tasks() == []
@@ -544,8 +546,11 @@ def test_every_button_of_the_card_through_its_route(tmp_path):
                 later = rig.walk(60)  # (nobody woke the sender: it waits)
                 flags = {walk["id"]: walk["in_walka_account"] for walk in await walks_shown(client)}
                 assert flags == {sent.id: True, waits.id: True, later.id: False}
+                # ... and none of them has a copy in a Walka account that is NOT the one signed in.
+                assert {walk["in_other_walka_account"] for walk in await walks_shown(client)} == {False}
                 one = await (await client.get(f"/api/sessions/{sent.id}")).json()
                 assert "in_walka_account" not in one  # (a walk's own page is the file, as it was)
+                assert "in_other_walka_account" not in one
 
                 # Stop sending: at once, and nothing more goes.
                 assert await said(client, "/api/walka-account/sending/off") == (200, {"ok": True})
@@ -558,7 +563,15 @@ def test_every_button_of_the_card_through_its_route(tmp_path):
                 assert (await shown(client))["walka_account"]["state"] == "signed_out"
                 await rig.idle()
                 assert rig.keystore.secrets() == []
+                # Nobody is signed in, so no walk is "in the Walka account that is signed in" ...
                 assert {walk["in_walka_account"] for walk in await walks_shown(client)} == {False}
+                # ... but the copies stay where they were sent, and History is still told which walks
+                # have one (decision 8): a plain yes or no, and never whose Walka account it is.
+                listed = await (await client.get("/api/sessions")).text()
+                elsewhere = {walk["id"]: walk["in_other_walka_account"] for walk in json.loads(listed)["sessions"]}
+                assert elsewhere == {sent.id: True, waits.id: True, later.id: False}
+                assert "walker@mail.example" not in listed and user not in listed
+                assert (await shown(client))["walka_account"]["left_in_store"] == ""
                 for path in ("look-again", "question", "sending/off"):
                     assert await said(client, f"/api/walka-account/{path}") == (409, NOT_SIGNED_IN)
 
@@ -587,6 +600,95 @@ def test_every_button_of_the_card_through_its_route(tmp_path):
             assert [key for key in rig.needles() if key and key.encode() in with_the_part] == []
             written.unlink()
             assert hand_in(rig, tmp_path, part=False).sync_addon() and written.read_bytes() == with_the_part
+
+    run(scenario)
+
+
+def test_try_again_is_the_sign_out_route_and_takes_a_left_over_sign_in_out_of_the_store(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path, start=False) as rig:
+            app = hand_in(rig, tmp_path)
+            rig.account.start()
+            rig.person()
+            rig.walk(3600)
+            await rig.sign_in()
+            await rig.switch_on("all")
+            rig.clock.advance(4000)
+            rig.fake.expire_access_tokens()  # (signing out asks nobody: the access token has run out)
+            (stored,) = rig.keystore.secrets()
+            asked = len(rig.fake.requests)
+            rig.keystore.refuse["delete"] = "refused"  # the system's store will not let the sign-in go
+            async with dashboard(app) as client:
+                # "Sign out" says so at once, as ever - and then the card is told what Walka could not make sure of.
+                assert await said(client, "/api/walka-account/sign-out") == (200, {"ok": True})
+                assert (await shown(client))["walka_account"]["state"] == "signed_out"
+                await rig.idle()
+                piece = (await shown(client))["walka_account"]
+                assert (piece["state"], piece["left_in_store"], piece["problem"]) == ("signed_out", "sign_in", "")
+                assert rig.keystore.secrets() == [stored]
+                # Only the card's piece of the snapshot says so: nothing in the Live view's list, no other key.
+                whole = await shown(client)
+                assert "left_in_store" not in names_in({key: whole[key] for key in SNAPSHOT_KEYS})
+                assert "sign" not in json.dumps(list(app.events)).lower()
+
+                # Its button "Try again": the same route, ONE delete, no read, and nobody is asked.
+                rig.keystore.calls.clear()
+                del rig.keystore.refuse["delete"]
+                assert await said(client, "/api/walka-account/sign-out") == (200, {"ok": True})
+                await rig.idle()
+                assert rig.keystore.calls == [("delete", rig.entry)] and rig.keystore.secrets() == []
+                assert (await shown(client))["walka_account"]["left_in_store"] == ""
+                assert len(rig.fake.requests) == asked and len(rig.opened) == 1
+                # Pressed once more, with nothing left to take out: the store is not touched.
+                assert await said(client, "/api/walka-account/sign-out") == (200, {"ok": True})
+                await rig.idle()
+                assert rig.keystore.calls == [("delete", rig.entry)]
+            assert ledger.is_left_in_store(rig.book(), rig.origin) is False
+
+    run(scenario)
+
+
+def test_history_is_told_of_a_copy_in_a_walka_account_that_is_not_signed_in_now_and_never_whose(tmp_path):
+    async def scenario():
+        async with Rig(tmp_path, start=False) as rig:
+            app = hand_in(rig, tmp_path)
+            rig.account.start()
+            first = rig.person("first@mail.example")
+            second = rig.person("second@mail.example", way="google")
+            old = rig.walk(7200)
+            await rig.sign_in(first)
+            await rig.switch_on("all")
+            assert rig.account.sign_out() == OK
+            await rig.idle()
+            new = rig.walk(3600)
+            await rig.sign_in(second, way="google")
+            await rig.switch_on("from_now_on")
+            rig.clock.advance(600)
+            newest = rig.walk(60)
+            await rig.saved()
+            async with dashboard(app) as client:
+                listed = await (await client.get("/api/sessions")).text()
+                flags = {
+                    walk["id"]: (walk["in_walka_account"], walk["in_other_walka_account"])
+                    for walk in json.loads(listed)["sessions"]
+                }
+                # Sent to the first Walka account; never sent; sent to the one that is signed in.
+                assert flags == {old.id: (False, True), new.id: (False, False), newest.id: (True, False)}
+                # Two plain words for each walk. Nobody's e-mail address or id is on this route.
+                for told in ("first@mail.example", "second@mail.example", first, second):
+                    assert told not in listed
+                assert of_the_part(names_in(json.loads(listed))) == {"in_walka_account", "in_other_walka_account"}
+            # What "all of them" would send is counted as before: a copy in ANOTHER Walka account is not one in this.
+            assert app.snapshot()["walka_account"]["counts"]["sent"] == 1
+            question = await rig.question()
+            assert question["waiting"] == 2
+            # The same Walka folder, started again without the part (packed, or the variables are gone):
+            # neither word, and the question before deleting is the one it always was.
+            await rig.idle()
+            without = hand_in(rig, tmp_path, part=False)
+            async with dashboard(without) as client:
+                for walk in await walks_shown(client):
+                    assert of_the_part(names_in(walk)) == set()
 
     run(scenario)
 
@@ -840,7 +942,7 @@ def test_the_house_rigs_simulated_treadmill_keeps_the_part_out_of_everything(tmp
                     for body in ({}, {"way": "github"}, {"question": "q", "send": "all"}):
                         assert await said(client, path, body) == (409, NOT_THERE), (path, body)
                 (walk,) = await walks_shown(client)
-                assert walk["in_walka_account"] is False
+                assert walk["in_walka_account"] is False and walk["in_other_walka_account"] is False
             await part.idle()
             assert quiet(rig) and part._listeners == set()
 
@@ -1198,6 +1300,9 @@ class Spy:
     def in_account(self, walk_id: str, start: float) -> bool:
         return False
 
+    def in_other_account(self, walk_id: str, start: float) -> bool:
+        return False
+
 
 def test_stop_tells_the_part_before_the_walk_is_saved_and_waits_for_it_only_when_everything_is_done(tmp_path):
     async def scenario():
@@ -1301,6 +1406,7 @@ def test_after_stop_the_dashboard_still_answers_and_the_part_refuses_and_starts_
                 assert (piece["state"], piece["sending"], piece["question"]) == ("signed_in", False, None)
                 (walk,) = await walks_shown(client)
                 assert (walk["id"], walk["in_walka_account"]) == (record.id, False)
+                assert walk["in_other_walka_account"] is False
             assert len(rig.fake.requests) == requests and len(rig.keystore.calls) == store_calls
             assert len(rig.opened) == 1 and rig.fake.walks(user) == []
             assert (rig.dir / ledger.FILE_NAME).read_bytes() == written
@@ -1781,7 +1887,9 @@ def test_walka_run_has_no_part_with_the_simulated_treadmill_or_packed_whatever_t
                         async with session.post(there + path, json=body) as response:
                             assert (response.status, await response.json()) == (404, NOT_THERE), (path, body)
                 async with session.get(f"{there}/api/sessions") as response:
-                    assert all("in_walka_account" not in walk for walk in (await response.json())["sessions"])
+                    listed = (await response.json())["sessions"]
+                    assert all("in_walka_account" not in walk for walk in listed)
+                    assert all("in_other_walka_account" not in walk for walk in listed)
             task.cancel()
             assert await asyncio.wait_for(task, 10) == 0
             assert fake.requests == [] and walka.stores == []

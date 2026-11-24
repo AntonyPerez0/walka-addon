@@ -219,6 +219,14 @@ QUIET_BUTTONS: dict[str, tuple[tuple[str, Any, tuple[int, dict]], ...]] = {
         ("/api/walka-account/sending/off", {}, NOT_SIGNED_IN),
         ("/api/walka-account/notice/ok", {}, OK),
     ),
+    # (Not "Sign out" here: while the card says that a sign-in may still be in the system's store,
+    # that route is its button "Try again", and a press is what it takes to touch the store.)
+    "signed out, a sign-in may be left in the store": (
+        ("/api/walka-account/look-again", {}, NOT_SIGNED_IN),
+        ("/api/walka-account/question", {}, NOT_SIGNED_IN),
+        ("/api/walka-account/sending/off", {}, NOT_SIGNED_IN),
+        ("/api/walka-account/notice/ok", {}, OK),
+    ),
     "signed in, sending off": (
         ("/api/walka-account/sign-in", {"way": "github"}, SIGNED_IN_ALREADY),
         ("/api/walka-account/sign-in", {"way": "google"}, SIGNED_IN_ALREADY),
@@ -344,6 +352,68 @@ def test_never_signed_in_walka_asks_nobody_and_looks_into_no_store_however_long_
             # Not a file of the part's either: no walka-account.json, no lock.
             assert sorted(path.name for path in rig.dir.iterdir() if "account" in path.name) == []
             assert app.treadmill.tripped == []
+
+    run(scenario, 120)
+
+
+def test_a_sign_in_that_may_still_be_in_the_store_is_said_from_the_file_and_no_start_touches_the_store(
+    tmp_path, monkeypatch
+):
+    async def scenario():
+        async with Rig(tmp_path, start=False) as rig:
+            # An earlier run: somebody signed in, and signed out again - and the system's store did not
+            # let the sign-in go (a Mac's keychain that was locked, say).
+            earlier = hand_in(rig, tmp_path)
+            await earlier.start()
+            rig.person()
+            rig.walk(7200)
+            await rig.sign_in()
+            rig.clock.advance(4000)
+            rig.fake.expire_access_tokens()
+            rig.keystore.refuse["delete"] = "refused"
+            assert rig.account.sign_out() == OK
+            await rig.idle()
+            assert earlier.snapshot()["walka_account"]["left_in_store"] == "sign_in"
+            await earlier.stop()
+            assert await left_running() == [] and len(rig.keystore.secrets()) == 1
+            del rig.keystore.refuse["delete"]  # (it would let go now: and still nothing tries by itself)
+            written = (rig.dir / ledger.FILE_NAME).read_bytes()
+            assert ledger.is_left_in_store(rig.book(), rig.origin) is True
+
+            await the_accounts_are_gone(rig)
+            began = Marks(rig)
+            app = hand_in(rig, tmp_path)
+            async with dashboard(app) as client:
+                wires = Wires(monkeypatch, client.server.port)
+                await app.start()
+                await rig.idle()
+                state = "signed out, a sign-in may be left in the store"
+                for _ in range(3):
+                    # The card says it - read off the file - at the start and all the while ...
+                    piece = (await shown(client))["walka_account"]
+                    assert (piece["state"], piece["left_in_store"], piece["email"]) == ("signed_out", "sign_in", "")
+                    await an_hour(rig, app, client, state)
+                    # ... and the store is not looked into, not for a read and not for a delete.
+                    assert asked_nobody(rig, wires, began)
+                rig.clock.jump_wall(365 * 86400.0)
+                await an_hour(rig, app, client, state)
+                assert asked_nobody(rig, wires, began)
+                assert len(rig.keystore.secrets()) == 1
+                # (Nothing was pressed that changes the file: it says what it said.)
+                assert json.loads((rig.dir / ledger.FILE_NAME).read_text("utf-8")) == json.loads(written)
+
+                # The press: ONE delete. No read, no connection, no browser - and no wait on a clock but
+                # the time limit of that one call of the store.
+                assert await said(client, "/api/walka-account/sign-out") == OK
+                await rig.idle()
+                assert wires.tripped == [] and len(rig.fake.requests) == began.requests
+                assert rig.keystore.calls[began.store_calls :] == [("delete", rig.entry)]
+                assert rig.keystore.secrets() == [] and rig.opened[began.opened :] == []
+                assert rig.wait.limits(began.waits) == [] and len(wires.timers) == 1
+                assert (await shown(client))["walka_account"]["left_in_store"] == ""
+                await app.stop()
+            assert await left_running() == []
+            assert ledger.is_left_in_store(rig.book(), rig.origin) is False
 
     run(scenario, 120)
 

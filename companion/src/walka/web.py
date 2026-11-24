@@ -227,9 +227,13 @@ def create_app(app: App) -> web.Application:
         if part is not None:
             # For the question before a walk is deleted: a copy that is in
             # the Walka account stays there. (Read from what Walka wrote
-            # down on this computer: nobody is asked.)
+            # down on this computer: nobody is asked.) Two plain answers,
+            # and never who: "in the Walka account that is signed in", and
+            # "sent from this computer to a Walka account that is not the
+            # one signed in now" - after signing out, say. Its copy stays too.
             for record, summary in found:
                 summary["in_walka_account"] = part.in_account(record.id, record.start)
+                summary["in_other_walka_account"] = part.in_other_account(record.id, record.start)
         return web.json_response({"sessions": [summary for _record, summary in found]})
 
     @routes.get("/api/sessions/{session_id}")
@@ -370,6 +374,9 @@ def create_app(app: App) -> web.Application:
 
     @walka_account_route("/api/walka-account/sign-out")
     def walka_account_sign_out(part: Any, _said: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+        # Also "Stop waiting" while a sign-in waits for the browser, and the
+        # card's "Try again" while it says that a sign-in may still be in the
+        # system's store: then the store is asked once more to take it out.
         return part.sign_out()
 
     @walka_account_route("/api/walka-account/look-again")
