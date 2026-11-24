@@ -2692,7 +2692,10 @@ def test_what_reaches_out_before_the_first_test_or_after_the_last_fails_one_too(
         ("setup", "test_before_which_a_fixture_reached_out"),
         ("teardown", "test_after_which_a_fixture_reached_out"),
     ]
-    before, after = done.stdout.split(" ERROR at teardown of ")
+    # (Only the two accounts of what went wrong, not pytest's list of names at the end: on a build
+    # machine that list repeats each reason whole, and so the first one would stand after the second.)
+    told_whole = done.stdout.split("short test summary info")[0]
+    before, after = told_whole.split(" ERROR at teardown of ")
     assert "before this test began, something reached for another computer" in before
     assert "after a test was over, something it left behind reached for another computer" in after
     assert before.count("AssertionError: ") >= 1 and "before this test began" not in after
