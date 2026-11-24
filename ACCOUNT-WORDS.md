@@ -82,8 +82,8 @@ your profile and your devices."
 
 ### 1.2 The card "Walka account", last in Settings
 
-There is no card at all when Walka has no such part (every download today),
-or while the simulated treadmill is in use.
+There is no card at all while the simulated treadmill is in use, or in a
+Walka that has no such part (every download before 0.8.0-rc2).
 
 Heading: "Walka account" (`index.html:492`). **drafted**
 
@@ -1052,8 +1052,9 @@ question stands that answer, and what was done on it.
   switch on, or send anything anywhere but to the Walka account its user
   signed in to".
 - "Nothing is uploaded" stands in other places of the website's own
-  (how-it-works `:257`, FAQ `:265`): true of every download until the
-  feature ships, and false the day it does.
+  (how-it-works `:257`, FAQ `:265`): true of every download before
+  0.8.0-rc2, and no longer true from that one on, for whoever switches
+  sending on.
 
 **Sentences of the dashboard that changed on the owner's answer of 24
 November** (the website quotes none of them word for word; the brief does)
