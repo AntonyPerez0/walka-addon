@@ -25,12 +25,17 @@ look into the password store, no reminder.
 nowhere; a packed download makes no such part at all; no version file
 touched, no tag, no release, no merge, no pull request. Apart from the
 owner's one click on 21 November nothing touched the live project.
-- 4,396 tests pass. CI: see the end of section 3.
+- 4,448 tests pass. CI: see the end of section 3.
 - The last review confirmed twenty findings, one of them serious. All
-are dealt with; one of them (a backup put back, question 3) is not
-built but put to the owner.
-- Still the owner's: a yes to the words (`ACCOUNT-WORDS.md`); Windows or
-a Mac for the later trial; the questions in section 7.
+are dealt with.
+- On 24 November the owner answered the open questions with "Do
+everything and then push and publish". What was done about each is in
+section 7: among it, the gap of a backup put back is closed, five
+sentences now say "Walka account", and "walks are sent" stays in sight
+in a narrow window.
+- "Publish" was not read as leave to release Walka: section 7 says why.
+Still the owner's: what "publish" meant; Windows or a Mac for the
+later trial.
 
 ## 1. What was built
 
@@ -284,7 +289,7 @@ the question has a wording of its own: "A copy of this walk was sent to
 a Walka account from this computer. Deleting it here does not delete
 that copy: that is done on walka.dev/account/walks/, signed in to that
 Walka account." - shown also after signing out, and only for walks of
-which a copy was sent (question 4). A walk
+which a copy was sent (section 7, answer 3). A walk
 deleted in the Walka account stays on the computer and is not sent
 again. Walka has no request that changes or deletes anything in a Walka
 account, and nothing a Walka account does changes a file on the
@@ -308,9 +313,9 @@ counted or sent - also when they lie among real ones.
 
 ## 3. What was tried, and how
 
-**The tests.** 4,396 passed and 9 skipped here (Linux, Python 3.12);
+**The tests.** 4,448 passed and 9 skipped here (Linux, Python 3.12);
 the style check (`ruff`) is clean. Before the work there were 2,826: so
-about 1,570 are new. All of them run against the stand-in on the test
+about 1,620 are new. All of them run against the stand-in on the test
 computer, a password store in memory and a made-up clock. No test opens
 a real browser or asks anybody on the internet.
 
@@ -356,7 +361,9 @@ whole history of the branch for the live address and key (none).
 **The page in a real browser.** The real dashboard, served by the real
 program against the stand-in, driven through 19 views in Chromium at
 three widths (1200, 900 and 480 pixels), light and dark, and again
-after the last fixes: 104 pictures, kept in the scratch folder, not in
+after the last fixes and after the owner's answers: 179 pictures (and
+240 more of the narrow window, compared dot for dot with the page as
+it was), kept in the scratch folder, not in
 the repository.
 
 **Python 3.10.** The part's tests were run by hand on 3.10.20 and pass.
@@ -384,6 +391,13 @@ comes from the three downloads themselves. The HTTPS step on the Macs
 took 4 seconds and 1 second, where it had taken 37: the half minute was
 the check's own home-made server asking the computer for its name, not
 the program and not the network.
+
+**After the owner's answers of 24 November** the same was done again
+for what they changed: 4,448 tests here; the backup gap tried against
+306 combinations of files and states of the password store, and two
+Walkas stepped against each other in 600 random orders; the page
+pictured at five widths. What CI showed for it is in the commit that
+follows this one - see `ACCOUNT-WORK.md`, "Where it stands".
 
 **The proof of the brief's 5.2.** Done by the owner on 21 November
 2026: the live project lets a sign-in come back to 127.0.0.1. Nothing
@@ -437,8 +451,7 @@ its way.
 no longer said that its copy stays in the Walka account.
 Done, with C10: the question before deleting has a third wording, for a
 walk of which a copy went to a Walka account that is not the one signed
-in now - also after signing out. New words, for the owner's yes
-(question 4). A walk in a Walka account that Walka learned was deleted
+in now - also after signing out. New words (section 7, answer 3). A walk in a Walka account that Walka learned was deleted
 no longer counts.
 - **C3.** When the password store would not delete the sign-in at
 sign-out, the key stayed there, the card said "signed out", and
@@ -460,10 +473,16 @@ that it never takes out a newer key.
 says flatly that signing out removes the sign-in.
 See C3.
 - **C7.** An older `walka-account.json` put back from a backup (or
-changed by hand) while the sign-in is still stored switches sending
+changed by hand) while the sign-in is still stored switched sending
 on again, for that same Walka account, without the question.
-NOT built, on purpose: closing it needs a second entry in the password
-store, which is more than a fix. Put to the owner - question 3.
+Done after the owner's answer of 24 November: "sending is on" is now
+tied to the stored sign-in. When the question is answered Walka makes
+a random mark and keeps it twice: in its file, and as a second entry
+in the password store. A walk goes only while the two are the same.
+"Stop sending" and signing out take the mark out of the store, so an
+older file's mark never matches again. Tried against 306 combinations
+of older or changed files and states of the store: nothing was sent
+and no request was made. What it does not close is in section 3b.
 - **C8.** Two buttons pressed in the same instant (two tabs, or a
 program on the computer) could leave the card saying "off" and the
 file saying "on": at the next start the walks went.
@@ -492,13 +511,14 @@ were sent before, or were in your Walka account already."
 sign-in has no Walka account yet and, two lines on, how many walks
 are not in "your Walka account".
 Done in part: in that state the card now shows no count and no list of
-walks. The three other places are a question to the owner - question 5.
+walks. The three other places stay, by the owner's answer (section 7,
+answer 4).
 - **C14.** The word stood alone, without "Walka", in seven sentences
 written for this change and in five taken word for word from the
 brief.
 Done for the seven: they say "Walka account", and a test now fails on
-any new sentence that does not. The brief's own five are left word for
-word - question 6.
+any new sentence that does not. The brief's own five were changed too,
+after the owner's answer (section 7, answer 5).
 - **C15.** The words the owner must say yes to were only in the scratch
 folder.
 Done: `ACCOUNT-WORDS.md`.
@@ -565,7 +585,7 @@ written down as "there already". That is the contract's rule.
 - **N12** A Walka account that is nearly full takes none of a batch,
 though some of its walks would fit. That is what the brief asks.
 - **N13** One sentence of the brief's decision 4 was changed on
-purpose: question 7.
+purpose, and stays (section 7, answer 6).
 - **N14** Fixed. It was: after "Stop sending", a freshly opened
 dashboard could say "That did not work just now" of a button nobody pressed.
 - **N15** With no part, the page is not quite what it was: the Share
@@ -574,9 +594,9 @@ of walks in History now refreshes sooner after a change; and every
 download's page holds the hidden, empty frame of the card.
 - **N16** The rail's foot is hidden in a window narrower
 than 1,180 pixels, as it was before - but it is now the place that
-says walks are sent: question 10. (The scratch pictures were made
+says walks are sent. Built since: section 7, answer 8. (The scratch pictures were made
 again; none is a copy of another now.)
-- **N17** README line 123: question 8.
+- **N17** README line 123: left as it is (section 7, answer 7).
 - **N18** The ten sentences most worth the owner's own eye: listed in
 `ACCOUNT-WORDS.md`, part 3.
 - **N19** Fixed: the missing test (the first step not taken AND the
@@ -593,6 +613,36 @@ would have been skipped silently.
 - **N24** Every build, and so every release, now needs walka.dev to
 answer the three build machines. A red step "HTTPS works in the
 program" that says "did not answer (3 tries)" means: run it again.
+
+From the closing of the backup gap (C7) - sending can still come on
+without the question only in these ways:
+
+- The password store refuses both to delete the mark and to write over
+it when sending is stopped or somebody signs out. Then an older file
+is still believed.
+- Walka ends (a power cut, say) in the instant between writing "off"
+into its file and taking the mark out of the store. The mark stays
+until the next answer to the question, sign-in or sign-out.
+- Two Walkas on one folder: sending stopped in one, and an older file
+put back before the other has looked. That other one sends until it is
+started again; it looks once in a run.
+- A backup that puts back the password store and the file together.
+- Somebody who can change the file while sending is on can keep its
+mark and change the rest ("only from now on" into "all"). That is the
+program on the same computer that SECURITY.md already speaks of.
+
+And what an honest person may notice: two data FOLDERS that use the
+same address share the mark, so switching sending on in one makes the
+other ask its question again. After an older file was put back and
+nothing waits to be sent, the card says "on" until the first walk, and
+then, quietly, off: Walka may not look into the password store at a
+start. The brief says the sign-in "alone" is kept in the password
+store; the mark is a second thing there, a key to nothing.
+
+The narrow window: between 720 and 1,179 pixels the sentence stands at
+the foot of the rail. Below 720 it is one line under the four lamps at
+the top and scrolls away with the page, as the lamps do: further down
+a long page it is out of sight.
 
 From the last fixes themselves:
 
@@ -736,7 +786,7 @@ the dashboard and the README and must stay: `walka.dev/terms/`,
 ### 5.2 Every changed sentence
 
 Old words and new, with file and line: `ACCOUNT-WORDS.md` on the
-branch (191 sentences and places, each looked up in the files by a
+branch (198 sentences and places, each looked up in the files by a
 script). In kind:
 
 - the dashboard: six places where words that were there changed or got
@@ -819,7 +869,7 @@ the calories on top of sitting.
 - A computer where Walka is signed in stays so until somebody signs out
 ON it, the Walka account is deleted, or the sign-in ends. The website
 has no "sign out everywhere" and no list of signed-in computers
-(question 9).
+(section 7, still open, 3).
 - Walka sends every walk recorded on that computer, whoever walked. The
 terms say "Put in your own walks": the question tells the person so
 in one sentence, and Walka does not ask after each walk.
@@ -882,7 +932,8 @@ In this order.
  - the browser comes back to "Walka is signed in. You can close this
    tab.", with each of Discord, GitHub and Google;
  - Credential Manager (Windows) or Keychain Access (Mac) shows one
-   entry whose name begins "Walka account", and it is gone after
+   entry whose name begins "Walka account" (two while sending is
+   on: the sign-in and the mark), and none is left after
    "Sign out";
  - Walka opened a second time while a walk is going: the walk is in
    History once, whole, after it ends;
@@ -893,8 +944,8 @@ In this order.
    cable out - close the window: Walka is gone from Task Manager
    within four seconds and the walk is in the `sessions` folder
    (note N21);
- - in a window a little narrower than Walka opens, what still says
-   that walks are sent (question 10);
+ - in a window a little narrower than Walka opens, the sentence
+   "Your walks are sent to your Walka account." is in sight;
  - later, once a packed Walka has the part: the Mac's keychain after
    an update of Walka.
 5. **Then a change of a few lines**: the address and the key go into
@@ -913,67 +964,65 @@ In this order.
 8. **Remove** `ACCOUNT-WORK.md`, `ACCOUNT-WORDS.md` and this report's
  file `ACCOUNT-REPORT.md` before the merge.
 
-## 7. Questions still open for the owner
+## 7. The owner's answer of 24 November, and what is still open
 
-Each can be answered with a word, and each has a recommendation.
+On 24 November the owner answered the report and its questions: "Do
+everything and then push and publish". It was read as yes to the
+words and to each recommendation. That reading is the assistant's, not
+the owner's words: say if any of it was not meant.
 
-1. **The words.** Yes, or corrections, to `ACCOUNT-WORDS.md`.
- Recommended: read the ten sentences marked there first.
-2. **Windows or a Mac** for the trial? (Not answered yet.)
-3. **A backup put back (C7).** If an older `walka-account.json` is put
- back while the sign-in is still stored, sending is on again for that
- same Walka account without the question. Close this before the
- release (a second entry in the password store), or accept it and say
- it in the README? Recommended: accept it for the trial, close it
- before the release.
-4. **Deleting a walk that went to another Walka account (C2, C10).**
- The new third wording (section 2, "Deleting") - yes? And should a person
- who is signed out see it at all, though nothing else outside the
- card speaks of a Walka account to them? Recommended: yes to both -
- the copy is still there, and the person is about to delete the only
- other one.
-5. **The first step not taken (C13).** The card now shows no count
- there. Should the line beside "Sign out" also stop saying "your
- Walka account" to a person who was just told they have none?
- The same holds for the button "Look again (asks your Walka account)"
- and the line "Asking your Walka account...". Recommended: keep all
- three - a button that makes Walka ask has to say that it asks, and
- the only other name the card has for what is asked is the address of
- the database, a string of letters. (`ACCOUNT-WORDS.md`, part 4,
- question 1, has the other wording ready.)
-6. **Five sentences taken word for word from the brief** in which the
- word stands without "Walka" (C14; listed in `ACCOUNT-WORDS.md`).
- Leave them, or write "Walka account"? Recommended: write "Walka
- account" - above all in the question before deleting a walk, which
- stands in History, where the word alone could be read as the game's.
-7. **One sentence of yours that was changed (N13).** Decision 4 says
- "you made it another way". That is wrong when the e-mail addresses
- match: Discord and GitHub with one address come to ONE Walka
- account. Built: "it is under another e-mail address: sign out here
- and sign in the way that uses that address." Recommended: keep the
- new words.
-8. **README line 123**, "Only listens.", stands without "to your
- treadmill", four points above the feature that now speaks of
- sending. Leave it, or make it "Only listens to your treadmill."?
- Recommended: leave it - the treadmill is named in the very next
- words, and everything about the belt was to stay untouched.
-9. **"Sign out everywhere" on the website** before the release? Today a
+What was done about each question:
+
+1. **The words** (`ACCOUNT-WORDS.md`): taken as yes. The sentences
+ written after that answer are marked there as seen by nobody but
+ their writer.
+2. **A backup put back (C7)**: closed, as section 3a says, with the
+ limits of section 3b.
+3. **Deleting a walk of which a copy went to another Walka account**:
+ the third wording stays, and a person who has signed out sees it too
+ - only for walks of which a copy was sent.
+4. **The first step not taken**: the three places that say "your Walka
+ account" beside "no Walka account yet" stay as they are.
+5. **Five sentences of the brief in which the word stood alone**: all
+ five now say "Walka account" - "or the Walka account was deleted",
+ "goes to this Walka account, whoever walked", "Stopping deletes
+ nothing in your Walka account", "If you already have a Walka
+ account", "It stays in your Walka account". A test now fails on any
+ sentence of the card or of History that says the word alone.
+6. **Decision 4's changed sentence** ("it is under another e-mail
+ address"): stays.
+7. **README line 123, "Only listens."**: left as it is.
+8. **A narrow window**: built. While sending is on, and only then,
+ "Your walks are sent to your Walka account." stays on every view
+ below 1,180 pixels. Without sending, every picture of the page is dot
+ for dot what it was. (Its one limit is in section 3b.)
+9. **The notices in the game's folder**: the line stays in both
+ copies.
+10. **Three small things put right on the way**, each new and for the
+  owner's eye: the question now names all sixteen things that go (it
+  left out the random number and "it came from Walka"); "Nothing is
+  sent until you switch sending on." (it said "that"); and "With "All
+  of them" your whole history shows there at once." is now said only
+  of a public page that lists days or walks, of which alone it is
+  true. Where the password store did not let a sign-in go, the card
+  now ends "There may be two such entries: delete both."
+
+Still open:
+
+1. **What "publish" meant.** It was NOT read as leave to release
+ Walka, to tag, to merge, to put in the live address and key, or to
+ touch the version files. The brief puts two things before a release
+ that are not done: the website's privacy page and terms must change
+ first, and the owner tries it once from source against the live
+ project. A published release is never replaced, and a release now
+ would be the first time anybody signs in or sends a walk for real.
+ What was published is this report, as a private page the owner can
+ pass on. If a release was meant, the owner says so in so many words.
+2. **Windows or a Mac** for the trial.
+3. **"Sign out everywhere" on the website** before the release? Today a
  computer that is lost, sold or shared stays signed in until somebody
  signs out on it or the Walka account is deleted. Recommended: yes,
  or at the least a plain sentence in the terms and on the privacy
  page. (The website maintainer's work.)
-10. **A narrow window.** Below 1,180 pixels the rail's foot is hidden,
-  and Walka's window opens only 20 pixels wider. Should "walks are
-  sent" stay visible there? Recommended: yes, before the release.
-11. **The notices in the game's folder.** `Walka/THIRD-PARTY-NOTICES.md`
-  goes into the AddOns folder with the addon and now names a Walka
-  account. Keep the line in both copies (as proposed on 21 November),
-  or in the top copy only? Recommended: both - a notice should be
-  true wherever it lies, and nothing in the game shows it.
-12. **"Do everything".** Your answer of 21 November was read as yes to
-  each proposed answer (the list is in `ACCOUNT-WORK.md`) - among
-  them: real walks with an empty treadmill name are sent; the e-mail
-  address is shown whole; walks go at once, also to a public page; no
-  line in DISCLAIMER.md; no new library. Say if any was not meant.
-
-Notes N8, N9, N10 and N12 of section 3b need no decision now.
+4. **The readings of "Do everything"**, of 21 and of 24 November: both
+ lists are in `ACCOUNT-WORK.md`. Say if any was not meant.
