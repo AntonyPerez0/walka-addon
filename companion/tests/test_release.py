@@ -141,6 +141,35 @@ def test_a_published_release_is_never_changed(repo_root: Path):
     assert "SHA256SUMS.txt" in publish and "attest-build-provenance" in text
 
 
+def test_a_tag_of_the_version_in_the_code_passes_the_release_jobs_own_look(repo_root: Path):
+    """A release is published only if its tag is the version that stands in
+    three files - each in a line of its own, which the release job looks
+    for whole. That look is made here, on the same three lines: a version
+    changed in two files and not in the third shows on every push, and not
+    only when the tag is there and nothing is published. (And a trial
+    version, with "-", goes out as a pre-release: never "the latest".)"""
+    text = workflow(repo_root)
+    step = text[text.index("- name: The tag is the version written in the code") :]
+    step = step[: step.index("\n      - ")]
+    (shape,) = re.findall(r"grep -Eq '(\^v\S+\$)'", step)
+    looks = re.findall(r'grep -qx "((?:[^"\\]|\\")*)" (\S+) \|\| fail', step)
+    assert [file for _line, file in looks] == [
+        "companion/pyproject.toml",
+        "companion/src/walka/__init__.py",
+        "Walka/Walka.toc",
+    ]
+    version = tomllib.loads((repo_root / "companion" / "pyproject.toml").read_text("utf-8"))["project"]["version"]
+    assert re.fullmatch(shape, f"v{version}"), version
+    for line, file in looks:
+        assert "$version" in line
+        wanted = line.replace('\\"', '"').replace("$version", version)
+        assert (repo_root / file).read_text("utf-8").splitlines().count(wanted) == 1, f"{file}: no line {wanted!r}"
+    from walka import __version__
+
+    assert __version__ == version
+    assert 'case "$TAG" in *-*) pre="--prerelease" ;; esac' in text
+
+
 def test_a_package_published_without_its_licence_file_still_gets_its_licence(repo_root: Path):
     """The Windows Runtime packages and two of the Mac ones come without a
     licence file inside. Their licence goes with the program all the same."""

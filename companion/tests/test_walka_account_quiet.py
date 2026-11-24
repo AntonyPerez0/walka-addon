@@ -23,6 +23,13 @@ proof that there is no timer.
 
 At the end of the third case a walk IS there to send, and the wires trip:
 they were live all along.
+
+The first case is told twice. Once with a part that is handed in. And
+once with the part as every Walka now has it by default: made by the
+command line's own gate, from what is built in - in the packaged
+program, whose two variables name somebody else and are not read, and in
+Walka run from its source code. (What is "built in" here is a made-up
+address on this computer: conftest.py takes the real one away.)
 """
 
 from __future__ import annotations
@@ -43,9 +50,14 @@ from test_walka_account_nokeys import THE_BRIEFS_LIST, asked_of_the_accounts
 from test_walka_account_wiring import (
     JSON,
     JUNK,
+    KEY_VARIABLE,
     ROUTES,
+    URL_VARIABLE,
+    Pad,
+    a_config,
     dashboard,
     every_route_that_changes_something,
+    free_port,
     hand_in,
     left_running,
     run,
@@ -53,9 +65,12 @@ from test_walka_account_wiring import (
     shown,
     walk_on,
 )
+from walka import cli
 from walka.app import App
 from walka.session import SessionStore
-from walka.walka_account import ledger, service
+from walka.sources import BeaconSource
+from walka.walka_account import keystore, ledger, project, service
+from walka.walka_account.service import WalkaAccount
 from walka_account_rig import PAD, Rig
 
 
@@ -350,6 +365,94 @@ def test_never_signed_in_walka_asks_nobody_and_looks_into_no_store_however_long_
             assert await left_running() == []
             assert wires.tripped == [] and rig.fake.requests == [] and rig.keystore.calls == [] and rig.opened == []
             # Not a file of the part's either: no walka-account.json, no lock.
+            assert sorted(path.name for path in rig.dir.iterdir() if "account" in path.name) == []
+            assert app.treadmill.tripped == []
+
+    run(scenario, 120)
+
+
+@pytest.mark.parametrize("how", ["packed", "from source"])
+def test_the_part_walka_has_by_default_asks_nobody_either_while_nobody_has_signed_in(tmp_path, monkeypatch, how):
+    """How Walka comes, to everybody: with the part, made by the command
+    line's own gate with the address that is built in, and nobody signed
+    in. However long it runs: no connection, no look-up of a name, no
+    look into the store for secrets, no browser, no timer, no file.
+
+    The packaged program is started with both variables naming somebody
+    else - the stand-in, which listens all the while. They are not read:
+    the part is made with the built-in address, and the stand-in is never
+    asked."""
+
+    async def scenario():
+        async with Rig(tmp_path, start=False) as rig:
+            built_in = f"http://127.0.0.1:{free_port()}"  # (nobody listens there)
+            monkeypatch.setattr(project, "ADDRESS", built_in)
+            monkeypatch.setattr(project, "PUBLISHABLE_KEY", "built-in-test-key")
+            if how == "packed":
+                monkeypatch.setattr(sys, "frozen", True, raising=False)
+                monkeypatch.setenv(URL_VARIABLE, rig.fake.origin)
+                monkeypatch.setenv(KEY_VARIABLE, rig.fake.key)
+            assert cli._is_packed() is (how == "packed")
+            # (The store cli would open is the rig's, which writes down every look into it.)
+            monkeypatch.setattr(keystore, "open_keystore", lambda: rig.keystore)
+            began = Marks(rig)
+            pad = Pad()
+            part = cli._build_walka_account(rig.dir, pad)
+            assert isinstance(part, WalkaAccount)
+            assert part.origin.text == built_in != rig.fake.origin and part.key == "built-in-test-key" != rig.fake.key
+            assert part._opener is cli._open_sign_in_page
+            rig.account = part
+            rig.accounts.append(part)
+            app = App(
+                a_config(tmp_path),
+                rig.dir,
+                treadmill=pad,
+                beacon=BeaconSource(None, clock=rig.clock.mono),
+                walka_account=part,
+                wall_clock=rig.clock.wall,
+                mono_clock=rig.clock.mono,
+            )
+            rig.app = app  # type: ignore[assignment]
+            async with dashboard(app) as client:
+                wires = Wires(monkeypatch, client.server.port)
+                await app.start()
+                await rig.idle()
+                for _ in range(HOURS):
+                    await an_hour(rig, app, client, "never signed in")
+                    assert asked_nobody(rig, wires, began)
+                # The computer's clock is set a year on, and a walk is saved after that.
+                rig.clock.jump_wall(365 * 86400.0)
+                await an_hour(rig, app, client, "never signed in")
+                assert asked_nobody(rig, wires, began)
+
+                # A whole Walka all the while, with its card in Settings: signed out, and made with
+                # the address that is built in - not with the one the variables name.
+                assert len(app.store.records) == HOURS + 1 == len(SessionStore(rig.dir).records)
+                piece = (await shown(client))["walka_account"]
+                assert (piece["state"], piece["email"], piece["sending"], piece["last"]["word"]) == (
+                    "signed_out",
+                    "",
+                    False,
+                    "",
+                )
+                assert piece["host"] == built_in[len("http://") :] != rig.fake.origin[len("http://") :]
+                assert rig.fake.requests == [] and rig.keystore.calls == [] and wires.timers == []
+                # Not a file of the part's either: no walka-account.json, no lock.
+                assert sorted(path.name for path in rig.dir.iterdir() if "account" in path.name) == []
+
+                # And the wires were live all along: "Sign in" - a button that says it asks - opens
+                # the web browser, by the command line's own opener. (Here that is a wire.)
+                assert await said(client, "/api/walka-account/sign-in", {"way": "github"}) == OK
+                for _ in range(1000):
+                    if wires.tripped:
+                        break
+                    await asyncio.sleep(0.01)
+                assert wires.tripped == [("webbrowser.open",)]
+                assert await said(client, "/api/walka-account/sign-out", {}) == OK  # ("Stop waiting")
+                await rig.idle()
+                await app.stop()
+            assert await left_running() == []
+            assert rig.fake.requests == [] and rig.keystore.calls == [] and rig.opened == []
             assert sorted(path.name for path in rig.dir.iterdir() if "account" in path.name) == []
             assert app.treadmill.tripped == []
 

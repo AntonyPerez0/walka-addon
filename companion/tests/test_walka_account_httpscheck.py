@@ -558,8 +558,11 @@ import sys
 
 sys.path.insert(0, {src!r})
 from walka import cli
-from walka.walka_account import https
+from walka.walka_account import https, project
 
+# (A process of its own does not come by conftest.py. This one only ever runs "httpscheck", which
+# makes no Walka account's part - and it is given no built-in address all the same.)
+project.ADDRESS = project.PUBLISHABLE_KEY = ""
 real = https.Client
 
 
@@ -696,7 +699,7 @@ def test_the_helper_says_each_thing_the_moment_it_happens(tool, repo_root: Path,
 
 
 def test_whatever_the_builds_helpers_print_is_printed_at_once(repo_root: Path):
-    for name in ("check_https.py", "check_no_account.py"):
+    for name in ("check_https.py", "check_account_part.py"):
         tree = ast.parse((repo_root / "tools" / name).read_text("utf-8"))
         prints = [
             node

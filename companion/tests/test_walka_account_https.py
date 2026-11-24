@@ -1018,6 +1018,12 @@ def test_a_look_up_that_never_answers_holds_nobody(monkeypatch):
         assert len(threads) == 3 and all(thread.daemon for thread in threads)
     finally:
         release.set()
+        # Let go, each of the three looks once more (a look-up that failed is tried a second way). That
+        # must still find this test's stand-in: left to itself, the thread would get to it after the
+        # test is over, and ask the real look-up for a name. So they are waited for here.
+        for thread in list(threads):
+            thread.join(10)
+            assert not thread.is_alive()
 
 
 ASKS_WHILE_NO_NAME_IS_EVER_LOOKED_UP = """\

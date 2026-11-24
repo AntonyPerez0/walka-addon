@@ -433,8 +433,11 @@ async def the_whole_story(rig: Rig, tmp_path: Path, story: Story) -> None:
         rig.browser_comes = True
 
         # And now it works. The first step of the Walka account is not taken: nothing can be switched on.
+        # (The person is still in the browser while the card is looked at, and comes back after it.)
+        rig.browser_waits = asyncio.Event()
         assert await page.press("sign-in", {"way": "github"}) == OK
         assert (await page.piece())["state"] == "signing_in"
+        rig.browser_waits.set()
         await rig.idle()
         piece = await page.piece()
         assert (piece["state"], piece["email"], piece["way"]) == ("signed_in", ANNA, "github")
@@ -758,35 +761,119 @@ def test_the_part_starts_no_other_program_and_reads_no_environment_and_no_comman
             assert tool not in text, f"{path.name}: {tool}"
 
 
-# ---- decision 12: the live project's address and key are in no file that is kept --------------------
+# ---- where the accounts really are: one file, and nothing else that is kept -------------------------
+
+# Until the release, the brief's decision 12 kept the real project's address and key out of every
+# file. Now they are built in, in ONE file - and this is what keeps them out of every other. Nothing
+# here asks at that address, and nothing here prints it: a failure names files and kinds, never values.
+THE_ONE_FILE = "companion/src/walka/walka_account/project.py"
+
+A_KEY = re.compile(rb"sb_publishable_[A-Za-z0-9_-]{20,}")
+AN_ADDRESS = re.compile(rb"[A-Za-z0-9]{20}\.supabase\.co", re.IGNORECASE)
+# (A real secret key is longer than the made-up ones that the tests of the gate turn down.)
+A_SECRET_KEY = re.compile(rb"sb_secret_[A-Za-z0-9_-]{30,}")
 
 
-def test_no_file_that_git_keeps_holds_the_shape_of_the_live_address_or_of_its_key(repo_root: Path):
-    """Every file git keeps for this repository (``git ls-files``) - code,
-    tests, documents, workflows, whatever its folder is called: none holds
-    a publishable key of the accounts' kind, nor a project's address there.
-    (test_walka_account_wiring.py walks the folders as they lie on disk,
-    kept or not. Made-up ones are short and end in ``.example``.)"""
+def kept_files(repo_root: Path) -> list[str]:
+    """Every file git keeps for this repository, and every one that lies
+    in it and is not kept yet (but for what git is told to ignore)."""
     try:
-        listed = subprocess.run(["git", "ls-files", "-z"], cwd=repo_root, capture_output=True, timeout=60)
+        listed = subprocess.run(
+            ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+            cwd=repo_root,
+            capture_output=True,
+            timeout=60,
+        )
     except (OSError, subprocess.TimeoutExpired):
         pytest.skip("git is not here to say which files it keeps")
     if listed.returncode != 0:
         pytest.skip("this is not a checkout that git keeps")
-    names = [name for name in listed.stdout.decode("utf-8", "surrogateescape").split("\0") if name]
+    return [name for name in listed.stdout.decode("utf-8", "surrogateescape").split("\0") if name]
+
+
+@pytest.mark.real_address
+def test_where_the_accounts_really_are_is_an_address_and_a_key_walka_takes_and_no_secret():
+    """The two that are built in, looked at and not used: the address is
+    HTTPS and nothing after it, and Walka's own look takes it as it
+    stands; the key is one Walka uses, and of the publishable kind - not
+    a secret key, and not one of the older kind, which can be either."""
+    from walka.walka_account import https, project
+
+    address, key = project.ADDRESS, project.PUBLISHABLE_KEY
+    # (Each look by itself, into a word of its own: a failure says which, and not what was looked at.)
+    looks = {
+        "they are texts": isinstance(address, str) and isinstance(key, str),
+        "the address is HTTPS": isinstance(address, str) and address.startswith("https://"),
+        "the address has no path, no query and no port": isinstance(address, str)
+        and re.fullmatch(r"https://[a-z0-9.-]+", address) is not None,
+        "the address is one of the accounts' kind": isinstance(address, str)
+        and AN_ADDRESS.fullmatch(address[len("https://") :].encode("ascii", "replace")) is not None,
+    }
+    origin = https.parse_origin(address)
+    looks["Walka takes the address"] = origin is not None
+    looks["as it stands, with nothing changed"] = origin is not None and origin.text == address
+    looks["by HTTPS, at its usual port"] = origin is not None and (origin.scheme, origin.port) == ("https", None)
+    looks["Walka uses the key"] = https.key_is_usable(key)
+    looks["the key is a publishable one"] = isinstance(key, str) and A_KEY.fullmatch(key.encode("ascii", "replace")) is not None
+    looks["the key is no secret one"] = isinstance(key, str) and "secret" not in key.lower() and not key.startswith("eyJ")
+    failed = sorted(look for look, passed in looks.items() if not passed)
+    assert failed == []
+    # ... and the looks can fail: a key of the secret kind, an address with a path.
+    assert not https.key_is_usable("sb_secret_" + "x" * 31) and https.parse_origin("https://accounts.example/rest") is None
+    assert A_KEY.fullmatch(b"sb_publishable_" + b"Ab1_" * 6) and not A_KEY.fullmatch(b"sb_secret_" + b"Ab1_" * 6)
+
+
+@pytest.mark.real_address
+def test_the_real_address_and_key_stand_in_one_file_once_each_and_in_no_other_that_is_kept(repo_root: Path):
+    """Every file git keeps for this repository (and what lies in it, not
+    kept yet) - code, tests, documents, workflows, whatever its folder is
+    called. One file holds the address and the key, each once, and holds
+    nothing else of their kind. No other file holds either - not whole,
+    not as an address would spell it, and not anything of their shape.
+    And no file at all holds a secret key.
+    (test_walka_account_wiring.py walks the folders as they lie on disk,
+    ignored or not. Made-up ones are short and end in ``.example``.)"""
+    from walka.walka_account import project
+
+    names = kept_files(repo_root)
     assert len(names) > 150 and ".github/workflows/ci.yml" in names and "companion/src/walka/cli.py" in names
-    key = re.compile(rb"sb_publishable_[A-Za-z0-9_-]{20,}")
-    address = re.compile(rb"[A-Za-z0-9]{20}\.supabase\.co", re.IGNORECASE)
-    held = []
+    assert THE_ONE_FILE in names and "companion/tests/test_walka_account_nokeys.py" in names
+    address, key = project.ADDRESS.encode("ascii"), project.PUBLISHABLE_KEY.encode("ascii")
+    host = address.split(b"//", 1)[-1]
+    name_of_the_project = host.split(b".", 1)[0]
+    assert len(key) >= 30 and len(name_of_the_project) >= 16  # (long enough that a find is no accident)
+    # (What follows "sb_publishable_", too: the key with its first word cut off is the key all the same.)
+    values = {"the address": host, "the project's name": name_of_the_project, "the key": key, "the key's own part": key[15:]}
+    holds: dict[str, list[str]] = {}
     for name in names:
         try:
             data = (repo_root / name).read_bytes()
         except OSError:
             continue  # (deleted in this working copy, and not committed yet)
-        if key.search(data) or address.search(data):
-            held.append(name)
-    assert held == []
+        found = [what for what, value in values.items() if value in data or value.lower() in data.lower()]
+        found += ["the shape of a key"] if A_KEY.search(data) else []
+        found += ["the shape of an address"] if AN_ADDRESS.search(data) else []
+        found += ["a secret key"] if A_SECRET_KEY.search(data) else []
+        if found:
+            holds[name] = found
+    one = (repo_root / THE_ONE_FILE).read_bytes()
+    assert sorted(holds) == [THE_ONE_FILE], sorted(holds)
+    assert "a secret key" not in holds[THE_ONE_FILE]
+    # Once each: the file says them, and says them once. What is of their shape in it is the two themselves.
+    counts = (one.count(address), one.count(host), one.count(key), one.count(key[15:]), one.lower().count(name_of_the_project))
+    assert counts == (1, 1, 1, 1, 1)
+    assert [found == key for found in A_KEY.findall(one)] == [True]
+    assert [found.lower() == host for found in AN_ADDRESS.findall(one)] == [True]
     # ... and the look finds one of each kind. (Put together here, so that this file holds neither.)
-    assert key.search(b"sb_publishable_" + b"Ab1_" * 5) and not key.search(b"sb_publishable_" + b"x" * 19)
-    assert address.search(b"https://" + b"ab" * 10 + b".supabase.co")
-    assert not address.search(b"ab" * 9 + b".supabase.co")
+    assert A_KEY.search(b"sb_publishable_" + b"Ab1_" * 5) and not A_KEY.search(b"sb_publishable_" + b"x" * 19)
+    assert AN_ADDRESS.search(b"https://" + b"ab" * 10 + b".supabase.co")
+    assert not AN_ADDRESS.search(b"ab" * 9 + b".supabase.co")
+    assert A_SECRET_KEY.search(b"sb_secret_" + b"x" * 31) and not A_SECRET_KEY.search(b"sb_secret_" + b"x" * 24)
+
+
+def test_a_test_knows_neither_of_the_two():
+    """Without the mark, the two read as nothing here (conftest.py): no
+    test comes to ask the real accounts by forgetting to stand in for them."""
+    from walka.walka_account import project
+
+    assert project.ADDRESS == "" and project.PUBLISHABLE_KEY == ""

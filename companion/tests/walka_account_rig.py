@@ -371,6 +371,9 @@ class Rig:
         self.opened: list[str] = []  # every address the browser was opened at
         self.pages: list[tuple[int, dict[str, str], str]] = []  # what the browser ended on
         self.browser_comes = True  # False: the browser is opened and nobody ever comes back
+        # An event: the person takes their time in the browser, and comes back when it is set. (For a
+        # look at Walka while it waits: without it, whether the look or the browser is first is luck.)
+        self.browser_waits: asyncio.Event | None = None
         self.people: dict[str, str] = {}  # user id -> e-mail address
         self.account: WalkaAccount = None  # type: ignore[assignment]  (made when the stand-in has its port)
         self.accounts: list[WalkaAccount] = []  # every one made, restarts included
@@ -451,6 +454,8 @@ class Rig:
             self._browsers.append(asyncio.ensure_future(self._browse(url)))
 
     async def _browse(self, url: str) -> None:
+        if self.browser_waits is not None:
+            await self.browser_waits.wait()
         self.pages.append(await self.fake.browser(url))
 
     async def idle(self) -> None:

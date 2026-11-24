@@ -1,9 +1,9 @@
 """Sending walks to a Walka account (on walka.dev): signing in, and the sender.
 
-Walka works in full without this, and by default none of it is there:
-the part is handed to the ``App`` only when Walka runs from its source
-code with the accounts' address and key set on that computer
-(``cli._build_walka_account``).
+Walka works in full without this, and until somebody signs in the part
+does nothing: it is handed to the ``App`` at every start that listens to
+a real treadmill (``cli._build_walka_account``), with the address and
+the key that are built in (``project``), and then it waits to be used.
 
 When it may open a connection to another machine: only when the person
 has signed in, sending is switched on for that account, and there is a
