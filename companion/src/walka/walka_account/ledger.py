@@ -9,6 +9,14 @@ start, because an id is given out again after a walk is deleted - whether
 it was added, was there already, or was set aside. A walk that is not in
 the file is waiting. The e-mail address and the id are in this file only.
 
+Two more things are written down, each a plain yes or no. Under the
+address: that this Walka signed out and the system's store for secrets
+has not yet said that the sign-in is gone from it (``left_in_store``) -
+written BEFORE the store is asked, and taken back when it has answered,
+so that it also stands when Walka is closed in between. Under a Walka
+account: that the accounts said it was deleted (``gone``) - then the
+copies of its walks are gone with it.
+
 No key of a sign-in is ever in it: those live in memory and in the
 system's store for secrets (``keystore``).
 
@@ -21,10 +29,15 @@ Three rules, each with its reason:
 - A file that is there but cannot be opened is never taken for an empty
   one. Writing an empty one back would lose the other Walka's entries and
   the moment "from now on" was chosen.
-- Nothing read from the file switches sending on by itself. Sending
-  counts only for the Walka account that is signed in and only with a
-  choice beside it, and finishing ANY sign-in writes "off" for every
-  Walka account of that address: there is no road past the question.
+- Sending counts only for the Walka account that is signed in and only
+  with a choice beside it, and finishing ANY sign-in writes "off" for
+  every Walka account of that address: no sign-in leads past the
+  question. A Walka that is running never takes "on" from the file, and
+  a file without the sign-in in the system's store means "not signed
+  in". What that leaves: at a start the file is believed, for the Walka
+  account whose sign-in the store still holds. An older copy of the file
+  put back (from a backup, say) or a file changed by hand can so switch
+  sending on again, for that same Walka account, without the question.
 
 Lost, or damaged: sending is off; switched on again, everything is sent
 anew and answered "there already". A file of a newer Walka is left alone.
@@ -176,10 +189,15 @@ def _valid_account(raw: Any, is_signed_in: bool) -> dict | None:
     return {
         "way": _word(raw.get("way"), 32),
         "email": _word(raw.get("email"), 254),
-        # The one place where "on" is believed: said outright, with a choice
-        # beside it, and for the Walka account that is signed in.
+        # The one place where the file's "on" is taken: said outright, with a
+        # choice beside it, and for the Walka account that is signed in.
+        # (Whether the file itself is the newest one cannot be told from
+        # the file: an older copy put back is believed. See the top.)
         "sending": raw.get("sending") is True and chosen is not None and is_signed_in,
         "chosen": chosen,
+        # The accounts said that this Walka account was deleted. (Nobody is signed in to one
+        # that is gone - and a file that says both is believed about the sign-in.)
+        "gone": raw.get("gone") is True and not is_signed_in,
         "walks": walks,
     }
 
@@ -199,9 +217,12 @@ def _valid_address(raw: Any) -> dict | None:
         if fit is not None:
             accounts[user_id] = fit
     notice = raw.get("notice") if who is None and raw.get("notice") in NOTICES else None
-    if who is None and notice is None and not accounts:
+    # Said outright, and only while nobody is signed in: a sign-in writes its own key over the entry.
+    # (A file of before this was written down has no such word: nothing is left, as far as it knows.)
+    left = raw.get("left_in_store") is True and who is None
+    if who is None and notice is None and not left and not accounts:
         return None  # nothing is known of this address: no line for it
-    return {"signed_in": who, "notice": notice, "accounts": accounts}
+    return {"signed_in": who, "notice": notice, "left_in_store": left, "accounts": accounts}
 
 
 def validate(book: Any) -> dict:
@@ -258,7 +279,12 @@ def address(book: dict, origin: Any) -> dict:
     addresses = book.setdefault("addresses", {})
     place = addresses.get(_origin_text(origin))
     if not isinstance(place, dict):
-        place = addresses[_origin_text(origin)] = {"signed_in": None, "notice": None, "accounts": {}}
+        place = addresses[_origin_text(origin)] = {
+            "signed_in": None,
+            "notice": None,
+            "left_in_store": False,
+            "accounts": {},
+        }
     return place
 
 
@@ -266,7 +292,7 @@ def _account(place: dict, user_id: Any) -> dict:
     if not _text(user_id, 200):
         raise ValueError("not the id of a Walka account")
     return place["accounts"].setdefault(
-        user_id, {"way": "", "email": "", "sending": False, "chosen": None, "walks": {}}
+        user_id, {"way": "", "email": "", "sending": False, "chosen": None, "gone": False, "walks": {}}
     )
 
 
@@ -285,7 +311,9 @@ def sign_in(book: dict, origin: Any, user_id: str, way: str, email: str) -> None
 
     Whatever the file said before - copied from another computer, changed
     by hand - a sign-in never leaves sending on: only the question does.
-    What became of each walk stays.
+    What became of each walk stays. The word that an earlier sign-in may
+    still be in the system's store goes: this sign-in's key was written
+    over that entry.
     """
     if not isinstance(way, str) or not isinstance(email, str):
         raise ValueError("the way and the e-mail address are text")
@@ -296,19 +324,41 @@ def sign_in(book: dict, origin: Any, user_id: str, way: str, email: str) -> None
         other["chosen"] = None
     account["way"] = way
     account["email"] = email
+    account["gone"] = False  # (somebody has just signed in to it)
     place["signed_in"] = user_id
     place["notice"] = None
+    place["left_in_store"] = False
 
 
-def sign_out(book: dict, origin: Any, *, notice: str | None = None) -> None:
-    """Nobody is signed in at this address, and sending is off for everybody under it."""
+def sign_out(
+    book: dict, origin: Any, *, notice: str | None = None, left_in_store: bool = False, gone: str | None = None
+) -> None:
+    """Nobody is signed in at this address, and sending is off for everybody under it.
+
+    ``left_in_store``: this Walka held a sign-in in the system's store
+    for secrets and is taking it out now. Until the store has said that
+    it is gone (``sign_in_left(book, origin, False)``), the file says
+    that it may still be there. Without it the word stays as it was: a
+    sign-out that does not touch the store knows nothing new about it.
+
+    ``gone``: the id of a Walka account that the accounts said was
+    deleted. That is written down for it.
+    """
     if notice is not None and notice not in NOTICES:
         raise ValueError("not a notice")
+    if not isinstance(left_in_store, bool):
+        raise ValueError("left in the store or not: yes or no")
     place = address(book, origin)
     place["signed_in"] = None
     for account in place["accounts"].values():
         account["sending"] = False
     place["notice"] = notice
+    if left_in_store:
+        place["left_in_store"] = True
+    if gone is not None:
+        account = place["accounts"].get(gone) if isinstance(gone, str) else None
+        if isinstance(account, dict):
+            account["gone"] = True
 
 
 def set_sending(book: dict, origin: Any, user_id: str, on: bool, chosen: dict | None) -> None:
@@ -357,6 +407,57 @@ def clear_notice(book: dict, origin: Any) -> None:
     place = book.get("addresses", {}).get(_origin_text(origin))
     if isinstance(place, dict):
         place["notice"] = None
+
+
+def sign_in_left(book: dict, origin: Any, left: bool) -> None:
+    """What the system's store for secrets said when a sign-in was taken out of it.
+
+    False: it is gone. True: it may still be there. Counts only while
+    nobody is signed in at this address: a sign-in that was finished
+    meanwhile wrote its own key over the entry, and that one is wanted.
+    """
+    if not isinstance(left, bool):
+        raise ValueError("left in the store or not: yes or no")
+    place = book.get("addresses", {}).get(_origin_text(origin))
+    if not isinstance(place, dict):
+        if not left:
+            return
+        place = address(book, origin)
+    place["left_in_store"] = left and place.get("signed_in") is None
+
+
+def is_left_in_store(book: dict, origin: Any) -> bool:
+    """Does the file say that a sign-in may still be in the system's store? Changes nothing."""
+    place = book.get("addresses", {}).get(_origin_text(origin))
+    return isinstance(place, dict) and place.get("left_in_store") is True and place.get("signed_in") is None
+
+
+def a_copy(entry: Any) -> bool:
+    """Is a copy of the walk in the Walka account, as far as the file knows: added, or there and not deleted there?"""
+    if not isinstance(entry, dict):
+        return False
+    return entry.get("state") == "added" or (entry.get("state") == "there" and entry.get("deleted") is not True)
+
+
+def copies_elsewhere(book: dict, origin: Any, but: str | None = None) -> frozenset[str]:
+    """The walks (``walk_key``) of which a copy is in a Walka account of this address OTHER than ``but``.
+
+    ``but`` is the Walka account that is signed in, or None. A Walka
+    account that the accounts said was deleted does not count: its
+    copies are gone with it. Changes nothing, and names nobody.
+    """
+    place = book.get("addresses", {}).get(_origin_text(origin))
+    accounts = place.get("accounts") if isinstance(place, dict) else None
+    found: set[str] = set()
+    if not isinstance(accounts, dict):
+        return frozenset()
+    for user_id, account in accounts.items():
+        if user_id == but or not isinstance(account, dict) or account.get("gone") is True:
+            continue
+        walks = account.get("walks")
+        if isinstance(walks, dict):
+            found.update(key for key, entry in walks.items() if a_copy(entry))
+    return frozenset(found)
 
 
 # ------------------------------------------------------------------ the file

@@ -76,7 +76,12 @@ How the dashboard is shut off from other pages is at the top of
   public. On Windows, a program that runs as the same user can also read
   the stored sign-in in Credential Manager, and that is the whole Walka
   account: whoever has it can read the body numbers and the food diary
-  there, make the page public and delete the Walka account.
+  there, make the page public and delete the Walka account. On Linux,
+  where Walka runs from source, the address of a sign-in is on a command
+  line while the web browser starts, and other users of the computer can
+  read it there: with it, another user can sign Walka in to a Walka
+  account of their own - so look at the e-mail address under *Walka
+  account* before you switch sending on.
 * Someone with physical access to the computer or the treadmill.
 * Other software on a treadmill's Bluetooth: a treadmill takes commands
   from whatever connects to it. That is the treadmill's design, not

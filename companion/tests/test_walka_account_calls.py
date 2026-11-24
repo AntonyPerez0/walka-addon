@@ -847,7 +847,8 @@ def test_signing_out_never_fails_whatever_the_answer():
 
 
 def test_signing_out_waits_three_seconds_at_most_and_not_for_ever(monkeypatch):
-    monkeypatch.setattr(calls, "LOGOUT_S", 0.5)
+    # (Two real seconds: the request has to ARRIVE within them, on a machine that may be busy.)
+    monkeypatch.setattr(calls, "LOGOUT_S", 2.0)
 
     async def scenario():
         async with Accounts() as a:
@@ -1647,8 +1648,9 @@ def test_no_answer_means_later():
 
 
 def test_an_answer_that_takes_too_long_means_later(monkeypatch):
-    monkeypatch.setattr(calls, "ASK_S", 0.5)
-    monkeypatch.setattr(calls, "EXCHANGE_S", 0.5)
+    # (Two real seconds each: the request has to ARRIVE within them, on a machine that may be busy.)
+    monkeypatch.setattr(calls, "ASK_S", 2.0)
+    monkeypatch.setattr(calls, "EXCHANGE_S", 2.0)
 
     async def scenario():
         async with Accounts() as a:

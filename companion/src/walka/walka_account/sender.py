@@ -21,7 +21,18 @@ first, and each step ends the pass when nothing is left:
 5. The walks, at most 200 in a request. Before EVERY request the file
    ``walka-account.json`` is read again - still signed in, the same
    Walka account, sending still on - and walks deleted meanwhile are
-   left out.
+   left out. Whether a walk is still there to send is looked at once
+   more, on the loop and with nothing waited for after it, before the
+   store for secrets is read and before each request that is made for
+   the walks' sake - the one for a new key, the one for the version of
+   the rules, the one with the walks. None left: none of that happens.
+   What this cannot catch: a walk that is deleted while such a request
+   is already on its way. That request was made while the walk was
+   there, and is not taken back (after one for a new key, the new key is
+   still written to the store: the old one is spent). Nothing more is
+   asked after it. And which row a walk has that the Walka account held
+   already is still looked up when the walk is deleted meanwhile: that
+   walk did go.
 6. What the answer says is written down before anything else is asked.
 
 A pass never raises (a cancellation passes through it), and every wait in
@@ -39,6 +50,7 @@ import asyncio
 import logging
 import os
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -196,12 +208,13 @@ class Sender:
         self.retry_after: float | None = None  # what the accounts asked for with the last "later"
         self._began = -1  # the service's epoch when the pass in hand began
         self._added = 0  # walks the pass in hand added to the Walka account
-        self._dealt = 0  # walks it has dealt with: added, there already, or set aside
+        self._went = 0  # walks it added or found there already: what "sent" is said of
+        self._dealt = 0  # walks it has dealt with: those, and the ones it set aside
 
     # ---- the task ------------------------------------------------------------------------------
 
     async def run(self) -> None:
-        """Wait to be woken; make a pass; after "no answer" wait and make another. For ever."""
+        """Wait to be woken; make a pass; after "no answer" wait and make another. Until Walka closes."""
         service = self.service
         pause: float | None = None
         tries = 0
@@ -209,7 +222,9 @@ class Sender:
             with service.resting(service.wake):
                 await service.wait(service.wake, pause)
             service.wake.clear()
-            outcome = await self.one_pass()
+            outcome = await self.one_pass()  # (while Walka is closing a pass does nothing, and waits for nothing)
+            if service.stopping:
+                return  # by itself, and not only when it is cancelled: closing waits for nothing here
             if outcome == "later" and self._worth_another_try():
                 asked = self.retry_after or 0.0
                 pause = min(max(PAUSES_S[min(tries, len(PAUSES_S) - 1)], asked), LONGEST_PAUSE_S)
@@ -236,7 +251,7 @@ class Sender:
         service = self.service
         self.retry_after = None
         self._began = service.epoch
-        self._added = self._dealt = 0
+        self._added = self._went = self._dealt = 0
         try:
             return await self._pass()
         except Halt as halt:
@@ -263,6 +278,11 @@ class Sender:
         elif halt.outcome == "later":
             self.retry_after = halt.retry_after
             service.say("later", self._added)
+        elif halt.outcome == "nothing":
+            # No walk was left to ask for: deleted on this computer meanwhile.
+            outcome = "sent" if self._went else "nothing"
+            service.say(outcome, self._added)
+            return outcome
         return halt.outcome
 
     async def _pass(self) -> str:
@@ -293,7 +313,8 @@ class Sender:
         # 3. and 4. A key, and the version of the database's rules - once in a run.
         service.sending_now(True)
         if not service.schema_known:
-            version = await service.ask(epoch, calls.schema_version)
+            # (wanted: asked only while one of these walks is still there to send - see ``_wanted``.)
+            version = await service.ask(epoch, calls.schema_version, wanted=self._wanted(ready))
             service.check(epoch)
             if version > KNOWN_SCHEMA:
                 raise Halt("stopped", "too_old")
@@ -307,7 +328,9 @@ class Sender:
             if error.kind == "not_open":
                 await self._not_open(epoch)
             raise
-        outcome = "sent" if self._dealt else "nothing"
+        # "Sent" is said of walks that are in the Walka account now. A pass that
+        # only set walks aside says nothing of its own: the card names those.
+        outcome = "sent" if self._went else "nothing"
         service.say(outcome, self._added)
         return outcome
 
@@ -317,7 +340,7 @@ class Sender:
         there = await service.ask(epoch, calls.who)
         service.check(epoch)
         if there != "there":
-            await service.sign_in_ended(epoch)
+            await service.sign_in_ended(epoch, gone=there == "gone")
             raise Halt("over")
         service.first_step_is(False)
         raise Halt("stopped", "not_open")
@@ -329,6 +352,15 @@ class Sender:
         there = service.keys_in_store()
         return [walk for walk in walks if walk.key in there and not service.dealt_with(walk.key)]
 
+    def _wanted(self, walks: list[Walk]) -> Callable[[], bool]:
+        """Is one of these walks still there to send? For the service to ask on the loop, without
+        waiting, as the last thing before it reads the store for secrets or makes a request for
+        these walks: if not, ``Halt("nothing")``, and neither happens.
+
+        It cannot see a walk that is deleted while the request is on its way.
+        """
+        return lambda: bool(self._still_there(walks))
+
     async def _push(self, epoch: int, walks: list[Walk]) -> tuple[list[Walk], list[str], list[str]]:
         """One request with these walks: (the walks that went, the ids made for them, the ids that came back).
 
@@ -336,11 +368,20 @@ class Sender:
         out at the last moment. A token that ran out is made anew once.
         """
         service = self.service
+        wanted = self._wanted(walks)
         for again in (False, True):
             await service.still(epoch)
             held = service.access_token()
-            token = await service.fresh_token(epoch)
+            try:
+                # (wanted: before a key is made anew, the service looks whether one of these walks
+                # is still there - before it reads the store, and again before it asks.)
+                token = await service.fresh_token(epoch, wanted=wanted)
+            except Halt as halt:
+                if halt.outcome != "nothing":
+                    raise
+                return [], [], []  # none of them is left: deleted meanwhile. The pass goes on with the rest
             service.check(epoch)
+            # And once more, with nothing waited for between this and the request: these are the rows that go.
             going = self._still_there(walks)
             if not going:
                 return [], [], []
@@ -399,6 +440,7 @@ class Sender:
         # in by now: the walks did go to that Walka account.
         await service.note(user, entries)
         self._added += len(came)
+        self._went += len(going)
         self._dealt += len(going)
         service.check(epoch)
         if missing:
@@ -457,6 +499,7 @@ class Sender:
                     entry = {"state": "there", "row": None, "deleted": False}
                 await service.note(user, {walk.key: entry})
                 self._added += 1 if back else 0
+                self._went += 1
                 self._dealt += 1
                 service.check(epoch)
                 return not back

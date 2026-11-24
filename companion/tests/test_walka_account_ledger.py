@@ -164,12 +164,14 @@ def test_wrong_things_inside_are_dropped_and_the_rest_stays(tmp_path):
             ORIGIN: {
                 "signed_in": ANNA,
                 "notice": None,
+                "left_in_store": False,
                 "accounts": {
                     ANNA: {
                         "way": "",
                         "email": "",
                         "sending": False,
                         "chosen": {"what": "all", "at": 1800000000.0},
+                        "gone": False,
                         "walks": {
                             key: {"state": "added", "row": ROW, "at": 1800000000.0},
                             "there|1.0": {"state": "there", "row": None, "deleted": False},
@@ -284,12 +286,14 @@ def test_the_file_is_written_as_agreed(tmp_path):
             ORIGIN: {
                 "signed_in": ANNA,
                 "notice": None,
+                "left_in_store": False,
                 "accounts": {
                     ANNA: {
                         "way": "github",
                         "email": "a@b.example",
                         "sending": True,
                         "chosen": {"what": "from", "from": 1800000000.0, "at": 1800000000.0},
+                        "gone": False,
                         "walks": {
                             "20261119-213000|1795210200.0": {"state": "added", "row": ROW, "at": 1800000100.0},
                             "20261120-070000|1795244400.0": {"state": "there", "row": None, "deleted": False},
@@ -880,6 +884,7 @@ def test_a_file_carried_in_with_sending_on_is_off_after_any_sign_in(tmp_path):
         "email": "a@b.example",
         "sending": False,
         "chosen": None,
+        "gone": False,
         "walks": {},
     }
     assert b'"sending":true' not in (tmp_path / FILE_NAME).read_bytes()
@@ -966,6 +971,14 @@ def test_the_changes_switch_off_by_themselves_not_only_through_the_sieve():
     ledger.sign_in(book, ORIGIN, BEN, "google", "ben@b.example")
     assert place["notice"] is None and place["signed_in"] == BEN
     assert account_of(book)["sending"] is False and account_of(book)["chosen"] is None
+    # The same for the two words that came later: a sign-in takes them away by itself.
+    ledger.sign_out(book, ORIGIN, left_in_store=True, gone=BEN)
+    assert place["left_in_store"] is True and account_of(book, BEN)["gone"] is True
+    ledger.sign_in(book, ORIGIN, BEN, "google", "ben@b.example")
+    assert place["left_in_store"] is False and account_of(book, BEN)["gone"] is False
+    # ... and the store's "no" to an older sign-out, arriving now, does not bring one back.
+    ledger.sign_in_left(book, ORIGIN, True)
+    assert place["left_in_store"] is False
     ledger.set_sending(book, ORIGIN, BEN, True, dict(ALL))
     ledger.set_sending(book, ORIGIN, BEN, False, None)
     assert account_of(book, BEN)["sending"] is False and account_of(book, BEN)["chosen"] is None
@@ -1130,6 +1143,7 @@ def test_noting_walks(tmp_path):
         "email": "",
         "sending": False,
         "chosen": None,
+        "gone": False,
         "walks": {key: THERE},
     }
     assert ledger.signed_in(book.read(), ORIGIN)[0] == ANNA
@@ -1172,3 +1186,148 @@ def test_the_module_asks_nothing_of_the_network_reads_no_clock_and_writes_no_log
     assert re.findall(r"\btime\.\w+", source) == ["time.sleep"]
     assert "sleep: Callable[[float], None] = time.sleep" in source
     assert "—" not in source and "–" not in source  # the house writes " - "
+
+
+# ---------------------------------------- a sign-in that may still be in the system's store
+
+
+def place_of(book: dict) -> dict:
+    return book["addresses"][ORIGIN]
+
+
+def test_a_sign_out_that_takes_the_sign_in_out_of_the_store_says_so_until_the_store_has_answered(tmp_path):
+    book = signed_in_and_on(tmp_path)
+    assert place_of(book.read())["left_in_store"] is False and ledger.is_left_in_store(book.read(), ORIGIN) is False
+
+    # Written with the sign-out itself, before the store is asked ...
+    book.change(lambda b: ledger.sign_out(b, ORIGIN, left_in_store=True))
+    after = book.read()
+    assert place_of(after)["signed_in"] is None and place_of(after)["left_in_store"] is True
+    assert ledger.is_left_in_store(after, ORIGIN) is True
+    assert b'"left_in_store":true' in (tmp_path / FILE_NAME).read_bytes()
+    # ... it stands when the store says no, and through a sign-out that does not touch the store,
+    book.change(lambda b: ledger.sign_in_left(b, ORIGIN, True))
+    book.change(lambda b: ledger.sign_out(b, ORIGIN))
+    book.change(lambda b: ledger.sign_out(b, ORIGIN, notice="ended"))
+    book.change(lambda b: ledger.clear_notice(b, ORIGIN))
+    assert ledger.is_left_in_store(book.read(), ORIGIN) is True
+    # ... and it goes when the store has said that the sign-in is gone.
+    book.change(lambda b: ledger.sign_in_left(b, ORIGIN, False))
+    assert place_of(book.read())["left_in_store"] is False and ledger.is_left_in_store(book.read(), ORIGIN) is False
+
+
+def test_a_new_sign_in_takes_the_word_away_and_none_stands_beside_a_sign_in(tmp_path):
+    book = signed_in_and_on(tmp_path)
+    book.change(lambda b: ledger.sign_out(b, ORIGIN, notice="ended", left_in_store=True))
+    assert ledger.is_left_in_store(book.read(), ORIGIN) is True and place_of(book.read())["notice"] == "ended"
+    book.change(lambda b: ledger.sign_in(b, ORIGIN, BEN, "google", "b@b.example"))
+    assert place_of(book.read())["left_in_store"] is False  # its key was written over the entry
+    # The store's "no" to an OLDER sign-out arrives late: somebody is signed in, and that key is wanted.
+    book.change(lambda b: ledger.sign_in_left(b, ORIGIN, True))
+    assert place_of(book.read())["left_in_store"] is False and ledger.is_left_in_store(book.read(), ORIGIN) is False
+    with pytest.raises(ValueError):
+        book.change(lambda b: ledger.sign_out(b, ORIGIN, left_in_store="yes"))
+    with pytest.raises(ValueError):
+        book.change(lambda b: ledger.sign_in_left(b, ORIGIN, 1))
+    assert place_of(book.read())["signed_in"] == BEN
+
+
+def test_the_word_is_a_plain_yes_and_anything_else_in_the_file_is_no(tmp_path):
+    def left(**place) -> bool:
+        whole = {"signed_in": None, "notice": None, "accounts": {}, **place}
+        (tmp_path / FILE_NAME).write_text(json.dumps({"version": 1, "addresses": {ORIGIN: whole}}), "utf-8")
+        return ledger.is_left_in_store(Ledger(tmp_path).read(), ORIGIN)
+
+    assert left(left_in_store=True) is True
+    # (An address of which only this is known keeps its line: the word must not be lost.)
+    assert Ledger(tmp_path).read()["addresses"][ORIGIN] == {
+        "signed_in": None,
+        "notice": None,
+        "left_in_store": True,
+        "accounts": {},
+    }
+    for junk in (False, None, 1, "true", "yes", ["x"], {"a": 1}):
+        assert left(left_in_store=junk) is False, junk
+    assert left() is False  # a file of before this was written down: nothing is left, as far as it knows
+    # Beside a sign-in it says nothing: that sign-in's key is the entry.
+    account = {"way": "github", "email": "a@b.example", "sending": False, "chosen": None, "walks": {}}
+    assert left(signed_in=ANNA, accounts={ANNA: account}, left_in_store=True) is False
+    assert Ledger(tmp_path).read()["addresses"][ORIGIN]["left_in_store"] is False
+
+
+def test_the_store_saying_gone_where_nothing_is_known_of_the_address_makes_no_line(tmp_path):
+    book = Ledger(tmp_path, sleep=Naps())
+    book.change(lambda b: ledger.sign_in_left(b, ORIGIN, False))
+    assert book.read() == EMPTY and names(tmp_path) == [LOCK_NAME]
+    # ... and its "no" does: a sign-in that was cut off may have left its key behind.
+    book.change(lambda b: ledger.sign_in_left(b, ORIGIN, True))
+    assert ledger.is_left_in_store(book.read(), ORIGIN) is True
+    assert ledger.is_left_in_store(book.read(), "https://other.example") is False
+
+
+# ------------------------------------------------- where a copy of a walk is
+
+
+def test_the_copies_in_the_other_walka_accounts_of_the_address(tmp_path):
+    book = signed_in_and_on(tmp_path)
+    added, there, deleted, aside, bens = (walk_key(f"2026111{n}-213000", 1795210200 + n) for n in range(5))
+    entries = {
+        added: {"state": "added", "row": ROW, "at": 1800000100.0},
+        there: dict(THERE),
+        deleted: {"state": "there", "row": ROW, "deleted": True},
+        aside: {"state": "aside", "code": "23514", "message": "It lasts longer than two days.", "version": "0.8.0"},
+    }
+    book.change(lambda b: ledger.note_walks(b, ORIGIN, ANNA, entries))
+    book.change(lambda b: ledger.note_walks(b, "https://other.example", BEN, {aside: dict(THERE)}))
+    seen = book.read()
+    # A copy: added, or there already and not deleted there. Of ANNA's - unless she is the one meant.
+    assert ledger.copies_elsewhere(seen, ORIGIN) == {added, there}
+    assert ledger.copies_elsewhere(seen, ORIGIN, but=BEN) == {added, there}
+    assert ledger.copies_elsewhere(seen, ORIGIN, but=ANNA) == frozenset()
+    # Only this address counts, and nobody's id is in what comes back.
+    assert ledger.copies_elsewhere(seen, "https://other.example") == {aside}
+    assert ledger.copies_elsewhere(seen, "https://nobody.example") == frozenset()
+    assert ledger.copies_elsewhere(ledger.empty_book(), ORIGIN) == frozenset()
+
+    book.change(lambda b: ledger.sign_out(b, ORIGIN))
+    book.change(lambda b: ledger.sign_in(b, ORIGIN, BEN, "google", "b@b.example"))
+    book.change(lambda b: ledger.note_walks(b, ORIGIN, BEN, {bens: dict(THERE), added: dict(THERE)}))
+    seen = book.read()
+    assert ledger.copies_elsewhere(seen, ORIGIN, but=BEN) == {added, there}
+    assert ledger.copies_elsewhere(seen, ORIGIN, but=ANNA) == {added, bens}
+    assert ledger.copies_elsewhere(seen, ORIGIN) == {added, there, bens}
+    assert ledger.a_copy(entries[added]) and ledger.a_copy(entries[there])
+    assert not any(ledger.a_copy(thing) for thing in (entries[deleted], entries[aside], None, "added", {}))
+
+
+def test_a_walka_account_that_is_known_to_be_gone_has_no_copies_and_a_sign_in_to_it_says_otherwise(tmp_path):
+    book = signed_in_and_on(tmp_path)
+    key = walk_key("20261119-213000", 1795210200)
+    book.change(lambda b: ledger.note_walks(b, ORIGIN, ANNA, {key: dict(THERE)}))
+    assert account_of(book.read())["gone"] is False
+    # Nobody is signed in to a Walka account that is gone: beside a sign-in the word says nothing.
+    (tmp_path / "raw").mkdir()
+    (tmp_path / "raw" / FILE_NAME).write_bytes(raw_account(gone=True))
+    assert account_of(Ledger(tmp_path / "raw").read())["gone"] is False
+
+    book.change(lambda b: ledger.sign_out(b, ORIGIN, notice="ended", gone=ANNA))
+    after = book.read()
+    assert account_of(after)["gone"] is True and key in account_of(after)["walks"]  # (what was written down stays)
+    assert ledger.copies_elsewhere(after, ORIGIN) == frozenset()
+    assert b'"gone":true' in (tmp_path / FILE_NAME).read_bytes()
+    # It stays so through whatever follows - another Walka account signing in, and out ...
+    book.change(lambda b: ledger.sign_in(b, ORIGIN, BEN, "google", "b@b.example"))
+    book.change(lambda b: ledger.sign_out(b, ORIGIN, gone="nobody-of-this-address"))
+    assert account_of(book.read())["gone"] is True and account_of(book.read(), BEN)["gone"] is False
+    assert ledger.copies_elsewhere(book.read(), ORIGIN) == frozenset()
+    # ... until somebody signs in to it: then it is there.
+    book.change(lambda b: ledger.sign_in(b, ORIGIN, ANNA, "github", "a@b.example"))
+    assert account_of(book.read())["gone"] is False
+    assert ledger.copies_elsewhere(book.read(), ORIGIN, but=BEN) == {key}
+    for junk in (1, "true", None, ["x"]):
+        (tmp_path / "raw" / FILE_NAME).write_bytes(
+            json.dumps(
+                {"version": 1, "addresses": {ORIGIN: {"signed_in": None, "accounts": {ANNA: {"gone": junk}}}}}
+            ).encode()
+        )
+        assert account_of(Ledger(tmp_path / "raw").read())["gone"] is False, junk

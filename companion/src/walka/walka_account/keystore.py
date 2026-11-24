@@ -13,7 +13,8 @@ calls only work on their own system.
 
 The stores block (a Mac may sit on a call for as long as it likes), so
 the rest of Walka reaches them only through ``Keys``: one call at a time,
-each on a daemon thread of its own, each with a time limit.
+each on a daemon thread of its own, each with a time limit for whoever
+waits for it.
 
 No error from here carries what was stored. An error says one word, and
 at most the number the system answered.
@@ -625,9 +626,22 @@ class Keys:
 
     One call at a time: the Mac's "show no box" holds for the whole
     program, and a sign-out's delete and a refresh's write must not
-    overtake each other. The lock is taken inside the worker thread, with
-    a time limit, so a call that the system sits on holds up nothing but
-    the calls behind it - and those give up too.
+    overtake each other. The lock is taken inside the worker thread. A
+    read or a write waits for it with a time limit, so a call that the
+    system sits on holds up nothing but the calls behind it - and those
+    give up too.
+
+    A delete does not give up. Whoever asked for it stops waiting after
+    the time limit like everybody else, and is told "could not"; but its
+    thread (a daemon: closing Walka does not wait for it) stays in the
+    line for as long as it takes, and the delete is made when the store
+    comes back. Signing out must take the key away if it can at all - also
+    a key that a write put there while the store sat on it.
+
+    A lock promises no order among those who wait for it. So each call
+    gets a number when it is asked, and a delete stands down when a write
+    that was asked AFTER it has been made already: that key belongs to a
+    later sign-in, and is not this delete's to take away.
     """
 
     def __init__(self, store: KeyStore, *, timeout_s: float = 15.0) -> None:
@@ -636,10 +650,12 @@ class Keys:
         self.lasting: bool = store.lasting
         self._timeout_s = timeout_s
         self._lock = threading.Lock()
+        self._asked = 0  # how many calls were asked so far: each one's number
+        self._newest_write: dict[str, int] = {}  # name -> the number of the newest write the store took
 
     async def read(self, name: str) -> str | None:
         """What is stored under the name, or ``None``. Raises ``KeyStoreError``."""
-        return await self._off("read", lambda: self._store.read(name))
+        return await self._off("read", lambda _mine: self._store.read(name))
 
     async def write(self, name: str, secret: str, *, if_still: Callable[[], bool] | None = None) -> bool:
         """Store it. Raises ``KeyStoreError``.
@@ -654,16 +670,23 @@ class Keys:
         then is not made at all.
         """
 
-        def work() -> bool:
+        def work(mine: int) -> bool:
             if if_still is not None and not if_still():
                 return False
             self._store.write(name, secret)
+            self._newest_write[name] = max(self._newest_write.get(name, 0), mine)  # (still under the lock)
             return True
 
         return await self._off("write", work)
 
     async def delete(self, name: str) -> bool:
-        """Remove what is stored under the name. ``True`` if it is gone now; a failure is ``False``, never an error."""
+        """Remove what is stored under the name. A failure is ``False``, never an error.
+
+        ``True``: what this delete was asked to take away is gone now -
+        deleted, or written over meanwhile by a later sign-in, whose key
+        stays. ``False``: it may still be there (and if the store only
+        sat on a call, the delete is still made when the store comes back).
+        """
         try:
             await self._delete(name)
         except KeyStoreError:
@@ -673,13 +696,25 @@ class Keys:
     async def _delete(self, name: str) -> None:
         # (A delete is made even when nobody waits for it any more:
         # signing out must take the key away if it can at all.)
-        await self._off("delete", lambda: self._store.delete(name), though_unheard=True)
+        def work(mine: int) -> None:
+            if mine < self._newest_write.get(name, 0):
+                return  # a write that was asked after this delete got there first: that key is not this delete's
+            self._store.delete(name)
 
-    async def _off(self, what: str, work: Callable[[], T], *, though_unheard: bool = False) -> T:
+        await self._off("delete", work, though_unheard=True)
+
+    async def _off(self, what: str, work: Callable[[int], T], *, though_unheard: bool = False) -> T:
+        """``though_unheard``: the call is made even when nobody waits for it any more (a delete)."""
         unheard = threading.Event()  # set once nobody waits for the answer any more
+        self._asked += 1
+        mine = self._asked  # this call's number: taken here, on the loop, in the order the calls are asked
 
         def locked() -> T:
-            if not self._lock.acquire(timeout=self._timeout_s):
+            if though_unheard:
+                # No time limit of its own: behind a call the system sits on,
+                # it is made when the store comes back, however late.
+                self._lock.acquire()
+            elif not self._lock.acquire(timeout=self._timeout_s):
                 raise KeyStoreError("timeout")
             failure: KeyStoreError
             try:
@@ -687,7 +722,7 @@ class Keys:
                     # Whoever asked has been told "timeout" and has gone on
                     # as if nothing was done. So nothing is done.
                     raise KeyStoreError("timeout")
-                return work()
+                return work(mine)
             except KeyStoreError as error:
                 # Made anew, and only from one of the four words and a
                 # number: whatever else a store hung on its error stays here.

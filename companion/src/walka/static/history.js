@@ -4,7 +4,7 @@
 import { $, U, api, del, fmt, h, icon, run, setShown, setText, toast } from "./util.js";
 import { SessionChart, WeekChart } from "./charts.js";
 import { SOURCE_LABEL } from "./status.js";
-import { sentWalkWords } from "./walkaaccount.js";
+import { otherAccountWalkWords, sentWalkWords } from "./walkaaccount.js";
 
 const FIRST_PAGE = 200;
 const ALL = 2000;
@@ -149,7 +149,12 @@ function renderDetail(panel, walk, record) {
   const removeButton = h("button", { class: "btn danger", type: "button", text: "Delete walk..." });
   const keep = h("button", { class: "btn", type: "button", text: "Keep it" });
   // A walk that was sent to the Walka account stays there: deleting it here says so, and where.
-  const sent = walk.in_walka_account === true ? sentWalkWords() : null;
+  // So does a copy that was sent from this computer to a Walka account that is not the one signed
+  // in now (after signing out, say). Without either word the question is the one it always was.
+  const elsewhere = walk.in_other_walka_account === true;
+  let sent = null;
+  if (walk.in_walka_account === true) sent = sentWalkWords(elsewhere);
+  else if (elsewhere) sent = otherAccountWalkWords();
   const reallyRemove = h("button", {
     class: "btn danger solid",
     type: "button",

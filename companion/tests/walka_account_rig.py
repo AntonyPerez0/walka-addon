@@ -15,6 +15,9 @@ is handed when Walka runs:
   call, and can be told to refuse. ``lasting=True`` stands for Windows'
   Credential Manager or a Mac's keychain (it outlives ``rig.restart()``);
   ``lasting=False`` for a system without one.
+  ``LatestFirst`` is a lock to put into a ``Keys`` (``keys._lock``) for the
+  tests of what waits behind a call the store sits on: of those who wait,
+  the one who came last goes first.
 - ``rig.fake`` - the stand-in for the accounts (``fake_accounts``).
 - the opener: it writes the address down (``rig.opened``) and, unless
   ``rig.browser_comes`` is False, lets the stand-in's "browser" follow it
@@ -155,6 +158,39 @@ class CountingKeyStore(MemoryKeyStore):
     def secrets(self) -> list[str]:
         """What is stored this instant."""
         return list(self._entries.values())
+
+
+class LatestFirst:
+    """A lock that lets whoever came LAST go first. (A real lock promises no order at all among
+    those who wait: this one takes the order that hurts.)"""
+
+    def __init__(self) -> None:
+        self._turn = threading.Condition()
+        self._held = False
+        self.waiting: list[object] = []
+
+    def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+        me = object()
+        with self._turn:
+            self.waiting.append(me)
+            try:
+                mine = self._turn.wait_for(
+                    lambda: not self._held and self.waiting[-1] is me, None if timeout < 0 else timeout
+                )
+                if mine:
+                    self._held = True
+                return mine
+            finally:
+                self.waiting.remove(me)
+                self._turn.notify_all()
+
+    def release(self) -> None:
+        with self._turn:
+            self._held = False
+            self._turn.notify_all()
+
+    def locked(self) -> bool:
+        return self._held
 
 
 class Waiting:

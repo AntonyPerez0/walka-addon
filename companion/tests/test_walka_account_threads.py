@@ -9,9 +9,12 @@ import time
 
 import pytest
 
-from walka.walka_account.threads import OffLoopTimeout, off_loop
+from walka.walka_account.threads import OffLoopTimeout, off_loop, wait_for_event
 
 SECRET = "v4xk2j3h5l6m"
+# "At once", on a build machine that is busy: the work the caller walks away from sits for ten
+# seconds, so three tell "at once" from "waited for it" as well as one would.
+AT_ONCE_S = 3.0
 
 
 def run(scenario):
@@ -87,7 +90,86 @@ def test_the_one_who_waits_can_be_cancelled_at_once():
         release.set()
         return time.monotonic() - started
 
-    assert run(scenario) < 1.0
+    assert run(scenario) < AT_ONCE_S
+
+
+def test_a_cancellation_that_meets_the_answer_in_the_same_turn_still_ends_the_one_who_waits():
+    # Before Python 3.12, asyncio.wait_for kept such a cancellation to itself and gave the
+    # answer instead: a task that Walka cancelled while closing went on with its work.
+    release = threading.Event()
+
+    def work() -> str:
+        release.wait(10)
+        return SECRET
+
+    async def scenario():
+        task = asyncio.ensure_future(off_loop(work, timeout=30, name="walka-test-same-turn"))
+        await asyncio.sleep(0.05)
+        release.set()
+        for thread in threading.enumerate():
+            if thread.name == "walka-test-same-turn":
+                thread.join(10)  # the loop is busy while the work ends: its answer is in, and nobody has looked yet
+        await asyncio.sleep(0)  # the answer reaches the loop ...
+        task.cancel()  # ... and in that same turn the one who waits is cancelled
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    run(scenario)
+
+
+def test_waiting_for_an_event_with_and_without_a_time_limit():
+    async def scenario():
+        tasks = asyncio.all_tasks()  # (this one - and before Python 3.12 the one that waits for it)
+        event = asyncio.Event()
+        assert await wait_for_event(event, 0.01) is False  # the time was up
+        asyncio.get_running_loop().call_later(0.01, event.set)
+        assert await wait_for_event(event, 30) is True
+        assert await wait_for_event(event, 30) is True and await wait_for_event(event, None) is True  # it is set
+        event.clear()
+        asyncio.get_running_loop().call_later(0.01, event.set)
+        assert await wait_for_event(event, None) is True
+        await asyncio.sleep(0)
+        assert asyncio.all_tasks() == tasks  # no task is left behind by any of them
+
+    run(scenario)
+
+
+def test_an_event_that_came_and_was_cleared_again_before_the_one_who_waits_looked_did_come():
+    async def scenario():
+        event = asyncio.Event()
+        task = asyncio.ensure_future(wait_for_event(event, 30))
+        await asyncio.sleep(0.01)
+        event.set()
+        await asyncio.sleep(0)  # the event has come, and the one who waits has not looked yet ...
+        event.clear()  # ... when somebody clears it again (the sender does, after every wake)
+        assert await task is True
+
+    run(scenario)
+
+
+def test_a_cancellation_that_meets_the_event_in_the_same_turn_still_ends_the_wait():
+    async def scenario():
+        tasks = asyncio.all_tasks()
+        event = asyncio.Event()
+        task = asyncio.ensure_future(wait_for_event(event, 30))
+        await asyncio.sleep(0.01)
+        event.set()
+        await asyncio.sleep(0)  # the event has come, and the one who waits has not looked yet ...
+        task.cancel()  # ... when it is cancelled
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert asyncio.all_tasks() == tasks
+
+        # Cancelled while it simply waits: at once, and nothing is left.
+        event.clear()
+        task = asyncio.ensure_future(wait_for_event(event, 30))
+        await asyncio.sleep(0.01)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert asyncio.all_tasks() == tasks
+
+    run(scenario)
 
 
 def test_a_loop_that_is_closed_before_the_work_ends_hears_nothing_and_nothing_is_printed(caplog, capfd):

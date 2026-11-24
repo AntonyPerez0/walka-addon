@@ -94,6 +94,32 @@ DELETE_SENT = (
     "This cannot be undone. It stays in your account, and on your public page if you have one, until you delete "
     "it there: walka.dev/account/walks/"
 )
+# Decision 8, for a copy in a Walka account that is NOT the one signed in now (after signing out, say). It
+# promises nothing Walka cannot know, names nobody, and does not say "your".
+DELETE_SENT_ELSEWHERE = (
+    "Delete this walk from this computer? It disappears from your totals here and from the addon's history. "
+    "This cannot be undone. A copy of this walk was sent to a Walka account from this computer. Deleting it "
+    "here does not delete that copy: that is done on walka.dev/account/walks/, signed in to that Walka account."
+)
+# ... and for a walk that has a copy in both.
+ANOTHER_COPY = (
+    ". Another copy was sent to a different Walka account from this computer. Deleting the walk here does not "
+    "delete that copy either."
+)
+# Signing out, and the system's store did not say that the sign-in is gone from it.
+LEFT_IN = "Walka could not make sure that your sign-in was taken out of "
+LEFT_WINDOWS = (
+    LEFT_IN + "Windows' Credential Manager. Try again, or delete the entry there by hand: its name begins "
+    '"Walka account".'
+)
+LEFT_MAC = (
+    LEFT_IN + "your Mac's keychain. Try again, or delete the entry by hand in Keychain Access: its name begins "
+    '"Walka account".'
+)
+LEFT_ELSEWHERE = (
+    LEFT_IN + "the password store of the computer that runs Walka. Try again, or delete the entry there by "
+    'hand: its name begins "Walka account".'
+)
 
 
 def read(name: str) -> str:
@@ -266,8 +292,8 @@ def test_the_words_that_are_given_are_there_word_for_word():
         "Not now",
         "Sending is on. Each walk goes to your Walka account when it is saved.",
         "Stop sending",
-        "The account is full: it has room for 20,000 walks.",
-        "This Walka is too old for the account as it is now: get the newest Walka.",
+        "Your Walka account is full: it has room for 20,000 walks.",
+        "This Walka is too old for your Walka account as it is now: get the newest Walka.",
         "The sign-in is not on this computer any more. Nothing is sent.",
         "macOS did not let this version of Walka read the stored sign-in. Sign in again.",
         RAIL_FOOT,
@@ -275,10 +301,20 @@ def test_the_words_that_are_given_are_there_word_for_word():
         PAGE_STAYS,
         PAGE_STAYS_SENDING,
         DELETE_SENT.removesuffix("walka.dev/account/walks/"),
+        DELETE_SENT_ELSEWHERE.split("walka.dev/account/walks/")[0],
+        ", signed in to that Walka account.",
+        ANOTHER_COPY,
         "Delete from this computer",
         "Walk deleted from this computer.",
+        "Try again",
     ):
         assert sentence in text, sentence
+    for sentence in (LEFT_WINDOWS, LEFT_MAC, LEFT_ELSEWHERE):
+        assert sentence.replace('its name begins "Walka account".', "${named}") in text, sentence
+    assert """'its name begins "Walka account".'""" in text
+    # Neither invites anybody to sign in: the Walka account may be gone (decision 11).
+    for sentence in (LEFT_WINDOWS, LEFT_MAC, LEFT_ELSEWHERE, DELETE_SENT_ELSEWHERE, ANOTHER_COPY):
+        assert "sign in" not in sentence.lower().replace("sign-in", "") and "again." not in sentence
     # The house voice: " - " for a dash, and the words that are taken stay out.
     raw = read(SCRIPT)
     assert "\N{EM DASH}" not in raw and "\N{EN DASH}" not in raw and "\N{HORIZONTAL ELLIPSIS}" not in raw
@@ -286,6 +322,42 @@ def test_the_words_that_are_given_are_there_word_for_word():
     for taken in ("sync", "connected", "offline", "log in", "logged", "profile"):
         assert taken not in words.lower(), taken
     assert "!" not in re.sub(r"\$\{[^}]*\}", "", words)
+
+
+# The five sentences that say "account" alone. Each is the brief's own (decisions 11, 5, 5, 4 and 8),
+# kept word for word until the owner says otherwise; every other sentence says "Walka account".
+ACCOUNT_ALONE = {
+    "or the account was deleted.",
+    "goes to this account, whoever walked.",
+    "Stopping deletes nothing in the account.",
+    "If you already have an account, it is under another e-mail address:",
+    "It stays in your account, and on your public page",
+}
+
+
+def test_no_sentence_but_the_five_of_the_brief_says_account_alone():
+    """ "Account" alone is the player's game account elsewhere in Walka (decision 2)."""
+    for name in (SCRIPT, "history.js"):
+        raw = read(name)
+        # What a person can read: the script's strings. (Not its comments, nor the names of routes and classes.)
+        code = "\n".join(line for line in raw.splitlines() if not line.lstrip().startswith(("//", "*", "/*")))
+        strings = re.findall(r'"(?:[^"\\\n]|\\.)*"|`[^`]*`|\'(?:[^\'\\\n]|\\.)*\'', code)
+        alone = []
+        for string in strings:
+            if " " not in string:
+                continue  # a name (the key of the page walka.dev/account/), not words
+            for found in re.finditer(r"(?<![\w/-])[Aa]ccounts?\b(?![/-])", string):
+                if string[: found.start()].endswith("Walka "):
+                    continue
+                alone.append(string[max(0, found.start() - 40) : found.end() + 60])
+        left = [words for words in alone if not any(known in words for known in ACCOUNT_ALONE)]
+        assert left == [], (name, left)
+        if name == SCRIPT:
+            assert len(alone) == len(ACCOUNT_ALONE), alone
+            for known in ACCOUNT_ALONE:
+                assert sum(known in words for words in alone) == 1, known
+        else:
+            assert alone == []
 
 
 def test_the_words_elsewhere_on_the_page():
@@ -306,7 +378,10 @@ def test_the_words_elsewhere_on_the_page():
         "Delete this walk? It disappears from your totals here and from the addon's history. This cannot be undone.",
         '"Delete permanently"',
         '"Walk deleted."',
-        "walk.in_walka_account === true ? sentWalkWords() : null",
+        # ... or a copy of it was sent to a Walka account that is not the one signed in now.
+        "const elsewhere = walk.in_other_walka_account === true;",
+        "if (walk.in_walka_account === true) sent = sentWalkWords(elsewhere);",
+        "else if (elsewhere) sent = otherAccountWalkWords();",
         "s.walka_account ? s.walka_account.rev : null",
     ):
         assert words in history, words
@@ -660,7 +735,7 @@ for (const step of request.steps) {
   } else if (step.op === "tab") {
     find(step.text).focus();
   } else if (step.op === "sent_words") {
-    const words = script.sentWalkWords();
+    const words = step.other ? script.otherAccountWalkWords() : script.sentWalkWords(step.elsewhere);
     const p = new El("p");
     p.append(...words.question);
     document.body.append(p);
@@ -738,6 +813,7 @@ def part(**changes: Any) -> dict[str, Any]:
         "store": "lasting",
         "problem": "",
         "notice": "",
+        "left_in_store": "",
         "email": "",
         "way": "",
         "first_step": "unknown",
@@ -892,7 +968,7 @@ def test_signing_in_and_what_can_go_wrong(tmp_path: Path):
         "failed": "Walka could not finish signing in. Try again.",
         "timed_out": "Nobody came back from the browser. Try again.",
         "no_store": "Walka could not keep the sign-in on this computer, so nothing was signed in.",
-        "certificate": "Walka could not check that it is talking to your account's server, so it asked nothing.",
+        "certificate": "Walka could not check that it is talking to your Walka account's server, so it asked nothing.",
         "no_answer": "There was no answer. Try again later.",
         "no_stored_sign_in": "The sign-in is not on this computer any more. Nothing is sent.",
         "store_refused": "Windows did not let Walka read the stored sign-in. Sign in again.",
@@ -930,7 +1006,7 @@ def test_signed_in_says_which_account_and_where_the_sign_in_is_kept(tmp_path: Pa
         "Sign out",
         f"{SIGN_OUT_HERE} Signing out here may ask your Walka account one last time, to tell it so. "
         "The sign-in is kept in Windows' Credential Manager.",
-        "Nothing is sent. 5 walks on this computer are not in your Walka account.",
+        "Nothing is sent. Walka has not sent 5 walks on this computer to your Walka account.",
         "Send my walks to my Walka account...",
         "Asks your Walka account first.",
     ]
@@ -957,6 +1033,14 @@ def test_signed_in_says_which_account_and_where_the_sign_in_is_kept(tmp_path: Pa
     assert away[0]["lines"][2].endswith("The sign-in is kept in the password store of the computer that runs Walka.")
 
 
+# Walks the companion knows of that did not go, or will not: each kind once.
+KNOWN_FROM_BEFORE: dict[str, Any] = {
+    "counts": {"waiting": 2, "aside": 1, "held": 1, "unnamed": 1, "unreadable": 1},
+    "aside": [{"id": "20261115-120000", "start": 1_794_744_000.0, "code": "22003", "message": "numeric field overflow"}],
+    "held": [{"id": "20261114-120000", "start": 1_794_657_600.0, "why": "There are more than 400,000 steps."}],
+}
+
+
 @needs_node
 def test_the_first_step_is_taken_on_the_website(tmp_path: Path):
     seen = play(
@@ -967,13 +1051,37 @@ def test_the_first_step_is_taken_on_the_website(tmp_path: Path):
         press("Look again (asks your Walka account)"),
         snap(signed_in(first_step="unknown", counts={"waiting": 2})),
         snap(signed_in(first_step="unknown", busy="asking", counts={"waiting": 2})),
+        snap(signed_in(first_step="not_taken", counts={"waiting": 0, "sent": 4})),
+        snap(signed_in(first_step="taken", counts={"waiting": 0, "sent": 4})),
+        snap(signed_in(first_step="not_taken", **KNOWN_FROM_BEFORE)),
+        snap(signed_in(first_step="unknown", **KNOWN_FROM_BEFORE)),
     )
     now = seen[0]
+    # Beside "no Walka account yet" the card counts no walks: only that nothing is sent.
     assert now["lines"][3:] == [
         NO_ACCOUNT_YET,
         "Open walka.dev/account/",
         "Look again (asks your Walka account)",
-        "Nothing is sent. 2 walks on this computer are not in your Walka account.",
+        "Nothing is sent.",
+    ]
+    assert not re.search(r"\d", " ".join(now["lines"][3:]))
+    assert seen[6]["lines"][-1] == "Nothing is sent."  # nor walks that were sent before the step was lost
+    assert seen[7]["lines"][3] == (
+        "Nothing is sent. 4 walks on this computer were sent before, or were in your Walka account already."
+    )
+    # Nor does it list walks beside it. The companion can still know such walks from the question of a
+    # Walka account that was signed in before - and "your Walka account did not take ..." would speak of one.
+    assert seen[8]["lines"][3:] == now["lines"][3:]
+    assert not re.search(r"\d|walks?\b", " ".join(seen[8]["lines"][3:]).replace("walka.dev", ""))
+    # (They are listed as soon as that sentence is gone.)
+    assert seen[9]["lines"][3] == "Nothing is sent. Walka has not sent 2 walks on this computer to your Walka account."
+    assert seen[9]["lines"][-6:] == [
+        "Your Walka account did not take 1 walk. It stays here.",
+        "Sun, Nov 15, 12:00 PMnumeric field overflow",
+        "1 walk is outside what your Walka account takes, and stays here.",
+        "Sat, Nov 14, 12:00 PMThere are more than 400,000 steps.",
+        "1 walk does not say which treadmill made it, and is not sent.",
+        "1 walk could not be read, and is not sent.",
     ]
     # Sending cannot be switched on from here: no button for it.
     assert names(now) == ["Sign out", "Look again (asks your Walka account)"]
@@ -995,7 +1103,7 @@ def test_the_first_step_is_taken_on_the_website(tmp_path: Path):
     assert posts(seen[3]) == [("look-again", {})]
     # Not known yet (nothing is asked at a start): the button that asks first is there.
     assert seen[4]["lines"][3:] == [
-        "Nothing is sent. 2 walks on this computer are not in your Walka account.",
+        "Nothing is sent. Walka has not sent 2 walks on this computer to your Walka account.",
         "Send my walks to my Walka account...",
         "Asks your Walka account first.",
     ]
@@ -1018,10 +1126,10 @@ def test_sending_off_says_how_many_walks_wait(tmp_path: Path):
     )
     lines = [now["lines"][3] for now in seen[:5]]
     assert lines == [
-        "Nothing is sent. 1 walk on this computer is not in your Walka account.",
-        "Nothing is sent. 1,234 walks on this computer are not in your Walka account.",
-        "Nothing is sent. 1 walk on this computer is in your Walka account already.",
-        "Nothing is sent. 7 walks on this computer are in your Walka account already.",
+        "Nothing is sent. Walka has not sent 1 walk on this computer to your Walka account.",
+        "Nothing is sent. Walka has not sent 1,234 walks on this computer to your Walka account.",
+        "Nothing is sent. 1 walk on this computer was sent before, or was in your Walka account already.",
+        "Nothing is sent. 7 walks on this computer were sent before, or were in your Walka account already.",
         "Nothing is sent.",
     ]
     # The button says that it asks, and asks for the question - which switches nothing on.
@@ -1029,7 +1137,7 @@ def test_sending_off_says_how_many_walks_wait(tmp_path: Path):
     assert seen[5]["toasts"] == []
     assert seen[6]["lines"][-1] == "There was no answer. Try again later."
     assert seen[7]["lines"][-1] == (
-        "Walka could not check that it is talking to your account's server, so it asked nothing."
+        "Walka could not check that it is talking to your Walka account's server, so it asked nothing."
     )
     assert seen[8]["lines"][-1] == "That did not work just now. Try again later."
 
@@ -1058,7 +1166,7 @@ def test_the_question_before_sending(tmp_path: Path):
 
     now = seen[3]
     assert now["lines"][3:] == [
-        "Nothing is sent. 3 walks on this computer are not in your Walka account.",
+        "Nothing is sent. Walka has not sent 3 walks on this computer to your Walka account.",
         "Send my walks to my Walka account?",
         "To walker@mail.example, signed in with GitHub.",
         GOES,
@@ -1103,7 +1211,7 @@ def test_the_question_before_sending(tmp_path: Path):
     # so the choice and the place of the keyboard stay as the person left them.
     assert [radio["checked"] for radio in seen[6]["radios"]] == [False, True]
     assert seen[6]["focus"] == chosen["focus"] and seen[6]["focus"].startswith("input")
-    assert "4 walks on this computer are not in your Walka account." in seen[6]["lines"][3]
+    assert seen[6]["lines"][3] == "Nothing is sent. Walka has not sent 4 walks on this computer to your Walka account."
     assert "3 walks would go now." in seen[6]["lines"]  # (the question says what it was made with)
     assert seen[7]["made"] == seen[6]["made"]
 
@@ -1136,7 +1244,7 @@ def test_the_question_says_what_a_public_page_shows_and_which_walks_stay(tmp_pat
             "Only walks from now on",
             THEN,
             "2 walks do not say which treadmill made them, and are not sent.",
-            "1 walk is outside what the account takes, and stays here.",
+            "1 walk is outside what your Walka account takes, and stays here.",
             PUBLIC,
             WHOEVER,
             STOP,
@@ -1148,10 +1256,10 @@ def test_the_question_says_what_a_public_page_shows_and_which_walks_stay(tmp_pat
     counted = signed_in(counts={"unnamed": 1, "held": 3}, held=held)
     seen = play(tmp_path, snap({**counted, "question": question(unnamed=1, held=3)}), press("Not now"))
     one = seen[0]["lines"]
-    assert "3 walks are outside what the account takes, and stay here." in one[: one.index("Send my walks")]
+    assert "3 walks are outside what your Walka account takes, and stay here." in one[: one.index("Send my walks")]
     # Under the question, which of them and why. What the question has said in full is not said twice.
     assert one[one.index("Choose which walks first.") + 1 :] == [
-        "3 walks are outside what the account takes, and stay here.",
+        "3 walks are outside what your Walka account takes, and stay here.",
         "Sun, Nov 15, 12:00 PMIt lasts longer than two days.",
         "and 2 more",
     ]
@@ -1270,10 +1378,10 @@ def test_sending_on_says_so_in_the_card_and_in_both_feet(tmp_path: Path):
     said = {
         "sent": "Sent.",
         "later": "No answer - Walka tries again later.",
-        "too_old": "This Walka is too old for the account as it is now: get the newest Walka.",
-        "full": "The account is full: it has room for 20,000 walks.",
+        "too_old": "This Walka is too old for your Walka account as it is now: get the newest Walka.",
+        "full": "Your Walka account is full: it has room for 20,000 walks.",
         "stopped": "Walka stopped for now and tries again when it is next started.",
-        "certificate": "Walka could not check that it is talking to your account's server, so it sent nothing.",
+        "certificate": "Walka could not check that it is talking to your Walka account's server, so it sent nothing.",
         "no_answer": "There was no answer. Try again later.",
     }
     seen = play(
@@ -1325,12 +1433,12 @@ def test_walks_the_account_did_not_take_and_walks_that_stay_are_listed(tmp_path:
         ],
     )
     now = play(tmp_path, snap(account))[0]
-    at = now["lines"].index("The account did not take 2 walks. They stay here.")
+    at = now["lines"].index("Your Walka account did not take 2 walks. They stay here.")
     assert now["lines"][at : at + 4] == [
-        "The account did not take 2 walks. They stay here.",
+        "Your Walka account did not take 2 walks. They stay here.",
         f"Mon, Nov 16, 12:00 PM{message}",  # the day, and what the Walka account said - as text, whatever it says
         "Sun, Nov 15, 12:00 PMnumeric field overflow",
-        "25 walks are outside what the account takes, and stay here.",
+        "25 walks are outside what your Walka account takes, and stay here.",
     ]
     held = now["lines"][at + 4 : at + 25]
     assert held[0] == "Sun, Nov 15, 12:00 PMIt lasts longer than two days."
@@ -1342,7 +1450,7 @@ def test_walks_the_account_did_not_take_and_walks_that_stay_are_listed(tmp_path:
     assert now["links"] == [] and now["marks"] == 0
     one = play(tmp_path, snap(signed_in(counts={"aside": 1, "unreadable": 1})))[0]
     assert one["lines"][-2:] == [
-        "The account did not take 1 walk. It stays here.",
+        "Your Walka account did not take 1 walk. It stays here.",
         "1 walk could not be read, and is not sent.",
     ]
 
@@ -1388,6 +1496,64 @@ def test_deleting_a_walk_that_was_sent_says_where_its_copy_is(tmp_path: Path):
     ]
     assert words["button"] == "Delete from this computer" and words["toast"] == "Walk deleted from this computer."
 
+    # A copy in a Walka account that is not the one signed in now: words of its own, and the same link.
+    other, both = play(tmp_path, {"op": "sent_words", "other": True}, {"op": "sent_words", "elsewhere": True})
+    assert other["question"] == DELETE_SENT_ELSEWHERE and other["links"] == words["links"]
+    assert other["button"] == "Delete from this computer" and other["toast"] == "Walk deleted from this computer."
+    assert "your" not in other["question"].replace("your totals here", "")
+    # A copy in both: the words for the Walka account that is signed in, and one sentence more.
+    assert both["question"] == DELETE_SENT + ANOTHER_COPY and both["links"] == words["links"]
+    assert (both["button"], both["toast"]) == (words["button"], words["toast"])
+
+
+@needs_node
+def test_a_sign_in_that_may_still_be_in_the_store_is_said_in_the_card_with_one_button(tmp_path: Path):
+    left = part(left_in_store="sign_in")
+    seen = play(
+        tmp_path,
+        snap(left),
+        snap(left, settings=False),
+        press("Try again"),
+        snap(part(left_in_store="sign_in", state="signing_in")),
+        snap(part(left_in_store="sign_in", notice="ended")),
+        snap(part()),
+        snap(signed_in(left_in_store="sign_in")),
+    )
+    now = seen[0]
+    assert now["lines"] == [
+        LEFT_WINDOWS,
+        "Try again",
+        "Optional. Walka works in full without it.",
+        "Sign in with Discord",
+        "Sign in with GitHub",
+        "Sign in with Google",
+        BEFORE_THE_BROWSER,
+    ]
+    # In the card and nowhere else: no pop-up, no lamp, no word in the head, and the feet as always.
+    assert now["panels"] == ["walka-account-panel"] and LEFT_WINDOWS in " ".join(now["live"])
+    assert now["toasts"] == [] and now["head"] == "" and now["marks"] == 0 and now["tone"] == "idle"
+    assert (now["railFoot"], now["footStays"]) == (RAIL_FOOT, PAGE_STAYS)
+    assert now["everything"].replace(now["text"], "") == RAIL_FOOT + PAGE_STAYS
+    assert now["asked"] == []  # (showing it asks nothing of anybody)
+    # The button is the route of "Sign out": the companion then asks the store once more, and nobody else.
+    assert posts(seen[2]) == [("sign-out", {})] and seen[2]["toasts"] == []
+    # While a new sign-in waits for the browser it is not said: that sign-in's key is written over the entry.
+    assert LEFT_IN not in seen[3]["text"] and "Try again" not in names(seen[3])
+    # Beside decision 11's sentence, not instead of it - and each with its own button.
+    assert seen[4]["lines"][:4] == [ENDED, "OK", LEFT_WINDOWS, "Try again"]
+    assert seen[4]["panels"] == ["walka-account-panel"] * 2
+    # Gone when the companion no longer says so; and never beside somebody who is signed in.
+    assert LEFT_IN not in seen[5]["text"] and LEFT_IN not in seen[6]["text"]
+    assert "Try again" not in names(seen[5]) + names(seen[6])
+    # It names the system's own store - of the computer that runs Walka, and only if that is this one.
+    mac = play(tmp_path, snap(left), platform="MacIntel")
+    assert mac[0]["lines"][0] == LEFT_MAC
+    away = play(tmp_path, snap(left), hostname="192.168.1.20")
+    assert away[0]["lines"][0] == LEFT_ELSEWHERE
+    # Any other word of the companion's is not this one: nothing is said.
+    for word in ("", "yes", True, 1, None, "SIGN_IN"):
+        assert LEFT_IN not in play(tmp_path, snap(part(left_in_store=word)))[0]["text"], word
+
 
 @needs_node
 def test_a_word_about_one_try_does_not_stand_beside_the_next(tmp_path: Path):
@@ -1427,7 +1593,7 @@ def test_a_word_about_one_try_does_not_stand_beside_the_next(tmp_path: Path):
     assert seen[0]["lines"][-1] == "Walka stopped for now and tries again when it is next started."
     assert seen[2]["lines"][-2:] == ["Send my walks to my Walka account...", "Asks your Walka account first."]
     assert seen[2]["live"] == []
-    assert seen[3]["lines"][-1] == seen[4]["lines"][-1] == "The account is full: it has room for 20,000 walks."
+    assert seen[3]["lines"][-1] == seen[4]["lines"][-1] == "Your Walka account is full: it has room for 20,000 walks."
 
     # "Look again" is such a button too.
     seen = play(
@@ -1477,8 +1643,17 @@ def gets(seen: dict[str, Any]) -> list[str]:
     return [request["path"] for request in seen["asked"] if request["method"] == "GET"]
 
 
-SENT = walk("20261116-120000", 1_794_830_400.0, in_walka_account=True)
-NOT_SENT = walk("20261115-120000", 1_794_744_000.0, in_walka_account=False)
+SENT = walk("20261116-120000", 1_794_830_400.0, in_walka_account=True, in_other_walka_account=False)
+NOT_SENT = walk("20261115-120000", 1_794_744_000.0, in_walka_account=False, in_other_walka_account=False)
+# A copy was sent to a Walka account that is not the one signed in now; and one that has a copy in both.
+SENT_ELSEWHERE = walk("20261113-120000", 1_794_571_200.0, in_walka_account=False, in_other_walka_account=True)
+SENT_TO_BOTH = walk("20261112-120000", 1_794_484_800.0, in_walka_account=True, in_other_walka_account=True)
+WALKS_LINK = {
+    "text": "walka.dev/account/walks/",
+    "href": "https://walka.dev/account/walks/",
+    "target": "_blank",
+    "rel": "noopener noreferrer",
+}
 LIST = "/api/sessions?limit=200"
 
 
@@ -1543,6 +1718,86 @@ def test_the_question_before_a_sent_walk_is_deleted_says_where_its_copy_stays(tm
     assert seen[4]["confirms"] == [{"text": DELETE_PLAIN, "buttons": ["Keep it", "Delete permanently"], "links": []}]
     assert "account" not in seen[4]["everything"] and "walka.dev" not in seen[4]["everything"]
     assert (seen[4]["railFoot"], seen[4]["footStays"]) == (RAIL_FOOT, PAGE_STAYS)
+
+
+@needs_node
+def test_after_signing_out_the_question_still_says_that_a_copy_was_sent_to_a_walka_account(tmp_path: Path):
+    """Decision 8 has no "while signed in": the copy stays where it was sent, whoever is signed in now."""
+    walks = [SENT_ELSEWHERE, NOT_SENT]
+    seen = play(
+        tmp_path,
+        {"op": "walks", "walks": walks},
+        history(part(), walks),  # nobody is signed in
+        {"op": "row", "at": 0},
+        press("Delete walk..."),
+        press("Delete from this computer"),
+        {"op": "row", "at": 0},  # (the walk that is left: it was never sent anywhere)
+        press("Delete walk..."),
+        press("Delete permanently"),
+        history=True,
+    )
+    assert seen[3]["confirms"] == [
+        {"text": DELETE_SENT_ELSEWHERE, "buttons": ["Keep it", "Delete from this computer"], "links": [WALKS_LINK]}
+    ]
+    assert seen[3]["focus"] == "btn: Keep it"
+    # Deleted here and nowhere else, and the toast says what is true.
+    assert seen[4]["asked"][-1]["path"] == "/api/sessions/20261113-120000"
+    assert seen[4]["asked"][-1]["method"] == "DELETE"
+    assert seen[4]["toasts"] == [{"role": "status", "kind": "ok", "text": "Walk deleted from this computer."}]
+    assert seen[6]["confirms"] == [{"text": DELETE_PLAIN, "buttons": ["Keep it", "Delete permanently"], "links": []}]
+    assert seen[7]["toasts"][-1] == {"role": "status", "kind": "ok", "text": "Walk deleted."}
+
+    # With another Walka account signed in: the same words for the copy in the first one, the approved
+    # words for a walk that is in the one signed in now - and both for a walk that is in both.
+    walks = [SENT, SENT_ELSEWHERE, SENT_TO_BOTH]
+    on = signed_in(sending=True, chosen="all", counts={"sent": 2})
+    seen = play(
+        tmp_path,
+        {"op": "walks", "walks": walks},
+        history(on, walks),
+        {"op": "row", "at": 1},
+        press("Delete walk..."),
+        {"op": "row", "at": 2},
+        press("Delete walk..."),
+        {"op": "row", "at": 0},
+        press("Delete walk..."),
+        history=True,
+    )
+    assert seen[3]["confirms"][0]["text"] == DELETE_SENT_ELSEWHERE
+    assert seen[5]["confirms"] == [
+        {
+            "text": DELETE_SENT + ANOTHER_COPY,
+            "buttons": ["Keep it", "Delete from this computer"],
+            "links": [WALKS_LINK],
+        }
+    ]
+    assert seen[7]["confirms"][0]["text"] == DELETE_SENT
+
+    # Somebody who never signed in (the part is there, the file is not): every walk comes with both
+    # words false, and the question is the plain one, word for word - and says nothing of a Walka account.
+    never = walk("20261114-120000", 1_794_657_600.0, in_walka_account=False, in_other_walka_account=False)
+    seen = play(
+        tmp_path,
+        {"op": "walks", "walks": [never]},
+        history(part(), [never]),
+        {"op": "row", "at": 0},
+        press("Delete walk..."),
+        history=True,
+    )
+    assert seen[3]["confirms"] == [{"text": DELETE_PLAIN, "buttons": ["Keep it", "Delete permanently"], "links": []}]
+    assert "Walka account" not in seen[3]["confirms"][0]["text"] and seen[3]["toasts"] == []
+    # Anything but a plain "true" is not that word (a companion that is older, or one that is broken).
+    for junk in ("true", 1, None, {"yes": 1}):
+        odd = {**never, "in_other_walka_account": junk}
+        seen = play(
+            tmp_path,
+            {"op": "walks", "walks": [odd]},
+            history(part(), [odd]),
+            {"op": "row", "at": 0},
+            press("Delete walk..."),
+            history=True,
+        )
+        assert seen[3]["confirms"][0]["text"] == DELETE_PLAIN, junk
 
 
 @needs_node

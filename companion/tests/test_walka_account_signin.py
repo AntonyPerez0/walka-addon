@@ -67,6 +67,19 @@ def run(scenario: Callable[[], Awaitable[None]]) -> None:
     asyncio.run(whole())
 
 
+# "Quick", in real seconds, on a build machine that is busy with other things. A second would do
+# (it takes a few thousandths); the room is for a slow machine.
+CLOSES_WITHIN_S = 3.0
+
+
+async def closed_quickly(attempt: SignIn) -> None:
+    """close() comes back soon - and it did not have to cut the listener's task off, which is what
+    it does when that task has not ended by itself in time."""
+    await asyncio.wait_for(attempt.close(), CLOSES_WITHIN_S)
+    life = attempt._life
+    assert life is None or (life.done() and not life.cancelled())
+
+
 async def turns(count: int = 30) -> None:
     """Let everything that can go on without the network go on."""
     for _ in range(count):
@@ -1016,7 +1029,7 @@ def test_cancel_while_the_exchange_hangs_answers_at_once_and_close_is_quick():
 
             status, headers, text = await asyncio.wait_for(browser, 5)
             assert (status, text) == (200, page(PAGE_FAILED)) and the_three_headers(headers)
-            await asyncio.wait_for(one.signin.close(), 1.0)
+            await closed_quickly(one.signin)
             assert one.signin._life.done() and one.signin._work.done()
             assert await gone(one.port)
             assert one.handed == [] and one.signin.outcome == "cancelled"
@@ -1039,7 +1052,7 @@ def test_nothing_is_left_the_moment_close_returns():
         one.signin.cancel()
         status, _headers, text = await browser
         assert (status, text) == (200, page(PAGE_FAILED))
-        await asyncio.wait_for(one.signin.close(), 1.0)
+        await closed_quickly(one.signin)
 
         assert others() == []
         assert hangs.left and hangs.times == 1 and one.handed == []
@@ -1061,7 +1074,7 @@ def test_closed_straight_after_cancel_the_browser_still_gets_its_page():
         browser = asyncio.create_task(ask(one.port, one.path + "?code=a-code"))
         await hangs.asked.wait()
         one.signin.cancel()
-        await asyncio.wait_for(one.signin.close(), 1.0)
+        await closed_quickly(one.signin)
         status, headers, text = await browser
         assert (status, text) == (200, page(PAGE_FAILED)) and the_three_headers(headers)
         assert others() == []
@@ -1078,7 +1091,7 @@ def test_cancel_while_nobody_has_come(caplog):
         one.signin.cancel()
         assert one.signin.done.is_set() and one.signin.outcome == "cancelled" and one.forgot()
         assert await gone(one.port)  # at once: nothing had to be waited for
-        await asyncio.wait_for(one.signin.close(), 1.0)
+        await closed_quickly(one.signin)
         assert others() == [] and hangs.times == 0
         await one.signin.close()  # twice is as good as once
 
@@ -1092,7 +1105,7 @@ def test_close_alone_cancels_and_waits_until_all_is_gone():
         await one.signin.start()
         idle_reader, idle_writer = await asyncio.open_connection("127.0.0.1", one.port)
         assert (await ask(one.port, "/"))[0] == 404  # (so that the idle line has been taken up for sure)
-        await asyncio.wait_for(one.signin.close(), 1.0)
+        await closed_quickly(one.signin)
         assert one.signin.outcome == "cancelled" and others() == []
         assert one.stopped() and one.signin._life.done() and not one.signin._life.cancelled()
         assert await ended(idle_reader)
@@ -1129,7 +1142,7 @@ def test_a_request_whose_body_never_comes_does_not_hold_the_close():
         assert await reader.readexactly(12) == b"HTTP/1.1 404"
         with contextlib.suppress(ConnectionError):
             await asyncio.wait_for(reader.read(), 5)  # the line ends with the answer: the body is not waited for
-        await asyncio.wait_for(one.signin.close(), 1.0)
+        await closed_quickly(one.signin)
         assert others() == []
         writer.close()
         with contextlib.suppress(OSError):
@@ -1182,7 +1195,7 @@ def test_cancel_while_the_sign_in_is_being_kept():
             await entered.wait()
             one.signin.cancel()
             assert (await browser)[2] == page(PAGE_FAILED)
-            await asyncio.wait_for(one.signin.close(), 1.0)
+            await closed_quickly(one.signin)
             assert ended == ["cancelled"] and one.signin.outcome == "cancelled"
 
     run(scenario)
@@ -1219,7 +1232,7 @@ def test_a_keeper_that_is_slow_to_stop_holds_neither_the_listener_nor_the_close(
 
             one.signin.cancel()
             assert (await browser)[2] == page(PAGE_FAILED)
-            await asyncio.wait_for(one.signin.close(), 1.0)
+            await closed_quickly(one.signin)
 
             # Everything of the listener is gone, and the task that kept it ended by itself.
             assert one.signin._life.done() and not one.signin._life.cancelled()
@@ -1314,7 +1327,7 @@ def test_a_listener_that_does_not_close_cleanly_is_named_by_its_kind_only(caplog
                 raise OSError("what-the-listener-said")
 
         one.signin._runner = Fails()
-        await asyncio.wait_for(one.signin.close(), 1.0)  # and nothing is raised
+        await closed_quickly(one.signin)  # and nothing is raised
         assert one.signin.outcome == "cancelled" and one.signin._life.done() and others() == []
 
     run(scenario)
@@ -1340,6 +1353,8 @@ def _the_page_leaves_when(monkeypatch, leaving: Callable[[], Awaitable[Any]]) ->
 def test_a_page_that_cannot_leave_does_not_hold_the_close(monkeypatch):
     monkeypatch.setattr(signin, "ANSWER_WITHIN_S", 0.05)
     monkeypatch.setattr(signin, "SHUTDOWN_S", 0.05)
+    # (Room for a slow machine: the listener's task is to end BY ITSELF, a tenth of a second from now.)
+    monkeypatch.setattr(signin, "CLOSE_WITHIN_S", 4.0)
 
     async def scenario():
         _the_page_leaves_when(monkeypatch, asyncio.Event().wait)  # never
@@ -1423,7 +1438,7 @@ def test_cancelled_before_the_listener_is_up_it_never_listens(monkeypatch):
         assert sockets[0].fileno() == -1 and one.signin._server is None
         assert not one.signin._path and not one.signin._verifier
         assert await gone(port)
-        await asyncio.wait_for(one.signin.close(), 1.0)
+        await closed_quickly(one.signin)
         assert others() == [] and one.signin._runner is None
 
     run(scenario)
@@ -1550,7 +1565,7 @@ def test_a_start_that_is_cancelled_leaves_nothing():
         with pytest.raises(asyncio.CancelledError):
             await starting
         assert one.signin.outcome == "cancelled" and one.opened == []
-        await asyncio.wait_for(one.signin.close(), 1.0)
+        await closed_quickly(one.signin)
         assert others() == [] and one.signin._server is None
         assert not one.signin._path and not one.signin._verifier
 
