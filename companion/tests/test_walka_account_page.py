@@ -33,6 +33,7 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from test_app import Rig
 from walka import cli, web
+from walka.walka_account import row
 
 STATIC = web.STATIC_DIR
 SCRIPT = "walkaaccount.js"
@@ -47,24 +48,27 @@ PAGES = {
 }
 DISCLAIMER = "https://github.com/AntonyPerez0/walka-addon/blob/HEAD/DISCLAIMER.md"
 
-# The words. Decision 11, word for word:
+# The words. Where a sentence is the brief's, it says "Walka account" where the brief has "account" alone:
+# the owner's answer of 24 November 2026 (decision 2 wants it so everywhere). Decision 11:
 ENDED = (
     "Walka is no longer signed in to your Walka account, and has stopped sending. You signed out elsewhere, "
-    "or the account was deleted. Your walks on this computer are untouched."
+    "or the Walka account was deleted. Your walks on this computer are untouched."
 )
 # Decision 4 (with what the files say of it: a second, empty sign-in comes from another e-mail address).
 NO_ACCOUNT_YET = (
     "This sign-in has no Walka account yet. To open one - or to delete this sign-in - go to walka.dev/account/ "
-    "and sign in there the same way (with GitHub). If you already have an account, it is under another e-mail "
-    "address: sign out here and sign in the way that uses that address."
+    "and sign in there the same way (with GitHub). If you already have a Walka account, it is under another "
+    "e-mail address: sign out here and sign in the way that uses that address."
 )
-# Decision 5, the seven points.
+# Decision 5, the seven points. What goes: all sixteen things of a row - the last sentence names the two
+# that are no number of the walk (its id there, and "origin": "walka"), in the README's own words.
 GOES = (
     "What goes, of each walk: when it started and ended, the day, and how far this computer's clock was from "
     "world time; how long the belt moved; distance, steps and calories (estimates), and how many of the calories "
     "were on top of sitting; how each number was come by (for the calories: from speed or from heart rate - the "
     "word, not the heart rate); whether a walking session was running in the game; and the walk's name on this "
-    "computer, which is its start time."
+    "computer, which is its start time. Each walk goes under a random number made for it, and says that it came "
+    "from Walka."
 )
 STAYS = (
     "What stays here: the samples, the heart rate, the top speed, the treadmill's name, the character, your "
@@ -73,26 +77,30 @@ STAYS = (
 THEN = "From then on each walk goes when it is saved, without asking again."
 PUBLIC = (
     "Your page on walka.dev is public. Walks you send count on it as soon as they are sent, so anyone who "
-    'reloads it can tell when you were on the pad. With "All of them" your whole history shows there at once.'
+    "reloads it can tell when you were on the pad."
 )
-WHOEVER = "Every walk recorded on this computer goes to this account, whoever walked."
+# ... and only of a page that lists days or walks (a page that lists neither gives out sums alone):
+PUBLIC_ALL = 'With "All of them" your whole history shows there at once.'
+WHOEVER = "Every walk recorded on this computer goes to this Walka account, whoever walked."
 STOP = (
-    "To stop: switch it off here, or sign out. Stopping deletes nothing in the account. There a walk is deleted "
-    "one at a time: walka.dev/account/walks/"
+    "To stop: switch it off here, or sign out. Stopping deletes nothing in your Walka account. There a walk is "
+    "deleted one at a time: walka.dev/account/walks/"
 )
 SIGN_OUT_HERE = '"Sign out" on walka.dev does not sign this computer out: sign out here.'
 BEFORE_THE_BROWSER = (
     "Signing in makes a Walka account if you have none: terms (walka.dev/terms/), privacy (walka.dev/privacy/). "
-    "Nothing is sent until you switch that on. Your web browser opens for this, and Walka asks accounts.example."
+    "Nothing is sent until you switch sending on. Your web browser opens for this, and Walka asks accounts.example."
 )
 RAIL_FOOT = "Runs on this computer. Nothing is uploaded."
 RAIL_FOOT_SENDING = "Runs on this computer. Your walks are sent to your Walka account."
+# What of it stays in sight in a window too narrow for the rail's foot.
+WALKS_ARE_SENT = "Your walks are sent to your Walka account."
 PAGE_STAYS = "Everything on this page stays on this computer."
 PAGE_STAYS_SENDING = "Your walks are sent to your Walka account. Everything else on this page stays on this computer."
 DELETE_SENT = (
     "Delete this walk from this computer? It disappears from your totals here and from the addon's history. "
-    "This cannot be undone. It stays in your account, and on your public page if you have one, until you delete "
-    "it there: walka.dev/account/walks/"
+    "This cannot be undone. It stays in your Walka account, and on your public page if you have one, until you "
+    "delete it there: walka.dev/account/walks/"
 )
 # Decision 8, for a copy in a Walka account that is NOT the one signed in now (after signing out, say). It
 # promises nothing Walka cannot know, names nobody, and does not say "your".
@@ -106,19 +114,16 @@ ANOTHER_COPY = (
     ". Another copy was sent to a different Walka account from this computer. Deleting the walk here does not "
     "delete that copy either."
 )
-# Signing out, and the system's store did not say that the sign-in is gone from it.
+# Signing out, and the system's store did not say that the sign-in is gone from it. While sending was on
+# the store held a second entry, the mark, and its name begins the same way: if the store let go of neither,
+# "the entry" is two, and whoever deletes one by hand may leave the sign-in. So the sentence says so.
 LEFT_IN = "Walka could not make sure that your sign-in was taken out of "
-LEFT_WINDOWS = (
-    LEFT_IN + "Windows' Credential Manager. Try again, or delete the entry there by hand: its name begins "
-    '"Walka account".'
-)
-LEFT_MAC = (
-    LEFT_IN + "your Mac's keychain. Try again, or delete the entry by hand in Keychain Access: its name begins "
-    '"Walka account".'
-)
+NAMED = 'its name begins "Walka account". There may be two such entries: delete both.'
+LEFT_WINDOWS = LEFT_IN + "Windows' Credential Manager. Try again, or delete the entry there by hand: " + NAMED
+LEFT_MAC = LEFT_IN + "your Mac's keychain. Try again, or delete the entry by hand in Keychain Access: " + NAMED
 LEFT_ELSEWHERE = (
     LEFT_IN + "the password store of the computer that runs Walka. Try again, or delete the entry there by "
-    'hand: its name begins "Walka account".'
+    "hand: " + NAMED
 )
 
 
@@ -271,14 +276,14 @@ def test_the_rest_of_the_page_says_nothing_of_a_walka_account():
 
 def test_the_words_that_are_given_are_there_word_for_word():
     text = flat(read(SCRIPT)).replace('\\"', '"')
-    for sentence in (ENDED, GOES, STAYS, THEN, PUBLIC, WHOEVER):
+    for sentence in (ENDED, GOES, STAYS, THEN, PUBLIC, PUBLIC_ALL, WHOEVER, WALKS_ARE_SENT):
         assert f'"{sentence}"' in text or f"'{sentence}'" in text, sentence
     assert NO_ACCOUNT_YET.replace(" (with GitHub)", "${same}") in text
     assert STOP.removesuffix(" walka.dev/account/walks/") in text
     for sentence in (
         "Optional. Walka works in full without it.",
         "Signing in makes a Walka account if you have none: terms (",
-        "). Nothing is sent until you switch that on. Your web browser opens for this, and Walka asks ",
+        "). Nothing is sent until you switch sending on. Your web browser opens for this, and Walka asks ",
         "Waiting for your web browser. Sign in there, then come back.",
         '"Sign out" on walka.dev does not sign this computer out: sign out here.',
         "Look again (asks your Walka account)",
@@ -310,8 +315,9 @@ def test_the_words_that_are_given_are_there_word_for_word():
     ):
         assert sentence in text, sentence
     for sentence in (LEFT_WINDOWS, LEFT_MAC, LEFT_ELSEWHERE):
-        assert sentence.replace('its name begins "Walka account".', "${named}") in text, sentence
-    assert """'its name begins "Walka account".'""" in text
+        assert sentence.endswith(": " + NAMED) and sentence.replace(NAMED, "${named}") in text, sentence
+    assert f"'{NAMED}'" in text
+    assert NAMED.endswith(" There may be two such entries: delete both.")  # (the sign-in, and the mark beside sending)
     # Neither invites anybody to sign in: the Walka account may be gone (decision 11).
     for sentence in (LEFT_WINDOWS, LEFT_MAC, LEFT_ELSEWHERE, DELETE_SENT_ELSEWHERE, ANOTHER_COPY):
         assert "sign in" not in sentence.lower().replace("sign-in", "") and "again." not in sentence
@@ -324,40 +330,105 @@ def test_the_words_that_are_given_are_there_word_for_word():
     assert "!" not in re.sub(r"\$\{[^}]*\}", "", words)
 
 
-# The five sentences that say "account" alone. Each is the brief's own (decisions 11, 5, 5, 4 and 8),
-# kept word for word until the owner says otherwise; every other sentence says "Walka account".
-ACCOUNT_ALONE = {
-    "or the account was deleted.",
-    "goes to this account, whoever walked.",
-    "Stopping deletes nothing in the account.",
-    "If you already have an account, it is under another e-mail address:",
-    "It stays in your account, and on your public page",
+# Five sentences of the brief's own (decisions 11, 5, 5, 4 and 8) said "account" alone, and stood here as
+# they were until the owner had been asked. The owner's answer of 24 November 2026: all five say "Walka
+# account". So there is no exception any more - and these are the five, as they read now.
+ONCE_ACCOUNT_ALONE = {
+    "or the Walka account was deleted.",
+    "goes to this Walka account, whoever walked.",
+    "Stopping deletes nothing in your Walka account.",
+    "If you already have a Walka account, it is under another e-mail address:",
+    "It stays in your Walka account, and on your public page",
 }
 
 
-def test_no_sentence_but_the_five_of_the_brief_says_account_alone():
-    """ "Account" alone is the player's game account elsewhere in Walka (decision 2)."""
+def account_alone(raw: str) -> list[str]:
+    """Every place in a script's strings where "account" stands without "Walka" before it."""
+    # What a person can read: the script's strings. (Not its comments, nor the names of routes and classes.)
+    code = "\n".join(line for line in raw.splitlines() if not line.lstrip().startswith(("//", "*", "/*")))
+    strings = re.findall(r'"(?:[^"\\\n]|\\.)*"|`[^`]*`|\'(?:[^\'\\\n]|\\.)*\'', code)
+    alone = []
+    for string in strings:
+        if re.fullmatch(r"[a-z][\w-]*", string[1:-1]):
+            continue  # a name (the key of the page walka.dev/account/), not words
+        for found in re.finditer(r"(?<![\w/-])[Aa]ccounts?\b(?![/-])", string):
+            if string[: found.start()].endswith("Walka "):
+                continue
+            alone.append(string[max(0, found.start() - 40) : found.end() + 60])
+    return alone
+
+
+def test_no_sentence_says_account_alone():
+    """ "Account" alone is the player's game account elsewhere in Walka (decision 2): never, in any sentence."""
+    script = flat(read(SCRIPT))
+    for words in ONCE_ACCOUNT_ALONE:
+        assert script.count(words) == 1, words
     for name in (SCRIPT, "history.js"):
-        raw = read(name)
-        # What a person can read: the script's strings. (Not its comments, nor the names of routes and classes.)
-        code = "\n".join(line for line in raw.splitlines() if not line.lstrip().startswith(("//", "*", "/*")))
-        strings = re.findall(r'"(?:[^"\\\n]|\\.)*"|`[^`]*`|\'(?:[^\'\\\n]|\\.)*\'', code)
-        alone = []
-        for string in strings:
-            if " " not in string:
-                continue  # a name (the key of the page walka.dev/account/), not words
-            for found in re.finditer(r"(?<![\w/-])[Aa]ccounts?\b(?![/-])", string):
-                if string[: found.start()].endswith("Walka "):
-                    continue
-                alone.append(string[max(0, found.start() - 40) : found.end() + 60])
-        left = [words for words in alone if not any(known in words for known in ACCOUNT_ALONE)]
-        assert left == [], (name, left)
-        if name == SCRIPT:
-            assert len(alone) == len(ACCOUNT_ALONE), alone
-            for known in ACCOUNT_ALONE:
-                assert sum(known in words for words in alone) == 1, known
-        else:
-            assert alone == []
+        assert account_alone(read(name)) == [], name
+    # The search itself: it finds the word alone - as the sentences once had it, at the start of a
+    # sentence, in a piece of a sentence that is put together, in the many - and nothing else.
+    for words in (
+        'const a = "Stopping deletes nothing in the account.";',
+        'line("Account deleted.")',
+        'const a = "It stays in your " + "account.";',
+        "const a = `${n} accounts did not answer.`;",
+        "const a = `Sign out of the\n  account.`;",
+        'const a = "Your Walka account is full, and so is the other account.";',
+    ):
+        assert len(account_alone(words)) == 1, words
+    for words in (
+        'outside("account", { text: "Open walka.dev/account/", button: true })',
+        'press(el, "/api/walka-account/sign-out")',
+        'h("div", { class: "walka-account-panel" })',
+        'const a = "Your Walka account is full: it has room for 20,000 walks.";',
+        'const a = "Walka could not check that it is talking to your Walka account\'s server.";',
+        "// the account, in a comment",
+    ):
+        assert account_alone(words) == [], words
+
+
+# What goes with each walk: the sixteen things of a row (walka_account/row.py), and for each the words of
+# the question that name it. The question says what goes, so it says all of it - and nothing that stays.
+NAMED_IN_THE_QUESTION = {
+    "started_at": "when it started",
+    "ended_at": "and ended",
+    "local_day": "the day",
+    "utc_offset_min": "how far this computer's clock was from world time",
+    "seconds": "how long the belt moved",
+    "distance_m": "distance",
+    "steps": "steps",
+    "kcal": "calories (estimates)",
+    "kcal_extra": "how many of the calories were on top of sitting",
+    "steps_source": "how each number was come by",
+    "distance_source": "how each number was come by",
+    "calories_source": "for the calories: from speed or from heart rate - the word, not the heart rate",
+    "session": "whether a walking session was running in the game",
+    "client_id": "the walk's name on this computer, which is its start time",
+    "id": "Each walk goes under a random number made for it",
+    "origin": "says that it came from Walka",
+}
+
+
+def test_the_question_names_every_thing_that_goes_with_a_walk_as_the_readme_does():
+    # A row that gains a thing needs words in the question first: this list is the row's, to the last key.
+    assert sorted(NAMED_IN_THE_QUESTION) == sorted(row.ROW_KEYS) and len(row.ROW_KEYS) == 16
+    for key, words in NAMED_IN_THE_QUESTION.items():
+        assert words in GOES, key
+    # Nothing is said twice over, and nothing is named that the row does not have: the sentence is made of
+    # these words and of what joins them.
+    rest = GOES
+    for words in sorted(set(NAMED_IN_THE_QUESTION.values()), key=len, reverse=True):
+        assert rest.count(words) == 1, words
+        rest = rest.replace(words, "~")
+    assert rest == "What goes, of each walk: ~ ~, ~, and ~; ~; ~, ~ and ~, and ~; ~ (~); ~; and ~. ~, and ~."
+    # What stays is not among it.
+    for kept in ("sample", "top speed", "treadmill", "character", "weight", "height", "age and sex"):
+        assert kept in STAYS and kept not in GOES, kept
+    assert not [key for key in row.ROW_KEYS if re.search(r"hr|heart|max|treadmill|sample|weight|height|beacon", key)]
+    # The README says what goes in the same words, to the letter - but for "your computer", which the
+    # dashboard calls "this computer".
+    readme = flat((Path(__file__).resolve().parents[2] / "README.md").read_text("utf-8")).replace("*", "")
+    assert GOES.replace("this computer", "your computer") in readme
 
 
 def test_the_words_elsewhere_on_the_page():
@@ -571,7 +642,7 @@ const card = place("set-walka-account", "section", { hidden: true, inert: true }
 card.attributes.tabindex = "-1";
 const head = place("walka-account-state", "span", {}, card);
 place("walka-account-body", "div", {}, card);
-place("rail-foot", "p").textContent = request.page.railFoot;
+place("rail-foot", "p", { className: request.page.railFootClass }).textContent = request.page.railFoot;
 place("foot-stays", "span").textContent = request.page.footStays;
 const toasts = place("toasts", "div");
 if (request.history) place("week-table", "table").append(new El("tbody"));
@@ -632,6 +703,16 @@ function blocks(root) {
   return out;
 }
 
+// An element as markup would have it: its tag, its class, its attributes and what is in it.
+function as(el) {
+  return {
+    tag: el.tag,
+    class: el.className,
+    attributes: { ...el.attributes },
+    holds: el.childNodes.map((node) => (node.nodeType === 3 ? node.textContent : as(node))),
+  };
+}
+
 function look() {
   const inCard = all(card).filter(shown);
   const active = document.activeElement;
@@ -657,6 +738,7 @@ function look() {
     marks: inCard.filter((el) => ["svg", "img"].includes(el.tag) || /lamp|badge|pill/.test(el.className)).length,
     focus: active === document.body ? "body" : active === card ? "card" : (active.attributes.id || classes(active).join(" ") || active.tag) + ": " + active.textContent.slice(0, 60),
     railFoot: byId["rail-foot"].textContent,
+    railFootAs: as(byId["rail-foot"]),
     footStays: byId["foot-stays"].textContent,
     toasts: toasts.children.map((el) => ({ role: el.attributes.role, kind: el.dataset.kind, text: el.textContent })),
     made: made - madeAtStart,
@@ -732,6 +814,8 @@ for (const step of request.steps) {
     answer = { status: step.status, body: step.body };
   } else if (step.op === "later") {
     clock += step.ms;
+  } else if (step.op === "look") {
+    // (Nothing happens: the page as it is.)
   } else if (step.op === "tab") {
     find(step.text).focus();
   } else if (step.op === "sent_words") {
@@ -773,6 +857,7 @@ def page_now() -> dict[str, str]:
     page = read("index.html")
     return {
         "railFoot": re.search(r'id="rail-foot">([^<]*)<', page).group(1),
+        "railFootClass": re.search(r'<p class="([^"]*)" id="rail-foot">', page).group(1),
         "footStays": re.search(r'id="foot-stays">([^<]*)<', page).group(1),
     }
 
@@ -893,7 +978,7 @@ def test_without_the_part_there_is_no_card_and_the_page_is_as_it_was(tmp_path: P
         assert (now["railFoot"], now["footStays"]) == (before["railFoot"], before["footStays"]), at
         assert now["toasts"] == [] and now["asked"] == [], at
         assert "walker@mail.example" not in now["everything"], at  # nothing of an account stays behind
-    assert before == {"railFoot": RAIL_FOOT, "footStays": PAGE_STAYS}
+    assert before == {"railFoot": RAIL_FOOT, "railFootClass": "rail-foot", "footStays": PAGE_STAYS}
     assert seen[4]["hidden"] is False and "walker@mail.example" in seen[4]["text"]
     # Hidden, it is out of the keyboard's reach too - also right after the page has heard the companion again.
     assert seen[3]["hidden"] is False and seen[3]["inert"] is False  # (a part with nothing in it but its state: shown)
@@ -1230,11 +1315,16 @@ def test_the_question_before_sending(tmp_path: Path):
 @needs_node
 def test_the_question_says_what_a_public_page_shows_and_which_walks_stay(tmp_path: Path):
     plain = play(tmp_path, snap(signed_in(question=question(waiting=1))))[0]
-    assert PUBLIC not in plain["lines"] and "1 walk would go now." in plain["lines"]
+    assert "1 walk would go now." in plain["lines"]
+    assert not any("public" in line or "whole history" in line for line in plain["lines"])
+    # (A page that is not public shows nothing, whatever else is said of it.)
+    private = play(tmp_path, snap(signed_in(question=question(public=False, all_shows=True))))[0]
+    assert not any("public" in line or "whole history" in line for line in private["lines"])
     assert not any("treadmill made" in line or "outside what" in line for line in plain["lines"])
 
-    # Public: said whenever the page is public - also when it lists neither days nor walks.
-    for shows in (False, True):
+    # Public: said whenever the page is public. That the whole history shows there at once is said only of a
+    # page that lists days or walks: one that lists neither gives out sums, and no history shows on it.
+    for shows, said in ((False, PUBLIC), (True, f"{PUBLIC} {PUBLIC_ALL}"), ("yes", PUBLIC), (None, PUBLIC)):
         asked = question(public=True, all_shows=shows, waiting=0, unnamed=2, held=1)
         now = play(tmp_path, snap(signed_in(question=asked)))[0]
         at = now["lines"].index("No walk would go now.")
@@ -1245,7 +1335,7 @@ def test_the_question_says_what_a_public_page_shows_and_which_walks_stay(tmp_pat
             THEN,
             "2 walks do not say which treadmill made them, and are not sent.",
             "1 walk is outside what your Walka account takes, and stays here.",
-            PUBLIC,
+            said,
             WHOEVER,
             STOP,
             "Send my walks",
@@ -1414,6 +1504,143 @@ def test_sending_on_says_so_in_the_card_and_in_both_feet(tmp_path: Path):
         assert seen[at]["lines"][-1] == sentence, at
         assert seen[at]["live"] == [sentence], at
     assert all(step["toasts"] == [] for step in seen)
+
+
+# The rail's foot as index.html has it, and as it is while sending is on: marked, and its first sentence
+# in a part of its own - so that a narrow window, which has no room for the foot, can keep the rest in sight.
+FOOT_AS_IT_WAS = {"tag": "p", "class": "rail-foot", "attributes": {"id": "rail-foot"}, "holds": [RAIL_FOOT]}
+FOOT_SENDING = {
+    "tag": "p",
+    "class": "rail-foot",
+    "attributes": {"id": "rail-foot", "data-sending": "1"},
+    "holds": [
+        {"tag": "span", "class": "rail-foot-here", "attributes": {}, "holds": ["Runs on this computer. "]},
+        WALKS_ARE_SENT,
+    ],
+}
+
+
+@needs_node
+def test_the_rails_foot_is_marked_while_sending_is_on_and_only_then(tmp_path: Path):
+    on = {"sending": True, "chosen": "all"}
+    not_on = [
+        {"op": "look"},  # before any snapshot: what index.html has
+        snap(None),  # Walka has no such part
+        snap(part(state="unavailable")),  # ... or it is not available (the simulated treadmill)
+        snap(part()),  # nobody ever signed in
+        snap(part(state="signing_in")),
+        snap(part(problem="refused")),
+        snap(signed_in(first_step="not_taken")),
+        snap(signed_in(counts={"waiting": 3})),  # signed in, sending off
+        snap(signed_in(question=question())),  # the question is open: nothing is switched on yet
+        snap(signed_in(sending="yes")),  # (only a plain yes is on)
+        snap(part(sending=True)),  # (nobody is signed in: not on, whatever else is said)
+        snap(part(notice="ended")),
+        snap(part(left_in_store="sign_in")),
+    ]
+    seen = play(
+        tmp_path,
+        *not_on,
+        snap(signed_in(**on)),
+        snap(signed_in(**on, rev=2)),
+        snap(signed_in(**on, rev=3), settings=False),  # another view is shown: the foot is on every view
+        snap(signed_in()),  # stopped
+        snap(signed_in(**on), settings=False),
+        snap(None, settings=False),  # ... and Walka's part is gone while another view is shown
+    )
+    # Not sending: the foot is what the page always had - its words, its class, no mark and no part.
+    # By that the stylesheet treats it as it always did, at every width (the test of app.css, below).
+    assert FOOT_AS_IT_WAS["holds"] == [page_now()["railFoot"]]
+    for at in (*range(len(not_on)), len(not_on) + 3, len(not_on) + 5):
+        assert seen[at]["railFootAs"] == FOOT_AS_IT_WAS, at
+    # Sending: the same words as before in all, marked, and the sentence that says so apart from the first.
+    for at in (len(not_on), len(not_on) + 1, len(not_on) + 2, len(not_on) + 4):
+        assert seen[at]["railFootAs"] == FOOT_SENDING, at
+        assert seen[at]["railFoot"] == RAIL_FOOT_SENDING, at
+    # A snapshot comes twice a second: the foot is written when it changes, not each time.
+    assert seen[len(not_on) + 1]["made"] == seen[len(not_on)]["made"]
+    assert seen[len(not_on) + 2]["made"] == seen[len(not_on)]["made"]
+    assert all(step["toasts"] == [] and step["asked"] == [] for step in seen)
+
+
+def css_rules(css: str) -> list[tuple[tuple[str, ...], list[str], str]]:
+    """A stylesheet's rules, in order: the @-rules each stands in, its selectors, and what it sets."""
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    found: list[tuple[tuple[str, ...], list[str], str]] = []
+    inside: list[str] = []
+    at = 0
+    while True:
+        brace = min((i for i in (css.find("{", at), css.find("}", at)) if i >= 0), default=-1)
+        if brace < 0:
+            return found
+        if css[brace] == "}":
+            inside.pop()
+            at = brace + 1
+            continue
+        head = flat(css[at:brace]).strip()
+        if head.startswith("@"):
+            inside.append(head)
+            at = brace + 1
+            continue
+        end = css.index("}", brace)
+        assert "{" not in css[brace + 1 : end], head  # (no rule inside a rule in this stylesheet)
+        found.append((tuple(inside), [s.strip() for s in head.split(",")], flat(css[brace + 1 : end]).strip()))
+        at = end + 1
+
+
+def test_a_narrow_window_keeps_the_rails_foot_in_sight_only_while_it_is_marked():
+    """Below 1180 px the page has no room for the rail's foot and puts it away. While sending is on the
+    foot is what says, on Live, History and Share, that walks are sent: then it stays, marked by the script."""
+    css = read("app.css")
+    foot = [
+        (inside, selector, sets)
+        for inside, selectors, sets in css_rules(css)
+        for selector in selectors
+        if "rail-foot" in selector
+    ]
+    narrow, phone = ("@media (max-width: 1179px)",), ("@media (max-width: 719px)",)
+    assert [(inside, selector) for inside, selector, _ in foot] == [
+        ((), ".rail-foot"),
+        (narrow, ".rail-foot:not([data-sending])"),
+        (narrow, ".rail-foot-here"),
+        (narrow, ".rail-foot[data-sending]"),
+        (phone, ".rail-foot[data-sending]"),
+    ]
+    sets = [found[2] for found in foot]
+    # Without the mark - sending off, signed out, never signed in, no such part - two rules reach the foot,
+    # and both are the ones the page always had: how it looks, and that a narrow window puts it away.
+    assert sets[0] == (
+        "padding: 10px 24px 14px; border-top: 1px solid var(--line); color: var(--ink-3); font-size: 12px; "
+        "line-height: 1.4;"
+    )
+    put_away = (
+        "position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;"
+    )
+    assert sets[1] == put_away
+    together = [selectors for _, selectors, _ in css_rules(css) if ".rail-foot-here" in selectors]
+    assert together == [[".brand-name", ".rail-label", ".rail-foot:not([data-sending])", ".rail-foot-here"]]
+    # With the mark nothing puts it away, at any width: all that is set is how much room it has and how
+    # big its letters are. It stays where it always was - at the rail's end.
+    for at in (3, 4):
+        names = set(re.findall(r"(?:^|; )([\w-]+):", sets[at]))
+        assert names <= {"padding", "border-top", "font-size", "text-align"}, at
+    # Its first sentence is put away with the unmarked foot (the same rule, above): the narrow foot is cut
+    # down to the sentence that says walks are sent. Nothing reaches the foot by another name.
+    selectors = [selector for _, found, _ in css_rules(css) for selector in found]
+    assert "#rail-foot" not in css and not [s for s in selectors if re.search(r"\.chrome\s*[>+~\s]", s)]
+    # (Nor as "what comes after the lamps", nor by the mark alone.)
+    assert not [s for s in selectors if re.search(r"\.rail-status\s*[+~]", s)]
+    assert [s for s in selectors if "data-sending" in s and ".rail-foot" not in s] == []
+    # The mark and the part are the script's own: the page has neither until sending is on.
+    page = read("index.html")
+    assert "data-sending" not in page and "rail-foot-here" not in page
+    knows = sorted(
+        path.name for path in STATIC.glob("*.js") if re.search(r"data-sending|rail-foot", path.read_text("utf-8"))
+    )
+    assert knows == [SCRIPT]
+    script = read(SCRIPT)
+    assert script.count('"data-sending"') == 2 and script.count('"rail-foot-here"') == 1  # set, and taken off
+    assert RAIL_FOOT_SENDING.endswith(" " + WALKS_ARE_SENT)
 
 
 @needs_node

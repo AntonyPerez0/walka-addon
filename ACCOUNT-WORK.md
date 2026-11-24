@@ -29,9 +29,14 @@ address, nor the address used for the proof of 5.2.
 - It stops where the brief says. No live address or key anywhere; a
   packed program has no part; the version files are untouched; no tag,
   no release, no merge, no pull request.
-- **Still the owner's:** a yes to the words (`ACCOUNT-WORDS.md`); which
-  computer they have for the later trial; the questions at the end of
-  `ACCOUNT-REPORT.md`.
+- 24 November 2026, later. The owner answered "Do everything and then
+  push and publish" (see the next part). Done since: the backup gap
+  closed; five sentences say "Walka account"; the question names all
+  sixteen things; with sending on, "walks are sent" stays in sight in a
+  narrow window; the report published as a private page. 4,448 tests
+  pass here.
+- **Still the owner's:** what "publish" meant (it was not read as leave
+  to release); which computer they have for the later trial.
 
 ## The owner's answers, in their own words
 
@@ -57,6 +62,23 @@ address, nor the address used for the proof of 5.2.
   **the live project lets a sign-in come back to 127.0.0.1.** No address
   was added in Supabase for it. (The one-time code of that try was never
   used and has run out.)
+- 24 November 2026, to the report and its questions: "Do everything and
+  then push and publish". Read by the assistant (its reading, not the
+  owner's words) as: yes to the words in `ACCOUNT-WORDS.md`, and the
+  recommended answer to each open question - so: the five sentences of
+  the brief that said "account" alone now say "Walka account"; the three
+  places beside "no Walka account yet" stay; decision 4's changed
+  sentence stays; README "Only listens." stays; the notices' line stays
+  in both copies; the question before deleting says of a copy in another
+  Walka account what it says, also after signing out; with sending on,
+  "walks are sent" stays in sight in a narrow window; and the gap of a
+  backup put back is closed. "Push": done, to this branch. "Publish":
+  NOT read as leave to release Walka, to tag, to merge, to put in the
+  live address and key or to touch the version files - the brief puts
+  the website's changes and the owner's own trial before that, and a
+  published release is never replaced. The report was published as a
+  private page for the owner to pass on, and the owner was asked what
+  was meant.
 - Not answered yet: Windows or a Mac.
 
 ## Where the brief and the files disagree
@@ -357,11 +379,19 @@ Walka as a whole `test_walka_account_wiring.py`, `_quiet.py`,
 
 Known and left (all of it is in `ACCOUNT-REPORT.md`, in plain words):
 
-- **Put to the owner:** an older `walka-account.json` put back from a
-  backup, or changed by hand, while the sign-in is still in the system's
-  store switches sending on again for that same Walka account without
-  the question. Closing it needs a second entry in the store; not built
-  without the owner's word.
+- **Closed on 24 November, with limits:** an older `walka-account.json`
+  put back from a backup, or changed by hand, no longer switches sending
+  on. "On" is tied to a random mark that is kept twice: in the file, and
+  as a second entry in the system's store (`... - sending`). Sending can
+  still come on without the question only when: the store refuses both
+  to delete and to write over the mark at "Stop sending" or sign-out;
+  Walka ends in the instant between writing "off" and taking the mark
+  out; two Walkas run on one folder and an older file is put back before
+  the second has looked (it looks once in a run); a backup puts back
+  store and file together; or somebody who can write the file keeps its
+  mark and changes the rest. Two data folders on one address share the
+  mark. The brief (3d, decision 9) says the sign-in "alone" is in the
+  store: the mark is a second thing there, a key to nothing.
 - A sign-in that the system's store would not let go at sign-out is
   noted in the file and said in the card, with a button that tries
   again. Nothing tries by itself at a later start. Two data folders on
@@ -384,9 +414,8 @@ Known and left (all of it is in `ACCOUNT-REPORT.md`, in plain words):
 
 ## What comes next
 
-1. The owner's yes to the words (`ACCOUNT-WORDS.md`), and answers to the
-   questions at the end of `ACCOUNT-REPORT.md`. Each answer goes into
-   this file, in the owner's words, with its date.
+1. The owner says what "publish" meant, and which computer they have.
+   Each answer goes into this file, in the owner's words, with its date.
 2. Not this work: the website's maintainer changes the privacy page and
    the terms; the owner tries it from source against the live project;
    then a change of a few lines adds the address and the key, lifts the

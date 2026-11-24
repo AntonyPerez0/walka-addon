@@ -2355,13 +2355,22 @@ input[type="checkbox"] {
   }
   .brand-name,
   .rail-label,
-  .rail-foot {
+  .rail-foot:not([data-sending]),
+  .rail-foot-here {
     position: absolute;
     width: 1px;
     height: 1px;
     overflow: hidden;
     clip-path: inset(50%);
     white-space: nowrap;
+  }
+  /* ... but not while it says that walks are sent to a Walka account (walkaaccount.js marks it
+     then): it stays, cut down to the one sentence that says so - on Live, History and Share
+     nothing else does. Without that mark it is put away, as it always was. */
+  .rail-foot[data-sending] {
+    padding: 10px 6px 12px;
+    font-size: 11px;
+    text-align: center;
   }
   .tabs a {
     flex-direction: column;
@@ -2558,6 +2567,12 @@ input[type="checkbox"] {
       grid-auto-flow: row;
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
+  }
+  /* (Only while walks are sent: one quiet line under the connections, which goes with the page.) */
+  .rail-foot[data-sending] {
+    padding: 10px 16px 0;
+    border-top: 0;
+    font-size: 12px;
   }
 
   main {

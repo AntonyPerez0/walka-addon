@@ -56,13 +56,16 @@ const WAY_NAME = Object.fromEntries(WAYS);
 
 const RAIL_FOOT = "Runs on this computer. Nothing is uploaded.";
 const RAIL_FOOT_SENDING = "Runs on this computer. Your walks are sent to your Walka account.";
+// How that foot ends. A narrow window has no room for the rail's foot, and it is cut down to this
+// (app.css): with sending on, it is all that says on Live, History and Share that walks are sent.
+const WALKS_ARE_SENT = "Your walks are sent to your Walka account.";
 const PAGE_STAYS = "Everything on this page stays on this computer.";
 const PAGE_STAYS_SENDING =
   "Your walks are sent to your Walka account. Everything else on this page stays on this computer.";
 
 // When the sign-in ends. Said once, in the card, until "OK" is pressed - and it asks for nothing.
 const SIGN_IN_ENDED =
-  "Walka is no longer signed in to your Walka account, and has stopped sending. You signed out elsewhere, or the account was deleted. Your walks on this computer are untouched.";
+  "Walka is no longer signed in to your Walka account, and has stopped sending. You signed out elsewhere, or the Walka account was deleted. Your walks on this computer are untouched.";
 
 // The last try to sign in, or the stored sign-in: snapshot.walka_account.problem.
 const PROBLEM = {
@@ -116,7 +119,7 @@ const REFUSAL = {
 // The question that stands before sending. Every switching-on passes it.
 const QUESTION = {
   title: "Send my walks to my Walka account?",
-  goes: "What goes, of each walk: when it started and ended, the day, and how far this computer's clock was from world time; how long the belt moved; distance, steps and calories (estimates), and how many of the calories were on top of sitting; how each number was come by (for the calories: from speed or from heart rate - the word, not the heart rate); whether a walking session was running in the game; and the walk's name on this computer, which is its start time.",
+  goes: "What goes, of each walk: when it started and ended, the day, and how far this computer's clock was from world time; how long the belt moved; distance, steps and calories (estimates), and how many of the calories were on top of sitting; how each number was come by (for the calories: from speed or from heart rate - the word, not the heart rate); whether a walking session was running in the game; and the walk's name on this computer, which is its start time. Each walk goes under a random number made for it, and says that it came from Walka.",
   stays:
     "What stays here: the samples, the heart rate, the top speed, the treadmill's name, the character, your weight, height, age and sex.",
   where: (host) => `Where: your Walka account, in the database the site's owner runs (${host}).`,
@@ -124,9 +127,12 @@ const QUESTION = {
   fromNowOn: "Only walks from now on",
   then: "From then on each walk goes when it is saved, without asking again.",
   public:
-    'Your page on walka.dev is public. Walks you send count on it as soon as they are sent, so anyone who reloads it can tell when you were on the pad. With "All of them" your whole history shows there at once.',
-  whoever: "Every walk recorded on this computer goes to this account, whoever walked.",
-  stop: "To stop: switch it off here, or sign out. Stopping deletes nothing in the account. There a walk is deleted one at a time:",
+    "Your page on walka.dev is public. Walks you send count on it as soon as they are sent, so anyone who reloads it can tell when you were on the pad.",
+  // Only of a page that lists days or walks. A page that lists neither gives out sums and nothing else:
+  // there the walks count at once, as the sentences before say, but no history shows.
+  publicAll: 'With "All of them" your whole history shows there at once.',
+  whoever: "Every walk recorded on this computer goes to this Walka account, whoever walked.",
+  stop: "To stop: switch it off here, or sign out. Stopping deletes nothing in your Walka account. There a walk is deleted one at a time:",
   send: "Send my walks",
   notNow: "Not now",
 };
@@ -196,9 +202,11 @@ function problemSentence(problem, where) {
 /** Signing out took the sign-in out of the system's store - and the store did not say that it is
     gone (snapshot.walka_account.left_in_store). Said in the card, with a button that tries once more.
     The entry is named after the address Walka asks; "Walka account" is how its name begins on both
-    systems. It invites nobody to sign in: the Walka account may be gone. */
+    systems. There may be a second one, named alike: the mark Walka keeps there while sending is on,
+    if the store did not let go of that either - and whoever deletes one of two by hand may leave the
+    sign-in. It invites nobody to sign in: the Walka account may be gone. */
 function leftSentence(where) {
-  const named = 'its name begins "Walka account".';
+  const named = 'its name begins "Walka account". There may be two such entries: delete both.';
   if (where === "windows")
     return `Walka could not make sure that your sign-in was taken out of Windows' Credential Manager. Try again, or delete the entry there by hand: ${named}`;
   if (where === "mac")
@@ -360,6 +368,7 @@ function modelOf(a) {
         unnamed: count(question.unnamed),
         held: count(question.held),
         public: question.public === true,
+        allShows: question.all_shows === true, // (said only with `public`: see buildQuestion)
         host,
       }
     : null;
@@ -440,7 +449,7 @@ function buildWho(model, acts) {
         outside("terms"),
         "), privacy (",
         outside("privacy"),
-        "). Nothing is sent until you switch that on. Your web browser opens for this, and Walka asks ",
+        "). Nothing is sent until you switch sending on. Your web browser opens for this, and Walka asks ",
         h("span", { class: "walka-account-host", text: model.host }),
         ".",
       ),
@@ -479,7 +488,7 @@ function buildStep(model, acts) {
       "div",
       { class: "walka-account-panel" },
       line(
-        `This sign-in has no Walka account yet. To open one - or to delete this sign-in - go to walka.dev/account/ and sign in there the same way${same}. If you already have an account, it is under another e-mail address: sign out here and sign in the way that uses that address.`,
+        `This sign-in has no Walka account yet. To open one - or to delete this sign-in - go to walka.dev/account/ and sign in there the same way${same}. If you already have a Walka account, it is under another e-mail address: sign out here and sign in the way that uses that address.`,
       ),
       h("div", { class: "btn-row" }, outside("account", { text: "Open walka.dev/account/", button: true }), look),
     ),
@@ -612,7 +621,7 @@ function buildQuestion(model, acts) {
     line(QUESTION.then),
     model.unnamed ? line(unnamedLine(model.unnamed)) : null,
     model.held ? line(heldLine(model.held)) : null,
-    model.public ? line(QUESTION.public) : null,
+    model.public ? line(model.allShows ? `${QUESTION.public} ${QUESTION.publicAll}` : QUESTION.public) : null,
     line(QUESTION.whoever),
     h("p", null, `${QUESTION.stop} `, outside("walks")),
     h("div", { class: "btn-row" }, send, notNow, hint),
@@ -767,12 +776,33 @@ export function updateWalkaAccount(s) {
   }
 }
 
+let railFootSending = null; // what the rail's foot holds: null - whatever index.html gave it
+
+/** The rail's foot. While sending is off it is what index.html has: one line of text and no mark
+    of any kind, so the page looks as it always did, at every width. While sending is on it says so
+    and carries a mark, `data-sending`: by that mark the page keeps it in sight in a narrow window
+    too, where the foot is otherwise put away - there without its first sentence, which is in a
+    part of its own for that. (Written only when it changes: a snapshot comes twice a second.) */
+function railFoot(on) {
+  if (on === railFootSending) return;
+  railFootSending = on;
+  const foot = $("rail-foot");
+  if (!on) {
+    foot.removeAttribute("data-sending");
+    foot.textContent = RAIL_FOOT;
+    return;
+  }
+  const here = RAIL_FOOT_SENDING.slice(0, RAIL_FOOT_SENDING.length - WALKS_ARE_SENT.length);
+  foot.replaceChildren(h("span", { class: "rail-foot-here", text: here }), WALKS_ARE_SENT);
+  foot.setAttribute("data-sending", "1");
+}
+
 /** The two feet - of the rail, on every view, and of Settings: today's words, unless sending is on.
     Then the page no longer says that nothing is uploaded. (Called for every snapshot, on every view.) */
 export function updateFeet(s) {
   const a = partOf(s);
   const on = !!a && a.state === "signed_in" && a.sending === true;
-  setText($("rail-foot"), on ? RAIL_FOOT_SENDING : RAIL_FOOT);
+  railFoot(on);
   setText($("foot-stays"), on ? PAGE_STAYS_SENDING : PAGE_STAYS);
   if (!card) return;
   // Also while another view is shown: a card that is not there is hidden, and holds nothing.
@@ -784,7 +814,7 @@ export function updateFeet(s) {
     `elsewhereToo`: a copy was also sent to a Walka account that is not the one signed in now. */
 export function sentWalkWords(elsewhereToo = false) {
   const question = [
-    "Delete this walk from this computer? It disappears from your totals here and from the addon's history. This cannot be undone. It stays in your account, and on your public page if you have one, until you delete it there: ",
+    "Delete this walk from this computer? It disappears from your totals here and from the addon's history. This cannot be undone. It stays in your Walka account, and on your public page if you have one, until you delete it there: ",
     outside("walks"),
   ];
   if (elsewhereToo)
