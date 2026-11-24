@@ -48,8 +48,10 @@ jobs:
         working-directory: companion
         run: ruff check src tests
       - name: Test
-        # (-rs: a test that could not be run on this machine says why.)
-        run: python -m pytest -q -rs
+        # (-rs: a test that could not be run on this machine says why.
+        # --durations: the fifteen slowest tests are named, with their
+        # seconds - what is slow on one kind of machine only shows there.)
+        run: python -m pytest -q -rs --durations=15
 
   windows-exe:
     name: Windows executable
@@ -171,6 +173,19 @@ jobs:
       # the build fails: nothing was checked.)
       - name: HTTPS works in the program, and it checks certificates
         run: python tools/check_https.py companion/dist/Walka.exe
+      # Walka can sign in to a Walka account and send walks to it - run
+      # from its source code, by somebody who has set it up for that. The
+      # program built here has no such part, whatever it is started with:
+      # no download reaches the accounts before the website has said what
+      # Walka does with them. So it is started once as it would have to be
+      # for that part to be there - a real treadmill asked for, not the
+      # demo's, and everything set that the part reads - and must say
+      # nothing of a Walka account, answer none of its buttons and keep
+      # no file of one. (tools/check_no_account.py says how; what it sets,
+      # it sets for that one run. This machine has no Bluetooth adapter
+      # and no treadmill: Walka serves its dashboard while it looks.)
+      - name: The program has no Walka account's part
+        run: python tools/check_no_account.py companion/dist/Walka.exe
       - name: Package
         shell: pwsh
         run: |
@@ -290,6 +305,12 @@ jobs:
       # macOS's own list instead, and says here how many it found there.
       - name: HTTPS works in the program, and it checks certificates
         run: python tools/check_https.py companion/dist/Walka.app/Contents/MacOS/Walka
+      # No Walka account's part in the packed program, as for Windows
+      # above: started once with a real treadmill asked for and with
+      # everything set that the part reads. (Whether this machine lets it
+      # use Bluetooth is another matter: it serves its dashboard all the same.)
+      - name: The program has no Walka account's part
+        run: python tools/check_no_account.py companion/dist/Walka.app/Contents/MacOS/Walka
       - name: Package
         run: |
           mkdir -p release

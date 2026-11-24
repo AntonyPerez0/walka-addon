@@ -1183,13 +1183,21 @@ class _HttpsCheckFailed(Exception):
     """What "walka httpscheck" found wrong, as the sentence it prints."""
 
 
-async def _httpscheck_steps(refuse_port: int | None) -> list[str]:
+async def _httpscheck_steps(refuse_port: int | None, mono: Callable[[], float] = time.monotonic) -> list[str]:
+    """What the check found, piece by piece - each with the seconds it
+    took (by ``mono``), and the page with every try: the build's log then
+    shows where the time of the check went, and whether the page answered
+    at once or only at the last try."""
     import ssl
 
     from .walka_account import https
 
     if refuse_port is not None and not 1 <= refuse_port <= 65535:
         raise _HttpsCheckFailed("--refuse-port takes a port, 1 to 65535")
+    began = mono()
+
+    def since(moment: float) -> str:
+        return f"{max(0.0, mono() - moment):.1f} s"
 
     # 1. Without asking anybody: is there anything to check a certificate against?
     try:
@@ -1203,36 +1211,43 @@ async def _httpscheck_steps(refuse_port: int | None) -> list[str]:
     named = f" ({', '.join(report['named'])} among them)" if report.get("named") else ""
     said = [
         f"{ssl.OPENSSL_VERSION}, {'packed' if _is_packed() else 'run from source'}",
-        f"{report['count']} root certificates from {report['source']}{named}",
+        f"{report['count']} root certificates from {report['source']}{named}, read in {since(began)}",
     ]
 
     # 2. A page that is there for everybody: it must answer, on a connection that was checked.
     page = f"https://{HTTPSCHECK_HOST}/"
     client = https.Client(https.Origin("https", HTTPSCHECK_HOST, None))
+    tries: list[str] = []  # how long each try took - and, of those that got no answer, that they got none
     for attempt in range(1, HTTPSCHECK_TRIES + 1):
+        asked = mono()
         try:
             answer = await client.request("GET", "/", timeout_s=HTTPSCHECK_TRY_S)
         except https.NetError as error:
             kind = error.kind
         else:
-            said.append(f"{page} answered ({answer.status}) on a checked connection")
+            tries.append(since(asked))
+            said.append(f"{page} answered ({answer.status}) on a checked connection, on try {attempt}")
             break
         if kind == "too_big":  # an answer all the same - a long one
-            said.append(f"{page} answered on a checked connection")
+            tries.append(since(asked))
+            said.append(f"{page} answered on a checked connection, on try {attempt}")
             break
         if kind == "certificate":
             raise _HttpsCheckFailed(f"the certificate of {page} could not be checked")
         if kind != "no_answer":
             raise _HttpsCheckFailed(f"{page} could not be asked ({kind})")
+        tries.append(f"{since(asked)} no answer")
         if attempt == HTTPSCHECK_TRIES:
-            raise _HttpsCheckFailed(f"{page} did not answer ({HTTPSCHECK_TRIES} tries)")
+            raise _HttpsCheckFailed(f"{page} did not answer ({HTTPSCHECK_TRIES} tries): {', '.join(tries)}")
         await asyncio.sleep(HTTPSCHECK_PAUSE_S)
+    said[-1] += f" ({', '.join(tries)})"
 
     # 3. A server with a certificate nobody vouches for (the build starts
     # one): it must be refused. Not answering is not refusing - a server
     # that is not there would pass for one that was turned down.
     if refuse_port is not None:
         there = f"127.0.0.1:{refuse_port}"
+        asked = mono()
         try:
             answer = await https.Client(https.Origin("https", "127.0.0.1", refuse_port)).request(
                 "GET", "/", timeout_s=HTTPSCHECK_TRY_S
@@ -1247,7 +1262,8 @@ async def _httpscheck_steps(refuse_port: int | None) -> list[str]:
             raise _HttpsCheckFailed(f"nothing answered on {there}, and that is not a certificate refused")
         if kind != "certificate":
             raise _HttpsCheckFailed(f"the server on {there} was not refused for its certificate ({kind})")
-        said.append(f"the home-made certificate on {there} was refused, and nothing was asked there")
+        said.append(f"the home-made certificate on {there} was refused, and nothing was asked there ({since(asked)})")
+    said.append(f"{since(began)} in all")
     return said
 
 

@@ -7,6 +7,10 @@ mode: the helper modules next to this file (``walka_fakes``) and the
 
 from __future__ import annotations
 
+import importlib.util
+import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -27,6 +31,52 @@ def pytest_configure(config) -> None:
         "real_keystore: this test may open the system's own store for secrets (walka_account.keystore.open_keystore)",
     )
     config.addinivalue_line("markers", "real_browser: this test may open a page in the real web browser")
+
+
+def tools_not_here(repo_root: Path = REPO) -> list[str]:
+    """Three kinds of test need a tool that is not Python's, and are
+    skipped on a computer that lacks it: what is missing here, in words -
+    nothing, if all three are there. Each is looked for exactly as the
+    tests that need it look."""
+    missing = []
+    # test_walka_account_page.py, test_share_page.py: the dashboard's own scripts, run by Node.
+    if shutil.which("node") is None:
+        missing.append('Node.js (the command "node"), which runs the dashboard\'s scripts')
+    # test_walka_account_httpscheck.py: a home-made certificate, for the real client to refuse.
+    spec = importlib.util.spec_from_file_location("walka_check_https", repo_root / "tools" / "check_https.py")
+    tool = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tool)
+    try:
+        tool.find_openssl()
+    except tool.CheckFailed:
+        missing.append('the command "openssl", which makes the certificate that Walka must refuse')
+    # test_walka_account_nokeys.py: every file git keeps is searched for the live address and key.
+    try:
+        listed = subprocess.run(["git", "ls-files", "-z"], cwd=repo_root, capture_output=True, timeout=60)
+        kept = listed.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        kept = False
+    if not kept:
+        missing.append('git (the command "git", in a checkout it keeps), which says what files there are to search')
+    return missing
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _on_a_build_machine_no_proof_is_skipped_for_want_of_a_tool() -> None:
+    """On somebody's own computer a test that lacks its tool is skipped,
+    and says so. On a build machine (they all set ``CI``) nobody reads
+    that list: a machine that lost Node, openssl or git would stay green
+    with the proof gone. There the whole run stops, and says what is missing."""
+    if not os.environ.get("CI"):
+        return
+    missing = tools_not_here()
+    if missing:
+        pytest.exit(
+            "This is a build machine (CI is set), and tests would be skipped on it for want of: "
+            + "; ".join(missing)
+            + ". On a build machine that is a failure: no test was run.",
+            returncode=1,
+        )
 
 
 @pytest.fixture(autouse=True)
