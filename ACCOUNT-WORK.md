@@ -34,7 +34,10 @@ address, nor the address used for the proof of 5.2.
   closed; five sentences say "Walka account"; the question names all
   sixteen things; with sending on, "walks are sent" stays in sight in a
   narrow window; the report published as a private page. 4,448 tests
-  pass here.
+  pass here. CI at `f4613af` (the commit with those changes): green in
+  every job - the tests on Ubuntu, Windows and macOS, the packed Windows
+  program and both Mac programs with both build checks. The job that
+  publishes a release did not run: nothing was tagged.
 - **Still the owner's:** what "publish" meant (it was not read as leave
   to release); which computer they have for the later trial.
 
