@@ -1094,6 +1094,13 @@ proper is one more step, after the owner has tried it.
 README is the page people download Walka from; it is unchanged, so
 it does not speak of sending before the website does.
 
+**Where it stands.** Everything for the release is on the branch, and
+GitHub's build machines are green on it in every job. What is missing
+is the tag itself: the session this work ran in may push to this one
+branch only, and a tag was refused. The release is published the moment
+the tag `v0.8.0-rc2` is pushed on a commit of this branch whose build
+is green.
+
 **What this release cannot have behind it**, said plainly:
 
 - No whole sign-in and no send has ever been made against the real

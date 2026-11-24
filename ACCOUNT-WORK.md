@@ -41,8 +41,17 @@ address, nor the address used for the proof of 5.2.
   every job - the tests on Ubuntu, Windows and macOS, the packed Windows
   program and both Mac programs with both build checks. The job that
   publishes a release did not run: nothing was tagged.
-- **Still the owner's:** what "publish" meant (it was not read as leave
-  to release); which computer they have for the later trial.
+- 24 November 2026, evening. The owner chose "Release it now" (see the
+  next part). The release change is made, reviewed and pushed: the
+  address and key in one file, the from-source rule lifted, version
+  0.8.0-rc2. 4,496 tests pass here; CI at `bdf97a1` is green in every
+  job, the build check on the packed Windows program and both Mac
+  programs among them. **The tag is not pushed:** the session this work
+  ran in may push to this one branch only, and a tag was refused. The
+  release is published the moment somebody pushes the tag `v0.8.0-rc2`
+  on a commit of this branch whose CI is green; nothing else is missing.
+- **Still the owner's:** the tag (or the word to do it another way);
+  which computer they have for the trial.
 
 ## The owner's answers, in their own words
 
