@@ -1506,7 +1506,7 @@ def test_the_other_walka_on_this_folder_switches_off_and_this_one_stops_at_once(
 
             # And nothing read from the file switches sending ON in a Walka that is running.
             chosen = {"what": "all", "at": 1.0}
-            other.change(lambda book: ledger.set_sending(book, rig.origin, user, True, chosen))
+            other.change(lambda book: ledger.set_sending(book, rig.origin, user, True, chosen, "a-mark-of-the-other"))
             assert rig.account.look_again() == OK
             await rig.idle()
             assert rig.snapshot()["sending"] is False

@@ -39,6 +39,24 @@ The rules it keeps, each with its reason:
   before each refresh and written back at once: none is kept here.
 - Signing in never switches sending on. Only the question does, and the
   question belongs to one Walka account and one sign-in.
+- The file alone does not say that sending is on. When the question is
+  answered a mark is made - a random text, a key to nothing - and kept
+  twice: in the system's store, in an entry of its own, and in the file
+  beside "sending is on". The store first: if it will not keep the
+  mark, sending is not on. Before a walk goes, the sender's key is
+  fetched through ``fresh_token``, and there - where the stored sign-in
+  is read anyway, and never at a start, never with nothing to send - the
+  store's mark is read once in a run and held against the file's. Not
+  the same, or none: "off" is written, quietly, and nothing is asked of
+  anybody; the person can answer the question again. A store that does
+  not answer just then stops the run and switches nothing off. A run in
+  which the question itself was answered needs no such look. Stopping,
+  signing out, a sign-in that ends, and every finished sign-in take the
+  mark out of the store (or, if the store will not let it go, write
+  another over it): after "off", no older copy of the file bears a mark
+  that the store holds. (Where that does not hold - a store that does
+  neither, a Walka ended in between, and two more - is said at the top
+  of ``ledger``, and pinned by the tests named "known and left".)
 - Signing out says "signed out" at once and never fails. Whether the
   sign-in then really left the system's store is another matter: the
   file says "it may still be there" from before the store is asked until
@@ -77,7 +95,7 @@ from .. import __version__
 from . import calls, ledger
 from .calls import WAYS, CallError, Signed
 from .https import Client, Origin
-from .keystore import Keys, KeyStoreError, entry_name
+from .keystore import Keys, KeyStoreError, entry_name, mark_name
 from .ledger import Ledger, LedgerError
 from .sender import MADE_UP, Halt, Sender, Walk, halt_of, read_walks
 from .signin import SignIn
@@ -94,6 +112,8 @@ QUESTION_GOOD_FOR_S = 600.0
 CLOSE_WITHIN_S = 1.0
 # Walks named one by one in the snapshot, at most.
 MOST_SHOWN = 20
+# How much chance goes into a mark, in bytes. (As text it is 32 characters.)
+MARK_BYTES = 24
 
 THREAD_NAME = "walka-account-file"
 
@@ -154,6 +174,9 @@ class View:
     chosen: dict | None = None
     notice: str = ""
     walks: dict = field(default_factory=dict)
+    # The mark beside "sending is on" - none while sending is off. It leaves this object for the file
+    # and for the system's store only: never for the snapshot, the log or an error.
+    mark: str = ""
 
 
 def _view_of(book: dict, origin_text: str) -> View:
@@ -169,8 +192,9 @@ def _view_of(book: dict, origin_text: str) -> View:
     walks = account.get("walks") if isinstance(account.get("walks"), dict) else {}
     # Without an e-mail address nobody could tell WHICH Walka account the
     # walks go to: then sending is off, whatever the file says.
-    sending = account.get("sending") is True and chosen is not None and bool(email)
-    return View(user, way, email, sending, chosen, "", walks)
+    mark = account.get("mark") if ledger.valid_mark(account.get("mark")) else ""
+    sending = account.get("sending") is True and chosen is not None and bool(email) and bool(mark)
+    return View(user, way, email, sending, chosen, "", walks, mark if sending else "")
 
 
 def _copies_of(view: View) -> frozenset[str]:
@@ -231,6 +255,7 @@ class WalkaAccount:
         self.wait: Wait = wait if wait is not None else _wait
         self.sender = Sender(self)
         self._entry = entry_name(origin.text)
+        self._mark_entry = mark_name(origin.text)
         self._opener = opener
         self._own_wall = wall
         self._own_mono = mono
@@ -253,6 +278,10 @@ class WalkaAccount:
         self.wake: asyncio.Event | None = None
 
         self._access: tuple[str, float] | None = None  # the access token, and when it runs out (monotonic)
+        # The mark that this run knows the system's store to hold: made here when the question was
+        # answered, or read from the store and found to be the file's. While it is the mark of
+        # ``view``, the store is not read for it again.
+        self._mark_good = ""
         self._signin: SignIn | None = None  # the sign-in that waits for the browser
         self._listeners: set[SignIn] = set()  # every sign-in whose listener is not closed yet
         self._question: dict | None = None
@@ -519,13 +548,13 @@ class WalkaAccount:
             return refused
         view = self.view
         self._bump()
-        self.view = replace(view, sending=False)
+        self.view = replace(view, sending=False, mark="")
         if self._last["word"] not in STANDS:
             # What the last pass or the last button came to is not said of a card on which
             # sending was stopped since: a page loaded afresh would show it as news.
             self._last = {"word": "", "at": 0.0, "added": 0}
         # (Let run on while Walka closes, like forgetting a sign-in: "off" must reach the file.)
-        self._spawn(self._switch_off, view.user, self.epoch, forgets=True)
+        self._spawn(self._switch_off, view.user, self.epoch, view.sending, forgets=True)
         self._wake_up()
         return _OK
 
@@ -641,7 +670,9 @@ class WalkaAccount:
                 # Sending is off afterwards for EVERY Walka account of this address: no road past the question.
                 ledger.sign_in(book, self.origin, signed.user_id, way, signed.email)
 
-            book = await self._change(signs_in, only_if=epoch)
+            # And with it no mark stays in the store: sending is off after every sign-in, and a mark
+            # that an earlier sign-out could not take out would bear out an older copy of the file.
+            _unmarked, book = await asyncio.gather(self._unmark(), self._change(signs_in, only_if=epoch))
             if book is None or self._stale(epoch):
                 taken = await self.keys.delete(self._entry)
                 if book is not None:
@@ -676,6 +707,8 @@ class WalkaAccount:
             if book is not None and self.epoch == epoch and not self.stopping:
                 self._apply(book)
             await self._store_said(taken)
+            # And the mark goes with the sign-in. (Last: the card does not wait for it.)
+            await self._unmark()
         # A courtesy to the accounts, with a short time limit, and only with
         # a token that has not run out: nobody refreshes in order to sign out.
         if held is not None and self.mono() < held[1] and not self.stopping:
@@ -725,7 +758,8 @@ class WalkaAccount:
             self._touch()
 
     async def _take_out_again(self) -> None:
-        """The card's "Try again": ONE delete. Nothing is read from the store, and nobody is asked.
+        """The card's "Try again": the sign-in is deleted once more, and the mark with it. Nothing is
+        read from the store, and nobody is asked.
 
         The file is looked at first. The entry is named after the
         address, so the OTHER Walka on this data folder shares it: if
@@ -748,6 +782,7 @@ class WalkaAccount:
                         self._touch()
                     return
                 await self._store_said(await self.keys.delete(self._entry))
+                await self._unmark()
         finally:
             self._trying_again = False
 
@@ -790,11 +825,13 @@ class WalkaAccount:
             if book is not None and self.epoch == mine and not self.stopping:
                 self._apply(book)
             await self._store_said(taken)
+            await self._unmark()  # (and the mark with it, as when signing out)
 
     async def _lost_sign_in(self, epoch: int, problem: str, *, taken: bool | None = None) -> None:
         """The stored sign-in is not there, or is not this folder's: quietly "not signed in". Not decision 11:
-        nobody signed out and no Walka account was deleted. The entry in the store is left alone - it may be
-        another data folder's.
+        nobody signed out and no Walka account was deleted. The store is left alone - what is in it may be
+        another data folder's. (So a mark may stay in it. Nothing can be sent for it: nobody is signed in
+        here until a sign-in is finished, and that takes the mark out.)
 
         ``taken``: whoever calls did take the entry out, because its key
         could not be kept - and this is what the store answered."""
@@ -847,19 +884,26 @@ class WalkaAccount:
         for secrets is read and again before the request for a new token
         is made. When it says no, neither happens: ``Halt("nothing")``.
 
+        With ``wanted`` the token is for sending walks. Then no token is
+        given unless the store holds the mark that stands in the file
+        beside "sending is on" (see ``_look_at_mark``): read once in a run,
+        straight after the stored sign-in where a new token is made, and
+        by itself where the old token is still good.
+
         Raises ``Halt`` ("over": nobody is signed in any more; "dropped";
         "stopped": the store could not be asked; "nothing") and
         ``CallError`` (the refresh got no answer, or one that says nothing).
         """
         token = self.access_token()
-        if token is not None:
-            return token
-        async with self._lock("refreshing"):
-            self.check(epoch)
-            token = self.access_token()
-            if token is not None:
-                return token
-            return await self._refresh(epoch, wanted)
+        if token is None:
+            async with self._lock("refreshing"):
+                self.check(epoch)
+                token = self.access_token()
+                if token is None:
+                    return await self._refresh(epoch, wanted)  # (which looks at the mark itself)
+        if wanted is not None:
+            await self._look_at_mark(epoch, wanted)
+        return token
 
     async def _refresh(self, epoch: int, wanted: Callable[[], bool] | None = None) -> str:
         user, sign_in_no = self.view.user, self._sign_in_no
@@ -882,6 +926,10 @@ class WalkaAccount:
         if stored is None:
             await self._lost_sign_in(epoch, "no_stored_sign_in")
             raise Halt("over")
+        if wanted is not None:
+            # For sending: is "on" what the question's answer made it? Looked at here, where the
+            # store is read anyway, and before anybody is asked for a new key.
+            await self._look_at_mark(epoch, wanted)
         if wanted is not None and not wanted():
             raise Halt("nothing")  # the walk was deleted while the store was read: nothing is asked
         over = False
@@ -963,6 +1011,85 @@ class WalkaAccount:
             if self.view.user is None:
                 await self._store_said(await self.keys.delete(self._entry))
 
+    # ---- the mark beside "sending is on" -------------------------------------------------------
+
+    async def _look_at_mark(self, epoch: int, wanted: Callable[[], bool]) -> None:
+        """Before a walk goes: does the system's store hold the mark that the file has beside "sending is on"?
+
+        Yes: returns, and this run does not look again while the file's
+        mark stays that one. No - another mark, or none: an older copy
+        of the file was put back, the file was changed by hand, or it
+        was written before there were marks. "Off" is written, quietly,
+        and ``Halt("dropped")``: nothing is sent and nobody is asked.
+        The store did not answer: ``Halt("stopped")`` - nothing is sent
+        in this run, and nothing is switched off for it.
+
+        Whoever calls has just read the file again (``still``), and a
+        walk is there to send: ``wanted`` is asked once more, on the
+        loop, as the last thing before the store is read.
+        """
+        view = self.view
+        if not view.sending or not view.mark:
+            raise Halt("dropped")  # (sending is not on: no token for a walk)
+        if _same_text(view.mark, self._mark_good):
+            return
+        if not wanted():
+            raise Halt("nothing")  # no walk is left to send: the store is not looked into
+        try:
+            stored = await self.keys.read(self._mark_entry)
+        except KeyStoreError:
+            self.check(epoch)
+            raise Halt("stopped", "stopped") from None  # not answered this once: nothing is switched off for it
+        self.check(epoch)
+        if stored is not None and _same_text(stored, view.mark):
+            self._mark_good = view.mark
+            return
+        await self._mark_not_held(epoch, view)
+        raise Halt("dropped")
+
+    async def _mark_not_held(self, epoch: int, was: View) -> None:
+        """The store does not bear out the file's "sending is on": write "off", and say nothing.
+
+        Not a sign-out, and not decision 11: the card shows sending as
+        switched off, and the question can be answered again. The store
+        is left as it is - the mark in it may be the newest answer's,
+        of the other Walka on this data folder, whose file is on its way.
+        For the same reason "off" is written only if the file still
+        bears the mark that was held against the store.
+        """
+        user, mark = was.user or "", was.mark
+        async with self._lock("order"):
+            self.check(epoch)
+            same: list[bool] = []
+            book = await self._change(lambda book: same.append(ledger.stop_if_marked(book, self.origin, user, mark)))
+            self.check(epoch)
+            if book is None or True in same:
+                # Written - or not to be written just now: then it is off in memory all the same,
+                # and at the next start the store still does not bear the file out.
+                log.info("sending to the Walka account is off: the system's store does not bear out what the file says")
+                self._bump()
+                if book is not None:
+                    self._apply(book)
+                else:
+                    self.view = replace(self.view, sending=False, mark="")
+                if self._last["word"] not in STANDS:
+                    self._last = {"word": "", "at": 0.0, "added": 0}
+                return
+        # The file is not as it was a moment ago: what it says now is taken over (``still`` ends this
+        # piece of work if anything differs, and wakes the sender if sending is still on).
+        await self.still(epoch)
+        self._wake_up()
+
+    async def _unmark(self) -> bool:
+        """Take the mark out of the system's store: no file's "sending is on" is borne out any more.
+
+        If the store will not let the entry go, another random text is
+        written over it - one that stands in no file. True: one of the
+        two was done. Never raises.
+        """
+        self._mark_good = ""
+        return await self.keys.delete(self._mark_entry, or_write=secrets.token_urlsafe(MARK_BYTES))
+
     # ---- asking, for the sender and for the buttons ------------------------------------------
 
     def check(self, epoch: int) -> None:
@@ -979,6 +1106,9 @@ class WalkaAccount:
         The other Walka on this data folder may have signed out or
         switched sending off: that counts here too, at once. Nothing read
         from the file switches sending ON in a Walka that is running.
+        And if sending is on under another mark than a moment ago - the
+        question was answered anew in the other Walka - the work in hand
+        ends, and the sender is woken to look at the store's mark.
         """
         while True:
             self.check(epoch)
@@ -995,24 +1125,35 @@ class WalkaAccount:
             # walk was noted): the picture may be the older one, and what was just written must not be
             # undone by it. Read again - the look before a request is not skipped.
         seen, mine = _view_of(book, self.origin.text), self.view
-        if seen.user == mine.user:
-            adopted = replace(seen, sending=seen.sending and mine.sending)
-        else:
-            adopted = replace(seen, sending=False)
-        if (adopted.user, adopted.sending, _choice(adopted)) == (mine.user, mine.sending, _choice(mine)):
+        on = seen.user == mine.user and seen.sending and mine.sending
+        adopted = replace(seen, sending=on, mark=seen.mark if on else "")
+        if (adopted.user, adopted.sending, _choice(adopted), adopted.mark) == (
+            mine.user,
+            mine.sending,
+            _choice(mine),
+            mine.mark,
+        ):
             if adopted.walks != mine.walks:
                 self.view = replace(mine, walks=adopted.walks)
                 self._touch()
             self._see_copies(book)
             return
         if adopted.user != mine.user:
-            self._access = None
-            self._first = "unknown"
-            self._sign_in_no += 1
+            self._other_sign_in()
         self.view = adopted
         self._see_copies(book)
         self._bump()
+        if adopted.sending:
+            # Still on, as the other Walka on this data folder answered the question: under a
+            # mark this run has not held against the store. The sender begins again, and looks.
+            self._wake_up()
         raise Halt("dropped")
+
+    def _other_sign_in(self) -> None:
+        """By the file, who is signed in is not who was a moment ago: nothing of the earlier sign-in is used again."""
+        self._access = None
+        self._first = "unknown"
+        self._sign_in_no += 1
 
     async def ask(
         self, epoch: int, call: Callable[..., Awaitable[Any]], *, wanted: Callable[[], bool] | None = None, **said: Any
@@ -1130,29 +1271,59 @@ class WalkaAccount:
     # ---- switching sending on and off --------------------------------------------------------
 
     async def _switch_on(self, user: str, chosen: dict, epoch: int) -> None:
+        # A new mark for every answer to the question: one that an older copy of the file bears
+        # is never made again.
+        mark = secrets.token_urlsafe(MARK_BYTES)
+
         def on(book: dict) -> None:
-            ledger.set_sending(book, self.origin, user, True, chosen)
+            ledger.set_sending(book, self.origin, user, True, chosen, mark)
 
         async with self._lock("order"):
-            book = await self._change(on, only_if=epoch)
             if self._stale(epoch):
                 return
-            if book is None:
-                self.say("stopped")  # not written: then it is not on
+            # The store first. If it will not keep the mark, sending is not on: a file that said
+            # "on" with a mark the store does not hold would be switched off at the next start.
+            try:
+                kept = await self.keys.write(self._mark_entry, mark, if_still=lambda: not self._stale(epoch))
+            except KeyStoreError:
+                await self._unmark()  # (after a timeout it may be written all the same)
+                if not self._stale(epoch):
+                    self.say("stopped")  # not kept: then it is not on
                 return
+            if not kept:
+                return
+            book = await self._change(on, only_if=epoch)
+            if book is None:
+                # Not written: then it is not on, and the mark that was made for it goes.
+                await self._unmark()
+                if not self._stale(epoch):
+                    self.say("stopped")
+                return
+            if self._stale(epoch):
+                return  # (stopped or signed out meanwhile: that work comes next, and takes "on" and the mark away)
+            self._mark_good = mark
             self._apply(book)
             self.latch = ""
             self._last = {"word": "", "at": 0.0, "added": 0}
         self._wake_up()
 
-    async def _switch_off(self, user: str | None, epoch: int) -> None:
+    async def _switch_off(self, user: str | None, epoch: int, was_on: bool) -> None:
+        on = [was_on]  # sending was on: this Walka thought so, or the file says so
+
         def off(book: dict) -> None:
             found = ledger.signed_in(book, self.origin)
-            kept = found[1].get("chosen") if found is not None and found[0] == user else None
-            ledger.set_sending(book, self.origin, user or "", False, kept)
+            mine = found[1] if found is not None and found[0] == user else None
+            on.append(mine is not None and mine.get("sending") is True)
+            ledger.set_sending(book, self.origin, user or "", False, mine.get("chosen") if mine is not None else None)
 
         async with self._lock("order"):
+            # The file first, and then the mark goes from the store: no copy of the file that says
+            # "on" - this one as it was, or an older one put back - is believed again. (The button
+            # can be pressed while sending is off, too. Then there is no mark, and the store is
+            # not touched: not here and not in the file is anything to stop.)
             book = await self._change(off)
+            if book is None or True in on:
+                await self._unmark()
             if book is None:
                 # "Off" could not be written, and the file would say "on"
                 # again at the next start. So the sign-in itself goes: then
@@ -1162,7 +1333,16 @@ class WalkaAccount:
                 await self.keys.delete(self._entry)
                 return
             if self.epoch == epoch and not self.stopping:
-                self._apply(book)
+                # What the file says now - but for "on". Sending was stopped here this moment, and
+                # nothing read from the file switches it on in a Walka that is running: a file that
+                # names another sign-in with sending on (an older copy, put back while Walka runs)
+                # is taken over as ``still`` takes it over - whoever it names, with sending off.
+                seen = _view_of(book, self.origin.text)
+                if seen.user != user:
+                    self._other_sign_in()
+                self.view = replace(seen, sending=False, mark="")
+                self._see_copies(book)
+                self._touch()
 
     async def _clear_notice(self) -> None:
         async with self._lock("order"):

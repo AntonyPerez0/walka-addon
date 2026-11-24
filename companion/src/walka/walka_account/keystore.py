@@ -1,10 +1,17 @@
 """Where the sign-in to a Walka account is kept between two runs of Walka.
 
-One thing is kept: the refresh token. Whoever has it has the whole Walka
-account, so it goes to the system's own store for secrets and to no file:
-Windows' Credential Manager, or the login keychain of a Mac. Where there
-is neither (Linux), it is kept in memory and the sign-in lasts until
-Walka is closed.
+The refresh token is kept. Whoever has it has the whole Walka account, so
+it goes to the system's own store for secrets and to no file: Windows'
+Credential Manager, or the login keychain of a Mac. Where there is
+neither (Linux), it is kept in memory and the sign-in lasts until Walka
+is closed.
+
+Beside it, in an entry of its own, a mark is kept while sending is
+switched on: a random text that is made when the question before sending
+is answered, and that also stands in ``walka-account.json``. It is a key
+to nothing. It is here so that the file alone cannot say "sending is
+on": an older copy of the file, put back from a backup, bears a mark that
+the store no longer holds (``mark_name``).
 
 Both systems are asked through their own C libraries by way of
 ``ctypes``, as ``macos.py`` and ``winsession.py`` ask theirs, so nothing
@@ -93,6 +100,20 @@ def entry_name(origin_text: str) -> str:
     address is in the name.
     """
     return f"{SERVICE} - {origin_text}"
+
+
+def mark_name(origin_text: str) -> str:
+    """The name of the entry for the mark that says: the question before sending was answered.
+
+    An entry of its own, not a part of the sign-in's: the sign-in's entry
+    is written anew at every refresh, by whichever Walka on the data
+    folder refreshes, and a mark carried along in it could come back
+    after it was taken away. Its name begins like the sign-in's, so that
+    whoever looks into the store finds both under "Walka account" (on a
+    Mac: the service is "Walka account", and the rest stands in the other
+    field).
+    """
+    return f"{entry_name(origin_text)} - sending"
 
 
 def valid_secret(text: object) -> bool:
@@ -679,27 +700,39 @@ class Keys:
 
         return await self._off("write", work)
 
-    async def delete(self, name: str) -> bool:
+    async def delete(self, name: str, *, or_write: str | None = None) -> bool:
         """Remove what is stored under the name. A failure is ``False``, never an error.
 
         ``True``: what this delete was asked to take away is gone now -
         deleted, or written over meanwhile by a later sign-in, whose key
         stays. ``False``: it may still be there (and if the store only
         sat on a call, the delete is still made when the store comes back).
+
+        ``or_write``: for an entry whose whole worth is what it says (the
+        mark of ``mark_name``). If the store will not let the entry go,
+        this is written over it instead - in the same turn, under the
+        lock - and that counts as gone: what the entry said, it says no
+        longer.
         """
         try:
-            await self._delete(name)
+            await self._delete(name, or_write)
         except KeyStoreError:
             return False
         return True
 
-    async def _delete(self, name: str) -> None:
+    async def _delete(self, name: str, or_write: str | None = None) -> None:
         # (A delete is made even when nobody waits for it any more:
         # signing out must take the key away if it can at all.)
         def work(mine: int) -> None:
             if mine < self._newest_write.get(name, 0):
                 return  # a write that was asked after this delete got there first: that key is not this delete's
-            self._store.delete(name)
+            try:
+                self._store.delete(name)
+            except KeyStoreError:
+                if or_write is None:
+                    raise
+                # (Not noted as a write: a delete that still waits in the line may take this away.)
+                self._store.write(name, or_write)
 
         await self._off("delete", work, though_unheard=True)
 

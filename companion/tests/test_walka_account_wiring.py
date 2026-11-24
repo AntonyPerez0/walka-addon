@@ -604,6 +604,68 @@ def test_every_button_of_the_card_through_its_route(tmp_path):
     run(scenario)
 
 
+def test_an_older_copy_of_the_file_put_back_shows_as_sending_off_and_the_card_asks_the_question_again(tmp_path):
+    """Through a whole Walka and the dashboard's own routes: "Stop sending", then an older copy of
+    walka-account.json is put back (from a backup, say) and Walka is started. The file says "on" and
+    the sign-in is in the store - but the mark that the answer to the question made is not. So the
+    card shows sending as off, as after "Stop sending", nothing is sent - and the question is there
+    to be answered again."""
+
+    async def scenario():
+        async with Rig(tmp_path, start=False) as rig:
+            earlier = hand_in(rig, tmp_path)
+            await earlier.start()
+            user = rig.person()
+            rig.walk(7200)
+            await rig.sign_in()
+            await rig.switch_on("all")
+            mark = rig.mark()
+            assert len(rig.fake.walks(user)) == 1 and mark is not None
+            backup = (rig.dir / ledger.FILE_NAME).read_bytes()
+            async with dashboard(earlier) as client:
+                assert await said(client, "/api/walka-account/sending/off") == (200, {"ok": True})
+                await rig.idle()
+                assert (await shown(client))["walka_account"]["sending"] is False
+            assert rig.mark() is None
+            rig.walk(600)  # a walk made while sending was off
+            rig.account.walk_saved()
+            await rig.idle()
+            await earlier.stop()
+            assert len(rig.fake.walks(user)) == 1
+
+            (rig.dir / ledger.FILE_NAME).write_bytes(backup)
+            asked = len(rig.fake.requests)
+            app = hand_in(rig, tmp_path)
+            async with dashboard(app) as client:
+                await app.start()
+                await rig.idle()
+                whole = await shown(client)
+                piece = whole["walka_account"]
+                assert (piece["state"], piece["sending"], piece["chosen"]) == ("signed_in", False, "")
+                # Said in the quiet way of "switched off": no word of anything gone wrong, no notice -
+                # and nothing in the Live view's list.
+                assert (piece["last"]["word"], piece["problem"], piece["notice"]) == ("", "", "")
+                assert piece["counts"]["waiting"] == 1 and piece["can_send"] is True
+                assert "sending" not in json.dumps(list(app.events)).lower()
+                assert len(rig.fake.requests) == asked and len(rig.fake.walks(user)) == 1
+                assert mark not in json.dumps(whole) and mark not in rig.files_text()
+                # The question again, by the card's own routes: asked, answered - and now the walk goes.
+                assert await said(client, "/api/walka-account/question") == (200, {"ok": True})
+                await rig.idle()
+                question = (await shown(client))["walka_account"]["question"]
+                assert question is not None and question["waiting"] == 1
+                answer = {"question": question["id"], "send": "all"}
+                assert await said(client, "/api/walka-account/sending", answer) == (200, {"ok": True})
+                await rig.idle()
+                whole = await shown(client)
+                assert whole["walka_account"]["sending"] is True and len(rig.fake.walks(user)) == 2
+                assert rig.mark() not in (None, mark) and rig.mark() not in json.dumps(whole)
+                await app.stop()
+            assert await left_running() == []
+
+    run(scenario)
+
+
 def test_try_again_is_the_sign_out_route_and_takes_a_left_over_sign_in_out_of_the_store(tmp_path):
     async def scenario():
         async with Rig(tmp_path, start=False) as rig:
@@ -616,6 +678,8 @@ def test_try_again_is_the_sign_out_route_and_takes_a_left_over_sign_in_out_of_th
             rig.clock.advance(4000)
             rig.fake.expire_access_tokens()  # (signing out asks nobody: the access token has run out)
             (stored,) = rig.keystore.secrets()
+            mark = rig.mark()
+            assert mark is not None and rig.account_in_book(next(iter(rig.people)))["mark"] == mark
             asked = len(rig.fake.requests)
             rig.keystore.refuse["delete"] = "refused"  # the system's store will not let the sign-in go
             async with dashboard(app) as client:
@@ -626,23 +690,28 @@ def test_try_again_is_the_sign_out_route_and_takes_a_left_over_sign_in_out_of_th
                 piece = (await shown(client))["walka_account"]
                 assert (piece["state"], piece["left_in_store"], piece["problem"]) == ("signed_out", "sign_in", "")
                 assert rig.keystore.secrets() == [stored]
+                # (The mark could not be taken out either: something else was written over it, which
+                # stands in no file. An older copy of the file, put back, is not borne out by it.)
+                assert rig.mark() not in (None, mark) and rig.mark() not in rig.files_text()
                 # Only the card's piece of the snapshot says so: nothing in the Live view's list, no other key.
                 whole = await shown(client)
                 assert "left_in_store" not in names_in({key: whole[key] for key in SNAPSHOT_KEYS})
                 assert "sign" not in json.dumps(list(app.events)).lower()
 
-                # Its button "Try again": the same route, ONE delete, no read, and nobody is asked.
+                # Its button "Try again": the same route, one delete of the sign-in and one of the mark,
+                # no read, and nobody is asked.
                 rig.keystore.calls.clear()
                 del rig.keystore.refuse["delete"]
                 assert await said(client, "/api/walka-account/sign-out") == (200, {"ok": True})
                 await rig.idle()
-                assert rig.keystore.calls == [("delete", rig.entry)] and rig.keystore.secrets() == []
+                assert rig.keystore.calls == [("delete", rig.entry), ("delete", rig.mark_entry)]
+                assert rig.keystore.secrets() == [] and rig.keystore.marks() == []
                 assert (await shown(client))["walka_account"]["left_in_store"] == ""
                 assert len(rig.fake.requests) == asked and len(rig.opened) == 1
                 # Pressed once more, with nothing left to take out: the store is not touched.
                 assert await said(client, "/api/walka-account/sign-out") == (200, {"ok": True})
                 await rig.idle()
-                assert rig.keystore.calls == [("delete", rig.entry)]
+                assert rig.keystore.calls == [("delete", rig.entry), ("delete", rig.mark_entry)]
             assert ledger.is_left_in_store(rig.book(), rig.origin) is False
 
     run(scenario)
