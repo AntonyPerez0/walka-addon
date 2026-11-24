@@ -6,6 +6,7 @@ written to it over Bluetooth, and every scenario ends with it empty."""
 from __future__ import annotations
 
 import asyncio
+import json
 import random
 from pathlib import Path
 from types import SimpleNamespace
@@ -229,6 +230,142 @@ def test_soak_on_the_emulated_pad(tmp_path: Path, monkeypatch, seed: int):
     assert rig.heard_nothing_from_walka()
     for record in rig.app.store.records:
         assert record.seconds >= 20 and record.distance_m >= 0 and record.steps >= 0
+
+
+@pytest.mark.parametrize("seed", [2, 8])
+def test_soak_on_the_emulated_pad_through_every_route_of_the_dashboard_with_a_walka_account(
+    tmp_path: Path, monkeypatch, caplog, seed: int
+):
+    """The same long run, by the dashboard's own routes: every POST and
+    DELETE it has, in any order, with what a page might send - the buttons
+    of the Walka-account card among them, with the part handed in and a
+    stand-in for the accounts behind it. Walks are recorded, saved and sent
+    meanwhile. And at the end the pad has still not been sent a single
+    byte. (docs/SAFETY.md counts on these runs.)"""
+    # (Here, not at the top: that file's rig is built on this one's.)
+    import walka_account_rig
+    from test_walka_account_wiring import (
+        JUNK,
+        ROUTES,
+        dashboard,
+        every_route_that_changes_something,
+        left_running,
+        on_the_emulated_pad,
+        said,
+    )
+    from test_walka_account_wiring import run as run_scenario
+
+    rng = random.Random(seed)
+    pad_does = ["start", "speed", "speed", "stop", "drop", "connect"]
+    card_does = ["sign-in", "sign-in", "switch-on", "switch-on", "switch-on", "switch-on"]
+    walka_account_rig.before_test(caplog)
+    pressed: dict[tuple[str, str], set[int]] = {}
+    walked: set[str] = set()  # every walk that ever lay on this computer, deleted since or not
+
+    async def scenario():
+        async with walka_account_rig.Rig(tmp_path, start=False) as rig:
+            house, app, part = on_the_emulated_pad(rig, tmp_path, monkeypatch)
+            part.start()
+            user = rig.person()
+
+            def what_a_page_might_send(path: str):
+                question = app.snapshot()["walka_account"]["question"]
+                weight, send = rng.uniform(50, 100), rng.choice(["all", "from_now_on"])
+                return rng.choice(
+                    {
+                        "/api/treadmill/connect": [{}, {"address": house.pad.address}],
+                        "/api/treadmill/press": [{"button": "start"}, {"button": "faster"}, {"button": "stop"}, {}],
+                        "/api/config": [{"profile": {"weight_kg": weight}}, {"limits": {"max_speed_kmh": 1}}, {}],
+                        # (Into a folder of the test's own: on a computer with the game on it, the real one is found.)
+                        "/api/addon/install": [{"addons_dir": str(tmp_path / "AddOns")}],
+                        "/api/walka-account/sign-in": [{"way": "discord"}, {"way": "github"}, {"way": "google"}, {}],
+                        "/api/walka-account/sending": [
+                            {"question": question["id"] if question else "", "send": send},
+                            rng.choice(JUNK),
+                        ],
+                    }.get(path, [{}, {"button": "start"}, {"action": "start", "speed_kmh": 3.0}])
+                )
+
+            async with dashboard(app) as client:
+                routes = every_route_that_changes_something(client)
+                assert len(routes) >= 17 and {path for _method, path in routes} >= set(ROUTES)
+
+                async def press(method: str, path: str) -> int:
+                    walk = rng.choice([record.id for record in app.store.records] or ["nothing"])
+                    there, body = path.replace("{session_id}", walk), what_a_page_might_send(path)
+                    response = await client.request(
+                        method, there, data=json.dumps(body), headers={"Content-Type": "application/json"}
+                    )
+                    await response.read()
+                    assert response.status < 500, (method, path, body)
+                    pressed.setdefault((method, path), set()).add(response.status)
+                    await rig.idle()
+                    return response.status
+
+                # First a walk that is sent for certain: whatever comes after, this was no idle run.
+                await rig.sign_in()
+                await rig.switch_on("all")
+                await house.walking(seconds=120)
+                house.pad.press_stop()
+                await house.run(5)
+                await house.run(3, active=False)
+                await rig.idle()
+                assert len(rig.fake.walks(user)) == 1 and house.heard_nothing_from_walka()
+                # Then every route once, in its turn: which of them chance picks below is Python's business.
+                for method, path in routes:
+                    walked.update(record.id for record in app.store.records)
+                    await press(method, path)
+                    await house.run(rng.uniform(0.2, 5))
+                    assert house.heard_nothing_from_walka()
+
+                for _ in range(150):
+                    walked.update(record.id for record in app.store.records)
+                    event = rng.choice([*pad_does, *card_does, *routes, *routes])
+                    if event in ("start", "stop"):
+                        getattr(house.pad, f"press_{event}")()
+                    elif event == "speed":
+                        house.pad.press_speed(rng.uniform(0.5, 6.0))
+                    elif event == "drop":
+                        house.pad.drop_link()
+                    elif event == "connect":
+                        app.connect(house.pad.address)
+                        await house.treadmill.connect()
+                    elif event == "sign-in":
+                        await press("POST", "/api/walka-account/sign-in")
+                    elif event == "switch-on":
+                        # (The question, and its answer straight after: by chance alone the two seldom meet.)
+                        await said(client, "/api/walka-account/question")
+                        await rig.idle()
+                        await press("POST", "/api/walka-account/sending")
+                    else:
+                        await press(*event)
+                    game = rng.choice(["session", "paused", "none", "lost"])
+                    await house.run(
+                        rng.uniform(0.2, 30),
+                        active=game != "none",
+                        paused=game == "paused",
+                        moving=rng.random() < 0.7,
+                        signal=game != "lost",
+                        session=rng.randint(1, 3),
+                    )
+                    await rig.idle()
+                    assert house.heard_nothing_from_walka()
+                await house.run(FREE_WALK_GRACE_S + 5, active=False)
+                await rig.idle()
+                walked.update(record.id for record in app.store.records)
+                await app.stop()
+            assert house.heard_nothing_from_walka()
+            assert await left_running() == []
+            # Every route was pressed, and the buttons of the card did what they do: some were let through.
+            assert set(pressed) == set(routes)
+            assert 200 in pressed[("POST", "/api/walka-account/sign-out")] and 200 in pressed[("POST", "/api/config")]
+            # What went to the Walka account are walks that lay on this computer, and nothing of the pad.
+            assert len(rig.fake.walks(user)) >= 1
+            assert {row["client_id"] for row in rig.fake.walks(user)} <= walked
+            assert "URTM030" not in json.dumps(rig.pushes())
+
+    run_scenario(scenario, 120)
+    walka_account_rig.after_test(caplog)
 
 
 # ---- treadmills of other makes ----------------------------------------------------------
