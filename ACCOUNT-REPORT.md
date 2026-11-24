@@ -373,9 +373,17 @@ made-up name. Two earlier failures on CI's Windows machine were fixed
 in `76930e7`: a test that counted a task of Windows' own as Walka's,
 and a real fault in `tools/check_https.py`.
 
-**CI after the last review's fixes.** The build machines were still
-running when this was written; the result is added here when they are
-done.
+**CI after the last review's fixes.** Green in every job at `e5506a1`,
+the commit before the one that added this paragraph (which changes this
+file only). The tests on Ubuntu, Windows (4,376 passed there; the tests
+with two Walkas and a real second process were among them, not skipped)
+and macOS. The packed Windows program and both Mac programs, each with
+both build checks: HTTPS as before, and the new step "The program has no
+Walka account's part" - so the proof that a download has no part now
+comes from the three downloads themselves. The HTTPS step on the Macs
+took 4 seconds and 1 second, where it had taken 37: the half minute was
+the check's own home-made server asking the computer for its name, not
+the program and not the network.
 
 **The proof of the brief's 5.2.** Done by the owner on 21 November
 2026: the live project lets a sign-in come back to 127.0.0.1. Nothing
@@ -497,9 +505,9 @@ Done: `ACCOUNT-WORDS.md`.
 - **C16.** The HTTPS step takes 37 seconds on the Macs against 4 on
 Windows, inside a limit of 60, and nothing in the log said where the
 time goes.
-Done: the check now prints how long each of its parts took, and no
-longer asks the computer for its own name (the likely cause). What the
-Mac build machines then showed is at the end of section 3.
+Done: the check now prints how long each of its parts took, and its
+home-made server no longer asks the computer for its own name. That
+was the cause: the step now takes 4 seconds and 1 second on the Macs.
 - **C17.** Sending one by one after a refused batch was tested for two
 of its outcomes only.
 Done: the tests are there, and each fails against the broken version.
