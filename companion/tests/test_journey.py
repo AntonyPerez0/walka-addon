@@ -540,6 +540,20 @@ def test_the_book_keeps_the_latest_journey_of_each_character(tmp_path: Path):
     assert book.to_api()["current"] is None  # nobody is in the game any more
 
 
+def test_the_book_says_which_character_is_in_the_game_now(tmp_path: Path):
+    """For the dashboard's "Playing" line: the character whose numbers are
+    arriving, by name and level - nobody, once they stop."""
+    clock = Clock()
+    book = JourneyBook(tmp_path / "journey.json", wall=clock.wall, mono=clock.mono)
+    assert book.playing() is None
+    book.add(journey_of("Thrall", NOW - 86400))
+    assert book.playing() is None, "seen yesterday is not playing now"
+    book.add(journey_of("Jaina", NOW - 5))
+    assert book.playing() == {"name": "Jaina", "level": 17, "max_level": 60}
+    clock.advance(LIVE_FOR_S + 10)
+    assert book.playing() is None
+
+
 def test_the_collector_of_a_book_fills_it(tmp_path: Path):
     clock = Clock()
     book = JourneyBook(tmp_path / "journey.json", wall=clock.wall, mono=clock.mono)

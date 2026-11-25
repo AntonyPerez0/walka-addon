@@ -75,13 +75,17 @@ not a companion is listening to it and whatever the game shows meanwhile.
 The addon in the game does not move anything either - it never could; it
 only ever drew the strip.
 
-* *Start* on the HUD (or `/walka start`) marks a walking session: "I am
-  walking now, for this character". The companion files the walk it
-  records under that session.
-* The numbers on the HUD are estimates, counted from the pace you tell the
-  addon (`/walka pace`, or the − and + buttons on the HUD): an addon cannot
-  be told what the treadmill is really doing while the game runs. What the
-  treadmill measured replaces them after the next `/reload` or login.
+* `/walka start` (or a click on *Walka* in the game's AddOns menu) marks
+  a walking session: "I am walking now, for this character". The
+  companion files the walk it records under that session.
+* The addon has no windows: it draws only the strip. The numbers it keeps
+  for the character's journey are estimates, counted from the pace you
+  tell it (`/walka pace`): an addon cannot be told what the treadmill is
+  really doing while the game runs. What the treadmill measured replaces
+  them after the next `/reload` or login.
+* The companion's floating window shows the walk on top of the game. It
+  is a window like any other: it shows numbers, and has no button for the
+  belt.
 * Going AFK pauses the session - that is, the addon's count - if you leave
   that option on. The belt is not touched by it: stop the belt yourself
   when you step off.

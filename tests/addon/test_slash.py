@@ -339,13 +339,14 @@ def test_unknown_command_prints_help(rt):
     rt.slash("/walka frobnicate")
     assert len(rt.printed) >= 8
     assert all(line.startswith("|cff4fc3f7Walka|r: /walka") for line in rt.printed)
-    for word in ("start", "pace", "history", "journey", "options", "status", "weight", "height", "units", "beacon"):
+    for word in ("start", "pace", "road", "status", "weight", "height", "units", "beacon"):
         assert any(word in line for line in rt.printed), word
+    for word in ("history", "journey", "options", "hud", "/walka map"):
+        assert not any(word in line.lower() for line in rt.printed), f"the addon has no {word} any more"
     assert (
-        "|cff4fc3f7Walka|r: /walka journey - your character's journey so far: level, time played, "
-        "your steps and its steps"
+        "|cff4fc3f7Walka|r: /walka pace 1.5 - the speed your treadmill is set to, "
+        "for the estimate until the app's numbers arrive"
     ) in rt.printed
-    assert "|cff4fc3f7Walka|r: /walka pace 1.5 - the speed your treadmill is set to, for the live estimate" in rt.printed
 
 
 @pytest.mark.parametrize("command", ["help", "?"])
@@ -368,3 +369,18 @@ def test_commands_ignore_case_and_extra_space(rt):
 def test_slash_command_is_registered_the_way_the_client_expects(rt):
     assert rt.global_("SLASH_WALKA1") == "/walka"
     assert rt.global_("SlashCmdList").WALKA is not None
+
+
+@pytest.mark.parametrize("command", ["", "help"])
+def test_a_bare_command_says_what_the_addon_is_for_and_lists_the_commands(rt, command):
+    rt.slash(("/walka " + command).strip())
+    assert "Walka app" in rt.printed[0] and "Floating window" in rt.printed[0]
+    assert any("/walka start" in line for line in rt.printed[1:])
+
+
+@pytest.mark.parametrize("command", ["hud", "show", "hide", "history", "journey", "map", "map window", "options"])
+def test_the_commands_of_the_old_windows_point_to_the_app(rt, command):
+    rt.slash("/walka " + command)
+    assert len(rt.printed) == 1
+    assert "no windows any more" in rt.printed[0] and "Walka app" in rt.printed[0]
+    assert rt.walka.session is None

@@ -58,6 +58,7 @@ const KINDS = {
   },
   years: { unit: () => "years", digits: () => 0, shown: same, metric: same },
   factor: { unit: () => "x", digits: () => 2, fixed: true, shown: same, metric: same },
+  steps: { unit: () => "steps", digits: () => 0, shown: same, metric: same },
 };
 
 // ---- fields ----------------------------------------------------------------------------
@@ -160,7 +161,7 @@ class NumberField extends Field {
       this.sent = null;
     } else {
       const metric = this.kind.metric(parseNumber(text));
-      this.sent = this.spec.kind === "years" ? Math.round(metric) : +metric.toFixed(6);
+      this.sent = this.spec.kind === "years" || this.spec.kind === "steps" ? Math.round(metric) : +metric.toFixed(6);
     }
     setPath(patch, this.spec.path, this.sent);
   }
@@ -509,6 +510,25 @@ const FORMS = {
       },
     ],
   },
+  overlay: {
+    fields: [
+      {
+        type: "check",
+        path: "overlay.enabled",
+        label: "Show the floating window",
+        help: "On top of every other window, the game's included. Its × closes it again.",
+      },
+      {
+        type: "number",
+        kind: "steps",
+        path: "overlay.step_goal",
+        min: 0,
+        max: 100000,
+        label: "Daily step goal",
+        help: "Shown as a bar along the bottom of the floating window. 0 for no bar.",
+      },
+    ],
+  },
   addon: {
     fields: [
       {
@@ -556,6 +576,8 @@ function updateStatusCards(s, links) {
   setText($("set-addon-state"), addon.state);
   setText($("set-addon-detail"), addon.detail);
   setShown($("addon-sync-2"), addon.installed);
+
+  setShown($("overlay-note"), !(s.overlay && s.overlay.available));
 }
 
 async function findGameFolders(button) {

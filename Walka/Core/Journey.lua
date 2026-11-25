@@ -1,8 +1,8 @@
 -- Walka journey: what one character has done since Walka began watching it.
 --
--- Pure Lua 5.1 (no WoW API). The game side is in Tracker.lua, the window in
--- UI/Journey.lua, and the numbers reach the companion app as stat frames
--- (docs/PROTOCOL.md, section 4).
+-- Pure Lua 5.1 (no WoW API). The game side is in Tracker.lua, and the
+-- numbers reach the companion app as stat frames (docs/PROTOCOL.md,
+-- section 4), which shows them on its Share page.
 --
 -- One record per character, kept in WalkaDB.journeys under "Name-Realm":
 --

@@ -318,4 +318,4 @@ def test_date_formats_use_only_conversions_every_c_library_has(addon_dir):
                 assert specifier and specifier in "aAbBcdHIjmMpSUwWxXyYZ%", (
                     f"{path.name}: date format {pattern!r} uses %{specifier}"
                 )
-    assert len(found) >= 8, "the scan no longer finds the addon's date() calls"
+    assert len(found) >= 4, "the scan no longer finds the addon's date() calls"

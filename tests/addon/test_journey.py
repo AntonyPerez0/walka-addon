@@ -4,7 +4,7 @@ Tracker.lua (what the game feeds into it).
 Per character the addon keeps how far it travelled - on foot and in all -
 its level, its /played time, and the real-world walking done while playing
 it. The stat frames that carry these numbers to the companion are in
-test_stat_frames.py, the window that shows them in test_ui_journey.py.
+test_stat_frames.py.
 """
 
 from __future__ import annotations
@@ -15,7 +15,6 @@ import math
 
 import pytest
 
-from . import ui_driver as ui
 from .harness import lua_dict, lua_list, lua_plain
 
 NOW = 1795000000                # the mock client's clock at login
@@ -78,6 +77,30 @@ def walk(rt, seconds: float) -> None:
     rt.slash("/walka stop")
 
 
+def same(rt, a, b) -> bool:
+    """Are these the very same Lua value (the same table)?"""
+    return bool(rt.lua.globals().rawequal(a, b))
+
+
+class Counter:
+    """Counts calls of a function in one of the addon's tables."""
+
+    def __init__(self, rt, table, name: str):
+        self._read = rt.lua.eval(
+            "function(t, name) local real, calls = t[name], 0 "
+            "t[name] = function(...) calls = calls + 1 return real(...) end "
+            "return function() return calls end end"
+        )(table, name)
+        self._base = 0
+
+    @property
+    def calls(self) -> int:
+        return int(self._read()) - self._base
+
+    def reset(self) -> None:
+        self._base = int(self._read())
+
+
 # ---- Core/Journey.lua: the record ----------------------------------------------------------------
 
 
@@ -89,9 +112,9 @@ def test_a_new_character_starts_at_zero(rt):
         "since": NOW, "footYd": 0, "travelYd": 0, "level": 0, "maxLevel": 0, "classId": 0, "faction": 0, "played": 0,
         "real": {"walks": 0, "seconds": 0, "distanceM": 0, "steps": 0, "kcal": 0, "estimated": False},
     }
-    assert ui.same(rt, journeys["Newbie-Azeroth"], opened)
+    assert same(rt, journeys["Newbie-Azeroth"], opened)
     opened.footYd = 12.5
-    assert ui.same(rt, journey.open(journeys, "Newbie-Azeroth", NOW + 500), opened), "opened again, not started again"
+    assert same(rt, journey.open(journeys, "Newbie-Azeroth", NOW + 500), opened), "opened again, not started again"
     assert opened.footYd == 12.5 and opened.since == NOW
 
 
@@ -350,9 +373,8 @@ def test_a_name_hidden_later_does_not_matter(rt):
 def test_tracking_costs_no_history_merge(make_rt):
     rt = make_rt(saved_variables=saved(*[own(NOW - 90000 + index * 100, 60) for index in range(50)]),
                  files=companion(measured(NOW - 90000, 60)))
-    merges = ui.merge_counter(rt)
-    totals = ui.Counter(rt, rt.ns.SessionLog, "totals")
-    rt.slash("/walka hide")                         # (the HUD keeps its own count of the history)
+    merges = Counter(rt, rt.ns.SessionLog, "merge")
+    totals = Counter(rt, rt.ns.SessionLog, "totals")
     merges.reset()
     rt.set(speed=7.0)
     for _ in range(3):
@@ -531,6 +553,28 @@ def test_request_played_asks_once_per_login(rt):
     assert again.ns.Tracker.RequestPlayed() is True
     again.tick()
     assert summary(again)["played"] == int(again.game.played)
+
+
+def test_starting_a_session_asks_for_the_time_played_once_per_login(rt):
+    """The addon has no Journey window to ask from any more: a session the
+    player starts is the moment - once a login, and not when the chat is
+    to stay quiet."""
+    rt.slash("/walka start")
+    rt.tick()
+    assert len(lua_list(rt.log.played_requests)) == 1 and len(played_lines(rt)) == 2
+    assert summary(rt)["played"] == int(rt.game.played)
+    rt.tick(250)
+    rt.slash("/walka stop")
+    rt.slash("/walka start")
+    rt.tick()
+    assert len(lua_list(rt.log.played_requests)) == 1, "the game has answered during this login"
+    rt.slash("/walka stop")
+
+    quiet = rt.reload(gap=600)
+    quiet.walka.Set(quiet.walka, "announce", False)
+    quiet.slash("/walka start")
+    quiet.tick()
+    assert lua_list(quiet.log.played_requests) == []
 
 
 def test_an_unanswered_request_is_not_repeated_at_once(make_rt):

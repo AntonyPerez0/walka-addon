@@ -133,6 +133,11 @@ def create_app(app: App) -> web.Application:
     async def index(_request: web.Request) -> web.StreamResponse:
         return web.FileResponse(STATIC_DIR / "index.html", headers=PAGE_HEADERS)
 
+    @routes.get("/floating")
+    async def floating(_request: web.Request) -> web.StreamResponse:
+        """The floating window's page (window.FloatingWindow)."""
+        return web.FileResponse(STATIC_DIR / "floating.html", headers=PAGE_HEADERS)
+
     @routes.get("/api/state")
     async def state(_request: web.Request) -> web.Response:
         return web.json_response(app.snapshot())

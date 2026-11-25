@@ -1,12 +1,11 @@
 ## Interface: 16001, 16002
 ## Title: Walka
-## Notes: Walk on your walking pad while you play: Walka counts your time, steps, distance and calories, and draws your character's road on the map.
+## Notes: Connects the game to the Walka app: it tells the app which character your walking-pad walks are for. Everything is shown in the app.
 ## Author: Walka
 ## Version: 0.8.0
 ## X-License: MIT
 ## SavedVariables: WalkaDB
 ## SavedVariablesPerCharacter: WalkaCharDB
-## OptionalDeps: OpenMap
 ## IconTexture: Interface\Icons\Ability_Rogue_Sprint
 ## AddonCompartmentFunc: Walka_OnCompartmentClick
 ## Category: Miscellaneous
@@ -22,10 +21,3 @@ Beacon.lua
 Tracker.lua
 RoadRecorder.lua
 Walka.lua
-UI\Widgets.lua
-UI\HUD.lua
-UI\History.lua
-UI\Journey.lua
-UI\RoadMap.lua
-UI\WorldMapRoad.lua
-UI\Options.lua

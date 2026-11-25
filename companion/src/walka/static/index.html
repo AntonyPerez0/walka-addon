@@ -94,7 +94,7 @@
         <dl class="readout">
           <div><dt>Set to</dt><dd class="num" id="ro-set">-</dd></div>
           <div><dt>Game session</dt><dd id="ro-game">-</dd></div>
-          <div><dt>Character</dt><dd class="num" id="ro-char">-</dd></div>
+          <div><dt>Playing</dt><dd id="ro-char">-</dd></div>
           <div><dt>Belt</dt><dd id="ro-belt">-</dd></div>
         </dl>
         <div class="meter" id="meter" role="img" aria-label="Belt speed against the pad's top speed">
@@ -132,7 +132,7 @@
         <h4>How to start a walk</h4>
         <ul>
           <li><strong>Start the belt with the treadmill's own remote</strong> and set the speed there. Walka records the walk by itself, with any game or none.</li>
-          <li><strong>In World of Warcraft:</strong> type <kbd>/walka start</kbd> or click the ▶ button on the Walka HUD, so that the walk is counted for your character.</li>
+          <li><strong>In World of Warcraft:</strong> type <kbd>/walka start</kbd> (or click Walka in the game's AddOns menu, by the minimap), so that the walk is counted for your character.</li>
         </ul>
         <p class="muted small" id="last-walk" hidden></p>
       </div>
@@ -157,7 +157,7 @@
           <span class="tick"><svg aria-hidden="true"><use href="#i-check"/></svg></span>
           <div class="step-text"><strong>Install the game addon</strong>
             <b class="step-done">Done</b>
-            <span>Copies Walka into World of Warcraft's AddOns folder. Then restart the game and tick Walka in the AddOns list. The addon counts your walks for your character and shows them in game.</span></div>
+            <span>Copies Walka into World of Warcraft's AddOns folder. Then restart the game and tick Walka in the AddOns list. The addon connects the game to Walka: it says which character you are playing, so that your walks are counted for it.</span></div>
           <button class="btn small" id="setup-install" type="button">Install</button>
         </li>
         <li id="step-game" data-done="false">
@@ -311,7 +311,7 @@
       <span>When</span><span>Source</span><span class="r">Time</span><span class="r">Distance</span><span class="r">Steps</span><span class="r">Calories</span><span class="r">Avg speed</span><span class="r">Avg HR</span><span></span>
     </div>
     <ul class="slist" id="session-list"></ul>
-    <p class="empty" id="sessions-empty" hidden>No walks yet. A finished walk shows up here, and in the addon's history after the next /reload. Walks shorter than 20 seconds are not kept.</p>
+    <p class="empty" id="sessions-empty" hidden>No walks yet. A finished walk shows up here. Walks shorter than 20 seconds are not kept.</p>
     <p class="empty" id="sessions-error" role="alert" hidden></p>
     <div class="btn-row center"><button class="btn" id="sessions-more" type="button" hidden>Show older walks</button></div>
   </section>
@@ -429,10 +429,17 @@
       <p class="muted small">Changes how numbers are shown here. How the pad's own firmware counts speed is set under Treadmill.</p>
     </section>
 
+    <section class="card wide" id="set-overlay" aria-labelledby="set-overlay-h" tabindex="-1">
+      <header class="card-head"><h3 id="set-overlay-h">Floating window</h3></header>
+      <p class="muted">A small Walka panel that stays on top of the game: the belt's speed and this walk's steps, calories, distance and time, as the treadmill measures them. Drag it wherever you like - it opens there next time. It shows on top of the game when the game runs in <em>Windowed</em> or <em>Windowed (Fullscreen)</em> mode, as it has to for Walka to see it anyway.</p>
+      <p class="link-detail" id="overlay-note" hidden>Only when Walka runs in its own window: started with <code>--browser</code> or <code>--no-window</code>, or with its dashboard in the web browser, it has no floating window.</p>
+      <form class="form" data-form="overlay" novalidate></form>
+    </section>
+
     <div class="stack">
       <section class="card" id="set-profile" aria-labelledby="set-profile-h" tabindex="-1">
         <header class="card-head"><h3 id="set-profile-h">Body profile</h3><span class="badge quiet" id="profile-badge" hidden>Not set yet</span></header>
-        <p class="muted">Used only for the estimates, and synced to the addon so the in-game numbers agree.</p>
+        <p class="muted">Used only for the estimates, and synced to the addon so that its numbers agree.</p>
         <form class="form" data-form="profile" novalidate></form>
       </section>
 

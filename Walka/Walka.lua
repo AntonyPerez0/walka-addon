@@ -3,8 +3,15 @@
 -- This file is the addon's core: saved settings, the walking session
 -- (start / pause / resume / stop), and the ten-times-a-second tick that
 -- reads the character's state, counts the walk and paints the beacon for
--- the companion app. The windows live in UI/; the character's journey is
--- kept by Tracker.lua, which this file drives.
+-- the companion app. The character's journey is kept by Tracker.lua, which
+-- this file drives.
+--
+-- The addon draws no windows of its own: it is the game's end of the
+-- connection to the Walka app, which shows everything - on its dashboard,
+-- and in a floating window it can put on top of the game. In game there
+-- is the strip the app reads, a few slash commands, and Walka's entry in
+-- the game's AddOns menu by the minimap (click: start or pause the
+-- session; right-click: stop it).
 --
 -- Walka only counts. The walker sets the belt's speed at the treadmill;
 -- nothing here - and nothing in the companion app - starts, stops or
@@ -55,11 +62,8 @@ local function buildDefaults()
             heightCm = Metrics.DEFAULT_PROFILE.heightCm,
         },
         beacon = { enabled = true, cellPx = Beacon.DEFAULT_CELL_PX },
-        hud = { shown = true, locked = false, scale = 1.0, alpha = 0.9 },
         autoPauseAFK = true,
-        recordRoad = true,      -- keep the character's path for the map
-        worldMap = { road = true, button = true },  -- the road on the game's world map, and its button there
-        dailyStepGoal = 6000,
+        recordRoad = true,      -- keep the character's path, for the app's map
         announce = true,
     }
 end
@@ -188,7 +192,7 @@ function Walka:ApplySettings()
     self:Fire("SETTINGS")
 end
 
---- Change one setting by dotted path, e.g. Walka:Set("hud.scale", 1.2).
+--- Change one setting by dotted path, e.g. Walka:Set("beacon.cellPx", 4).
 function Walka:Set(path, value)
     local node = self.db.settings
     local last
@@ -362,12 +366,20 @@ function Walka:StartSession()
     }
     if db.settings.announce then
         self:Print(string.format(
-            "session started - Walka counts this walk at %s. Set the speed on your treadmill; "
-                .. "/walka pace tells Walka what it is. /walka stop to finish.",
+            "session started - your walk counts for this character. Start the belt at the treadmill; "
+                .. "the Walka app shows the walk (until its numbers arrive, Walka estimates at %s). "
+                .. "/walka stop to finish.",
             self:FormatSpeed(self:GetPace())
         ))
     end
     self:Fire("SESSION", "start")
+    -- The app's Share picture shows the character's time played, which the
+    -- game tells only when asked (and prints in the chat when it answers).
+    -- Asked here, once a login at most: in reply to something the player did
+    -- (and not with announcements off: they keep the chat quiet).
+    if db.settings.announce then
+        Tracker.RequestPlayed()
+    end
 end
 
 function Walka:PauseSession(reason)
@@ -454,7 +466,7 @@ function Walka:StopSession(endTime)
         Tracker.HistoryChanged()
         if self.db.settings.announce then
             self:Print(string.format(
-                "session finished: %s, %s, %s steps, %d kcal (estimates - /reload to load the companion's numbers).",
+                "session finished: %s, %s, %s steps, %d kcal (estimates - the Walka app has the treadmill's numbers).",
                 self:FormatDuration(record.seconds),
                 self:FormatDistance(record.distanceM),
                 self:FormatNumber(record.steps),
@@ -609,6 +621,11 @@ local function initDatabase()
     -- page of settings for that. Nothing reads them any more.
     db.settings.speed = nil
     db.riskNoticeShown = nil
+    -- Until 0.9 the addon had windows of its own: a HUD, the history, the
+    -- journey, the road on the world map. The app shows all of that now.
+    db.settings.hud = nil
+    db.settings.worldMap = nil
+    db.settings.dailyStepGoal = nil
     db.settings.paceKmh = numberWithin(db.settings.paceKmh, Metrics.MIN_PACE_KMH, Metrics.MAX_PACE_KMH)
         or Metrics.DEFAULT_PACE_KMH
     -- The body profile feeds every step and calorie: a height of zero from a
@@ -728,16 +745,10 @@ local function parseMeasure(text, units)
 end
 
 local HELP = {
-    "/walka - show or hide the HUD",
-    "/walka start | pause | resume | stop - the walking session: when Walka counts your walk",
-    "/walka pace 1.5 - the speed your treadmill is set to, for the live estimate",
-    "/walka history - past sessions and totals",
-    "/walka journey - your character's journey so far: level, time played, your steps and its steps",
-    "/walka map - open the world map with the road your character has travelled on it",
-    "/walka map on | off | window - show or hide the road on the world map; Walka's own road window",
-    "/walka road on | off - record the road, or stop",
-    "/walka options - settings",
+    "/walka start | pause | resume | stop - the walking session: your walk counts for this character",
     "/walka status - what the addon is doing right now",
+    "/walka pace 1.5 - the speed your treadmill is set to, for the estimate until the app's numbers arrive",
+    "/walka road on | off - record your character's road for the app's map, or stop",
     "/walka weight 180lb (or 82kg) - your weight, for calorie estimates",
     "/walka height 5'11 (or 180cm) - your height, for step estimates",
     "/walka units mph | kmh",
@@ -752,15 +763,11 @@ local function slash(message)
         return
     end
 
-    if command == "" or command == "hud" or command == "show" or command == "hide" then
-        if ns.HUD then
-            if command == "show" then
-                ns.HUD.SetShown(true)
-            elseif command == "hide" then
-                ns.HUD.SetShown(false)
-            else
-                ns.HUD.Toggle()
-            end
+    if command == "" or command == "help" then
+        self:Print("connects the game to the Walka app, which shows your walks - its dashboard, "
+            .. "and a floating window over the game (app: Settings -> Floating window).")
+        for index = 1, #HELP do
+            self:Print(HELP[index])
         end
     elseif command == "start" or command == "go" then
         self:StartSession()
@@ -774,35 +781,12 @@ local function slash(message)
         else
             self:StopSession()
         end
-    elseif command == "history" or command == "log" then
-        if ns.History then
-            ns.History.Toggle()
-        end
-    elseif command == "journey" or command == "card" then
-        if ns.JourneyWindow then
-            ns.JourneyWindow.Toggle()
-        end
-    elseif command == "map" or (command == "road" and rest == "") then
-        local onWorldMap = ns.WorldMapRoad
-        if command == "map" and rest == "window" then
-            if ns.RoadMap then
-                ns.RoadMap.Toggle()
-            end
-        elseif command == "map" and (rest == "on" or rest == "off") and onWorldMap then
-            onWorldMap.SetShown(rest == "on")
-            if rest == "on" then
-                self:Print("your road is drawn on the world map.")
-            elseif RoadRecorder.IsEnabled() then
-                self:Print("your road is no longer drawn on the world map (it is still being recorded).")
-            else
-                self:Print("your road is no longer drawn on the world map.")
-            end
-        elseif command == "map" and rest ~= "" then
-            self:Print("use /walka map, /walka map on, /walka map off or /walka map window.")
-        elseif not (onWorldMap and onWorldMap.Open()) and ns.RoadMap then
-            -- No world map to draw on in this client: Walka's own window.
-            ns.RoadMap.Toggle()
-        end
+    elseif command == "hud" or command == "show" or command == "hide" or command == "history" or command == "log"
+        or command == "journey" or command == "card" or command == "map" or command == "options"
+        or command == "config" or command == "settings" then
+        -- The windows these opened are gone: the app shows all of it.
+        self:Print("the addon has no windows any more: your walks, history, journey and road are in the "
+            .. "Walka app. For the walk on top of the game: Settings -> Floating window, in the app.")
     elseif command == "road" then
         if rest == "on" or rest == "off" then
             self:Set("recordRoad", rest == "on")
@@ -810,21 +794,7 @@ local function slash(message)
             self:Print(rest == "on" and "recording your character's road." or
                 "no longer recording your character's road (what is recorded so far is kept).")
         else
-            self:Print("use /walka road on, /walka road off, or /walka map to see it.")
-        end
-    elseif command == "mapcheck" then
-        local function say(text)
-            self:Print(text)
-        end
-        if ns.RoadMap then
-            ns.RoadMap.Check(say)
-        end
-        if ns.WorldMapRoad then
-            ns.WorldMapRoad.Check(say)
-        end
-    elseif command == "options" or command == "config" or command == "settings" then
-        if ns.Options then
-            ns.Options.Open()
+            self:Print("use /walka road on or /walka road off. The road is shown in the Walka app (Share).")
         end
     elseif command == "status" then
         local state = self.gameState
@@ -948,16 +918,21 @@ end
 SLASH_WALKA1 = "/walka"
 SlashCmdList["WALKA"] = slash
 
---- Addon compartment (minimap dropdown) click.
+--- Walka in the game's AddOns menu (by the minimap): a click starts the
+-- session, or pauses or resumes it; a right-click stops it.
 function Walka_OnCompartmentClick(_, button)
     if not Walka.loaded then
         return
     end
-    if button == "RightButton" and ns.Options then
-        ns.Options.Open()
-    elseif ns.HUD then
-        ns.HUD.Toggle()
+    if button == "RightButton" then
+        if Walka.session then
+            Walka:StopSession()
+        else
+            Walka:Print("no session is running - click Walka here to start one.")
+        end
+        return
     end
+    Walka:TogglePause()
 end
 
 return Walka

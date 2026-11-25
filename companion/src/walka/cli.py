@@ -18,6 +18,7 @@ import webbrowser
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from . import __version__, addon_sync, capture
 from . import config as config_module
@@ -588,6 +589,16 @@ class _Running:
     loop: asyncio.AbstractEventLoop
     stop: asyncio.Event
     stopped: threading.Event  # set once the walk is saved
+    app: Any = None  # the App: touched only on ``loop``, through ``call``
+
+    def call(self, function: Callable[..., Any], *args: Any) -> None:
+        """Run ``function(*args)`` on the companion's loop, from any thread."""
+        if self.stopped.is_set():
+            return
+        try:
+            self.loop.call_soon_threadsafe(function, *args)
+        except RuntimeError:  # the loop is closed: Walka is on its way out
+            pass
 
     def ask_to_stop(self, wait_s: float = SAVE_WAIT_S) -> None:
         """Ask for an orderly stop, and wait - that long at most - until the
@@ -718,7 +729,7 @@ async def _run(
             print("Press Ctrl+C to quit (the walk being recorded is saved first).")
         print(LISTENS_ONLY)
         log.info("Walka %s is running: dashboard at %s, data in %s", __version__, url, data_dir)
-        running = _Running(url, loop, stop, stopped)
+        running = _Running(url, loop, stop, stopped, app)
         if started is not None:
             started(running)
         if goes == "browser":
@@ -818,6 +829,34 @@ def _hear_signals(
     return undo
 
 
+# The floating window's page, beside the dashboard's.
+FLOATING_PATH = "floating"
+
+
+def _floating_window(window: Any, running: _Running) -> Any:
+    """The floating window (Settings -> Floating window), handed to the
+    App, which shows and hides it as the setting says. What it reports -
+    dragged here, closed - goes to the App on its own loop."""
+    app = running.app
+    if app is None:
+        return None
+
+    def place() -> tuple[int, int] | None:
+        overlay = app.config.overlay  # (read only: a pair of numbers)
+        if overlay.x is None or overlay.y is None:
+            return None
+        return overlay.x, overlay.y
+
+    floating = window.FloatingWindow(
+        running.url + FLOATING_PATH,
+        place=place,
+        on_moved=lambda x, y: running.call(app.overlay_moved, x, y),
+        on_closed=lambda: running.call(app.overlay_closed),
+    )
+    running.call(app.attach_overlay, floating)
+    return floating
+
+
 def _run_in_window(args: argparse.Namespace, cfg: config_module.Config) -> int:
     """Run the companion with its dashboard in a window of Walka's own;
     closing the window closes Walka.
@@ -850,7 +889,10 @@ def _run_in_window(args: argparse.Namespace, cfg: config_module.Config) -> int:
         thread.join()
         return codes[0]
 
-    dashboard = window.DashboardWindow(running.url, _data_dir(args) / WINDOW_DATA, on_closing=running.ask_to_stop)
+    floating = _floating_window(window, running)
+    dashboard = window.DashboardWindow(
+        running.url, _data_dir(args) / WINDOW_DATA, on_closing=running.ask_to_stop, floating=floating
+    )
 
     def close_with_the_companion() -> None:
         # The companion can stop without the window having been closed:

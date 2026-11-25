@@ -230,9 +230,10 @@ There is no live return path - an addon cannot receive anything while the
 game runs. The companion writes `Walka/CompanionData.lua` (one global table,
 `WalkaCompanionData`: measured sessions, body profile, the treadmill's
 name), and the game loads it at login and on `/reload`, like the data files
-written by other addon companion apps. Until then the in-game HUD shows the
-addon's own estimates, counted from the pace the walker tells it
-(`/walka pace`).
+written by other addon companion apps. Until then the addon's journey
+numbers (section 4) count with its own estimates, from the pace the walker
+tells it (`/walka pace`). The addon shows nothing in game: the companion
+shows the walk, measured, on its dashboard and in its floating window.
 
 There is one more way out of the game, a slow one: what an addon keeps in
 its saved variables, the game writes to a file at logout and on `/reload`.

@@ -12,8 +12,9 @@ Tip: `/console scriptErrors 1` makes Lua errors pop up instead of hiding.
 
 - [ ] *Walka* appears in the AddOns list at character select and is not
       marked out of date.
-- [ ] After logging in, `/walka` shows the HUD and `/walka status` prints a
-      line. No Lua error.
+- [ ] After logging in, `/walka` prints what the addon is for and its
+      commands, and `/walka status` prints a line. The addon draws no
+      window of its own. No Lua error.
 - [ ] Top-left corner of the screen: a thin strip of tiny black and white
       squares. Some of them flicker.
 
@@ -65,59 +66,29 @@ used.
 ## 5. A session, without the treadmill
 
 A session is how you tell Walka "I am walking now". Walka does not start,
-stop or steer the belt: you set its speed at the treadmill, and tell Walka
-what it is (the *pace*) so that its live numbers fit.
+stop or steer the belt: you set its speed at the treadmill.
 
-- [ ] `/walka start`. The HUD shows *Walking* at once, and a chat line says
-      at which pace the walk is counted (1.5 mph on a fresh install). Time,
-      steps, distance and calories count up, each with a `~`.
-- [ ] Stand still, run, mount up: the big speed on the HUD stays what it
-      is - it is your pace, not your character's - and the numbers keep
-      counting at the same rate.
-- [ ] `/walka pace 2.0`: a chat line confirms it, the HUD shows `2.0`, and
-      the distance now grows faster. `/walka pace` alone says what it is.
-      The small **-** and **+** beside the speed change it by 0.1; their
-      tooltip says that they do not change the belt's speed.
-- [ ] Pause, resume, stop from the HUD buttons: paused, nothing counts; a
+- [ ] `/walka start`. A chat line says that the walk counts for this
+      character; the first time in a login the game's two "Total time
+      played" lines follow it (that is Walka asking, for the journey).
+      `/walka status` says *session active*.
+- [ ] `/walka pace 2.0`: a chat line confirms it. `/walka pace` alone says
+      what it is.
+- [ ] `/walka pause`, `/walka resume`, `/walka stop`: chat lines say so; a
       chat line summarises the session when it is stopped.
 - [ ] `/reload` in the middle of a session: the session is still running
-      afterwards, at the same pace.
-- [ ] `/walka history` lists the session; `/walka options` opens the
-      settings page; the *My treadmill is set to* slider, the other sliders
-      and the checkboxes work.
+      afterwards.
+- [ ] `/afk` during a session: a chat line says the session is paused.
+      Move your character (which also ends AFK): it carries on.
+- [ ] `/walka history`, `/walka journey`, `/walka map`, `/walka options`:
+      each prints one line pointing to the Walka app - and opens nothing.
 
-## 6. The windows
+## 6. The game's AddOns menu
 
-- [ ] HUD: it has a border and a dark fill; the play icon is a triangle,
-      not a rectangle; the small **-** and **+** beside the speed are a bar
-      and a cross; no text is clipped ("Paused (AFK)" fits beside the four
-      buttons, and "10.0 km/h" beside the **-** and **+**).
-- [ ] Right-click the HUD: a menu with *Lock position*, *History*,
-      *Journey*, *Road map*, *Options* and *Hide*. All of them work, also
-      in combat (there *Road map* opens Walka's own road window, not the
-      world map: section 8).
-- [ ] Drag the HUD into a corner, then `/reload`: it is back in the same
-      place.
-- [ ] `/afk` during a session: "Paused (AFK)", and the numbers stop.
-      Move your character (which also ends AFK): it carries on. Switch
-      *Pause automatically when I go AFK* off in the options and `/afk`
-      again: the session counts on.
-- [ ] `/afk`, then pause by hand (`/walka pause`): the HUD says "Paused",
-      and moving the character does not end that pause - the play button
-      does.
-- [ ] `/walka history`: opens centred; Escape and the X close it; the wheel
-      scrolls the list. *Sync* reloads the interface and a running session
-      is still running afterwards.
-- [ ] Esc → Options → AddOns → Walka exists; `/walka options` opens it on
-      that page; it scrolls; sliders, checkboxes and edit boxes work; the
-      units switch converts every value (the pace too: 1.5 mph is
-      2.4 km/h). Nothing on the page offers to set a belt speed.
-- [ ] In combat, `/walka options` prints a "cannot be opened in combat"
-      line and nothing else. After Walka has opened the settings window,
-      change a keybinding in that same window - if "Interface action failed
-      because of an AddOn" appears, tell me.
-- [ ] Minimap addon compartment: left-click toggles the HUD, right-click
-      opens the options.
+- [ ] Minimap addon compartment (the AddOns button by the minimap):
+      *Walka* is in it. A click starts a session (chat line), another
+      pauses it, another resumes it. A right-click stops it. Also in
+      combat.
 
 ## 7. The journey
 
@@ -137,153 +108,45 @@ pane:
       tell me what it printed.
 
 Time played. The game tells an addon the time played only when asked, and
-prints every answer in the chat; Walka therefore asks only when you open the
-Journey window.
+prints every answer in the chat; Walka therefore asks only when you start a
+session, once a login.
 
-- [ ] Log in and play for a minute without opening the Journey window: the
-      chat shows **no** "Total time played" lines.
-- [ ] `/walka journey` (or `/walka card`): the window opens in the middle of
-      the screen. The chat shows the game's two lines ("Total time played",
-      "Time played this level") **once**, and *TIME PLAYED* in the window
-      agrees with the first of them.
-- [ ] Close the window and open it again, several times: no further lines
-      in the chat.
-- [ ] `/reload`, open the window: still no new lines, and the time played is
-      right (within a few seconds).
+- [ ] Log in and play for a minute without starting a session: the chat
+      shows **no** "Total time played" lines.
+- [ ] `/walka start`: the chat shows the game's two lines ("Total time
+      played", "Time played this level") **once**, and the dashboard's
+      *Share* page agrees with the first of them within about ten seconds.
+- [ ] Stop and start the session again, several times: no further lines in
+      the chat. `/reload` and start one: still none.
 - [ ] Type `/played` yourself: the two lines appear as always - Walka has
-      not broken the game's own command - and the window agrees.
-- [ ] Log out and in again; open the window after ten minutes of play: one
-      new pair of lines, and the figures agree.
+      not broken the game's own command.
 
-The window:
+On the dashboard's *Share* page:
 
-- [ ] It shows your character's name, *LEVEL* as `17 / 60`, *TIME PLAYED*,
-      *MY STEPS* with the distance walked, *CHARACTER STEPS* with in-game
-      miles, *CALORIES*, *TIME ON THE BELT*, *WALKS* and "Totals through"
-      with today's date. No text is clipped or overlaps, also with
-      `/walka units kmh` (the distances switch to km).
+- [ ] It shows your character's name, level, time played, your steps,
+      the character's steps, calories, time on the belt and walks.
 - [ ] Run 100 yards in a straight line (a target dummy's range ring, or
-      count seconds: 100 yards is about 14 seconds of running): *CHARACTER
-      STEPS* goes up by about 114. Mount up and ride: it does not move.
-      Swim, take a flight path: it does not move. Jump while running, run
-      as a ghost: it moves.
+      count seconds: 100 yards is about 14 seconds of running): the
+      character steps go up by about 114 within a round or two (about
+      eight seconds each). Mount up and ride: they do not move. Swim, take
+      a flight path: they do not move.
 - [ ] In combat the character steps still count, and nothing errors.
-- [ ] Level up (or check after your next level): the window shows the new
-      level without a reload.
-- [ ] Walk a session of a minute: *MY STEPS* starts counting about twenty
-      seconds in, with a `~`. After the walk, *Sync* in the history window:
-      the `~` goes away once every walk of this character is measured.
-- [ ] Escape and the X close the window. Drag it somewhere, `/reload`,
-      open it: it is where you left it. It opens from the HUD's right-click
-      menu and from the *Journey* button of the history window, also in
-      combat.
-- [ ] *Screenshot*: the game says "Screen Captured" and a picture of the
-      whole screen is in `World of Warcraft\_forever_\Screenshots`.
-- [ ] Log in on a second character: its window starts from zero; the first
-      character's numbers are unchanged when you go back.
+- [ ] Log in on a second character: its numbers start from zero; the first
+      character's are unchanged when you go back.
 
 And the companion:
 
-- [ ] With the Journey numbers on screen, the dashboard's *Share* page shows
-      the same character, level and steps within about ten seconds (the
-      *Game signal* stays green).
+- [ ] The dashboard's *Live* view says *Playing: <your character> · level
+      <n>* within about ten seconds of logging in (the *Game signal* stays
+      green).
 
-## 8. The road map
+## 8. The road
 
-The road recorder and the maps use game calls that could only be checked
-against Blizzard's documentation and other addons' source, not in the
-game. This section matters most.
+The addon records the road your character travels, for the picture on the
+app's *Share* page. (It no longer draws it on the game's world map.)
 
-- [ ] Run around outdoors for a minute, then `/walka mapcheck`. It should
-      list two or more continents with "art 1002x668 ... 12 picture
-      file(s)" (the numbers may differ), say which continent you are on,
-      and count more than one point. If it says "0 continent map(s)" or
-      "the recorder ran into: ...", copy the lines for me.
-
-On the game's world map (first without OpenMap, if you can spare the
-minute to switch it off; then with it):
-
-- [ ] Open the world map as you always do. Your road is on the zone's map
-      as a line through where you ran, ending at your arrow. **Take a
-      screenshot.** If there is no line, `/walka mapcheck` and copy what
-      it prints (the lines from "world map:" on).
-- [ ] Zoom out to the continent and to the whole world: the line is in the
-      same place on each (the right zone, not mirrored, not out at sea).
-- [ ] Is the line **over** the map's picture everywhere - also over the
-      places you have explored - and **under** the icons and your arrow?
-      If it is hidden in places or covers icons, tell me the "frame level"
-      number from `/walka mapcheck`. (With OpenMap, Questie's townsfolk
-      icons and Zygor's waypoint sit at the road's own level: either may
-      be on top there.)
-- [ ] Zoom the map with the wheel and drag it: the line stays the same
-      width, follows without lagging behind, and nothing flickers.
-- [ ] Walk with the map open: the line grows up to your arrow.
-- [ ] The small *Walka road* button in the top-left corner of the map: is
-      anything of the game's under it or over it? Click it: the road goes
-      and comes back. Its tooltip explains the colours. On a dungeon's map
-      the button is not there.
-- [ ] `/walka map` opens the map. In a fight it says that it cannot, and
-      opens Walka's own road window instead - and with the world map open
-      during a fight, does the game print "interface action failed because
-      of an addon" or blame Walka for a blocked action? (That would be the
-      one serious problem here.)
-- [ ] With OpenMap: all of the above on its map. Drag slowly across a zone
-      border and stop: half a second later OpenMap swaps the map
-      underneath - the road must stay where it is, with no jump (a blink
-      of one frame is expected). Zoom far in and far out.
-- [ ] With OpenMap: its menu has *My road (Walka)* under *On the map*; the
-      switch hides and shows the road; star it, and the button on
-      OpenMap's rail does the same.
-
-And Walka's own road window (`/walka map window`), which is also what
-`/walka map` falls back to if the world map cannot be found:
-
-- [ ] The continent's map appears - the real picture, not black or green
-      squares - with your road on it as a line and an arrow where you
-      stand. **Take a screenshot** (the window has a button): only a
-      picture shows whether the art loaded.
-- [ ] Mouse wheel zooms towards the cursor, dragging moves the map, *Me*
-      centres on your character, *Fit* shows the whole continent, `<` `>`
-      change continent. The line stays about two pixels wide at every zoom.
-- [ ] The window opens, moves and closes in combat; Escape closes it.
-
-On either map:
-
-- [ ] Walk a square: the corners are kept (not cut diagonally).
-- [ ] Start a session and walk: that stretch is brighter than the rest,
-      with a glow.
-- [ ] Take a flight path: a thin pale line. Use your hearthstone or a
-      portal: no line across the map between the two places.
-- [ ] Enter a dungeon and leave again: nothing drawn for the time inside,
-      no Lua error.
-- [ ] `/reload`: the road is still there and carries on.
-
-And on a **Skyborne**, on Zephras Isle (the isle is no continent of
-Azeroth, and how the game files it could not be looked up - this is the
-part of the maps I know least about):
-
-- [ ] Run around on the isle for a minute, then `/walka mapcheck`. It
-      should say "you are on continent N at ..., on map M" and, further
-      down, "continent N is drawn on map M' (Zephras Isle)" - or another
-      name the game has for it, such as Skywall. Copy those lines for me
-      whatever they say; if it says "the game does not say where you are
-      right now" while you stand outdoors on the isle, the game treats the
-      isle as an instance and no road can be recorded there.
-- [ ] Open the world map: the road is on the isle's map, ending at your
-      arrow. Zoom out as far as the map goes: is the isle shown on a larger
-      map, and is the road on it there, in the right place?
-- [ ] `/walka map window`: it opens on the isle's map (the real picture)
-      with your road; `<` and `>` go to Kalimdor and the Eastern Kingdoms
-      and back to the isle.
-- [ ] Take the airship to Dalaran or Mulgore, `/reload`, and open
-      `/walka map window` again: the isle is still one of the maps, with
-      the road you walked there.
-- [ ] On the *Share* page (after a `/reload`): while you have only been on
-      the isle, the *My road* panel shows a piece of land around your road
-      with ZEPHRAS ISLE under it - the land is a sketch of where you have
-      been, so it will not have the isle's real shape. Once you have been
-      on a continent too, the isle is a narrow plate on the left with
-      *START* on it, and a dashed arc leads from it to the continent.
+- [ ] Walk a square, take a flight path, enter a dungeon and leave again:
+      no Lua error. `/reload`.
 
 And the road on the picture (the companion reads it from the file the game
 writes at a `/reload` or logout):
@@ -291,7 +154,7 @@ writes at a `/reload` or logout):
 - [ ] After that `/reload`, open the dashboard's *Share* page: under the
       tick boxes it says "My road: as the game last saved it (...)" with
       the time of the `/reload`, and the picture has a *My road* panel
-      whose line has the shape of the road on `/walka map` (north up).
+      whose line has the shape of the way you went (north up).
       If it says "none found for this character yet" or "the game's folder
       was not found", tell me which - and whether this file exists:
       `World of Warcraft\_forever_\WTF\Account\<your account>\<realm>\<character>\SavedVariables\Walka.lua`
@@ -320,14 +183,33 @@ the pad or with its remote - before, during and after a session.
       the belt.
 - [ ] Stand on the pad, `/walka start`, set `/walka pace` to the speed on
       the treadmill's display: the dashboard's walk now belongs to the game
-      session, and the HUD's distance keeps up with the treadmill's.
+      session.
 - [ ] `/walka pause`, `/walka resume`, `/walka stop`, going AFK, covering
       the game's top-left corner with another window, closing the game:
       **the belt does not react to any of them.** It runs at the speed you
       set until you stop it at the treadmill.
 - [ ] Change the speed with the remote: the dashboard follows within a
-      second or two; the HUD keeps counting with the pace you gave it
-      until you change that as well.
-- [ ] After the walk, *Sync* in `/walka history` (or `/reload`): the
-      session now shows the treadmill's measured numbers (no `~`), also if
-      the pace you gave was off.
+      second or two.
+- [ ] After the walk, `/reload`: the character's numbers on the *Share*
+      page are the treadmill's measured ones, also if the pace you gave was
+      off.
+
+## 10. The floating window
+
+- [ ] In the app, *Settings → Floating window → Show the floating window*,
+      *Save*: a small dark Walka panel opens in the top-right corner of the
+      screen.
+- [ ] With the game in *Windowed (Fullscreen)* mode and in front, the
+      panel stays on top of it. Also in *Windowed* mode.
+- [ ] Click the panel, then press a movement key: the character moves
+      (the click did not take the keyboard from the game). Tell me if it
+      does not.
+- [ ] Drag the panel somewhere else. Close Walka and start it again: the
+      panel opens where you left it.
+- [ ] Start the belt: the panel's speed follows it, *Walking* with a green
+      dot, and the walk's steps, calories, distance and time count up.
+      `/walka pause` in game: *Paused in game*. Stop the belt: *Today*'s
+      totals, and the bar along the bottom fills towards the step goal.
+- [ ] The panel's ×: it closes, and the setting in Settings is off.
+- [ ] Close Walka's main window with the panel open: both go, and Walka
+      ends (the walk is saved).

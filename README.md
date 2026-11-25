@@ -109,8 +109,9 @@ are under [On a Mac](#on-a-mac) - and the rest is the same.*
      *Windowed (Fullscreen)* mode and keep the top-left corner of the game
      uncovered.
    * **Enter your weight and height:** for the calorie count.
-4. **Walk.** In the game, click the ▶ button on the small Walka box (or
-   type `/walka start`): that says "this walk is for this character".
+4. **Walk.** In the game, type `/walka start` (or click *Walka* in the
+   game's AddOns menu by the minimap): that says "this walk is for this
+   character".
    Then step onto the pad and start the belt **with the treadmill's own
    remote**, at the speed you like.
 
@@ -124,12 +125,14 @@ for any of that.
   it no commands: the belt does what you tell it at the treadmill, and
   nothing else.
 - 📊 **Counts every walk.** Time, distance, steps and calories - live on
-  the dashboard, and in the game while you play. A walk is recorded
+  the dashboard, and in a small floating window on top of the game while
+  you play. A walk is recorded
   whenever the belt moves, with a game or without.
 - 🧙 **Your walks, per character.** Start a session in the game and the
   walk counts for the character you are playing.
 - 🗺️ **Your road on the map.** The path your character has travelled,
-  drawn on the game's world map - brightest where you really walked.
+  drawn on the map of the world on the dashboard's Share picture -
+  brightest where you really walked.
 - 🖼️ **A picture to share.** Your journey so far as a picture, made on
   your own computer. You choose what is on it and where it goes.
 - 🔒 **Stays on your computer.** Nothing is uploaded unless you sign in to
@@ -181,14 +184,16 @@ Everything below is the long version, for when you want it.
 Walka is a walking log for people who walk on an under-desk pad while they
 play **World of Warcraft: Forever**. You walk at the speed you set on the
 pad; Walka counts your time, steps, distance and calories - for this walk
-and every one before it - shows them in an in-game HUD, and keeps them per
+and every one before it - shows them on its dashboard and, if you like, in
+a small floating window on top of the game, and keeps them per
 character.
 
 It is two pieces:
 
 * **the addon** (`Walka/`) - marks your walking sessions, knows which
-  character they belong to, and shows the HUD, history, journey and road
-  map in game;
+  character they belong to, and sends the app your character's journey
+  and road. It draws no windows in game: it is the game's end of the
+  connection, and the app shows everything;
 * **the companion** (`companion/`, the `Walka.exe` you download above, or
   `Walka` on a Mac) - a small app that reads the addon's signal off the
   screen, listens to the treadmill over Bluetooth, records your walks, and
@@ -245,11 +250,12 @@ key presses, no mouse input, no memory reading.
   character is fighting, dead or resting - the companion does not need to
   know, so the addon does not say.
 
-An addon also cannot receive live data, so the in-game HUD shows the
-addon's own estimate (counted from the pace you tell it: see
-[Using it](#using-it)), and the companion's *measured* numbers are written
-to a file the game loads at login or on `/reload`. The dashboard always
-shows the measured numbers live.
+An addon also cannot receive live data, so the addon itself only keeps an
+estimate (counted from the pace you tell it: see
+[Using it](#using-it)), for the journey numbers it sends; the companion's
+*measured* numbers are written to a file the game loads at login or on
+`/reload`. The dashboard - and the floating window on top of the game -
+always show the measured numbers live.
 
 Details: [docs/PROTOCOL.md](docs/PROTOCOL.md).
 
@@ -473,10 +479,12 @@ touched.
 
 ## Using it
 
-In game, press the ▶ button on the HUD (or type `/walka start`): a walking
-session starts for the character you are playing. Step onto the pad and
-start the belt with the treadmill's remote, at whatever speed you like.
-`/walka` shows or hides the HUD.
+In game, type `/walka start` (or click *Walka* in the game's AddOns menu,
+by the minimap): a walking session starts for the character you are
+playing. Step onto the pad and start the belt with the treadmill's remote,
+at whatever speed you like. The addon draws nothing in game but the signal
+strip: the walk is on the dashboard, and in the
+[floating window](#the-floating-window) if you switch it on.
 
 The companion records the walk from what the treadmill reports. A walk is
 whatever the belt does:
@@ -488,43 +496,54 @@ whatever the belt does:
   same, as a walk of its own (*No game session* in the dashboard's
   history).
 
-**Tell the addon your pace.** An addon cannot be told what the treadmill is
-doing while the game runs, so the HUD counts with the speed you say the
-belt is set to: `/walka pace 1.5`, the − and + buttons on the HUD, or
-*Your pace* in `/walka options`. It starts at 1.5 mph - people settle at
-1-2 mph on a treadmill desk. It only feeds the HUD's estimate; it changes
-nothing at the treadmill, and the measured numbers replace the estimate
-later (below).
+**Pause** and **stop** the session with `/walka pause` and `/walka stop` -
+or click *Walka* in the AddOns menu again to pause or resume, and
+right-click it to stop. They pause and end the *session* - the addon's
+count - and nothing else: stop the belt yourself, at the treadmill, when
+you step off. Going AFK pauses the session automatically; it carries on
+when your character next moves.
 
-**Pause** / **Stop** are on the HUD too. They pause and end the *session* -
-the addon's count - and nothing else: stop the belt yourself, at the
-treadmill, when you step off. Going AFK pauses the session automatically
-(you can turn that off); it carries on when your character next moves.
+**Your pace** (`/walka pace 1.5`) is the speed you say the belt is set to.
+The addon counts its own estimate of the walk with it - for your
+character's journey numbers, until the companion's measured numbers arrive
+at the next login or `/reload`. It changes nothing at the treadmill, and
+nothing on the dashboard, which always shows what the treadmill measured.
 
 | Command | What it does |
 |---|---|
-| `/walka` | show or hide the HUD |
+| `/walka` | what the addon is for, and its commands |
 | `/walka start` · `pause` · `resume` · `stop` | mark the walking session |
-| `/walka pace 1.5` | the speed your treadmill is set to, for the HUD's estimate |
-| `/walka history` | past sessions, totals, 7-day chart |
-| `/walka journey` | your character's journey so far (see [below](#your-journey-and-a-picture-to-share)) |
-| `/walka options` | settings |
 | `/walka status` | what the addon is doing right now |
+| `/walka pace 1.5` | the speed your treadmill is set to, for the addon's estimate |
+| `/walka road on` \| `off` | record your character's road for the Share picture, or stop |
 | `/walka weight 180lb` · `/walka height 5'11` | your body, if you do not run the companion |
-| `/walka units mph` \| `kmh` | display units |
+| `/walka units mph` \| `kmh` | units of the addon's chat messages |
 | `/walka beacon on` \| `off` \| `size 2-8` | the signal strip |
 
-### Numbers: estimated now, measured later
+### The floating window
 
-The HUD's live numbers are marked `~`: they are the addon's estimate. After
-a walk, press **Sync** in the history window (it reloads the interface; a
-session in progress carries on) or just log in next time, and the history
-switches that session to what the treadmill measured. The dashboard shows
-measured values the whole time - put it on a second monitor. (It is only
-reachable from the PC itself: it shows your walks, weight and height - and
-the e-mail address of your Walka account, while Walka is signed in to
-one - and has no password, so it is not offered to other devices on your
-network.)
+*Settings → Floating window → Show the floating window* opens a small
+Walka panel that stays on top of every other window - the game's
+included: the belt's speed, and this walk's steps, calories, distance and
+time as the treadmill measures them (today's, with no walk), with your
+day's steps against a goal along the bottom. It looks like the panel the
+addon used to draw in game, but its numbers are measured, live, rather
+than estimated.
+
+* **Drag it** anywhere; it opens there next time. It first opens in the
+  top-right corner of the screen - keep it away from the top-left corner
+  of the game, where the strip is that Walka reads.
+* **Its ×** closes it (the setting goes off with it).
+* **Clicking it** does not take the keyboard from the game.
+* It shows over the game when the game runs in *Windowed* or *Windowed
+  (Fullscreen)* mode - as it has to for Walka to see the game at all.
+* It needs Walka's own window: started with `--browser` or `--no-window`,
+  or with its dashboard in the web browser, Walka has no floating window.
+
+The dashboard is only reachable from the PC itself: it shows your walks,
+weight and height - and the e-mail address of your Walka account, while
+Walka is signed in to one - and has no password, so it is not offered to
+other devices on your network.
 
 ### In combat
 
@@ -690,9 +709,8 @@ there, make your page public and delete the Walka account.
 
 Walka keeps a record for every character you play: the level it has
 reached, its time played and how far it has travelled on foot - and next to
-that the real walking *you* did while playing it. `/walka journey` shows it
-in game, and the dashboard's **Share** page turns it into a picture you can
-post.
+that the real walking *you* did while playing it. The dashboard's
+**Share** page shows it, and turns it into a picture you can post.
 
 1. Log in with the companion running. The character's numbers reach the
    companion within about ten seconds (over the same strip as everything
@@ -815,52 +833,11 @@ never saved.
 
 From the moment the addon is installed it keeps the road your character
 travels - install it before you start a character and the road begins at
-level 1. It is drawn **on the game's own world map**: open the map as you
-always do (or type `/walka map`, or pick *Road map* in the HUD's
-right-click menu) and the road is on it, on every map of the world - all
-of Azeroth, a continent, or a zone in the game's full detail. That goes for
-a land that is no continent of Azeroth as well: a Skyborne's road on
-Zephras Isle is on the isle's own map, and wherever else the game shows
-the isle.
-
-* the road is coloured by level, a colour for every ten levels;
-* the stretches you walked **on the treadmill** - a walking session was
-  running - are bright, with a soft glow; what your character travelled
-  without one is dimmer;
-* flight paths are thin and pale;
-* the road runs right up to your character and grows as you walk, with the
-  map open;
-* it lies over the map's picture and under what the map marks (quest icons,
-  your arrow), and it takes no clicks: the map works as it did.
-
-**With [OpenMap](https://github.com/openmap-world/openmap)** installed the
-road is drawn on OpenMap's seamless map in the same way - Walka asks
-OpenMap where a place is on its map, through the interface OpenMap offers
-other addons - and *My road (Walka)* is a switch in OpenMap's menu (under
-*On the map*) that can be starred onto the map like OpenMap's own. Nothing
-has to be set up; without OpenMap the road is on Blizzard's map.
-
-A small *Walka road* button in the top-left corner of the map hides and
-shows the road, and its tooltip says what the colours mean. `/walka map
-off` and `/walka map on` do the same, and the options page (*Your road*)
-has both the road and the button as tick boxes.
-
-Walka does not open the world map for you in combat: the game restricts
-what an addon may do to the map during a fight. `/walka map` then says so
-and opens Walka's own road window instead; open the world map yourself and
-the road is on it. (With OpenMap's view for controllers, which lays its own
-picture over the map's, the road cannot be seen; the button's tooltip says
-so.)
-
-Walka's own road window is still there as `/walka map window`: one
-continent at a time, the mouse wheel zooms, dragging moves the map, *Me*
-centres it on your character, *Fit* shows the whole continent, `<` and `>`
-change continent, and *Screenshot* saves a picture of the screen. It is
-also what `/walka map` opens in combat, and should the game's world map not
-be found. A land the game does not count among its continents - Zephras
-Isle - is one of the maps `<` and `>` go through from the moment your
-character has stood on it (Walka remembers which map shows it), also after
-you have left.
+level 1. It is drawn on the [Share picture](#the-road-on-the-picture), on
+Walka's own map of the world: coloured by level, brightest where you walked
+on the treadmill, with flight paths thin and pale. (Until version 0.9 the
+addon also drew it on the game's world map. The addon has no windows any
+more; the road is in the app.)
 
 What is recorded: a point every twenty yards (fewer on flight paths, more
 where the road bends), nothing while you stand still, nothing inside
@@ -871,17 +848,11 @@ leaves your PC (the companion reads it there, to draw it on the
 recording (`on` starts it again); what is recorded so far is kept. A road
 from level 1 to 60 comes to about a megabyte.
 
-If the road does not show, `/walka mapcheck` prints what the game answered
-when Walka asked for its maps, whether it found the world map and OpenMap,
-and what it drew.
-
 The way the road is recorded and drawn follows
 [Road to Sixty](https://github.com/Jordanburch101/road-to-sixty) by Jordan
 Burch (MIT licence, see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)) -
 an addon made for exactly this, with a replay of the whole journey, a
 journal of quests and kills, and much more. It runs fine next to Walka.
-Nothing of OpenMap is in Walka: it only calls OpenMap when OpenMap is
-there.
 
 ## Other games, or no game
 
@@ -1040,8 +1011,8 @@ And for you, not for Walka: start slow, and know where the remote is.
 | Walka opens in my web browser, with a small box that says *Walka is running* | That Windows has no *Microsoft Edge WebView2*, which Walka's own window is drawn with. Walka works the same in the browser; the box is how you close it. To get the window: install the *WebView2 Runtime* from Microsoft. See [Walka's window](#walkas-window). |
 | I open Walka and nothing happens | Is it open already? Look on the taskbar (or in the Dock). Otherwise `walka.log`, in the folder with [your settings and walks](#walkas-window), says how far it got: please [open an issue](https://github.com/AntonyPerez0/walka-addon/issues) with it. |
 | A walk is not counted for my character | Was a session running in the game (`/walka status`) while you walked? Without one the walk is recorded as *No game session*. |
-| The HUD's numbers are off | They are an estimate from the pace you told the addon: set it with `/walka pace` to what the treadmill shows. The measured numbers arrive with *Sync*. |
-| History shows `~` numbers | Press *Sync* in the history window after the companion has saved the walk; check *Settings → Game addon* shows the right folder. |
+| The floating window is not on top of the game | Run the game in *Windowed* or *Windowed (Fullscreen)* mode: nothing can be drawn over a game in exclusive fullscreen. |
+| No floating window in Settings | It needs Walka's own window: not with `--browser`, `--no-window` or the dashboard in the web browser. |
 | Addon marked out of date after a game patch | Tick *Load out of date AddOns*, and update the `## Interface:` line in `Walka/Walka.toc`. |
 | Walks are no longer recorded after the pad was switched off and on | The companion reconnects when a session starts in the game, or when you press *Connect* on the dashboard. |
 | The pad keeps waking up | The companion only reconnects when a session starts or you press Connect; closing the companion releases the pad entirely. |
@@ -1049,7 +1020,7 @@ And for you, not for Walka: start slow, and know where the remote is.
 ## Ideas for later
 
 * A foot pod or other Bluetooth cadence sensor for true step counts.
-* Goals and streak rewards in game; milestones announced in chat.
+* Streak rewards in the floating window; milestones announced in chat.
 * Per-game plugins for other games (walks are already recorded with any
   game, or none; a plugin would say which character they are for).
 * Reading daily totals back from Garmin's personal API.
