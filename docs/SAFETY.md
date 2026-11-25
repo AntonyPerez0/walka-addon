@@ -75,9 +75,10 @@ not a companion is listening to it and whatever the game shows meanwhile.
 The addon in the game does not move anything either - it never could; it
 only ever drew the strip.
 
-* `/walka start` (or a click on *Walka* in the game's AddOns menu) marks
-  a walking session: "I am walking now, for this character". The
-  companion files the walk it records under that session.
+* A walking session - which starts by itself at login, or with
+  `/walka start` - says "the walks now are this character's". The
+  companion files the walk it records under that session. Clicking
+  *Walka* in the game's AddOns menu pauses it.
 * The addon has no windows: it draws only the strip. The numbers it keeps
   for the character's journey are estimates, counted from the pace you
   tell it (`/walka pace`): an addon cannot be told what the treadmill is

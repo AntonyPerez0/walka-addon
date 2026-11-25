@@ -283,7 +283,7 @@ function updateLinks(s, links, online) {
   if (beacon && beacon.state === "ok" && frame) {
     detail = frame.active
       ? `Session ${frame.session}${frame.paused ? " (paused in game)" : ""}${s.character && s.character.name ? ` for ${s.character.name}` : ""}. Walks are filed under this session.`
-      : "The addon is visible. No session is marked in game - type /walka start there to count your walk for your character.";
+      : "The addon is visible, but no session is marked in game, so a walk would not count for your character. The session starts by itself when you log in; if it was paused or stopped, click Walka in the game's AddOns menu, by the minimap.";
   }
   setText($("game-detail"), detail);
   const showFlags = beacon && frame && (beacon.state === "ok" || beacon.state === "frozen");

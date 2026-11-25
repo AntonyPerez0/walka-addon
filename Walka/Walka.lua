@@ -63,6 +63,9 @@ local function buildDefaults()
         },
         beacon = { enabled = true, cellPx = Beacon.DEFAULT_CELL_PX },
         autoPauseAFK = true,
+        -- Start the session by itself once the character is in the game,
+        -- so that nobody has to type a command: see Walka:StartAutoSession.
+        autoSession = true,
         recordRoad = true,      -- keep the character's path, for the app's map
         announce = true,
     }
@@ -330,7 +333,7 @@ end
 -- pace while a session is running, 0 while it is paused or there is none.
 function Walka:GetLiveSpeed()
     local session = self.session
-    if session and not session.paused then
+    if session and not session.paused and not session.auto then
         return self:GetPace()
     end
     return 0
@@ -341,7 +344,7 @@ function Walka:GetGameState()
     return self.gameState
 end
 
-function Walka:StartSession()
+function Walka:StartSession(auto)
     if self.session then
         if self.session.paused then
             self:ResumeSession()
@@ -363,7 +366,23 @@ function Walka:StartSession()
         -- (The name as read at login, should the game be hiding it now:
         -- the walk is this character's either way.)
         character = Tracker.CharacterName(),
+        -- Started by itself (Walka:StartAutoSession): it only says whose
+        -- walks are walked now, and estimates nothing.
+        auto = auto and true or nil,
     }
+    if auto then
+        if db.settings.announce then
+            self:Print("connected to the Walka app - walks on your walking pad count for this character. "
+                .. "Click Walka in the AddOns menu to pause.")
+        end
+        self:Fire("SESSION", "start")
+        -- The Share picture's time played: asked for once if this
+        -- character's is not known yet (it is counted on from there).
+        if db.settings.announce and not Tracker.Played() then
+            Tracker.RequestPlayed()
+        end
+        return
+    end
     if db.settings.announce then
         self:Print(string.format(
             "session started - your walk counts for this character. Start the belt at the treadmill; "
@@ -380,6 +399,25 @@ function Walka:StartSession()
     if db.settings.announce then
         Tracker.RequestPlayed()
     end
+end
+
+--- The session Walka starts by itself, once a login, as soon as the
+-- character is known: the walk the app records while it runs is filed
+-- under this character, with nobody typing a command. It makes no estimate
+-- of its own (it cannot know whether anybody is on the pad): only the
+-- treadmill's measured numbers count, once they arrive. A session the
+-- player stops stays stopped until the next login or /reload.
+function Walka:StartAutoSession()
+    self.autoTried = true
+    if self.session or not self.db.settings.autoSession then
+        return
+    end
+    local name = Tracker.CharacterName()
+    if not ns.Journey.isCharacter(name) then
+        self.autoTried = false  -- the game has not said who this is yet: next tick
+        return
+    end
+    self:StartSession(true)
 end
 
 function Walka:PauseSession(reason)
@@ -443,6 +481,7 @@ local function finishRecord(session, endTime)
         yards = math.floor(session.yards + 0.5),
         maxKmh = math.floor((session.maxKmh or 0) * 100 + 0.5) / 100,
         character = session.character,
+        auto = session.auto,
     }
 end
 
@@ -464,7 +503,9 @@ function Walka:StopSession(endTime)
             Tracker.Forget(table.remove(sessions, 1))
         end
         Tracker.HistoryChanged()
-        if self.db.settings.announce then
+        if self.db.settings.announce and record.auto then
+            self:Print("session finished - the Walka app has the treadmill's numbers.")
+        elseif self.db.settings.announce then
             self:Print(string.format(
                 "session finished: %s, %s, %s steps, %d kcal (estimates - the Walka app has the treadmill's numbers).",
                 self:FormatDuration(record.seconds),
@@ -538,6 +579,9 @@ function Walka:Tick(dt)
     -- The journey counts every yard, with or without a session.
     Tracker.Travel(state, dt)
     RoadRecorder.Watchdog()
+    if not self.autoTried then
+        self:StartAutoSession()
+    end
     local session = self.session
     local flags = stateFlags(state)
 
@@ -567,7 +611,12 @@ function Walka:Tick(dt)
             end
         else
             session.yards = session.yards + state.speed * dt
-            Metrics.walk(session, dt, self:GetPace(), self:GetProfile())
+            if session.auto then
+                -- Time only: whether anybody walked is the treadmill's to say.
+                session.seconds = session.seconds + dt
+            else
+                Metrics.walk(session, dt, self:GetPace(), self:GetProfile())
+            end
         end
     end
 
@@ -666,6 +715,7 @@ local function restoreSession(self)
     end
     -- (Kept by older versions for a rule about restarting the belt.)
     session.afkStill, session.pausedAt = nil, nil
+    session.auto = session.auto == true or nil
     local savedAt = tonumber(saved.savedAt) or 0
     if Game.Now() - savedAt <= Walka.RESUME_WINDOW_SECONDS then
         self.session = session
@@ -749,6 +799,7 @@ local HELP = {
     "/walka status - what the addon is doing right now",
     "/walka pace 1.5 - the speed your treadmill is set to, for the estimate until the app's numbers arrive",
     "/walka road on | off - record your character's road for the app's map, or stop",
+    "/walka auto on | off - start the session by itself at login (on), or only when asked",
     "/walka weight 180lb (or 82kg) - your weight, for calorie estimates",
     "/walka height 5'11 (or 180cm) - your height, for step estimates",
     "/walka units mph | kmh",
@@ -787,6 +838,19 @@ local function slash(message)
         -- The windows these opened are gone: the app shows all of it.
         self:Print("the addon has no windows any more: your walks, history, journey and road are in the "
             .. "Walka app. For the walk on top of the game: Settings -> Floating window, in the app.")
+    elseif command == "auto" then
+        if rest == "on" or rest == "off" then
+            self:Set("autoSession", rest == "on")
+            if rest == "on" then
+                self:Print("Walka starts the session by itself when you log in.")
+                self:StartAutoSession()
+            else
+                self:Print("Walka no longer starts the session by itself: click Walka in the AddOns menu, "
+                    .. "or /walka start, when you walk.")
+            end
+        else
+            self:Print("use /walka auto on or /walka auto off.")
+        end
     elseif command == "road" then
         if rest == "on" or rest == "off" then
             self:Set("recordRoad", rest == "on")

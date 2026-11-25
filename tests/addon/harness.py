@@ -237,8 +237,13 @@ class WowRuntime:
         files: dict[str, str] | None = None,
         state: dict[str, Any] | None = None,
         snapshot: Snapshot | None = None,
+        auto_session: bool = True,
     ):
         self.snapshot = snapshot or load_snapshot()
+        # False: the addon's setting that starts a session by itself at login
+        # is switched off as it loads - for the many tests about sessions
+        # that the player starts and stops.
+        self.auto_session = auto_session
         self.addon_dir = Path(addon_dir)
         tocs = sorted(self.addon_dir.glob("*.toc"))
         if not tocs:
@@ -342,6 +347,8 @@ class WowRuntime:
         self.loaded = True
         # ... and just before ADDON_LOADED.
         self.fire_event("ADDON_LOADED", self.addon_name)
+        if not self.auto_session:
+            self.run("if Walka and Walka.db then Walka.db.settings.autoSession = false end")
         self.fire_event("PLAYER_LOGIN")
         self.fire_event("PLAYER_ENTERING_WORLD", not reloading, reloading)
         return self
@@ -361,7 +368,12 @@ class WowRuntime:
         state["clock"] = state["clock"] + gap
         state["uptime"] = state["uptime"] + gap
         fresh = WowRuntime(
-            addon_dir=self.addon_dir, saved_variables=saved, files=self.files, state=state, snapshot=self.snapshot
+            addon_dir=self.addon_dir,
+            saved_variables=saved,
+            files=self.files,
+            state=state,
+            snapshot=self.snapshot,
+            auto_session=self.auto_session,
         )
         return fresh.load_addon(reloading=gap == 0.0)
 

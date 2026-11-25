@@ -642,13 +642,15 @@ def test_settings_and_history_survive_reloads(rt):
     assert fresh.db.version == 1
 
 
-def test_settings_of_a_fresh_install(rt):
+def test_settings_of_a_fresh_install(make_rt):
+    rt = make_rt(auto_session=True)
     assert lua_plain(rt.db.settings) == {
         "units": "mph",                                     # an enUS client
         "paceKmh": 2.414,                                   # 1.5 mph
         "profile": {"weightKg": 75, "heightCm": 172},
         "beacon": {"enabled": True, "cellPx": 4},
         "autoPauseAFK": True,
+        "autoSession": True,
         "recordRoad": True,
         "announce": True,
     }, "exactly these settings: nothing that no code reads (such as the old netCalories)"

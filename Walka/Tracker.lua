@@ -88,7 +88,9 @@ end
 -- that is thrown away again never shows in the totals.
 local function liveSession()
     local session = core.session
-    if session and session.character == key and session.seconds >= core.MIN_SESSION_SECONDS then
+    -- (One Walka started by itself estimates nothing: it is not counted
+    -- until the treadmill's numbers for it arrive.)
+    if session and session.character == key and not session.auto and session.seconds >= core.MIN_SESSION_SECONDS then
         return session
     end
     return nil

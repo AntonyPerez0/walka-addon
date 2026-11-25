@@ -287,7 +287,7 @@ export function describe(s) {
       }
     } else if (s.source.beacon) {
       detail =
-        "The belt is moving. No session is marked in a game, so the walk is recorded on its own. In World of Warcraft, /walka start files it under your character.";
+        "The belt is moving. No session is marked in a game, so the walk is recorded on its own. In World of Warcraft the session starts by itself when you log in (or click Walka in the game's AddOns menu).";
     } else {
       detail = `The belt is moving. ${NOT_FILED}`;
     }
@@ -340,7 +340,9 @@ export function describe(s) {
     title: "Ready",
     short: "Ready",
     detail: `Start the belt with the treadmill's own remote - Walka records the walk by itself. ${
-      s.source.beacon ? "In World of Warcraft, /walka start files it under your character." : NOT_FILED
+      s.source.beacon
+        ? "In World of Warcraft the session starts by itself when you log in, and the walk counts for your character."
+        : NOT_FILED
     }`,
   };
 }

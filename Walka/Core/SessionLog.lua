@@ -195,7 +195,9 @@ function SessionLog.merge(ownSessions, companionData, absorbed)
 
     if type(ownSessions) == "table" then
         for index, own in ipairs(ownSessions) do
-            if not used[index] then
+            -- (A session the addon started by itself estimates nothing: on
+            -- its own, without a measured walk in it, it is no walk.)
+            if not used[index] and not own.auto then
                 local entry = fromOwn(own)
                 if SessionLog.unconfirmed(own, written) then
                     entry.unconfirmed = true
