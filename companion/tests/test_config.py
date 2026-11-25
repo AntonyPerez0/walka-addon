@@ -30,7 +30,7 @@ def test_there_is_nothing_to_set_about_the_belt():
     """No speed limit, no STOP hotkey, no manual speed, no disclaimer to
     accept before a belt is moved: the companion moves no belt."""
     assert set(Config().to_dict()) == {
-        "units", "profile", "treadmill", "heart_rate", "wow", "web", "overlay", "welcome_done"
+        "units", "profile", "treadmill", "heart_rate", "wow", "web", "overlay", "updates", "welcome_done"
     }  # fmt: skip
     assert set(Config().to_dict()["overlay"]) == {"enabled", "step_goal", "x", "y"}  # a window, and where it is
     assert set(Config().to_dict()["treadmill"]) == {"kind", "address", "name_prefixes", "units", "auto_connect"}

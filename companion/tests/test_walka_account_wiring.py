@@ -153,6 +153,7 @@ SNAPSHOT_KEYS = {
     "heart_rate",
     "addon",
     "check",
+    "update",
     "setup",
     "config",
     "events",
@@ -451,7 +452,7 @@ def test_the_snapshot_gains_one_key_with_the_part_and_none_without(tmp_path):
             )
             # The e-mail address is in the part's piece and nowhere else; the settings know nothing of it.
             assert "walker@mail.example" not in json.dumps({key: snapshot[key] for key in SNAPSHOT_KEYS})
-            assert set(snapshot["config"]) == {"units", "profile", "treadmill", "heart_rate", "wow", "web", "overlay", "welcome_done"}
+            assert set(snapshot["config"]) == {"units", "profile", "treadmill", "heart_rate", "wow", "web", "overlay", "updates", "welcome_done"}
 
     run(scenario)
 

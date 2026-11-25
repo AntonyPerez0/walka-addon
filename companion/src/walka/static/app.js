@@ -91,6 +91,15 @@ function updateChrome(s, summary, links, online) {
   if (document.title !== title) document.title = title;
   // "Nothing is uploaded", on every view - unless walks are being sent to a Walka account.
   updateFeet(s);
+  // A newer Walka, when the update notice is switched on.
+  const update = online && s && s.update;
+  const newer = !!(update && update.enabled && update.newer);
+  setShown($("update-note"), newer);
+  if (newer) {
+    setText($("update-title"), `Walka ${update.latest.replace(/^v/, "")} is out.`);
+    setText($("update-detail"), `You have ${update.current}. Walka does not update itself: download the new version from its page.`);
+    setAttr($("update-link"), "href", update.url);
+  }
 }
 
 function render() {

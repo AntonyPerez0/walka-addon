@@ -238,7 +238,8 @@ def test_the_card_is_last_in_settings_hidden_and_quiet():
     after = page[page.index(card) + len(card) :]
     assert page.index(card) > grid
     assert re.match(r'\s*</div>\s*<p class="foot muted small">', after)
-    assert page.count("<section", grid, page.index(card)) == 6  # the six cards that were there, all before it
+    # The cards that were there (and Updates, since), all before it.
+    assert page.count("<section", grid, page.index(card)) == 7
 
 
 def test_nothing_is_called_plain_account():

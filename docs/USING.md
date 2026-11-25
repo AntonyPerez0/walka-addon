@@ -339,3 +339,14 @@ Nothing to set up: the companion records a walk whenever the belt moves.
 Start the belt with the treadmill's remote and play anything, or nothing.
 Such a walk is in the dashboard's history as *No game session*, and in
 your totals.
+
+## Updates
+
+Walka does not look for new versions unless you ask it to. *Settings →
+Updates → Tell me when a new version of Walka is out* switches that on:
+Walka then asks GitHub, once a day while it runs, which release is the
+newest (the request names the program and its version, and nothing about
+you), and shows a note with a link when there is a newer one. Walka never
+downloads or installs anything by itself - the new version is downloaded
+the same way as the first one, warnings and all (see
+[Is the download safe?](INSTALL.md#is-the-download-safe)).

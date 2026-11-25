@@ -35,6 +35,8 @@ from .session import SessionRecord, SessionRecorder, SessionStore
 from .sources import BeaconSource, Reading
 from .treadmill import Treadmill, TreadmillError, TreadmillEvent
 from .treadmill_check import REPORTS_DIR, CheckState, run_check
+from .updates import UpdateState
+from .updates import check as check_for_update
 
 log = logging.getLogger(__name__)
 
@@ -125,6 +127,10 @@ class App:
         self._checking = False
         self._check_task: asyncio.Task | None = None
         self.probe_fn: Any = None  # tests hand in a stand-in for probe.probe
+        # The update notice (updates.py): nothing is asked unless it is switched on.
+        self.update = UpdateState()
+        self._update_task: asyncio.Task | None = None
+        self.update_fetch: Any = None  # tests hand in a stand-in for updates.fetch_latest
 
         self._connect_now = asyncio.Event()
         self.watching = False  # listening for the lost treadmill's advertisements
@@ -240,6 +246,7 @@ class App:
             if self.treadmill.status.connected:  # (a belt out of reach has not been heard to stop)
                 self.log_event("The belt is moving." if moving else "The belt has stopped.")
         self._record(wall, reading, speed)
+        self._maybe_check_for_update()
 
     # ---- recording ---------------------------------------------------------------
     def _wanted_recording(self, reading: Reading, moving: bool) -> tuple[str, int | None] | None:
@@ -533,6 +540,24 @@ class App:
             if was_wanted:
                 self.connect()
 
+    # ---- the update notice ------------------------------------------------------------
+    def _maybe_check_for_update(self) -> None:
+        """From the tick: start a check when it is switched on and one is due."""
+        if not self.config.updates.check or self._stopping.is_set():
+            return
+        if self._update_task is not None and not self._update_task.done():
+            return
+        mono = self.mono()
+        if mono < self.update.next_at:
+            return
+        fetch = self.update_fetch
+        if fetch is None:
+            from .updates import fetch_latest as fetch
+        self.update.next_at = mono + 60.0  # (not twice while this one runs)
+        self._update_task = asyncio.create_task(
+            check_for_update(self.update, fetch=fetch, wall=self.wall(), mono=mono), name="walka-update-check"
+        )
+
     def save_config(self) -> None:
         try:
             config_module.save(self.config, self.data_dir)
@@ -558,6 +583,12 @@ class App:
         self.save_config()
         if isinstance(patch.get("overlay"), dict):
             self._apply_overlay()
+        if isinstance(patch.get("updates"), dict):
+            # Switched on: ask now. Switched off: forget the answer (and ask nothing).
+            self.update = UpdateState()
+            if self._update_task is not None:
+                self._update_task.cancel()
+                self._update_task = None
         self.sync_addon()
 
     # ---- the floating window ---------------------------------------------------------
@@ -662,6 +693,7 @@ class App:
                 "error": self.addon_error,
             },
             "check": self.check.to_dict(self.wall()),
+            "update": self.update.to_dict(self.config.updates.check),
             "setup": {"profile_set": self.profile_is_set(), "system_units": self.system_units()},
             "config": self.config.to_dict(),
             "events": list(self.events)[:30],
@@ -808,6 +840,8 @@ class App:
         self._connect_now.set()
         if self._check_task is not None:
             self._check_task.cancel()
+        if self._update_task is not None:
+            self._update_task.cancel()
         for task in self._tasks:
             task.cancel()
         if self.walka_account is not None:

@@ -97,6 +97,13 @@ class OverlayConfig:
 
 
 @dataclass
+class UpdatesConfig:
+    """The update notice (updates.py): asks GitHub only when switched on."""
+
+    check: bool = False
+
+
+@dataclass
 class Config:
     """Everything the companion can be told. (A file written by a version
     that could still drive a belt holds more - speed limits, a STOP hotkey,
@@ -110,6 +117,7 @@ class Config:
     wow: WowConfig = field(default_factory=WowConfig)
     web: WebConfig = field(default_factory=WebConfig)
     overlay: OverlayConfig = field(default_factory=OverlayConfig)
+    updates: UpdatesConfig = field(default_factory=UpdatesConfig)
     # The first-run guide has been finished (or skipped). A settings file
     # from before there was a guide counts as finished: see load().
     welcome_done: bool = False

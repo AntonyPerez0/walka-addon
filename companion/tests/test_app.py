@@ -501,6 +501,7 @@ def test_snapshot_is_json_serialisable_and_says_nothing_about_control(rig: Rig):
         "heart_rate",
         "addon",
         "check",
+        "update",
         "setup",
         "config",
         "events",
@@ -513,7 +514,7 @@ def test_snapshot_is_json_serialisable_and_says_nothing_about_control(rig: Rig):
     assert snapshot["source"]["kind"] == "wow" and "manual" not in snapshot["source"]
     assert "target_kmh" not in snapshot["source"]["frame"]
     assert set(snapshot["config"]) == {
-        "units", "profile", "treadmill", "heart_rate", "wow", "web", "overlay", "welcome_done"
+        "units", "profile", "treadmill", "heart_rate", "wow", "web", "overlay", "updates", "welcome_done"
     }  # fmt: skip
     assert "stop_on_exit" not in snapshot["config"]["treadmill"]
 
@@ -749,7 +750,7 @@ def test_settings_of_an_older_version_are_ignored_not_obeyed(tmp_path: Path):
     app = App(config, data, treadmill=SimulatedTreadmill(auto_run=False), beacon=BeaconSource(None))
     app.update_config({"limits": {"max_speed_kmh": 6.0}, "stop_hotkey": "f13", "terms": {"accepted_version": 9}})
     saved = json.loads((data / "config.json").read_text("utf-8"))
-    assert set(saved) == {"units", "profile", "treadmill", "heart_rate", "wow", "web", "overlay", "welcome_done"}
+    assert set(saved) == {"units", "profile", "treadmill", "heart_rate", "wow", "web", "overlay", "updates", "welcome_done"}
     assert "stop_on_exit" not in saved["treadmill"]
 
 

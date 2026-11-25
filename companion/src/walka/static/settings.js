@@ -7,7 +7,7 @@
 // clamps everything to its own bounds; the ranges here mirror config._BOUNDS
 // so mistakes are caught before they are sent.
 
-import { $, CM_PER_INCH, U, api, h, post, run, setShown, setText, setTone, toast } from "./util.js";
+import { $, CM_PER_INCH, U, api, fmt, h, post, run, setShown, setText, setTone, toast } from "./util.js";
 import { installAddon, scanInto, syncAddon } from "./live.js";
 import { initWalkaAccount, updateWalkaAccount } from "./walkaaccount.js";
 
@@ -604,6 +604,17 @@ const FORMS = {
   },
 };
 
+FORMS.updates = {
+  fields: [
+    {
+      type: "check",
+      path: "updates.check",
+      label: "Tell me when a new version of Walka is out",
+      help: "Off unless you switch it on. Then Walka asks GitHub, once a day, which version is the newest - nothing else is sent, and nothing is downloaded or installed by itself: you get a link to the new version's page.",
+    },
+  ],
+};
+
 // The first-run guide asks for weight and height only.
 FORMS.welcome = { confirm: "profile", fields: FORMS.profile.fields.slice(0, 2) };
 
@@ -642,6 +653,16 @@ function updateStatusCards(s, links) {
   setShown($("addon-sync-2"), addon.installed);
 
   setShown($("overlay-note"), !(s.overlay && s.overlay.available));
+
+  const update = s.update || { enabled: false };
+  let status = "";
+  if (update.enabled) {
+    if (update.error) status = update.error;
+    else if (!update.checked_at) status = "Asking GitHub...";
+    else if (update.newer) status = `Walka ${update.latest.replace(/^v/, "")} is out (you have ${update.current}).`;
+    else status = `You have the newest version (${update.current}). Last asked ${fmt.timeOfDay(update.checked_at)}.`;
+  }
+  setText($("update-status"), status);
 }
 
 async function findGameFolders(button) {

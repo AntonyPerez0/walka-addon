@@ -462,7 +462,7 @@ def test_press_is_not_available_on_a_real_treadmill(rig: Rig):
 def test_config_read_and_clamped_update(rig: Rig):
     async def scenario(client: TestClient):
         config = await (await client.get("/api/config")).json()
-        assert set(config) == {"units", "profile", "treadmill", "heart_rate", "wow", "web", "overlay", "welcome_done"}
+        assert set(config) == {"units", "profile", "treadmill", "heart_rate", "wow", "web", "overlay", "updates", "welcome_done"}
         response = await post(
             client,
             "/api/config",

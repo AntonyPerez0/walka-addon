@@ -154,6 +154,12 @@
 
 <main id="main">
 
+<!-- The update notice (Settings -> Updates; off unless switched on). A link, never a download. -->
+<div id="update-note" class="update-note" role="status" hidden>
+  <p><strong id="update-title">A new version of Walka is out.</strong> <span id="update-detail"></span></p>
+  <a class="btn small" id="update-link" target="_blank" rel="noopener noreferrer">What's new, and the download</a>
+</div>
+
 <!-- ====================================================================== LIVE -->
 <section id="view-live" class="view" aria-labelledby="view-live-h">
   <header class="view-head">
@@ -603,6 +609,12 @@
         </div>
       </section>
     </div>
+
+    <section class="card wide" id="set-updates" aria-labelledby="set-updates-h" tabindex="-1">
+      <header class="card-head"><h3 id="set-updates-h">Updates</h3></header>
+      <form class="form" data-form="updates" novalidate></form>
+      <p class="link-detail" id="update-status"></p>
+    </section>
 
     <!-- Sending walks to a Walka account. Not there at all unless Walka has that part (the script
          shows the card only then), and quiet until somebody signs in: everything in it is written

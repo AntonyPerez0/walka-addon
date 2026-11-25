@@ -3133,3 +3133,29 @@ body[data-welcome="1"] main {
 .tile-link[hidden] {
   display: none;
 }
+
+/* A newer Walka (only with the update notice switched on). */
+.update-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  margin: 16px calc(var(--gutter) + var(--dock-w)) 0 var(--gutter); /* clear of the belt's state, as the view's title is */
+  padding: 12px 16px;
+  border-radius: var(--r);
+  background: var(--tint);
+  box-shadow: inset 3px 0 0 var(--accent);
+  color: var(--ink-2);
+  font-size: 14px;
+}
+.update-note[hidden] {
+  display: none;
+}
+.update-note p {
+  margin: 0;
+  flex: 1 1 280px;
+}
+.update-note strong {
+  color: var(--ink);
+}
