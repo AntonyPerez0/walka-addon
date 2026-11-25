@@ -467,6 +467,32 @@ class App:
         self._eager_connect = True
         self._connect_now.set()
 
+    async def use_reader(self, kind: str) -> None:
+        """Read the treadmill another way (treadmill/readers.py): a device picked
+        from all Bluetooth devices that speaks another protocol. The old reader
+        lets go first; the walk being recorded ends where its listening ends."""
+        from .treadmill import readers
+
+        if kind == self.treadmill.kind or kind not in readers.KINDS or self.treadmill.kind == "simulated":
+            return
+        old = self.treadmill
+        try:
+            await old.disconnect()
+        except Exception as exc:
+            log.debug("letting go of the old reader failed: %s", exc)
+        new = readers.build(
+            kind,
+            self.config.treadmill.address or None,
+            name_prefixes=self.config.treadmill.name_prefixes,
+            units=self.config.treadmill.units,
+            backend=getattr(old, "_backend", None),
+        )
+        new.on_event = self._on_treadmill_event
+        self.treadmill = new
+        self.config.treadmill.kind = kind
+        self.save_config()
+        self.log_event(f"Walka now reads the treadmill as {kind.upper()}.")
+
     def forget_treadmill(self) -> None:
         """Forget which treadmill Walka is tied to, so that the next one it
         finds is taken (and remembered in turn)."""

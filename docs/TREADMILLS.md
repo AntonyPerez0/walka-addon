@@ -59,3 +59,7 @@ devices* lists everything in range. *Check* next to a device connects to
 it, looks at what it offers, and lets go: if it sends something Walka can
 read, Walka connects to it as your treadmill; if not, it says what the
 device does offer. Checking writes nothing to the device.
+
+**A treadmill that is not FTMS, or a foot pod:** Walka also reads standard
+*Running Speed and Cadence* sensors (untested on hardware so far) - see
+[HARDWARE.md](HARDWARE.md#running-speed-and-cadence-sensors-foot-pods-treadmill-sensors).

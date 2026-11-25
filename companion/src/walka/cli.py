@@ -80,9 +80,10 @@ def _build_treadmill(cfg: config_module.Config, simulate: bool):
         from .treadmill.simulated import SimulatedTreadmill
 
         return SimulatedTreadmill(us_firmware=cfg.units == "mph")
-    from .treadmill.ftms_ble import FtmsTreadmill
+    from .treadmill import readers
 
-    return FtmsTreadmill(
+    return readers.build(
+        cfg.treadmill.kind if cfg.treadmill.kind in readers.KINDS else "ftms",
         cfg.treadmill.address or None,
         name_prefixes=cfg.treadmill.name_prefixes,
         units=cfg.treadmill.units,

@@ -39,7 +39,7 @@ def default_data_dir() -> Path:
 
 @dataclass
 class TreadmillConfig:
-    kind: str = "ftms"  # "ftms" | "simulated"
+    kind: str = "ftms"  # "ftms" | "rsc" (treadmill/readers.py) | "simulated"
     # Bluetooth address. Empty = the first matching treadmill; the companion
     # then stores that pad's address here, so that every later reconnect can
     # only reach the same pad.
@@ -276,7 +276,7 @@ def apply_update(config: Config, data: dict[str, Any]) -> Config:
         # the settings.
         log.warning("web.host %r is not this computer itself - using 127.0.0.1", config.web.host)
         config.web.host = "127.0.0.1"
-    if config.treadmill.kind not in ("ftms", "simulated"):
+    if config.treadmill.kind not in ("ftms", "rsc", "simulated"):
         config.treadmill.kind = "ftms"
     if config.treadmill.units not in ("auto", "mph", "kmh"):
         config.treadmill.units = "auto"

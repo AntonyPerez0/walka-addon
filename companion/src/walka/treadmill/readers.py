@@ -24,7 +24,24 @@ class Reader:
 
 READERS: tuple[Reader, ...] = (
     Reader("ftms", ftms.TREADMILL_DATA, "standard treadmill data (Bluetooth FTMS)"),
+    Reader("rsc", ftms.RSC_MEASUREMENT, "running speed and cadence (a foot pod or a treadmill's sensor)"),
 )
+KINDS = tuple(reader.key for reader in READERS)
+
+
+def build(kind: str, address: str | None, *, name_prefixes=None, units: str = "auto", backend=None):
+    """The reader for ``kind`` (one of KINDS), for the treadmill at ``address``."""
+    if kind == "rsc":
+        from .rsc import RscTreadmill
+
+        return RscTreadmill(address or None, units=units, backend=backend)
+    from .ftms_ble import FtmsTreadmill
+
+    kwargs = {"units": units, "backend": backend}
+    if name_prefixes is not None:
+        kwargs["name_prefixes"] = name_prefixes
+    return FtmsTreadmill(address or None, **kwargs)
+
 
 # Names for the services a device may offer, so that "what it has" reads as words.
 SERVICE_NAMES = {

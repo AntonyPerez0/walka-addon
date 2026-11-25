@@ -196,6 +196,7 @@ def create_app(app: App) -> web.Application:
         except Exception as exc:
             raise web.HTTPConflict(text=str(exc)) from None
         if found["readable"]:
+            await app.use_reader(found["reader"])  # (the same reader, mostly: then nothing changes)
             app.connect(found["address"])
         return ok(device=found)
 

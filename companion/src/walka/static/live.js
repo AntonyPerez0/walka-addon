@@ -190,7 +190,9 @@ function updateTreadmill(s, link) {
   const known = !!t.name;
   setText($("tm-name"), known ? t.name : "-");
   setAttr($("tm-name"), "title", known && t.address ? `${t.name} (${t.address})` : null);
-  setText($("tm-range"), known ? `${fmt.speed(t.min_kmh)}-${fmt.speedU(t.max_kmh)}` : "-");
+  // (A running speed and cadence sensor has no speed range: the default one is not its.)
+  const ranged = known && t.kind !== "rsc";
+  setText($("tm-range"), ranged ? `${fmt.speed(t.min_kmh)}-${fmt.speedU(t.max_kmh)}` : known ? "not sent" : "-");
   setText($("tm-step"), known ? `${trimNumber(U.speed(t.step_kmh), 2)} ${U.speedUnit}` : "-");
   setText($("tm-grid"), known ? (t.mph_grid ? "mph grid" : "km/h grid") : "-");
   setText($("tm-address"), t.address || "-");

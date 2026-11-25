@@ -17,6 +17,7 @@ from __future__ import annotations
 from ..recording import Recording, ReplayBackend
 from .base import Treadmill, TreadmillEvent
 from .ftms_ble import FtmsTreadmill
+from .readers import build, reader_for
 
 
 class ReplayTreadmill(Treadmill):
@@ -27,7 +28,13 @@ class ReplayTreadmill(Treadmill):
         super().__init__()
         self.recording = recording
         self.backend = ReplayBackend(recording, time_scale=time_scale)
-        self._reader = FtmsTreadmill(backend=self.backend, units=units, name_prefixes=(recording.name or "",))
+        # Read the way the recorded device is read: FTMS, RSC, ... (treadmill/readers.py).
+        reader = reader_for(recording.characteristics())
+        kind = reader.key if reader else "ftms"
+        address = self.backend.find_address()
+        self._reader: FtmsTreadmill = build(
+            kind, address, name_prefixes=(recording.name or "",), units=units, backend=self.backend
+        )
         self.status = self._reader.status  # one status: the reader's
         self._reader.on_event = self._relay
 

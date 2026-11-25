@@ -227,6 +227,30 @@ To add a treadmill to the names Walka knows:
    table in [TREADMILLS.md](TREADMILLS.md). And a paragraph here saying
    what was seen and on which model.
 
+## Running Speed and Cadence sensors (foot pods, treadmill sensors)
+
+Walka can also read a standard Bluetooth *Running Speed and Cadence*
+sensor (service `0x1814`, RSC Measurement `0x2A53`): a foot pod on a shoe,
+or a treadmill's own speed sensor. This reader
+([`treadmill/rsc.py`](../companion/src/walka/treadmill/rsc.py)) is
+**untested on hardware**: it is built from the Bluetooth specification and
+tested against recordings put together from it.
+
+* Pick the sensor under *Treadmill → Scan → Show all Bluetooth devices →
+  Check*. If it sends RSC, Walka switches to reading it that way (and
+  remembers it).
+* **Speed** is the sensor's. RSC has no "stopped" or "paused" events: the
+  belt counts as moving while the speed is above a crawl.
+* **Steps** are counted from the cadence, so they are real steps, not an
+  estimate. Some sensors report strides (one per two steps): a cadence
+  under 75 a minute at walking speed is taken for strides and doubled. If
+  your step count comes out half or double, please say so in an issue,
+  with a `walka probe --record` recording.
+* **Distance** is the sensor's own total if it sends one; otherwise Walka
+  works it out from the speed.
+* A foot pod measures your feet, not the belt: on a treadmill the two
+  agree closely, but not exactly.
+
 ## Windows notes
 
 * The Bluetooth library (bleak) documents Windows 11 as its supported

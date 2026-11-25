@@ -160,6 +160,11 @@ def describe_bluetooth_error(exc: BaseException, timeout_hint: str = PAD_TIMEOUT
 
 class FtmsTreadmill(Treadmill):
     kind = "ftms"
+    # The characteristic the walk comes from; a device without it is refused.
+    # (A reader of another protocol - treadmill/rsc.py - changes these two and
+    # _setup, and keeps the rest: finding, connecting, a lost link.)
+    DATA_CHARACTERISTIC = ftms.TREADMILL_DATA
+    NOT_READABLE = "does not send FTMS treadmill data"
 
     def __init__(
         self,
@@ -267,8 +272,8 @@ class FtmsTreadmill(Treadmill):
         client = backend.client(device, link_lost)
         try:
             await client.connect()
-            if not client.has_characteristic(ftms.TREADMILL_DATA):
-                raise TreadmillError(f"{device.name or device.address} does not send FTMS treadmill data")
+            if not client.has_characteristic(self.DATA_CHARACTERISTIC):
+                raise TreadmillError(f"{device.name or device.address} {self.NOT_READABLE}")
             self._client = client
             await asyncio.wait_for(self._setup(client), SETUP_TIMEOUT_S)
             # The link can drop during set-up without any step failing (the

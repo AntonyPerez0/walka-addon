@@ -254,12 +254,15 @@ class ReplayBackend:
         self.client_kwargs = client_kwargs
         self.clients: list[ReplayClient] = []
 
+    def find_address(self) -> str:
+        return self.recording.address or "REPLAY"
+
     def _device(self) -> FoundDevice:
         from . import ftms
 
         return FoundDevice(
             name=self.recording.name,
-            address=self.recording.address or "REPLAY",
+            address=self.find_address(),
             rssi=-50,
             ftms=ftms.FTMS_SERVICE in self.recording.services,
         )
