@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Safety and the disclaimer
+    url: https://github.com/AntonyPerez0/walka-addon/blob/HEAD/DISCLAIMER.md
+    about: What Walka is and is not. Walka only listens to a treadmill; it never moves the belt.
+  - name: Security problem
+    url: https://github.com/AntonyPerez0/walka-addon/blob/HEAD/SECURITY.md
+    about: Please do not report a security problem in a public issue.

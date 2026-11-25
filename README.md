@@ -304,11 +304,13 @@ Things to know:
 a private language (many NordicTrack / iFIT machines, the older KingSmith
 WalkingPads), and bikes or rowers - Walka only reads treadmills.
 
-**Is yours not listed, or not behaving?** Run `Walka.exe probe` (on a Mac:
-[`Walka probe`](#on-a-mac)) with the treadmill on. Like Walka itself it only listens - it sends the treadmill no commands - and saves a
-small text report.
-[Open an issue](https://github.com/AntonyPerez0/walka-addon/issues) with
-that report and the treadmill's make and model, and it can be added.
+**Is yours not listed, or not behaving?** Run `Walka.exe probe --record`
+(on a Mac: [`Walka probe --record`](#on-a-mac)) with the treadmill on, and
+work it with its remote while it listens. Like Walka itself it only
+listens - it sends the treadmill no commands - and saves a small text
+report and a recording of what the treadmill sent.
+[Fill in "My treadmill"](https://github.com/AntonyPerez0/walka-addon/issues/new?template=my-treadmill.yml)
+with both files and the treadmill's make and model, and it can be added.
 
 The saved report is made to be posted in public. It lists fitness machines
 only - not the headphones, watches and televisions that are also in

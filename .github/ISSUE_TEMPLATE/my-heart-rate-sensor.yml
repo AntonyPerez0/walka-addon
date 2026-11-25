@@ -1,0 +1,63 @@
+name: My heart-rate sensor
+description: Tell us how Walka does with your heart-rate strap, arm band or watch.
+title: "[Heart rate] <make and model>"
+labels: ["heart rate"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Walka reads heart rate from any sensor or watch that broadcasts it over standard Bluetooth (the Heart Rate service).
+        Many watches only do this once you switch broadcasting on - see *Settings → Heart rate* on the dashboard.
+
+        **The report file.** With the sensor on (or broadcasting) and on your body, make a report from a command prompt with
+        `Walka.exe probe --record --address <the sensor's address>` (on a Mac, typed in Terminal as the README's *On a Mac* section shows).
+        The address is shown when you scan for sensors under *Settings → Heart rate*. The probe only reads and listens.
+        It saves `walka-probe-....txt` and `walka-probe-....json`; both are made to be posted (addresses cut short, no serial number).
+        A heart-rate recording holds your heart rate for those seconds: post it only if you are happy to.
+  - type: input
+    id: model
+    attributes:
+      label: Make and model
+      description: e.g. "Polar H10", "Garmin Forerunner 265 (Broadcast Heart Rate)".
+    validations:
+      required: true
+  - type: dropdown
+    id: computer
+    attributes:
+      label: Computer
+      options:
+        - Windows 11
+        - Windows 10
+        - Mac with an Apple chip
+        - Mac with an Intel processor
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Walka version
+      description: At the bottom of the dashboard, e.g. 0.9.2.
+    validations:
+      required: true
+  - type: checkboxes
+    id: checked
+    attributes:
+      label: What you checked
+      options:
+        - label: The sensor shows up when Walka scans for heart-rate sensors.
+        - label: Walka connects to it.
+        - label: The heart rate on the dashboard matches the sensor's or watch's own display.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What worked, what did not. For a watch, say how you switched broadcasting on.
+    validations:
+      required: true
+  - type: textarea
+    id: report
+    attributes:
+      label: The report files
+      description: Drag `walka-probe-....txt` (and, if you like, the `.json`) in here, or paste the text of the `.txt` report.
+    validations:
+      required: true
