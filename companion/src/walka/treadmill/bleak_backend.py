@@ -167,5 +167,11 @@ class BleakBackend:
                     if device.address.upper() == wanted:
                         on_seen()
 
+    def query_client(self, device: FoundDevice, on_disconnect: Callable[[], None], protocol: str):
+        """The door for a vendor protocol that answers only when asked: see query_link.py."""
+        from .query_link import QueryClientAdapter
+
+        return QueryClientAdapter(device.handle or device.address, on_disconnect, protocol)
+
     def client(self, device: FoundDevice, on_disconnect: Callable[[], None]) -> BleakClientAdapter:
         return BleakClientAdapter(device.handle or device.address, on_disconnect)

@@ -246,6 +246,22 @@ class ReplayClient:
             self._on_disconnect()
 
 
+class ReplayQueryClient(ReplayClient):
+    """A recorded pad of a vendor protocol that answers only when asked: the
+    recording holds its answers, so asking only counts the questions (and
+    only this protocol's one question can be asked - see treadmill/proprietary.py)."""
+
+    def __init__(self, recording: Recording, on_disconnect: Callable[[], None], protocol: str, **kwargs: Any) -> None:
+        from .treadmill.proprietary import QUERIES
+
+        super().__init__(recording, on_disconnect, **kwargs)
+        self.query = QUERIES[protocol]
+        self.asked: list[bytes] = []
+
+    async def ask(self) -> None:
+        self.asked.append(self.query.payload)
+
+
 class ReplayBackend:
     """A Bluetooth backend with one recorded treadmill in range."""
 
@@ -272,6 +288,11 @@ class ReplayBackend:
 
     async def find(self, address: str | None, name_prefixes: Sequence[str], timeout: float) -> FoundDevice | None:
         return self._device()
+
+    def query_client(self, device: FoundDevice, on_disconnect: Callable[[], None], protocol: str) -> ReplayQueryClient:
+        client = ReplayQueryClient(self.recording, on_disconnect, protocol, **self.client_kwargs)
+        self.clients.append(client)
+        return client
 
     def client(self, device: FoundDevice, on_disconnect: Callable[[], None]) -> ReplayClient:
         client = ReplayClient(self.recording, on_disconnect, **self.client_kwargs)

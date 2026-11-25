@@ -269,7 +269,7 @@ class FtmsTreadmill(Treadmill):
             # must not be taken for the loss of the current one.
             self._on_disconnect(client)
 
-        client = backend.client(device, link_lost)
+        client = self._make_client(backend, device, link_lost)
         try:
             await client.connect()
             if not client.has_characteristic(self.DATA_CHARACTERISTIC):
@@ -311,6 +311,10 @@ class FtmsTreadmill(Treadmill):
             " (mph firmware)" if status.mph_grid else "",
         )
         self._emit(TreadmillEvent.CONNECTED)
+
+    def _make_client(self, backend: BleBackend, device: FoundDevice, on_disconnect: Callable[[], None]) -> BleClient:
+        """The door to the link: for FTMS, one that cannot write at all."""
+        return backend.client(device, on_disconnect)
 
     async def _setup(self, client: BleClient) -> None:
         """Read what the treadmill says it is, and start listening to it."""
