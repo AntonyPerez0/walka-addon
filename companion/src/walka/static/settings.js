@@ -11,6 +11,7 @@ import { $, CM_PER_INCH, U, api, fmt, h, post, run, setShown, setText, setTone, 
 import { installAddon, scanInto, syncAddon } from "./live.js";
 import { initWalkaAccount, updateWalkaAccount } from "./walkaaccount.js";
 import { t, tr } from "./i18n.js";
+import { renderHeartRateHelp } from "./hrhelp.js";
 
 let config = null; // the last config seen
 let configKey = "";
@@ -792,6 +793,7 @@ export function initSettings({ onUnits }) {
   }
 
   $("hr-scan").addEventListener("click", () => scanHeartRate($("hr-scan-out"), $("hr-scan")));
+  renderHeartRateHelp($("hr-help"));
   $("hr-off").addEventListener("click", (event) =>
     run(event.currentTarget, () => post("/api/heart-rate/connect", { enabled: false }), {
       success: "Heart-rate sensor turned off. Walka remembers it.",

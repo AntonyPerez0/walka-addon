@@ -3174,3 +3174,31 @@ body[data-welcome="1"] main {
   font-weight: 600;
   font-size: 13px;
 }
+
+/* How to switch on heart-rate broadcasting, maker by maker. */
+.hr-brands {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+}
+.hr-brand {
+  display: grid;
+  gap: 4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.hr-brand:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+.hr-brand dt {
+  font-weight: 600;
+}
+.hr-brand dd {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+}
+.hr-brand p {
+  margin: 0;
+}

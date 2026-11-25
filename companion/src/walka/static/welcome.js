@@ -8,6 +8,7 @@
 import { $, h, post, run, sentence, setAttr, setShown, setText, toast } from "./util.js";
 import { installAddon, scanTreadmills } from "./live.js";
 import { adoptConfig, formFor, scanHeartRate } from "./settings.js";
+import { renderHeartRateHelp } from "./hrhelp.js";
 
 const STEPS = ["hello", "units", "treadmill", "profile", "game", "hr", "done"];
 const COUNTED = STEPS.filter((step) => step !== "hello" && step !== "done");
@@ -211,6 +212,7 @@ export function initWelcome({ onUnits }) {
   $("wz-tm-scan").addEventListener("click", (event) => scanTreadmills($("wz-tm-out"), event.currentTarget));
   $("wz-addon-install").addEventListener("click", (event) => installAddon(event.currentTarget, undefined, { stay: true }));
   $("wz-hr-scan").addEventListener("click", (event) => scanHeartRate($("wz-hr-out"), event.currentTarget));
+  renderHeartRateHelp($("wz-hr-help"));
   window.addEventListener("hashchange", () => {
     if (location.hash === "#welcome" && !shown && last) {
       index = 0;

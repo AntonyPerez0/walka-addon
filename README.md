@@ -98,7 +98,7 @@ The whole of it: [docs/SAFETY.md](docs/SAFETY.md) and
 ## More
 
 * [Installing Walka](docs/INSTALL.md) - step by step, on a Mac, Walka's window, [is the download safe?](docs/INSTALL.md#is-the-download-safe), [before your first walk](docs/INSTALL.md#before-your-first-walk)
-* [Using Walka](docs/USING.md) - the dashboard, the floating window, heart rate, your journey and a picture to share
+* [Using Walka](docs/USING.md) - the dashboard, the floating window, your journey and a picture to share; [heart rate](docs/HEART-RATE.md)
 * [Which treadmills work](docs/TREADMILLS.md) and [hardware notes](docs/HARDWARE.md)
 * [How Walka works](docs/HOW-IT-WORKS.md) - what it looks at, why it only listens, [is this allowed?](docs/HOW-IT-WORKS.md#is-this-allowed)
 * [Your Walka account](docs/WALKA-ACCOUNT.md) on walka.dev - optional
