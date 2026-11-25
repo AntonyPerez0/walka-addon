@@ -18,10 +18,12 @@ def snapshot():
 
 @pytest.fixture
 def make_rt():
-    """Factory for mock clients: ``make_rt(load=True, files=..., state=...)``."""
+    """Factory for mock clients: ``make_rt(load=True, files=..., state=...)``.
+    The session the addon starts by itself at login is off unless a test
+    asks for it (``auto_session=True``)."""
 
-    def make(*, load: bool = True, **kwargs) -> WowRuntime:
-        runtime = WowRuntime(**kwargs)
+    def make(*, load: bool = True, auto_session: bool = False, **kwargs) -> WowRuntime:
+        runtime = WowRuntime(auto_session=auto_session, **kwargs)
         if load:
             runtime.load_addon()
         return runtime

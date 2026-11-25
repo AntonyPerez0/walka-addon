@@ -19,11 +19,12 @@ function headline(s) {
   const walk = s.session;
   const frame = s.source && s.source.beacon && s.source.beacon.state === "ok" ? s.source.frame : null;
   const t = s.treadmill;
-  if (walk) {
-    if (frame && frame.active && frame.paused) return ["paused", "Paused in game"];
-    return ["walking", frame && frame.active ? "Walking" : "Walking - no game session"];
-  }
   if (!t.connected) return ["off", t.want_connected ? "Looking for the treadmill" : "No treadmill"];
+  // (A session in the game now runs from login on: "walking" is the belt.)
+  if (t.moving) {
+    if (frame && frame.active && frame.paused) return ["paused", "Paused in game"];
+    return ["walking", walk && walk.source === "wow" ? "Walking" : "Walking - no game session"];
+  }
   if (frame && frame.active) return ["off", frame.paused ? "Paused in game" : "Ready - start the belt"];
   return ["off", "Belt stopped"];
 }

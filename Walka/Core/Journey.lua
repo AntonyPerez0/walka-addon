@@ -262,8 +262,10 @@ function Journey.forget(journeys, own, now, written)
         return
     end
     -- (A session the companion has looked for and not found was no walk:
-    -- it adds nothing - see SessionLog.unconfirmed.)
-    if not ns.SessionLog.unconfirmed(own, written) then
+    -- it adds nothing - see SessionLog.unconfirmed. Nor does one the addon
+    -- started by itself, which estimates nothing: only a measured walk in
+    -- it counts, and that is banked above.)
+    if not own.auto and not ns.SessionLog.unconfirmed(own, written) then
         settle(Journey.open(journeys, own.character, now), own, 1, true)
     end
     own.banked = true
@@ -283,7 +285,8 @@ function Journey.unbanked(ownSessions, key, out, written)
         -- (`written`: when the companion last wrote its file. A session
         -- that ended before then and that it has no walk for is not an
         -- estimate waiting for numbers - there was no walk.)
-        if type(own) == "table" and own.character == key and not own.banked and not unconfirmed(own, written) then
+        if type(own) == "table" and own.character == key and not own.banked and not own.auto
+            and not unconfirmed(own, written) then
             out.walks = out.walks + 1
             out.seconds = out.seconds + count(own.seconds)
             out.distanceM = out.distanceM + count(own.distanceM)

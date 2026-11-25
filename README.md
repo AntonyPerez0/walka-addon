@@ -109,11 +109,10 @@ are under [On a Mac](#on-a-mac) - and the rest is the same.*
      *Windowed (Fullscreen)* mode and keep the top-left corner of the game
      uncovered.
    * **Enter your weight and height:** for the calorie count.
-4. **Walk.** In the game, type `/walka start` (or click *Walka* in the
-   game's AddOns menu by the minimap): that says "this walk is for this
-   character".
-   Then step onto the pad and start the belt **with the treadmill's own
-   remote**, at the speed you like.
+4. **Walk.** Log in to the game: the addon says "this walk is for this
+   character" by itself - there is nothing to type or press. Step onto the
+   pad and start the belt **with the treadmill's own remote**, at the
+   speed you like.
 
 **The belt is yours.** Start it, stop it and change its speed at the
 treadmill - its remote, its buttons, its safety key. Walka has no button
@@ -479,12 +478,17 @@ touched.
 
 ## Using it
 
-In game, type `/walka start` (or click *Walka* in the game's AddOns menu,
-by the minimap): a walking session starts for the character you are
-playing. Step onto the pad and start the belt with the treadmill's remote,
-at whatever speed you like. The addon draws nothing in game but the signal
-strip: the walk is on the dashboard, and in the
-[floating window](#the-floating-window) if you switch it on.
+Log in to the game with the addon: a walking session starts by itself for
+the character you are playing (a chat line says so). Step onto the pad and
+start the belt with the treadmill's remote, at whatever speed you like.
+The addon draws nothing in game but the signal strip: the walk is on the
+dashboard, and in the [floating window](#the-floating-window) if you
+switch it on.
+
+The session that starts by itself counts nothing on its own: Walka cannot
+see the pad from inside the game. It only says whose walks are walked now;
+what counts is what the treadmill measured while it ran. A login without a
+walk is no walk.
 
 The companion records the walk from what the treadmill reports. A walk is
 whatever the belt does:
@@ -496,15 +500,18 @@ whatever the belt does:
   same, as a walk of its own (*No game session* in the dashboard's
   history).
 
-**Pause** and **stop** the session with `/walka pause` and `/walka stop` -
-or click *Walka* in the AddOns menu again to pause or resume, and
-right-click it to stop. They pause and end the *session* - the addon's
+**Pause** the session by clicking *Walka* in the game's AddOns menu (by
+the minimap) - click again to carry on - and right-click it to stop it
+until the next login. (`/walka pause`, `/walka resume` and `/walka stop` do
+the same.) They pause and end the *session* - the addon's
 count - and nothing else: stop the belt yourself, at the treadmill, when
 you step off. Going AFK pauses the session automatically; it carries on
 when your character next moves.
 
-**Your pace** (`/walka pace 1.5`) is the speed you say the belt is set to.
-The addon counts its own estimate of the walk with it - for your
+**Your pace** (`/walka pace 1.5`) is the speed you say the belt is set to,
+for a session you start yourself with `/walka start` after switching the
+automatic one off (`/walka auto off`). The addon counts its own estimate
+of such a walk with it - for your
 character's journey numbers, until the companion's measured numbers arrive
 at the next login or `/reload`. It changes nothing at the treadmill, and
 nothing on the dashboard, which always shows what the treadmill measured.
@@ -512,7 +519,8 @@ nothing on the dashboard, which always shows what the treadmill measured.
 | Command | What it does |
 |---|---|
 | `/walka` | what the addon is for, and its commands |
-| `/walka start` · `pause` · `resume` · `stop` | mark the walking session |
+| `/walka start` · `pause` · `resume` · `stop` | mark the walking session yourself (it starts by itself at login) |
+| `/walka auto on` \| `off` | start the session by itself at login (on), or not |
 | `/walka status` | what the addon is doing right now |
 | `/walka pace 1.5` | the speed your treadmill is set to, for the addon's estimate |
 | `/walka road on` \| `off` | record your character's road for the Share picture, or stop |

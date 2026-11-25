@@ -65,13 +65,18 @@ used.
 
 ## 5. A session, without the treadmill
 
-A session is how you tell Walka "I am walking now". Walka does not start,
-stop or steer the belt: you set its speed at the treadmill.
+A session says "the walks now are this character's". It starts by itself
+at login. Walka does not start, stop or steer the belt: you set its speed
+at the treadmill.
 
-- [ ] `/walka start`. A chat line says that the walk counts for this
-      character; the first time in a login the game's two "Total time
-      played" lines follow it (that is Walka asking, for the journey).
-      `/walka status` says *session active*.
+- [ ] Log in: a chat line says Walka is connected and walks count for this
+      character - with nothing typed. For a character whose time played
+      Walka does not know yet, the game's two "Total time played" lines
+      follow it (that is Walka asking, for the journey). `/walka status`
+      says *session active*, and the dashboard's game signal says
+      *Session N for <your character>*.
+- [ ] `/walka stop`, then `/walka start`: a session you start yourself
+      (the old way) still works.
 - [ ] `/walka pace 2.0`: a chat line confirms it. `/walka pace` alone says
       what it is.
 - [ ] `/walka pause`, `/walka resume`, `/walka stop`: chat lines say so; a
@@ -86,8 +91,9 @@ stop or steer the belt: you set its speed at the treadmill.
 ## 6. The game's AddOns menu
 
 - [ ] Minimap addon compartment (the AddOns button by the minimap):
-      *Walka* is in it. A click starts a session (chat line), another
-      pauses it, another resumes it. A right-click stops it. Also in
+      *Walka* is in it. A click pauses the session (chat line), another
+      resumes it. A right-click stops it; with none running, a click starts
+      one. Also in
       combat.
 
 ## 7. The journey
@@ -108,16 +114,15 @@ pane:
       tell me what it printed.
 
 Time played. The game tells an addon the time played only when asked, and
-prints every answer in the chat; Walka therefore asks only when you start a
-session, once a login.
+prints every answer in the chat; Walka therefore asks only when it does
+not know a character's time played yet, when the session starts.
 
-- [ ] Log in and play for a minute without starting a session: the chat
-      shows **no** "Total time played" lines.
-- [ ] `/walka start`: the chat shows the game's two lines ("Total time
-      played", "Time played this level") **once**, and the dashboard's
-      *Share* page agrees with the first of them within about ten seconds.
-- [ ] Stop and start the session again, several times: no further lines in
-      the chat. `/reload` and start one: still none.
+- [ ] On a character Walka has not seen before, log in: the chat shows the
+      game's two lines ("Total time played", "Time played this level")
+      **once**, and the dashboard's *Share* page agrees with the first of
+      them within about ten seconds.
+- [ ] Log out and in again: no new lines, and the time played is still
+      right (Walka counts on from the last answer).
 - [ ] Type `/played` yourself: the two lines appear as always - Walka has
       not broken the game's own command.
 
@@ -181,9 +186,9 @@ the pad or with its remote - before, during and after a session.
       belt with the remote: the dashboard shows its speed and starts
       recording a walk. Nothing in the game or on the dashboard changed
       the belt.
-- [ ] Stand on the pad, `/walka start`, set `/walka pace` to the speed on
-      the treadmill's display: the dashboard's walk now belongs to the game
-      session.
+- [ ] Logged in, with nothing typed: the dashboard's walk belongs to the
+      game session. After the walk and a `/reload`, the *Share* page's
+      steps for the character include it.
 - [ ] `/walka pause`, `/walka resume`, `/walka stop`, going AFK, covering
       the game's top-left corner with another window, closing the game:
       **the belt does not react to any of them.** It runs at the speed you
