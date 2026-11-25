@@ -28,6 +28,7 @@ READERS: tuple[Reader, ...] = (
     # Makers' own protocols (treadmill/proprietary.py): after the standards, so that a pad that
     # speaks both is read the standard way.
     Reader("walkingpad", ftms.uuid16(0xFE01), "the WalkingPad protocol (older KingSmith pads)"),
+    Reader("pitpat", ftms.uuid16(0xFBA2), "the PitPat protocol (PitPat, SupeRun and similar pads)"),
 )
 KINDS = tuple(reader.key for reader in READERS)
 
@@ -38,6 +39,10 @@ def build(kind: str, address: str | None, *, name_prefixes=None, units: str = "a
         from .rsc import RscTreadmill
 
         return RscTreadmill(address or None, units=units, backend=backend)
+    if kind == "pitpat":
+        from .pitpat import PitPatTreadmill
+
+        return PitPatTreadmill(address or None, units=units, backend=backend)
     if kind == "walkingpad":
         from .walkingpad import WalkingPadTreadmill
 
@@ -62,6 +67,7 @@ SERVICE_NAMES = {
     ftms.uuid16(0x1800): "Generic Access",
     ftms.uuid16(0x1801): "Generic Attribute",
     ftms.uuid16(0xFE00): "WalkingPad (KingSmith)",
+    ftms.uuid16(0xFBA0): "PitPat",
 }
 
 

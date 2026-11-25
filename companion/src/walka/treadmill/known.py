@@ -79,6 +79,16 @@ KNOWN_TREADMILLS = KNOWN_TREADMILLS + (
     KnownTreadmill("KS-ST-A1P", "KingSmith", "WalkingPad A1 Pro", "walkingpad", source=WALKINGPAD_SOURCE),
     KnownTreadmill("KS-BLC", "KingSmith", "WalkingPad C2", "walkingpad", source=WALKINGPAD_SOURCE),
     KnownTreadmill("KS-BLR", "KingSmith", "WalkingPad R2", "walkingpad", source=WALKINGPAD_SOURCE),
+    KnownTreadmill(
+        "PitPat-T",
+        "PitPat",
+        "PitPat-T01 (also sold as SupeRun, DeerRun and others)",
+        "pitpat",
+        source="[lapo-luchini/pitpat-exporter](https://github.com/lapo-luchini/pitpat-exporter) (ISC, with "
+        "hardware captures), [KeiranY/PitPat-WebBT](https://github.com/KeiranY/PitPat-WebBT), "
+        "[qdomyos-zwift](https://github.com/cagnulein/qdomyos-zwift) (`deerruntreadmill`): service 0xFBA0, "
+        "or 0xFFFF on some boards.",
+    ),
 )
 
 

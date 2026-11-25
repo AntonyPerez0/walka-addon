@@ -287,6 +287,30 @@ the captured data: speed in 0.1 km/h (one project scales it otherwise),
 steps as 3 bytes (one reads 2). Other apps send set-up packets after
 connecting (a mode, preferences); Walka sends none of them.
 
+### PitPat / SupeRun / DeerRun pads ("PitPat" app)
+
+| | |
+|---|---|
+| Bluetooth names | `PitPat-T01` (also on pads sold as SupeRun, DeerRun and others: they appear to share one maker's board) |
+| Service | `0xFBA0`, notifications on `0xFBA2`; on some boards (an ESP32) `0xFFFF`, notifications on `0xFF02`, each frame wrapped in `4D 04 <sequence> <length>` |
+| Query | **none**: these pads send their status by themselves, and Walka writes nothing to them. (Other apps send a keep-alive after each status; several working ones never do.) |
+| Status | start byte `0x66`/`0x67`/`0x68`, its length, ..., XOR of bytes 1 to n-3, `0x43`. Big-endian: speed (bytes 3-4, km/h x 1000, also when the pad shows mph), distance (7-10, m), calories (18-19), time (20-23; ms from firmware 20 on), flags (26: `0x18` bits stopped / running / paused / starting) |
+| Steps | 4 bytes at 14 by the maker's app - always 0 on the captured pads - else 2 bytes at 43 of the 47- and 50-byte frames, which matched a hand count (86 of 86) |
+
+Sources: [lapo-luchini/pitpat-exporter](https://github.com/lapo-luchini/pitpat-exporter)
+(ISC; `SPEC.md` and some 1,800 captured frames - the layout above was
+checked against them), [KeiranY/PitPat-WebBT](https://github.com/KeiranY/PitPat-WebBT),
+[azmke/pitpat-treadmill-control](https://github.com/azmke/pitpat-treadmill-control),
+[moritzWa/pitpat-menubar](https://github.com/moritzWa/pitpat-menubar),
+[Rick-Pro/stride-android](https://github.com/Rick-Pro/stride-android),
+[omrilotan/walk](https://github.com/omrilotan/walk),
+[sirfergy/HomeAssistantWalkingPad](https://github.com/sirfergy/HomeAssistantWalkingPad)
+and [qdomyos-zwift](https://github.com/cagnulein/qdomyos-zwift)
+(`src/devices/deeruntreadmill/`). Not known: what a pad does if it is never
+sent a keep-alive (the captured ones kept talking), and a third transport
+on `0xFFF0` that one project mentions - Walka does not read that one,
+because FitShow machines use the same service.
+
 ## Windows notes
 
 * The Bluetooth library (bleak) documents Windows 11 as its supported

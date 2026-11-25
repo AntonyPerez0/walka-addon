@@ -40,6 +40,7 @@ nothing else**:
 | Protocol | Written to | The bytes, always these | How often |
 |---|---|---|---|
 | WalkingPad (older KingSmith pads) | `0xFE02` | `F7 A2 00 00 A2 FD` ("your current status") | once a second |
+| PitPat / SupeRun | - | nothing: these pads report by themselves | - |
 
 These are the complete list. Walka cannot send any other bytes: the code
 that sends them takes no bytes from anywhere - it looks up its protocol's

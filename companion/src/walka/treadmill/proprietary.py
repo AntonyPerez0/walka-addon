@@ -136,7 +136,8 @@ class ProprietaryTreadmill(FtmsTreadmill):
     async def _setup(self, client: BleClient) -> None:
         self.raw_speed_range = None
         self._apply_speed_range(None)
-        await client.subscribe(self.DATA_CHARACTERISTIC, self._on_vendor)
+        uuid = next(u for u in self.data_characteristics() if client.has_characteristic(u))
+        await client.subscribe(uuid, self._on_vendor)
         if self.NEEDS_QUERY:
             self._poll = asyncio.create_task(self._ask_on(client), name=f"walka-{self.PROTOCOL}-query")
 

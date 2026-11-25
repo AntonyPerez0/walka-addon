@@ -277,7 +277,7 @@ class FtmsTreadmill(Treadmill):
         client = self._make_client(backend, device, link_lost)
         try:
             await client.connect()
-            if not client.has_characteristic(self.DATA_CHARACTERISTIC):
+            if not any(client.has_characteristic(uuid) for uuid in self.data_characteristics()):
                 raise TreadmillError(f"{device.name or device.address} {self.NOT_READABLE}")
             self._client = client
             await asyncio.wait_for(self._setup(client), SETUP_TIMEOUT_S)
@@ -316,6 +316,10 @@ class FtmsTreadmill(Treadmill):
             " (mph firmware)" if status.mph_grid else "",
         )
         self._emit(TreadmillEvent.CONNECTED)
+
+    def data_characteristics(self) -> tuple[str, ...]:
+        """Where the walk may come from; a device with none of these is refused."""
+        return (self.DATA_CHARACTERISTIC,)
 
     def _make_client(self, backend: BleBackend, device: FoundDevice, on_disconnect: Callable[[], None]) -> BleClient:
         """The door to the link: for FTMS, one that cannot write at all."""
