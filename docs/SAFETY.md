@@ -28,8 +28,26 @@ When the companion connects to a treadmill it:
    set to another speed) and *Training Status* (its countdown).
 
 That is everything. Switching a notification on is the only thing Walka
-ever writes to a treadmill, and it is what every app that shows a
-treadmill's numbers has to do.
+ever writes to a standard (FTMS) treadmill, and it is what every app that
+shows a treadmill's numbers has to do.
+
+**One exception, for pads that only report when asked.** Some walking pads
+do not speak the standard: they speak their maker's own protocol, and send
+their numbers only in answer to a question. For those - and only those -
+Walka sends **one fixed "report your numbers" query per protocol, and
+nothing else**:
+
+| Protocol | Written to | The bytes, always these | How often |
+|---|---|---|---|
+| WalkingPad (older KingSmith pads) | `0xFE02` | `F7 A2 00 00 A2 FD` ("your current status") | once a second |
+
+These are the complete list. Walka cannot send any other bytes: the code
+that sends them takes no bytes from anywhere - it looks up its protocol's
+one entry in a fixed table - and a test fails if a byte of that table
+changes, if anything else in Walka writes to a Bluetooth characteristic,
+or if a query could reach the FTMS control point. None of these queries
+starts, stops or changes the speed of a belt. The readers for these
+protocols have not been tried on hardware with Walka.
 
 The treadmill's *Fitness Machine Control Point* - the one channel through
 which an app can start, stop or steer a belt - is never written to and

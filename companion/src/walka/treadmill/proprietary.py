@@ -33,7 +33,7 @@ from types import MappingProxyType
 from typing import Any, Protocol
 
 from .base import BeltState, TreadmillError
-from .ftms_ble import BleClient, FoundDevice, FtmsTreadmill
+from .ftms_ble import BleClient, FoundDevice, FtmsTreadmill, describe_bluetooth_error, name_matches
 
 log = logging.getLogger(__name__)
 
@@ -54,27 +54,21 @@ def _vendor(short: int) -> str:
     return f"0000{short:04x}-0000-1000-8000-00805f9b34fb"
 
 
-# Filled in protocol by protocol (see each reader's module). Frozen: nothing can add to it at run time.
-_QUERIES: dict[str, Query] = {}
-QUERIES = MappingProxyType(_QUERIES)
-
-
-def register(query: Query) -> Query:
-    """At import of a protocol's module, once. (Not callable later: see ``seal``.)"""
-    if _SEALED:
-        raise RuntimeError("the table of queries is closed")
-    if query.protocol in _QUERIES:
-        raise RuntimeError(f"a query for {query.protocol} is there already")
-    _QUERIES[query.protocol] = query
-    return query
-
-
-_SEALED = False
-
-
-def seal() -> None:
-    global _SEALED
-    _SEALED = True
+# Every byte Walka may ever send a treadmill, besides switching notifications on. One entry per
+# protocol, each a "report your numbers" status query; tests/test_vendor_queries.py pins them.
+QUERIES = MappingProxyType(
+    {
+        "walkingpad": Query(
+            protocol="walkingpad",
+            service=_vendor(0xFE00),
+            characteristic=_vendor(0xFE02),
+            # header F7, type A2 (status), command 00 (stats), parameter 00, checksum A2, footer FD
+            payload=bytes.fromhex("F7A20000A2FD"),
+            every_s=1.0,
+            source="ph4r05/ph4-walkingpad ask_stats; also qdomyos-zwift, klassm/walkingpad_macos_client",
+        ),
+    }
+)
 
 
 class QueryClient(BleClient, Protocol):
@@ -117,9 +111,21 @@ class ProprietaryTreadmill(FtmsTreadmill):
 
     # ---- connecting ------------------------------------------------------------------
     async def connect(self) -> None:
-        if not self.address and not self.name_prefixes:
-            self.status.detail = "no treadmill chosen: pick it under Treadmill -> Scan -> Show all Bluetooth devices"
-            raise TreadmillError(self.status.detail)
+        if not self.address:
+            # By name only: never the nearest standard fitness machine, as an FTMS scan would settle for.
+            if not self.name_prefixes:
+                self.status.detail = "no treadmill chosen: pick it under Treadmill -> Scan -> Show all Bluetooth devices"
+                raise TreadmillError(self.status.detail)
+            try:
+                found = await self._get_backend().discover(self.scan_timeout_s)
+            except Exception as exc:
+                self.status.detail = f"Bluetooth scan failed: {describe_bluetooth_error(exc)}"
+                raise TreadmillError(self.status.detail) from exc
+            named = [d for d in found if name_matches(d.name, self.name_prefixes)]
+            if not named:
+                self.status.detail = "treadmill not found - is it switched on, in range, and is its own phone app closed?"
+                raise TreadmillError(self.status.detail)
+            self.address = max(named, key=lambda d: d.rssi if d.rssi is not None else -999).address
         await super().connect()
 
     def _make_client(self, backend: Any, device: FoundDevice, on_disconnect: Callable[[], None]) -> BleClient:

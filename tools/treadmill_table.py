@@ -21,6 +21,9 @@ END = "<!-- treadmill-table:end -->"
 PROTOCOL_WORDS = {
     "ftms": "standard Bluetooth FTMS",
     "rsc": "Running Speed and Cadence",
+    "walkingpad": "WalkingPad protocol (asked once a second with one fixed status query)",
+    "pitpat": "PitPat protocol",
+    "fitshow": "FitShow protocol (asked with one fixed status query)",
 }
 
 

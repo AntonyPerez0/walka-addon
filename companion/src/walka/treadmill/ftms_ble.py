@@ -206,8 +206,13 @@ class FtmsTreadmill(Treadmill):
         return [d for d in found if self.is_candidate(d)]
 
     def is_candidate(self, device: FoundDevice) -> bool:
+        """A treadmill for this reader - or a pad Walka knows by name that another reader reads."""
+        from .known import known_treadmill
+
         services = (ftms.FTMS_SERVICE,) if device.ftms else ()
-        return is_treadmill_candidate(device.name, services, self.name_prefixes, device.treadmill)
+        if is_treadmill_candidate(device.name, services, self.name_prefixes, device.treadmill):
+            return True
+        return known_treadmill(device.name) is not None
 
     async def identify(self, address: str) -> dict[str, Any]:
         """Connect to any device, see whether Walka can read it as a treadmill,

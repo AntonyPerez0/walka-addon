@@ -66,6 +66,22 @@ KNOWN_TREADMILLS: tuple[KnownTreadmill, ...] = (
 )
 
 
+# Makers' own protocols (treadmill/proprietary.py). The name is a first guess only: which protocol
+# a pad speaks is decided on connecting, by the services it has.
+WALKINGPAD_SOURCE = (
+    "[ph4r05/ph4-walkingpad](https://github.com/ph4r05/ph4-walkingpad) (MIT), "
+    "[qdomyos-zwift](https://github.com/cagnulein/qdomyos-zwift), "
+    "[klassm/walkingpad_macos_client](https://github.com/klassm/walkingpad_macos_client): "
+    "the WiLink protocol on service 0xFE00."
+)
+KNOWN_TREADMILLS = KNOWN_TREADMILLS + (
+    KnownTreadmill("WalkingPad", "KingSmith", "WalkingPad A1, R1, C1 (older models)", "walkingpad", source=WALKINGPAD_SOURCE),
+    KnownTreadmill("KS-ST-A1P", "KingSmith", "WalkingPad A1 Pro", "walkingpad", source=WALKINGPAD_SOURCE),
+    KnownTreadmill("KS-BLC", "KingSmith", "WalkingPad C2", "walkingpad", source=WALKINGPAD_SOURCE),
+    KnownTreadmill("KS-BLR", "KingSmith", "WalkingPad R2", "walkingpad", source=WALKINGPAD_SOURCE),
+)
+
+
 def _minimal_prefixes(entries: tuple[KnownTreadmill, ...], protocol: str) -> tuple[str, ...]:
     """The name prefixes to listen for, in the table's order: each one that
     no shorter prefix of the table already covers ("URTM" covers "URTM030")."""
@@ -83,6 +99,11 @@ DEFAULT_NAME_PREFIXES: tuple[str, ...] = _minimal_prefixes(KNOWN_TREADMILLS, "ft
 # What DEFAULT_NAME_PREFIXES was before other makes were added. A settings
 # file written then holds this list, and is moved on to the current one.
 LEGACY_NAME_PREFIXES: tuple[str, ...] = ("URTM",)
+
+
+def prefixes_for(protocol: str) -> tuple[str, ...]:
+    """The names (their start) a protocol's pads are listened for by."""
+    return _minimal_prefixes(KNOWN_TREADMILLS, protocol)
 
 
 def known_treadmill(name: str | None) -> KnownTreadmill | None:

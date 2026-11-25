@@ -179,9 +179,16 @@ def create_app(app: App) -> web.Application:
             found = await (discover(6.0, all_devices=True) if every else discover(6.0))
         except Exception as exc:
             return web.json_response({"ok": False, "error": f"Bluetooth scan failed: {exc}"}, status=500)
-        if every:
-            return ok(devices=[device.to_dict(candidate=app.treadmill.is_candidate(device)) for device in found])
-        return ok(devices=[device.to_dict() for device in found])
+        from .treadmill.known import known_treadmill
+
+        def shown(device):
+            data = device.to_dict(candidate=app.treadmill.is_candidate(device)) if every else device.to_dict()
+            known = known_treadmill(device.name)
+            if known is not None and app.treadmill.kind not in (known.protocol, "simulated"):
+                data["protocol"] = known.protocol  # (read another way than now: picking it checks first)
+            return data
+
+        return ok(devices=[shown(device) for device in found])
 
     @routes.post("/api/treadmill/identify")
     async def identify(request: web.Request) -> web.Response:

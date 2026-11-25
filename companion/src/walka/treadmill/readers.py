@@ -25,6 +25,9 @@ class Reader:
 READERS: tuple[Reader, ...] = (
     Reader("ftms", ftms.TREADMILL_DATA, "standard treadmill data (Bluetooth FTMS)"),
     Reader("rsc", ftms.RSC_MEASUREMENT, "running speed and cadence (a foot pod or a treadmill's sensor)"),
+    # Makers' own protocols (treadmill/proprietary.py): after the standards, so that a pad that
+    # speaks both is read the standard way.
+    Reader("walkingpad", ftms.uuid16(0xFE01), "the WalkingPad protocol (older KingSmith pads)"),
 )
 KINDS = tuple(reader.key for reader in READERS)
 
@@ -35,6 +38,10 @@ def build(kind: str, address: str | None, *, name_prefixes=None, units: str = "a
         from .rsc import RscTreadmill
 
         return RscTreadmill(address or None, units=units, backend=backend)
+    if kind == "walkingpad":
+        from .walkingpad import WalkingPadTreadmill
+
+        return WalkingPadTreadmill(address or None, units=units, backend=backend)
     from .ftms_ble import FtmsTreadmill
 
     kwargs = {"units": units, "backend": backend}
@@ -54,6 +61,7 @@ SERVICE_NAMES = {
     ftms.uuid16(0x1818): "Cycling Power",
     ftms.uuid16(0x1800): "Generic Access",
     ftms.uuid16(0x1801): "Generic Attribute",
+    ftms.uuid16(0xFE00): "WalkingPad (KingSmith)",
 }
 
 

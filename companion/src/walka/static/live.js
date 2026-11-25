@@ -300,7 +300,8 @@ export function scanTreadmills(out = $("tm-scan-out"), button = $("tm-scan"), { 
         ? "Nothing to scan for: this is the simulated treadmill. Start the companion without --simulate or --demo to look for a real pad."
         : "No treadmill found. Is it switched on and in range, and is its own phone app closed? A treadmill that is already connected - here or to a phone - does not show up.",
     onPick: (device, button) =>
-      device.candidate === false
+      // Not a treadmill by its name or service, or one read another way than now: look at it first.
+      device.candidate === false || (device.protocol && last && device.protocol !== last.treadmill.kind)
         ? tryDevice(device, button)
         : run(button, () => post("/api/treadmill/connect", { address: device.address }), {
             success: `Connecting to ${device.name || device.address}.`,

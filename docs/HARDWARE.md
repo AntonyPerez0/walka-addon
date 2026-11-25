@@ -251,6 +251,42 @@ tested against recordings put together from it.
 * A foot pod measures your feet, not the belt: on a treadmill the two
   agree closely, but not exactly.
 
+## Makers' own protocols (untested on hardware)
+
+These readers are written from public open-source projects and tested
+against recordings put together from them. None has been tried on a real
+pad with Walka yet: if you have one, please post a report (*Check my
+treadmill*, or `walka probe --record`) in a ["My treadmill"
+issue](https://github.com/AntonyPerez0/walka-addon/issues/new?template=my-treadmill.yml).
+Each may send one fixed status query, and nothing else - see
+[SAFETY.md](SAFETY.md#what-walka-does-to-a-treadmill-all-of-it). Which
+protocol a pad speaks is decided on connecting, by the services it has; a
+pad that also speaks FTMS is read through FTMS.
+
+### Older KingSmith / Xiaomi WalkingPads ("WiLink")
+
+| | |
+|---|---|
+| Models | WalkingPad A1, A1 Pro, R1, C1, C2, R2 - not the newer KS-HD models (Z1 and others), which speak FTMS |
+| Bluetooth names | `WalkingPad`, `KS-ST-A1P`, `KS-BLC`, `KS-BLR` (others are found by *Show all Bluetooth devices*) |
+| Service | `0xFE00`: notifications on `0xFE01`, queries to `0xFE02` (write without response) |
+| Query | `F7 A2 00 00 A2 FD`, once a second (the maker's app asks about every 0.75 s) |
+| Answer | 20 bytes: `F8 A2`, belt state (0 stopped, 1 running, 5 standby, 7-9 counting down), speed in 0.1 km/h, mode, time (3 bytes, big-endian, s), distance (3 bytes, 10 m), steps (3 bytes), 4 bytes, checksum (sum of bytes 1-17), `FD` |
+| Ignored | anything else: the "last record" answer (`F8 A7`), a packet with a wrong checksum |
+
+Sources: [ph4r05/ph4-walkingpad](https://github.com/ph4r05/ph4-walkingpad)
+(MIT; `ph4_walkingpad/pad.py` - the query, the checksum and the layout, and
+82 captured packets that the layout and checksum were checked against),
+[cagnulein/qdomyos-zwift](https://github.com/cagnulein/qdomyos-zwift)
+(`src/devices/kingsmithr1protreadmill/`), [klassm/walkingpad_macos_client](https://github.com/klassm/walkingpad_macos_client)
+(`0xFE02` takes only writes without response), [darnfish/walkingpad](https://github.com/darnfish/walkingpad),
+[madmatah/hass-walkingpad](https://github.com/madmatah/hass-walkingpad) and
+[mcdax/walkingpad-controller](https://github.com/mcdax/walkingpad-controller)
+(belt states, names). Where they disagree, Walka follows the majority and
+the captured data: speed in 0.1 km/h (one project scales it otherwise),
+steps as 3 bytes (one reads 2). Other apps send set-up packets after
+connecting (a mode, preferences); Walka sends none of them.
+
 ## Windows notes
 
 * The Bluetooth library (bleak) documents Windows 11 as its supported
