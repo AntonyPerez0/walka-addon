@@ -62,7 +62,8 @@ console.log(JSON.stringify(out));
 """,
         "utf-8",
     )
-    done = subprocess.run([NODE, str(script)], capture_output=True, text=True, timeout=30)
+    # (Node writes UTF-8; Windows would otherwise read it in its own code page.)
+    done = subprocess.run([NODE, str(script)], capture_output=True, text=True, encoding="utf-8", timeout=30)
     assert done.returncode == 0, done.stderr
     assert json.loads(done.stdout) == [
         "Settings",

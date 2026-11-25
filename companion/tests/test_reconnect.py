@@ -47,8 +47,10 @@ async def listen(rig: PadRig, rounds: list[tuple[float, bool]]) -> bool:
         await asyncio.sleep(0.01)
         if task.done():
             break
-    if not task.done():
-        rig.app.want_connected = False  # (ends the listening)
+    # Let the listener answer (it is woken by the advertisement, not by a clock), then end the listening.
+    done, _ = await asyncio.wait({task}, timeout=2.0)
+    if not done:
+        rig.app.want_connected = False
     return await asyncio.wait_for(task, 5)
 
 
