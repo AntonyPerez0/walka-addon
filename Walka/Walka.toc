@@ -2,7 +2,7 @@
 ## Title: Walka
 ## Notes: Walk on your walking pad while you play: Walka counts your time, steps, distance and calories, and draws your character's road on the map.
 ## Author: Walka
-## Version: 0.8.0-rc2
+## Version: 0.8.0
 ## X-License: MIT
 ## SavedVariables: WalkaDB
 ## SavedVariablesPerCharacter: WalkaCharDB
