@@ -41,20 +41,6 @@ def ns(rt):
     return rt.ns
 
 
-def ui_files_present() -> bool:
-    names = ("Widgets.lua", "HUD.lua", "History.lua", "Journey.lua", "Options.lua")
-    return all((ADDON_DIR / "UI" / name).is_file() for name in names)
-
-
-@pytest.fixture
-def ui_rt(make_rt) -> WowRuntime:
-    """A mock client with the addon and its windows; skipped until the UI
-    files exist."""
-    if not ui_files_present():
-        pytest.skip("Walka/UI/*.lua are not written yet")
-    return make_rt()
-
-
 KMH_PER_MPH = 1.609344
 
 # The pace a fresh install counts with: Metrics.DEFAULT_PACE_KMH (1.5 mph).

@@ -118,6 +118,11 @@ class App:
         if walka_account is not None:
             walka_account.attach(self)
 
+        # The floating window (window.FloatingWindow): there only when Walka
+        # has a window of its own to put it beside. It is shown and hidden
+        # from here, as the setting says; see attach_overlay.
+        self.overlay: Any = None
+
     # ---- small persistent state --------------------------------------------------
     def _load_state(self) -> dict[str, Any]:
         try:
@@ -474,7 +479,36 @@ class App:
             if "units" in treadmill_patch and hasattr(self.treadmill, "units"):
                 self.treadmill.units = self.config.treadmill.units
         self.save_config()
+        if isinstance(patch.get("overlay"), dict):
+            self._apply_overlay()
         self.sync_addon()
+
+    # ---- the floating window ---------------------------------------------------------
+    def attach_overlay(self, overlay: Any) -> None:
+        """Hand over the floating window (anything with ``set_shown``), and
+        show it if the setting says so. On the companion's loop."""
+        self.overlay = overlay
+        self._apply_overlay()
+
+    def _apply_overlay(self) -> None:
+        if self.overlay is None:
+            return
+        try:
+            self.overlay.set_shown(self.config.overlay.enabled)
+        except Exception:
+            log.exception("could not show or hide the floating window")
+
+    def overlay_moved(self, x: int, y: int) -> None:
+        """The floating window was dragged: remember where to, for next time."""
+        config_module.apply_update(self.config, {"overlay": {"x": x, "y": y}})
+        self.save_config()
+
+    def overlay_closed(self) -> None:
+        """The floating window was closed other than from Settings (from the
+        system, or its own close button): the setting follows."""
+        if self.config.overlay.enabled:
+            self.config.overlay.enabled = False
+            self.save_config()
 
     def profile_is_set(self) -> bool:
         """Has the walker's body profile been entered? Defaults do not count
@@ -541,6 +575,9 @@ class App:
             "config": self.config.to_dict(),
             "events": list(self.events)[:30],
             "journey": self.journeys.summary(),
+            "character": self.journeys.playing(),
+            # Can the floating window be shown? Only beside Walka's own window.
+            "overlay": {"available": self.overlay is not None},
         }
         if self.walka_account is not None:
             # Only with the part handed in: without it the page has no

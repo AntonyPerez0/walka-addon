@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="referrer" content="no-referrer">
+<title>Walka - walk</title>
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<link rel="stylesheet" href="/static/floating.css">
+<script type="module" src="/static/floating.js"></script>
+</head>
+<body>
+<!-- The floating window: what the in-game panel used to show, measured by
+     the treadmill instead of estimated. The whole panel is the handle it is
+     dragged by (pywebview's drag region); the close button is not. -->
+<main class="panel pywebview-drag-region" id="panel" data-state="off" aria-label="Walka: this walk">
+  <header class="head">
+    <span class="title">Walka</span>
+    <span class="dot" aria-hidden="true"></span>
+    <span class="state" id="state" role="status">Off</span>
+    <button class="close" id="close" type="button" title="Close the floating window (Settings → Floating window opens it again)" aria-label="Close the floating window">×</button>
+  </header>
+  <div class="speed-row">
+    <span class="speed num" id="speed">-</span>
+    <span class="unit" id="unit">mph</span>
+    <span class="caption" id="caption">Today</span>
+  </div>
+  <div class="row">
+    <span class="num"><span id="steps">0</span><small> steps</small></span>
+    <span class="num"><span id="kcal">0</span><small> kcal</small></span>
+  </div>
+  <div class="row">
+    <span class="num"><span id="dist">0.00</span><small id="dist-unit"> mi</small></span>
+    <span class="num" id="time">0:00</span>
+  </div>
+  <div class="goal" id="goal" hidden title="Today's steps against your daily goal">
+    <div class="goal-fill" id="goal-fill"></div>
+  </div>
+</main>
+</body>
+</html>

@@ -13,16 +13,14 @@ import re
 
 import pytest
 
-from .conftest import ui_files_present
 from .harness import ALLOWED_GLOBALS, ALLOWED_UNDEFINED, lua_list
-from .test_ui_worldmap import OPEN_MAP
 
 
 @pytest.fixture
 def busy_rt(make_rt):
     """Clients that have been through everything: session, pause, combat
-    with secrets, slash commands, every window (when present), a reload -
-    and one that has a world map and OpenMap, with the road drawn on it."""
+    with secrets, every slash command (those of the windows the addon once
+    had among them), the game's AddOns menu, a reload."""
     companion = (
         "WalkaCompanionData = { written = 1795000000, profile = { weightKg = 80, heightCm = 180 },\n"
         "  limits = { minKmh = 1, maxKmh = 6, stepKmh = 0.1 },\n"
@@ -47,75 +45,14 @@ def busy_rt(make_rt):
     rt.tick(30)
     rt.M.set_screen(2560, 1440)
     rt.M.set_ui_scale(0.8)
-    if ui_files_present():
-        frames = [rt.global_(name) for name in sorted(rt.created_globals()) if name != "WalkaBeaconFrame"]
-        for frame in [frame for frame in frames if rt.M.is_widget(frame)]:
-            if "Frame" not in rt.snapshot.type_chain(rt.inspect(frame)["type"]):
-                continue
-            for widget in rt.descendants(frame, visible=True):
-                if rt.M.script_set(widget, "OnEnter"):
-                    rt.hover(widget)
-            for button in rt.descendants(frame, "Button", visible=True) + rt.descendants(frame, "CheckButton", visible=True):
-                if rt.inspect(button)["visible"]:
-                    rt.click(button)
-                    rt.tick(1)
-            for slider in rt.descendants(frame, "Slider", visible=True):
-                low, high = slider.GetMinMaxValues(slider)
-                rt.M.slide(slider, (low + high) / 2)
-            for box in rt.descendants(frame, "EditBox", visible=True):
-                rt.M.type_text(box, "75", True)
-        hud = rt.global_("WalkaHUD")
-        if hud is not None and rt.inspect(hud)["visible"]:
-            rt.M.fire_script(hud, "OnMouseUp", "RightButton")
-        click = rt.global_(rt.toc.metadata["AddonCompartmentFunc"])
-        rt.M.call(click, "Walka", "LeftButton")
-        rt.M.call(click, "Walka", "RightButton")
+    click = rt.global_(rt.toc.metadata["AddonCompartmentFunc"])
+    rt.M.call(click, "Walka", "LeftButton")
+    rt.M.call(click, "Walka", "RightButton")
     rt.slash("/walka stop")
     fresh = rt.reload()
     fresh.slash("/walka start")
     fresh.tick(50)
-    return rt, fresh, on_the_world_map(make_rt)
-
-
-def on_the_world_map(make_rt):
-    """A client with a world map and (a stand-in for) OpenMap: the road is
-    drawn on Blizzard's map and on OpenMap's, zoomed, switched off and on,
-    through combat and a reload."""
-    rt = make_rt(load=False)
-    rt.M.world_map()
-    api = rt.run(OPEN_MAP, rt.M.maps)
-    rt.M.set_global("OpenMapAPI", api)
-    rt.load_addon()
-    for step in range(1, 200):
-        rt.set(worldX=-600 + 7 * step, worldY=-4200 + 3 * step, speed=7.6)
-        rt.tick(3)
-    for command in ("map", "mapcheck", "start"):
-        rt.slash("/walka " + command)
-        rt.tick(3)
-    for map_id, stitched in ((1411, True), (1414, True), (947, True), (1415, False), (1429, False), (1411, False)):
-        api.state.stitched = stitched
-        rt.M.world_map_show(map_id)
-        rt.tick(5)
-        for zoom in (2, 6, 1):
-            rt.M.world_map_view(zoom, 0.4, 0.3)
-            rt.tick(5)
-    rt.enter_combat()
-    rt.set(positionSecret=True)
-    rt.M.world_map_show(1414)
-    rt.tick(30)
-    rt.set(positionSecret=False)
-    rt.leave_combat()
-    rt.fire_event("PLAYER_REGEN_ENABLED")
-    for name in ("WalkaWorldMapRoadButton",):
-        button = rt.global_(name)
-        rt.hover(button)
-        rt.click(button)
-        rt.click(button)
-    for command in ("map off", "map on", "map window", "mapcheck", "stop"):
-        rt.slash("/walka " + command)
-        rt.tick(3)
-    assert rt.ns.WorldMapRoad.problem is None
-    return rt
+    return rt, fresh
 
 
 def test_no_undefined_globals_are_read(busy_rt, snapshot):
@@ -191,8 +128,8 @@ def test_toc_metadata(rt, snapshot):
     assert meta["SavedVariables"] == "WalkaDB"
     assert rt.global_(meta["AddonCompartmentFunc"]) is not None
     assert rt.toc.files[0] == "CompanionData.lua", "the companion's data must be loaded before the code that reads it"
-    core = [name for name in rt.toc.files if not name.startswith("UI")]
-    assert core == rt.loaded_files[: len(core)]
+    assert rt.toc.files == rt.loaded_files
+    assert not any(name.startswith("UI") for name in rt.toc.files), "the addon has no windows of its own"
     # C_AddOns.GetAddOnMetadata is how this client exposes the TOC fields.
     assert "GetAddOnMetadata" in snapshot.namespaces["C_AddOns"]
     assert rt.run("return C_AddOns.GetAddOnMetadata('Walka', 'Version')") == meta["Version"]

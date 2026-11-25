@@ -203,7 +203,7 @@ export function addonHealth(s) {
     pill: "missing",
     state: "not installed",
     installed: false,
-    detail: "The Walka addon was not found in the game's AddOns folder, so your history cannot be shown in game yet.",
+    detail: "The Walka addon was not found in the game's AddOns folder, so Walka cannot tell which character your walks are for.",
   };
 }
 

@@ -81,6 +81,22 @@ class WebConfig:
 
 
 @dataclass
+class OverlayConfig:
+    """The floating window: a small Walka panel that stays on top of the
+    game (``window.FloatingWindow``). Only where Walka has a window of its
+    own; off until it is switched on in Settings."""
+
+    enabled: bool = False
+    # Today's steps against this, as a bar along the bottom. 0: no bar.
+    step_goal: int = 6000
+    # Where it was last dragged to, in screen coordinates. None: the
+    # top-right corner of the main screen (well clear of the top-left
+    # corner of the game, where the addon's strip is).
+    x: int | None = None
+    y: int | None = None
+
+
+@dataclass
 class Config:
     """Everything the companion can be told. (A file written by a version
     that could still drive a belt holds more - speed limits, a STOP hotkey,
@@ -93,6 +109,7 @@ class Config:
     heart_rate: HeartRateConfig = field(default_factory=HeartRateConfig)
     wow: WowConfig = field(default_factory=WowConfig)
     web: WebConfig = field(default_factory=WebConfig)
+    overlay: OverlayConfig = field(default_factory=OverlayConfig)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -106,6 +123,7 @@ _BOUNDS: dict[tuple[str, str], tuple[float, float]] = {
     ("profile", "step_calibration"): STEP_CALIBRATION_RANGE,
     ("wow", "capture_fps"): (2.0, 60.0),
     ("web", "port"): (1.0, 65535.0),
+    ("overlay", "step_goal"): (0.0, 100000.0),
 }
 
 
@@ -159,6 +177,19 @@ def _valid_origin(value: Any) -> list[int]:
     return [int(value[0]), int(value[1])]
 
 
+# A window's place on the screen: far out of any screen means a damaged file.
+_COORD_LIMIT = 100_000
+
+
+def _valid_coord(value: Any) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"not a screen position: {value!r}")
+    coord = int(value)
+    if not -_COORD_LIMIT <= coord <= _COORD_LIMIT:
+        raise ValueError(f"not a screen position: {value!r}")
+    return coord
+
+
 def _valid_name_prefixes(value: Any) -> list[str]:
     if not isinstance(value, (list, tuple)) or not all(isinstance(v, str) for v in value):
         raise ValueError(f"name_prefixes must be a list of strings, not {value!r}")
@@ -171,6 +202,8 @@ _VALIDATORS = {
     ("profile", "sex"): _valid_sex,
     ("wow", "origin"): _valid_origin,
     ("treadmill", "name_prefixes"): _valid_name_prefixes,
+    ("overlay", "x"): _valid_coord,
+    ("overlay", "y"): _valid_coord,
 }
 
 
@@ -186,8 +219,8 @@ def _update(target: Any, data: dict[str, Any], section: str = "") -> None:
                 _update(current, value, f.name)
             continue
         if value is None:
-            # Optional fields (age, sex, origin) may be cleared.
-            if current is None or f.name in ("age", "sex", "origin"):
+            # Optional fields (age, sex, origin, a window's place) may be cleared.
+            if current is None or f.name in ("age", "sex", "origin", "x", "y"):
                 setattr(target, f.name, None)
             continue
         try:

@@ -275,8 +275,9 @@ class FakeDashboardWindow:
     opened: list[FakeDashboardWindow] = []
     fails = False
 
-    def __init__(self, url: str, storage: Path, *, on_closing) -> None:
+    def __init__(self, url: str, storage: Path, *, on_closing, floating=None) -> None:
         self.url, self.storage, self.on_closing = url, storage, on_closing
+        self.floating = floating  # (the floating window: test_floating.py)
         self.is_open = threading.Event()
         self.gone = threading.Event()
         self.closed_by: list[str] = []

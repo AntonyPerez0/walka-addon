@@ -143,8 +143,8 @@ def test_a_session_started_with_announcements_says_what_it_counts_with(rt):
     rt.clear_printed()
     rt.slash("/walka start")
     assert rt.printed == [
-        rt.walka.PREFIX + "session started - Walka counts this walk at 1.5 mph. Set the speed on your treadmill; "
-        "/walka pace tells Walka what it is. /walka stop to finish."
+        rt.walka.PREFIX + "session started - your walk counts for this character. Start the belt at the treadmill; "
+        "the Walka app shows the walk (until its numbers arrive, Walka estimates at 1.5 mph). /walka stop to finish."
     ]
 
 
@@ -648,11 +648,8 @@ def test_settings_of_a_fresh_install(rt):
         "paceKmh": 2.414,                                   # 1.5 mph
         "profile": {"weightKg": 75, "heightCm": 172},
         "beacon": {"enabled": True, "cellPx": 4},
-        "hud": {"shown": True, "locked": False, "scale": 1.0, "alpha": 0.9},
         "autoPauseAFK": True,
         "recordRoad": True,
-        "worldMap": {"road": True, "button": True},
-        "dailyStepGoal": 6000,
         "announce": True,
     }, "exactly these settings: nothing that no code reads (such as the old netCalories)"
     assert rt.walka.GetPace(rt.walka) == rt.ns.Metrics.DEFAULT_PACE_KMH == PACE
@@ -711,7 +708,7 @@ def test_saved_variables_from_an_older_or_damaged_file_are_repaired(make_rt):
     assert settings["units"] == "kmh"                       # kept
     assert "speed" not in settings                          # (a setting of older versions: dropped)
     assert settings["paceKmh"] == PACE
-    assert settings["hud"]["shown"] is True
+    assert "hud" not in settings                            # (the addon has no windows any more)
     assert settings["profile"] == {"weightKg": 75, "heightCm": 172}
     assert lua_plain(rt.db.sessions) in ([], {})
     assert rt.db.sessionCounter == 0
@@ -932,11 +929,11 @@ def test_format_number(rt, value, text):
 def test_set_and_get_by_path(rt):
     walka = rt.walka
     events = collect_events(rt)
-    assert walka.Get(walka, "hud.scale") == 1.0
-    walka.Set(walka, "hud.scale", 1.2)
-    assert walka.Get(walka, "hud.scale") == 1.2
-    assert rt.db.settings.hud.scale == 1.2
-    assert walka.Get(walka, "hud") is not None
+    assert walka.Get(walka, "beacon.cellPx") == 4
+    walka.Set(walka, "beacon.cellPx", 6)
+    assert walka.Get(walka, "beacon.cellPx") == 6
+    assert rt.db.settings.beacon.cellPx == 6
+    assert walka.Get(walka, "beacon") is not None
     assert walka.Get(walka, "no.such.setting") is None
     assert walka.Get(walka, "units.deeper") is None
     walka.Set(walka, "brand.new.key", 1)
@@ -956,7 +953,7 @@ def test_the_pace_is_what_a_session_counts_with_and_changes_live(rt):
     first = session(rt)
     assert first["distanceM"] == pytest.approx(PACE / 3.6 * 10)
     assert walka.SetPace(walka, 4.0) == 4.0
-    assert events.count(("SETTINGS",)) == 1, "the windows hear of it"
+    assert events.count(("SETTINGS",)) == 1, "whoever listens hears of it"
     assert walka.GetPace(walka) == rt.db.settings.paceKmh == live_speed(rt) == 4.0
     rt.tick(100)
     second = session(rt)

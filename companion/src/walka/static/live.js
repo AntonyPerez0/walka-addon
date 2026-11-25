@@ -24,6 +24,14 @@ function remember(key, value) {
 // no companion). Never a zero: an unseen belt may well be moving.
 const NO_SPEED = "No reading"; // said in words: a dash at this size reads as a glitch
 
+// The character in the game right now, as the addon's journey numbers say:
+// "Name · level 42". (Its speed in the game is no business of the belt's.)
+function characterText(character) {
+  if (!character) return "-";
+  const name = character.name || "Your character";
+  return character.level ? `${name} · level ${character.level}` : name;
+}
+
 const BELT_WORDS = {
   unknown: "state unknown",
   stopped: "stopped",
@@ -72,7 +80,7 @@ function updateHero(s, view, online) {
   let game = "-";
   if (beaconLive) game = !frame.active ? "none" : frame.paused ? "paused in game" : "marked";
   setText($("ro-game"), game);
-  setText($("ro-char"), beaconLive ? `${frame.char_speed_yps.toFixed(1)} yd/s` : "-");
+  setText($("ro-char"), characterText(s.character));
   setText($("ro-belt"), t.connected ? BELT_WORDS[t.state] || t.state : "not connected");
 
   // Meter: the belt's speed between nothing and the pad's own top speed.
@@ -259,7 +267,7 @@ const FLAG_HELP = {
   SWIMMING: "Swimming",
   FLYING: "Flying",
   AFK: "Away from keyboard",
-  ESTIMATED: "The character's speed is an estimate - the game hides it from addons in combat",
+  ESTIMATED: "The game hides the character's movement from addons in combat: the addon is estimating it",
 };
 
 let flagsKey = null;
@@ -274,7 +282,7 @@ function updateLinks(s, links, online) {
   let detail = game.detail;
   if (beacon && beacon.state === "ok" && frame) {
     detail = frame.active
-      ? `Session ${frame.session}${frame.paused ? " (paused in game)" : ""}: character at ${frame.char_speed_yps.toFixed(1)} yd/s. Walks are filed under this session.`
+      ? `Session ${frame.session}${frame.paused ? " (paused in game)" : ""}${s.character && s.character.name ? ` for ${s.character.name}` : ""}. Walks are filed under this session.`
       : "The addon is visible. No session is marked in game - type /walka start there to count your walk for your character.";
   }
   setText($("game-detail"), detail);

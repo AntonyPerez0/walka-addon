@@ -29,9 +29,10 @@ def test_defaults():
 def test_there_is_nothing_to_set_about_the_belt():
     """No speed limit, no STOP hotkey, no manual speed, no disclaimer to
     accept before a belt is moved: the companion moves no belt."""
-    assert set(Config().to_dict()) == {"units", "profile", "treadmill", "heart_rate", "wow", "web"}
+    assert set(Config().to_dict()) == {"units", "profile", "treadmill", "heart_rate", "wow", "web", "overlay"}
+    assert set(Config().to_dict()["overlay"]) == {"enabled", "step_goal", "x", "y"}  # a window, and where it is
     assert set(Config().to_dict()["treadmill"]) == {"kind", "address", "name_prefixes", "units", "auto_connect"}
-    assert {section for section, _name in _BOUNDS} == {"profile", "wow", "web"}
+    assert {section for section, _name in _BOUNDS} == {"profile", "wow", "web", "overlay"}
 
 
 def test_defaults_are_inside_their_own_bounds():

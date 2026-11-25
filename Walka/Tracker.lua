@@ -159,8 +159,8 @@ end
 --
 -- So Walka leaves the chat alone. It listens - the answer to the player's
 -- own /played counts as well - and counts on from the last answer: time
--- logged in is time played. It asks by itself only when the Journey window
--- is opened and the game has not answered yet during this login, which
+-- logged in is time played. It asks by itself only when a walking session
+-- is started and the game has not answered yet during this login, which
 -- puts the game's two lines in the chat once, in reply to something the
 -- player did.
 

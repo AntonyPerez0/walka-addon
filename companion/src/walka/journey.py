@@ -395,6 +395,17 @@ class JourneyBook:
         with self._lock:
             return {"rev": self._rev, "characters": len(self._journeys), "demo": self.demo}
 
+    def playing(self) -> dict[str, Any] | None:
+        """The character in the game right now - its name and level - or
+        ``None`` when no character's numbers are arriving."""
+        now = self._wall()
+        with self._lock:
+            live = [j for j in self._journeys.values() if 0 <= now - j.seen_at <= LIVE_FOR_S]
+        if not live:
+            return None
+        journey = max(live, key=lambda j: j.seen_at)
+        return {"name": journey.name, "level": journey.level, "max_level": journey.max_level}
+
     def to_api(self) -> dict[str, Any]:
         now = self._wall()
         with self._lock:

@@ -38,28 +38,16 @@ What a green run proves
   numbers as a stat frame, never two in a row, and a whole round read off
   the screen decodes to the journey with the companion's decoder
   (test_stat_frames.py).
-* The windows (once Walka/UI exists) survive every control being clicked,
-  dragged, typed into and scrolled, in and out of combat - and do what they
-  say: the HUD shows each session state and drives the session, the history
-  window lists the merged sessions and totals, every control of the options
-  page reads and writes its setting (test_ui_hud.py, test_ui_history.py,
-  test_ui_options.py; controls are found by their labels, ui_driver.py).
-  The journey window shows the card's numbers with their marks, remembers
-  its position, and asks the game for the time played once per login
-  (test_ui_journey.py).
-* Ten simulated minutes of mixed play with every window in use raise no
-  error, keep no secret, read no undefined global, create no widget after
-  start-up and merge the history only when it changed (test_ui_soak.py).
-* Nothing a data file can contain breaks a window: the companion's file and
-  the saved variables are fed in damaged in many ways. That includes
+* The addon has no windows of its own (the app shows everything): every
+  file in the TOC loads, the session is worked from slash commands and the
+  game's AddOns menu, and the commands of the windows it once had point to
+  the app (test_harness.py, test_slash.py). Starting a session asks the
+  game for the time played, once per login (test_journey.py).
+* Nothing a data file can contain breaks the addon: the companion's file
+  and the saved variables are fed in damaged in many ways. That includes
   timestamps the game cannot format - the mock's date() and time() have the
   limits of the Windows C runtime (nil before 1970 and after the year
   3000), because the game runs on Windows and the tests do not.
-* The Settings window treats the addon's page the way SettingsPanelMixin
-  does (page area of 665 x 601, OnRefresh before the page is visible, the
-  page taken off when the window reopens), frames clamped to the screen
-  stay on it, and a scroll child is placed by its scroll frame - so layout
-  can be checked across resolutions and UI scales.
 
 How to run
 ----------
