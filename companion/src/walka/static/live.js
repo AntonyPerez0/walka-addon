@@ -144,12 +144,18 @@ function updateSession(s, online) {
         ? "heart-rate sensor"
         : "no sensor";
     tile(5, "Heart rate", live.hr ? String(live.hr) : "-", live.hr ? "bpm" : "", hrNote);
+    // No sensor at all (and one could be used): the way to add one, instead of "no sensor".
+    const addSensor = !live.hr && !live.avg_hr && !!s.heart_rate && !s.heart_rate.enabled;
+    setShown($("t5-add"), addSensor);
+    setShown($("t5-s"), !addSensor);
     const avg = live.seconds > 0 ? (live.distance_m / live.seconds) * 3.6 : null;
     const avgUnit = avg == null ? "" : U.speedUnit;
     tile(6, "Average speed", avg == null ? "-" : fmt.speed(avg), avgUnit, `max ${fmt.speedU(live.max_kmh)}`);
     return;
   }
   const today = s.totals.today;
+  setShown($("t5-add"), false);
+  setShown($("t5-s"), true);
   setText($("session-title"), "Today");
   setText($("session-sub"), online ? "no walk being recorded" : "last known");
   tile(1, "Time", fmt.clock(today.seconds), "", "");

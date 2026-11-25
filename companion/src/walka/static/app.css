@@ -3124,3 +3124,12 @@ body[data-welcome="1"] main {
 .form-foot:not(:has(> button:not([hidden]))):has(> .status:empty) {
   display: none;
 }
+.tile .tile-link {
+  color: var(--accent-ink);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.tile-link[hidden] {
+  display: none;
+}
