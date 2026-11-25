@@ -186,6 +186,7 @@ function updateTreadmill(s, link) {
   setText($("tm-range"), known ? `${fmt.speed(t.min_kmh)}-${fmt.speedU(t.max_kmh)}` : "-");
   setText($("tm-step"), known ? `${trimNumber(U.speed(t.step_kmh), 2)} ${U.speedUnit}` : "-");
   setText($("tm-grid"), known ? (t.mph_grid ? "mph grid" : "km/h grid") : "-");
+  setText($("tm-address"), t.address || "-");
 
   const searching = !t.connected && t.want_connected;
   const connect = $("tm-connect");

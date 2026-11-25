@@ -1169,8 +1169,11 @@ main {
     gap: 0 24px;
     margin-top: 20px;
   }
-  .readout div:nth-last-child(2) {
+  .readout div:nth-last-child(2):nth-child(odd) {
     border-bottom: 0;
+  }
+  .readout div:last-child:nth-child(odd) {
+    grid-column: 1 / -1; /* an odd one out takes the whole row */
   }
 }
 /* Today / this session: six figures. */
@@ -2471,8 +2474,11 @@ input[type="checkbox"] {
     gap: 0 24px;
     margin-top: 20px;
   }
-  .readout div:nth-last-child(2) {
+  .readout div:nth-last-child(2):nth-child(odd) {
     border-bottom: 0;
+  }
+  .readout div:last-child:nth-child(odd) {
+    grid-column: 1 / -1; /* an odd one out takes the whole row */
   }
 }
 
@@ -3070,4 +3076,47 @@ body[data-welcome="1"] main {
   overflow-wrap: anywhere;
   font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
   font-size: 12px;
+}
+
+/* "Advanced": the technical words, folded away until asked for. */
+.advanced {
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+  font-size: 14px;
+}
+.advanced > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 32px;
+  cursor: pointer;
+  color: var(--accent-ink);
+  font-weight: 600;
+  list-style: none;
+}
+.advanced > summary::-webkit-details-marker {
+  display: none;
+}
+.advanced > summary::after {
+  content: "";
+  width: 7px;
+  height: 7px;
+  margin-left: 4px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: translateY(-2px) rotate(45deg);
+  transition: transform 0.15s;
+}
+.advanced[open] > summary::after {
+  transform: translateY(2px) rotate(-135deg);
+}
+.advanced > summary:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.advanced-body {
+  display: grid;
+  gap: 12px;
+  padding-top: 8px;
 }

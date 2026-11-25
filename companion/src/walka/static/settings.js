@@ -363,7 +363,19 @@ class Form {
     this.saveButton = h("button", { class: "btn primary", type: "submit", text: "Save", disabled: true });
     this.revertButton = h("button", { class: "btn quiet", type: "button", text: "Undo changes", hidden: true });
     this.statusEl = h("span", { class: "status", role: "status" });
-    root.append(...this.fields.map((field) => field.el));
+    const plain = this.fields.filter((field) => !field.spec.advanced);
+    const advanced = this.fields.filter((field) => field.spec.advanced);
+    root.append(...plain.map((field) => field.el));
+    if (advanced.length) {
+      root.append(
+        h(
+          "details",
+          { class: "advanced" },
+          h("summary", { text: "Advanced" }),
+          h("div", { class: "advanced-body" }, ...advanced.map((field) => field.el)),
+        ),
+      );
+    }
     root.append(h("div", { class: "form-foot" }, this.saveButton, this.revertButton, this.statusEl));
 
     const refresh = () => {
@@ -401,6 +413,7 @@ class Form {
       const message = field.changed() ? field.error() : "";
       field.setError(message);
       if (message) invalid = true;
+      if (message && field.spec.advanced) field.el.closest("details").open = true; // (never a hidden mistake)
     }
     const dirty = this.dirty;
     const unconfirmed = this.spec.confirm === "profile" && !profileSet;
@@ -488,6 +501,7 @@ const FORMS = {
       {
         type: "text",
         path: "treadmill.address",
+        advanced: true,
         optional: true,
         label: "Bluetooth address",
         placeholder: "AA:BB:CC:DD:EE:FF",
@@ -498,6 +512,7 @@ const FORMS = {
       {
         type: "select",
         path: "treadmill.units",
+        advanced: true,
         label: "Firmware speed grid",
         options: [
           ["auto", "Detect automatically"],

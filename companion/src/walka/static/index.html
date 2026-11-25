@@ -176,9 +176,8 @@
         </div>
         <dl class="readout">
           <div><dt>Set to</dt><dd class="num" id="ro-set">-</dd></div>
-          <div><dt>Game session</dt><dd id="ro-game">-</dd></div>
-          <div><dt>Playing</dt><dd id="ro-char">-</dd></div>
           <div><dt>Belt</dt><dd id="ro-belt">-</dd></div>
+          <div><dt>Playing</dt><dd id="ro-char">-</dd></div>
         </dl>
         <div class="meter" id="meter" role="img" aria-label="Belt speed against the pad's top speed">
           <div class="meter-track"><div class="meter-fill" id="meter-fill"></div></div>
@@ -272,9 +271,17 @@
         <dl class="facts">
           <div><dt>Name</dt><dd id="tm-name">-</dd></div>
           <div><dt>Range</dt><dd class="num" id="tm-range">-</dd></div>
-          <div><dt>Step</dt><dd class="num" id="tm-step">-</dd></div>
-          <div><dt>Firmware</dt><dd id="tm-grid">-</dd></div>
         </dl>
+        <details class="advanced">
+          <summary>Advanced</summary>
+          <div class="advanced-body">
+            <dl class="facts">
+              <div><dt>Step</dt><dd class="num" id="tm-step">-</dd></div>
+              <div><dt>Firmware</dt><dd id="tm-grid">-</dd></div>
+              <div><dt>Address</dt><dd class="num" id="tm-address">-</dd></div>
+            </dl>
+          </div>
+        </details>
         <div class="btn-row">
           <button class="btn" id="tm-scan" type="button">Scan</button>
           <button class="btn" id="tm-connect" type="button">Connect</button>
@@ -315,7 +322,15 @@
             <span class="head-state num" id="game-state"></span>
           </div>
           <p class="link-detail" id="game-detail"></p>
-          <div class="chips" id="game-flags" aria-label="What the character is doing"></div>
+          <details class="advanced">
+            <summary>Advanced</summary>
+            <div class="advanced-body">
+              <dl class="facts">
+                <div><dt>Game session</dt><dd id="ro-game">-</dd></div>
+              </dl>
+              <div class="chips" id="game-flags" aria-label="What the addon says the character is doing"></div>
+            </div>
+          </details>
         </div>
 
         <div class="link" id="link-hr" data-tone="idle" tabindex="-1">
@@ -525,7 +540,13 @@
     <section class="card wide" id="set-overlay" aria-labelledby="set-overlay-h" tabindex="-1">
       <header class="card-head"><h3 id="set-overlay-h">Floating window</h3></header>
       <p class="muted">A small Walka panel that stays on top of the game: the belt's speed and this walk's steps, calories, distance and time, as the treadmill measures them. Drag it wherever you like - it opens there next time. It shows on top of the game when the game runs in <em>Windowed</em> or <em>Windowed (Fullscreen)</em> mode, as it has to for Walka to see it anyway.</p>
-      <p class="link-detail" id="overlay-note" hidden>Only when Walka runs in its own window: started with <code>--browser</code> or <code>--no-window</code>, or with its dashboard in the web browser, it has no floating window.</p>
+      <div id="overlay-note" hidden>
+        <p class="link-detail">The floating window comes with Walka's own window. With the dashboard in a web browser, there is none.</p>
+        <details class="advanced">
+          <summary>Advanced</summary>
+          <div class="advanced-body"><p class="muted small">Walka started with <code>--browser</code> or <code>--no-window</code> shows no window of its own, and so no floating window either.</p></div>
+        </details>
+      </div>
       <form class="form" data-form="overlay" novalidate></form>
     </section>
 
