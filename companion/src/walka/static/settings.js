@@ -351,6 +351,12 @@ const TYPES = { number: NumberField, height: HeightField, text: TextField, selec
 
 // ---- a form card --------------------------------------------------------------------------
 
+// Saved as it is changed: a choice at once, typing once it pauses (or the
+// field is left), and only when every changed field is valid. There is no
+// Save button. The body profile also has "These are right" while it has
+// never been confirmed (its defaults are only a guess until then).
+const TYPING_PAUSE_MS = 1200;
+
 class Form {
   /** spec: {fields, confirm?: section that is sent even when unchanged} */
   constructor(root, spec) {
@@ -359,9 +365,11 @@ class Form {
     this.fields = spec.fields.map((field) => new TYPES[field.type](field));
     this.note = "";
     this.filled = false; // nothing to compare against until the first config arrives
+    this.saving = null; // the save under way, if one is
+    this.again = false; // changed while it was under way: save once more
+    this.timer = 0;
 
-    this.saveButton = h("button", { class: "btn primary", type: "submit", text: "Save", disabled: true });
-    this.revertButton = h("button", { class: "btn quiet", type: "button", text: "Undo changes", hidden: true });
+    this.confirmButton = h("button", { class: "btn", type: "button", text: "These are right", hidden: true });
     this.statusEl = h("span", { class: "status", role: "status" });
     const plain = this.fields.filter((field) => !field.spec.advanced);
     const advanced = this.fields.filter((field) => field.spec.advanced);
@@ -376,21 +384,27 @@ class Form {
         ),
       );
     }
-    root.append(h("div", { class: "form-foot" }, this.saveButton, this.revertButton, this.statusEl));
+    root.append(h("div", { class: "form-foot" }, this.confirmButton, this.statusEl));
 
-    const refresh = () => {
+    root.addEventListener("input", (event) => {
       this.note = "";
       this.refresh();
-    };
-    root.addEventListener("input", refresh);
-    root.addEventListener("change", refresh);
-    root.addEventListener("submit", (event) => {
-      event.preventDefault();
+      clearTimeout(this.timer);
+      // A box being typed in waits for a pause; a tick or a choice is saved at once.
+      const typing = event.target.matches && event.target.matches('input[type="text"]');
+      if (typing) this.timer = setTimeout(() => this.save(), TYPING_PAUSE_MS);
+      else this.save();
+    });
+    root.addEventListener("change", () => {
+      clearTimeout(this.timer);
       this.save();
     });
-    this.revertButton.addEventListener("click", () => {
-      if (config) this.fill(config);
+    root.addEventListener("submit", (event) => {
+      event.preventDefault(); // Enter in a box: save now
+      clearTimeout(this.timer);
+      this.save();
     });
+    this.confirmButton.addEventListener("click", () => this.save({ confirm: true }));
   }
 
   get dirty() {
@@ -399,6 +413,11 @@ class Form {
 
   get invalid() {
     return this.fields.some((field) => field.changed() && field.error());
+  }
+
+  values() {
+    const inputs = this.fields.flatMap((field) => (field.inputs && field.inputs.length ? field.inputs : [field.input]));
+    return JSON.stringify(inputs.map((input) => (input.type === "checkbox" ? input.checked : input.value)));
   }
 
   fill(source) {
@@ -415,32 +434,55 @@ class Form {
       if (message) invalid = true;
       if (message && field.spec.advanced) field.el.closest("details").open = true; // (never a hidden mistake)
     }
-    const dirty = this.dirty;
     const unconfirmed = this.spec.confirm === "profile" && !profileSet;
-    this.saveButton.disabled = !this.filled || invalid || !(dirty || unconfirmed);
-    this.saveButton.textContent = unconfirmed && !dirty ? "These are right - save" : "Save";
-    this.revertButton.hidden = !dirty;
-    setText(this.statusEl, invalid ? "Fix the marked fields to save." : dirty ? "Unsaved changes." : this.note);
+    this.confirmButton.hidden = !this.filled || !unconfirmed || this.dirty;
+    let status = this.note;
+    if (invalid) status = "Not saved: fix the marked field.";
+    else if (this.saving) status = "Saving...";
+    else if (unconfirmed) status = "Check these, then press \"These are right\" - or change them.";
+    setText(this.statusEl, status);
   }
 
-  async save() {
-    if (this.saveButton.disabled) return;
+  /** Save what changed, if it is all valid. confirm: send the section even unchanged. */
+  async save({ confirm = false } = {}) {
+    if (!this.filled || this.invalid || !(this.dirty || confirm)) {
+      this.refresh();
+      return;
+    }
+    if (this.saving) {
+      this.again = true;
+      return this.saving;
+    }
     const patch = {};
     if (this.spec.confirm) patch[this.spec.confirm] = {};
     const sent = this.fields.filter((field) => field.changed());
     for (const field of sent) field.write(patch);
-    await run(this.saveButton, async () => {
+    const before = this.values();
+    this.saving = run(null, async () => {
       const data = await post("/api/config", patch);
       const adjusted = sent.some((field) => field.differs(data.config));
       if (this.spec.confirm === "profile") {
         profileSet = true;
         setShown($("profile-badge"), false);
       }
-      adopt(data.config, true);
-      this.fill(data.config);
-      this.note = adjusted ? "Saved - some values were adjusted to the allowed range." : "Saved.";
-      this.refresh();
+      adopt(data.config, false);
+      // Typed on while it was saved: keep what is in the boxes, and save that too.
+      if (this.values() === before) this.fill(data.config);
+      else this.again = true;
+      this.note = adjusted ? "Saved - adjusted to the allowed range." : "Saved.";
     });
+    this.refresh();
+    try {
+      await this.saving;
+    } finally {
+      this.saving = null;
+      this.refresh();
+    }
+    if (this.again) {
+      this.again = false;
+      if (config) for (const field of this.fields) if (!field.changed()) field.fill(config);
+      await this.save();
+    }
   }
 }
 

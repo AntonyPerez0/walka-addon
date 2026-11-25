@@ -3120,3 +3120,7 @@ body[data-welcome="1"] main {
   gap: 12px;
   padding-top: 8px;
 }
+/* Settings save themselves: a form's foot is only there when it has something to say. */
+.form-foot:not(:has(> button:not([hidden]))):has(> .status:empty) {
+  display: none;
+}

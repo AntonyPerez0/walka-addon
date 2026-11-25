@@ -201,9 +201,9 @@ the pad or with its remote - before, during and after a session.
 
 ## 10. The floating window
 
-- [ ] In the app, *Settings → Floating window → Show the floating window*,
-      *Save*: a small dark Walka panel opens in the top-right corner of the
-      screen.
+- [ ] In the app, tick *Settings → Floating window → Show the floating
+      window* (settings save themselves): a small dark Walka panel opens in
+      the top-right corner of the screen.
 - [ ] With the game in *Windowed (Fullscreen)* mode and in front, the
       panel stays on top of it. Also in *Windowed* mode.
 - [ ] Click the panel, then press a movement key: the character moves
