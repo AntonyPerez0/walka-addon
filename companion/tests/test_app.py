@@ -500,6 +500,8 @@ def test_snapshot_is_json_serialisable_and_says_nothing_about_control(rig: Rig):
         "totals",
         "heart_rate",
         "addon",
+        "check",
+        "update",
         "setup",
         "config",
         "events",
@@ -511,7 +513,9 @@ def test_snapshot_is_json_serialisable_and_says_nothing_about_control(rig: Rig):
     assert "cap_kmh" not in snapshot["treadmill"] and "in_use" not in snapshot["treadmill"]
     assert snapshot["source"]["kind"] == "wow" and "manual" not in snapshot["source"]
     assert "target_kmh" not in snapshot["source"]["frame"]
-    assert set(snapshot["config"]) == {"units", "profile", "treadmill", "heart_rate", "wow", "web", "overlay"}
+    assert set(snapshot["config"]) == {
+        "units", "profile", "treadmill", "heart_rate", "wow", "web", "overlay", "updates", "welcome_done"
+    }  # fmt: skip
     assert "stop_on_exit" not in snapshot["config"]["treadmill"]
 
 
@@ -525,7 +529,8 @@ def test_the_activity_log_says_when_the_belt_moves_and_stops(rig: Rig):
 
     run(scenario())
     texts = [event["text"] for event in reversed(rig.app.events)]
-    assert texts[0].startswith("Treadmill connected: Simulated pad") and "only listens" in texts[0]
+    # ("Walka only listens" is said once on the Live screen, under the belt's state - not in every log line.)
+    assert texts[0] == "Treadmill connected: Simulated pad."
     assert texts[1:3] == ["The belt is moving.", "The belt has stopped."]
 
 
@@ -745,7 +750,7 @@ def test_settings_of_an_older_version_are_ignored_not_obeyed(tmp_path: Path):
     app = App(config, data, treadmill=SimulatedTreadmill(auto_run=False), beacon=BeaconSource(None))
     app.update_config({"limits": {"max_speed_kmh": 6.0}, "stop_hotkey": "f13", "terms": {"accepted_version": 9}})
     saved = json.loads((data / "config.json").read_text("utf-8"))
-    assert set(saved) == {"units", "profile", "treadmill", "heart_rate", "wow", "web", "overlay"}
+    assert set(saved) == {"units", "profile", "treadmill", "heart_rate", "wow", "web", "overlay", "updates", "welcome_done"}
     assert "stop_on_exit" not in saved["treadmill"]
 
 
@@ -881,3 +886,24 @@ def test_heart_rate_reaches_the_recording(tmp_path: Path):
     assert record.avg_hr == pytest.approx(118, abs=0.5) and record.max_hr == 118
     assert record.calories_source == "heart_rate"
     assert load_companion_data(rig).sessions[1].avgHr == 118
+
+
+def test_the_snapshot_says_whether_the_first_run_guide_is_due_and_which_units_to_suggest(rig: Rig, monkeypatch):
+    from walka import locale_units
+
+    monkeypatch.setattr(locale_units, "system_units", lambda: "kmh")
+    snapshot = rig.app.snapshot()
+    assert snapshot["setup"]["system_units"] == "kmh"
+    assert snapshot["config"]["welcome_done"] is False  # a new install
+    rig.app.update_config({"welcome_done": True})
+    assert rig.app.snapshot()["config"]["welcome_done"] is True
+
+
+def test_a_broken_locale_lookup_suggests_nothing(rig: Rig, monkeypatch):
+    from walka import locale_units
+
+    def broken():
+        raise OSError("no locale")
+
+    monkeypatch.setattr(locale_units, "system_units", broken)
+    assert rig.app.snapshot()["setup"]["system_units"] is None

@@ -20,7 +20,7 @@ py -m walka scan       # list nearby Bluetooth treadmills
 
 On a Mac it is `python3` in place of `py`, and macOS will ask whether
 Terminal may use Bluetooth and record the screen: see
-[On a Mac](../README.md#on-a-mac).
+[On a Mac](../docs/INSTALL.md#on-a-mac).
 
 The window is made with [pywebview](https://pywebview.flowrl.com), on what
 the system has for showing pages inside programs (Edge WebView2 on

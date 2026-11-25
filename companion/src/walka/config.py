@@ -13,6 +13,7 @@ from typing import Any
 
 from .metrics import STEP_CALIBRATION_RANGE, Profile
 from .treadmill.known import DEFAULT_NAME_PREFIXES, LEGACY_NAME_PREFIXES
+from .treadmill.readers import KINDS as READER_KINDS
 
 log = logging.getLogger(__name__)
 
@@ -39,7 +40,7 @@ def default_data_dir() -> Path:
 
 @dataclass
 class TreadmillConfig:
-    kind: str = "ftms"  # "ftms" | "simulated"
+    kind: str = "ftms"  # a reader of treadmill/readers.py ("ftms", "rsc", "walkingpad", ...) | "simulated"
     # Bluetooth address. Empty = the first matching treadmill; the companion
     # then stores that pad's address here, so that every later reconnect can
     # only reach the same pad.
@@ -58,6 +59,11 @@ class HeartRateConfig:
     enabled: bool = False
     address: str = ""  # Bluetooth address; empty = first heart-rate sensor found
     name: str = ""
+    # Heart rate over the local network, from a watch app (hr_network.py). Off unless switched on;
+    # its own port, and a pairing code that is made when it is first switched on.
+    network: bool = False
+    network_port: int = 8788
+    network_code: str = ""
 
 
 @dataclass
@@ -97,6 +103,13 @@ class OverlayConfig:
 
 
 @dataclass
+class UpdatesConfig:
+    """The update notice (updates.py): asks GitHub only when switched on."""
+
+    check: bool = False
+
+
+@dataclass
 class Config:
     """Everything the companion can be told. (A file written by a version
     that could still drive a belt holds more - speed limits, a STOP hotkey,
@@ -110,6 +123,10 @@ class Config:
     wow: WowConfig = field(default_factory=WowConfig)
     web: WebConfig = field(default_factory=WebConfig)
     overlay: OverlayConfig = field(default_factory=OverlayConfig)
+    updates: UpdatesConfig = field(default_factory=UpdatesConfig)
+    # The first-run guide has been finished (or skipped). A settings file
+    # from before there was a guide counts as finished: see load().
+    welcome_done: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -124,6 +141,7 @@ _BOUNDS: dict[tuple[str, str], tuple[float, float]] = {
     ("wow", "capture_fps"): (2.0, 60.0),
     ("web", "port"): (1.0, 65535.0),
     ("overlay", "step_goal"): (0.0, 100000.0),
+    ("heart_rate", "network_port"): (1024.0, 65535.0),
 }
 
 
@@ -265,7 +283,7 @@ def apply_update(config: Config, data: dict[str, Any]) -> Config:
         # the settings.
         log.warning("web.host %r is not this computer itself - using 127.0.0.1", config.web.host)
         config.web.host = "127.0.0.1"
-    if config.treadmill.kind not in ("ftms", "simulated"):
+    if config.treadmill.kind not in (*READER_KINDS, "simulated"):
         config.treadmill.kind = "ftms"
     if config.treadmill.units not in ("auto", "mph", "kmh"):
         config.treadmill.units = "auto"
@@ -285,6 +303,8 @@ def load(data_dir: Path | None = None) -> Config:
         return config
     if isinstance(raw, dict):
         apply_update(config, raw)
+        if "welcome_done" not in raw:
+            config.welcome_done = True  # set up before there was a first-run guide
     if tuple(config.treadmill.name_prefixes) == LEGACY_NAME_PREFIXES:
         # Written when UREVO was the only make known by name (the file holds
         # every setting, changed or not): move on to today's list.

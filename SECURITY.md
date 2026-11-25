@@ -39,7 +39,7 @@ version is out, and named in its notes if you want to be.
   open in the same browser, or another device on the network.
 * Anything that makes Walka send what its user did not switch on, or
   send anything anywhere but to the Walka account its user signed in to.
-  ([Your Walka account](README.md#your-walka-account-on-walkadev) in the
+  ([Your Walka account](docs/WALKA-ACCOUNT.md#your-walka-account-on-walkadev) in the
   README says what is sent, and when. One command is not meant by this:
   `Walka.exe httpscheck`, which the build runs to see that the program
   checks certificates. It fetches the front page of walka.dev - one
@@ -88,7 +88,7 @@ How the dashboard is shut off from other pages is at the top of
   Walka's. (While Walka is connected, most treadmills accept no second
   connection.)
 * Antivirus programs that flag `Walka.exe` without naming anything: see
-  [Is the download safe?](README.md#is-the-download-safe)
+  [Is the download safe?](docs/INSTALL.md#is-the-download-safe)
 
 Ordinary bugs - a walk is not recorded, a number is wrong, a treadmill is
 not found - go to the

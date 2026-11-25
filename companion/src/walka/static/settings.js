@@ -7,9 +7,11 @@
 // clamps everything to its own bounds; the ranges here mirror config._BOUNDS
 // so mistakes are caught before they are sent.
 
-import { $, CM_PER_INCH, U, api, h, post, run, setShown, setText, setTone, toast } from "./util.js";
+import { $, CM_PER_INCH, U, api, fmt, h, post, run, sentence, setShown, setText, setTone, toast } from "./util.js";
 import { installAddon, scanInto, syncAddon } from "./live.js";
 import { initWalkaAccount, updateWalkaAccount } from "./walkaaccount.js";
+import { t, tr } from "./i18n.js";
+import { renderHeartRateHelp } from "./hrhelp.js";
 
 let config = null; // the last config seen
 let configKey = "";
@@ -209,7 +211,7 @@ class HeightField extends Field {
     const imperial = U.mph;
     this.minor.hidden = !imperial;
     this.minorUnit.hidden = !imperial;
-    this.major.setAttribute("aria-label", imperial ? "Height, feet" : "Height in centimetres");
+    this.major.setAttribute("aria-label", tr(imperial ? "Height, feet" : "Height in centimetres"));
     setText(this.majorUnit, imperial ? "ft" : "cm");
     if (cm == null) this.base = ["", ""];
     else if (imperial) {
@@ -351,6 +353,12 @@ const TYPES = { number: NumberField, height: HeightField, text: TextField, selec
 
 // ---- a form card --------------------------------------------------------------------------
 
+// Saved as it is changed: a choice at once, typing once it pauses (or the
+// field is left), and only when every changed field is valid. There is no
+// Save button. The body profile also has "These are right" while it has
+// never been confirmed (its defaults are only a guess until then).
+const TYPING_PAUSE_MS = 1200;
+
 class Form {
   /** spec: {fields, confirm?: section that is sent even when unchanged} */
   constructor(root, spec) {
@@ -359,30 +367,59 @@ class Form {
     this.fields = spec.fields.map((field) => new TYPES[field.type](field));
     this.note = "";
     this.filled = false; // nothing to compare against until the first config arrives
+    this.saving = null; // the save under way, if one is
+    this.again = false; // changed while it was under way: save once more
+    this.timer = 0;
 
-    this.saveButton = h("button", { class: "btn primary", type: "submit", text: "Save", disabled: true });
-    this.revertButton = h("button", { class: "btn quiet", type: "button", text: "Undo changes", hidden: true });
+    this.confirmButton = h("button", { class: "btn", type: "button", text: "These are right", hidden: true });
     this.statusEl = h("span", { class: "status", role: "status" });
-    root.append(...this.fields.map((field) => field.el));
-    root.append(h("div", { class: "form-foot" }, this.saveButton, this.revertButton, this.statusEl));
+    const plain = this.fields.filter((field) => !field.spec.advanced);
+    const advanced = this.fields.filter((field) => field.spec.advanced);
+    root.append(...plain.map((field) => field.el));
+    if (advanced.length) {
+      root.append(
+        h(
+          "details",
+          { class: "advanced" },
+          h("summary", { text: "Advanced" }),
+          h("div", { class: "advanced-body" }, ...advanced.map((field) => field.el)),
+        ),
+      );
+    }
+    root.append(h("div", { class: "form-foot" }, this.confirmButton, this.statusEl));
 
-    const refresh = () => {
+    root.addEventListener("input", (event) => {
       this.note = "";
       this.refresh();
-    };
-    root.addEventListener("input", refresh);
-    root.addEventListener("change", refresh);
-    root.addEventListener("submit", (event) => {
-      event.preventDefault();
+      clearTimeout(this.timer);
+      // A box being typed in waits for a pause; a tick or a choice is saved at once.
+      const typing = event.target.matches && event.target.matches('input[type="text"]');
+      if (typing) this.timer = setTimeout(() => this.save(), TYPING_PAUSE_MS);
+      else this.save();
+    });
+    root.addEventListener("change", () => {
+      clearTimeout(this.timer);
       this.save();
     });
-    this.revertButton.addEventListener("click", () => {
-      if (config) this.fill(config);
+    root.addEventListener("submit", (event) => {
+      event.preventDefault(); // Enter in a box: save now
+      clearTimeout(this.timer);
+      this.save();
     });
+    this.confirmButton.addEventListener("click", () => this.save({ confirm: true }));
   }
 
   get dirty() {
     return this.filled && this.fields.some((field) => field.changed());
+  }
+
+  get invalid() {
+    return this.fields.some((field) => field.changed() && field.error());
+  }
+
+  values() {
+    const inputs = this.fields.flatMap((field) => (field.inputs && field.inputs.length ? field.inputs : [field.input]));
+    return JSON.stringify(inputs.map((input) => (input.type === "checkbox" ? input.checked : input.value)));
   }
 
   fill(source) {
@@ -397,33 +434,57 @@ class Form {
       const message = field.changed() ? field.error() : "";
       field.setError(message);
       if (message) invalid = true;
+      if (message && field.spec.advanced) field.el.closest("details").open = true; // (never a hidden mistake)
     }
-    const dirty = this.dirty;
     const unconfirmed = this.spec.confirm === "profile" && !profileSet;
-    this.saveButton.disabled = !this.filled || invalid || !(dirty || unconfirmed);
-    this.saveButton.textContent = unconfirmed && !dirty ? "These are right - save" : "Save";
-    this.revertButton.hidden = !dirty;
-    setText(this.statusEl, invalid ? "Fix the marked fields to save." : dirty ? "Unsaved changes." : this.note);
+    this.confirmButton.hidden = !this.filled || !unconfirmed || this.dirty;
+    let status = this.note;
+    if (invalid) status = "Not saved: fix the marked field.";
+    else if (this.saving) status = "Saving...";
+    else if (unconfirmed) status = "Check these, then press \"These are right\" - or change them.";
+    setText(this.statusEl, status);
   }
 
-  async save() {
-    if (this.saveButton.disabled) return;
+  /** Save what changed, if it is all valid. confirm: send the section even unchanged. */
+  async save({ confirm = false } = {}) {
+    if (!this.filled || this.invalid || !(this.dirty || confirm)) {
+      this.refresh();
+      return;
+    }
+    if (this.saving) {
+      this.again = true;
+      return this.saving;
+    }
     const patch = {};
     if (this.spec.confirm) patch[this.spec.confirm] = {};
     const sent = this.fields.filter((field) => field.changed());
     for (const field of sent) field.write(patch);
-    await run(this.saveButton, async () => {
+    const before = this.values();
+    this.saving = run(null, async () => {
       const data = await post("/api/config", patch);
       const adjusted = sent.some((field) => field.differs(data.config));
       if (this.spec.confirm === "profile") {
         profileSet = true;
         setShown($("profile-badge"), false);
       }
-      adopt(data.config, true);
-      this.fill(data.config);
-      this.note = adjusted ? "Saved - some values were adjusted to the allowed range." : "Saved.";
-      this.refresh();
+      adopt(data.config, false);
+      // Typed on while it was saved: keep what is in the boxes, and save that too.
+      if (this.values() === before) this.fill(data.config);
+      else this.again = true;
+      this.note = adjusted ? "Saved - adjusted to the allowed range." : "Saved.";
     });
+    this.refresh();
+    try {
+      await this.saving;
+    } finally {
+      this.saving = null;
+      this.refresh();
+    }
+    if (this.again) {
+      this.again = false;
+      if (config) for (const field of this.fields) if (!field.changed()) field.fill(config);
+      await this.save();
+    }
   }
 }
 
@@ -484,6 +545,7 @@ const FORMS = {
       {
         type: "text",
         path: "treadmill.address",
+        advanced: true,
         optional: true,
         label: "Bluetooth address",
         placeholder: "AA:BB:CC:DD:EE:FF",
@@ -494,6 +556,7 @@ const FORMS = {
       {
         type: "select",
         path: "treadmill.units",
+        advanced: true,
         label: "Firmware speed grid",
         options: [
           ["auto", "Detect automatically"],
@@ -543,6 +606,41 @@ const FORMS = {
   },
 };
 
+FORMS.updates = {
+  fields: [
+    {
+      type: "check",
+      path: "updates.check",
+      label: "Tell me when a new version of Walka is out",
+      help: "Off unless you switch it on. Then Walka asks GitHub, once a day, which version is the newest - nothing else is sent, and nothing is downloaded or installed by itself: you get a link to the new version's page.",
+    },
+  ],
+};
+
+FORMS.hrnet = {
+  fields: [
+    {
+      type: "check",
+      path: "heart_rate.network",
+      label: "Receive heart rate over the local network",
+      help: "Off unless you switch it on. Only for a watch app on your home network that knows the code.",
+    },
+    {
+      type: "number",
+      kind: "steps",
+      path: "heart_rate.network_port",
+      min: 1024,
+      max: 65535,
+      advanced: true,
+      label: "Port",
+      help: "8788 unless another program uses it.",
+    },
+  ],
+};
+
+// The first-run guide asks for weight and height only.
+FORMS.welcome = { confirm: "profile", fields: FORMS.profile.fields.slice(0, 2) };
+
 // ---- config in, config out ------------------------------------------------------------------
 
 function adopt(next, force) {
@@ -570,6 +668,8 @@ function updateStatusCards(s, links) {
   setText($("set-hr-detail"), hr.detail);
   $("hr-scan").disabled = !hr.available;
   setShown($("hr-off"), !!(s.heart_rate && s.heart_rate.enabled));
+  // Off, with a sensor remembered: one press turns it on again.
+  setShown($("hr-on"), !!(s.heart_rate && !s.heart_rate.enabled && s.config.heart_rate.address));
 
   const addon = links.addon;
   setTone($("set-addon"), addon.tone);
@@ -578,6 +678,41 @@ function updateStatusCards(s, links) {
   setShown($("addon-sync-2"), addon.installed);
 
   setShown($("overlay-note"), !(s.overlay && s.overlay.available));
+
+  // Heart rate over the local network: where the watch app sends it, and whether it does.
+  const net = s.heart_rate && s.heart_rate.network;
+  setShown($("hr-net-out"), !!net);
+  if (net && !net.listening) {
+    $("hr-net-urls").replaceChildren();
+    delete $("hr-net-urls").dataset.key;
+    setText($("hr-net-state"), sentence(net.error || "not listening"));
+  } else if (net && net.listening) {
+    const code = s.config.heart_rate.network_code;
+    const urls = (net.addresses.length ? net.addresses : ["this computer's address"]).map(
+      (address) => `http://${address}:${net.port}/${code}/hr`,
+    );
+    const key = urls.join(" ");
+    const list = $("hr-net-urls");
+    if (list.dataset.key !== key) {
+      list.dataset.key = key;
+      list.replaceChildren(...urls.map((url) => h("li", {}, h("code", { text: url }))));
+    }
+    setText(
+      $("hr-net-state"),
+      net.last_s != null
+        ? t("Received {1} readings; the last {2} s ago.", net.received, Math.round(net.last_s))
+        : tr("Nothing received yet."),
+    );
+  }
+  const update = s.update || { enabled: false };
+  let status = "";
+  if (update.enabled) {
+    if (update.error) status = update.error;
+    else if (!update.checked_at) status = "Asking GitHub...";
+    else if (update.newer) status = `Walka ${update.latest.replace(/^v/, "")} is out (you have ${update.current}).`;
+    else status = `You have the newest version (${update.current}). Last asked ${fmt.timeOfDay(update.checked_at)}.`;
+  }
+  setText($("update-status"), status);
 }
 
 async function findGameFolders(button) {
@@ -623,6 +758,64 @@ async function findGameFolders(button) {
   });
 }
 
+/** Each sensor's heart rate right now, under its name: one after the other (each connects briefly). */
+async function peekEach(out, devices) {
+  const rows = [...out.querySelectorAll(".device")];
+  for (const [i, device] of devices.entries()) {
+    if (i >= 4 || !(device.hr || device.candidate)) continue; // the likely ones, nearest first
+    const row = rows[i];
+    if (!row || !row.isConnected) return; // scanned again meanwhile
+    const reading = h("span", { class: "bpm", text: tr("reading...") });
+    row.querySelector(".device-text").append(reading);
+    try {
+      const data = await post("/api/heart-rate/peek", { address: device.address }, { timeoutMs: 30000 });
+      reading.textContent = data.bpm ? t("{1} bpm now", data.bpm) : tr("no heart rate heard");
+    } catch {
+      reading.textContent = tr("could not connect");
+    }
+  }
+}
+
+/** Shared by the heart-rate card and the first-run guide. */
+export async function scanHeartRate(out, button, { all = false } = {}) {
+  const devices = await scanInto(out, button, {
+    path: "/api/heart-rate/scan",
+    body: all ? { all: true } : {},
+    after: () => {
+      const toggle = h("button", {
+        class: "btn quiet small",
+        type: "button",
+        text: all ? "Show sensors only" : "Show all Bluetooth devices",
+      });
+      toggle.addEventListener("click", () => scanHeartRate(out, button, { all: !all }));
+      return h("div", { class: "btn-row" }, toggle);
+    },
+    pickLabel: "Use this sensor",
+    empty: () =>
+      "No heart-rate sensor found. Wear it so it wakes up; on a watch, switch on heart-rate broadcasting. A sensor already connected to another app may not show up.",
+    onPick: (device, pick) =>
+      run(
+        pick,
+        () => post("/api/heart-rate/connect", { address: device.address, name: device.name || "", enabled: true }),
+        {
+          success: `Connecting to ${device.name || device.address}.`,
+        },
+      ),
+  });
+  if (devices && devices.length) await peekEach(out, devices);
+}
+
+/** The form built on ``root`` (a form[data-form]). */
+export function formFor(root) {
+  return forms.find((form) => form.root === root);
+}
+
+/** A snapshot's settings, for forms outside the Settings view (the first-run guide). */
+export function adoptConfig(s) {
+  if (s.setup) profileSet = !!s.setup.profile_set;
+  adopt(s.config, false);
+}
+
 // ---- wiring ---------------------------------------------------------------------------------------
 
 export function initSettings({ onUnits }) {
@@ -645,25 +838,21 @@ export function initSettings({ onUnits }) {
     });
   }
 
-  $("hr-scan").addEventListener("click", () =>
-    scanInto($("hr-scan-out"), $("hr-scan"), {
-      path: "/api/heart-rate/scan",
-      pickLabel: "Use this sensor",
-      empty: () =>
-        "No heart-rate sensor found. Wear it so it wakes up; on a watch, switch on heart-rate broadcasting. A sensor already connected to another app may not show up.",
-      onPick: (device, button) =>
-        run(
-          button,
-          () => post("/api/heart-rate/connect", { address: device.address, name: device.name || "", enabled: true }),
-          {
-            success: `Connecting to ${device.name || device.address}.`,
-          },
-        ),
+  $("hr-scan").addEventListener("click", () => scanHeartRate($("hr-scan-out"), $("hr-scan")));
+  renderHeartRateHelp($("hr-help"));
+  $("hr-net-code").addEventListener("click", (event) =>
+    run(event.currentTarget, () => post("/api/heart-rate/network/code", {}), {
+      success: "New code made. Give the watch app the new address.",
     }),
   );
   $("hr-off").addEventListener("click", (event) =>
-    run(event.currentTarget, () => post("/api/heart-rate/connect", { address: "", name: "", enabled: false }), {
-      success: "Heart-rate sensor turned off.",
+    run(event.currentTarget, () => post("/api/heart-rate/connect", { enabled: false }), {
+      success: "Heart-rate sensor turned off. Walka remembers it.",
+    }),
+  );
+  $("hr-on").addEventListener("click", (event) =>
+    run(event.currentTarget, () => post("/api/heart-rate/connect", { enabled: true }), {
+      success: "Heart-rate sensor turned on.",
     }),
   );
 

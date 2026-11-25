@@ -238,7 +238,8 @@ def test_the_card_is_last_in_settings_hidden_and_quiet():
     after = page[page.index(card) + len(card) :]
     assert page.index(card) > grid
     assert re.match(r'\s*</div>\s*<p class="foot muted small">', after)
-    assert page.count("<section", grid, page.index(card)) == 6  # the six cards that were there, all before it
+    # The cards that were there (and Updates, since), all before it.
+    assert page.count("<section", grid, page.index(card)) == 7
 
 
 def test_nothing_is_called_plain_account():
@@ -425,9 +426,9 @@ def test_the_question_names_every_thing_that_goes_with_a_walk_as_the_readme_does
     for kept in ("sample", "top speed", "treadmill", "character", "weight", "height", "age and sex"):
         assert kept in STAYS and kept not in GOES, kept
     assert not [key for key in row.ROW_KEYS if re.search(r"hr|heart|max|treadmill|sample|weight|height|beacon", key)]
-    # The README says what goes in the same words, to the letter - but for "your computer", which the
-    # dashboard calls "this computer".
-    readme = flat((Path(__file__).resolve().parents[2] / "README.md").read_text("utf-8")).replace("*", "")
+    # The documentation (docs/WALKA-ACCOUNT.md, linked from the top of the README) says what goes in
+    # the same words, to the letter - but for "your computer", which the dashboard calls "this computer".
+    readme = flat((Path(__file__).resolve().parents[2] / "docs" / "WALKA-ACCOUNT.md").read_text("utf-8")).replace("*", "")
     assert GOES.replace("this computer", "your computer") in readme
 
 

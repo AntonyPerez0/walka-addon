@@ -3,6 +3,7 @@
 
 import { $, U, fmt, h, post, run, setAttr, setShown, setText, setTone, setTransform, toast } from "./util.js";
 import { SOURCE_LABEL, setupSteps, sourceLabel } from "./status.js";
+import { t, tr } from "./i18n.js";
 
 const SETUP_KEY = "walka.setup.hidden";
 
@@ -144,12 +145,18 @@ function updateSession(s, online) {
         ? "heart-rate sensor"
         : "no sensor";
     tile(5, "Heart rate", live.hr ? String(live.hr) : "-", live.hr ? "bpm" : "", hrNote);
+    // No sensor at all (and one could be used): the way to add one, instead of "no sensor".
+    const addSensor = !live.hr && !live.avg_hr && !!s.heart_rate && !s.heart_rate.enabled;
+    setShown($("t5-add"), addSensor);
+    setShown($("t5-s"), !addSensor);
     const avg = live.seconds > 0 ? (live.distance_m / live.seconds) * 3.6 : null;
     const avgUnit = avg == null ? "" : U.speedUnit;
     tile(6, "Average speed", avg == null ? "-" : fmt.speed(avg), avgUnit, `max ${fmt.speedU(live.max_kmh)}`);
     return;
   }
   const today = s.totals.today;
+  setShown($("t5-add"), false);
+  setShown($("t5-s"), true);
   setText($("session-title"), "Today");
   setText($("session-sub"), online ? "no walk being recorded" : "last known");
   tile(1, "Time", fmt.clock(today.seconds), "", "");
@@ -183,9 +190,12 @@ function updateTreadmill(s, link) {
   const known = !!t.name;
   setText($("tm-name"), known ? t.name : "-");
   setAttr($("tm-name"), "title", known && t.address ? `${t.name} (${t.address})` : null);
-  setText($("tm-range"), known ? `${fmt.speed(t.min_kmh)}-${fmt.speedU(t.max_kmh)}` : "-");
+  // (Only FTMS says its speed range: for any other reader the default one is not the pad's.)
+  const ranged = known && (t.kind === "ftms" || t.kind === "simulated");
+  setText($("tm-range"), ranged ? `${fmt.speed(t.min_kmh)}-${fmt.speedU(t.max_kmh)}` : known ? "not sent" : "-");
   setText($("tm-step"), known ? `${trimNumber(U.speed(t.step_kmh), 2)} ${U.speedUnit}` : "-");
   setText($("tm-grid"), known ? (t.mph_grid ? "mph grid" : "km/h grid") : "-");
+  setText($("tm-address"), t.address || "-");
 
   const searching = !t.connected && t.want_connected;
   const connect = $("tm-connect");
@@ -197,7 +207,8 @@ function updateTreadmill(s, link) {
   // Walka is tied to the first treadmill it connected to (so that a second
   // pad in range is never listened to by mistake). Offer the way out.
   setShown($("tm-forget"), !!t.pinned);
-  setShown($("tm-sim"), t.kind === "simulated");
+  // (A recording being played back has no remote: what it does is recorded.)
+  setShown($("tm-sim"), t.kind === "simulated" && !t.replay);
 }
 
 function signalWord(rssi) {
@@ -207,7 +218,9 @@ function signalWord(rssi) {
 
 function deviceRow(device, onPick, pickLabel) {
   const details = [device.address, signalWord(device.rssi)];
+  if (device.remembered) details.push("your sensor");
   if (device.ftms === true) details.push("treadmill service");
+  else if (device.candidate === false) details.push("not a treadmill by its name or service");
   else if (device.ftms === false) details.push("matched by name");
   const button = h("button", { class: "btn small", type: "button", text: pickLabel });
   button.addEventListener("click", () => onPick(device, button));
@@ -225,15 +238,20 @@ function deviceRow(device, onPick, pickLabel) {
 }
 
 /** Shared by the treadmill card and the heart-rate settings. */
-export async function scanInto(out, button, { path, empty, onPick, pickLabel }) {
+export async function scanInto(out, button, { path, empty, onPick, pickLabel, body = {}, after = null }) {
   if (button.dataset.busy === "1") return;
   button.dataset.busy = "1";
   out.replaceChildren(h("p", { class: "muted", text: "Scanning for about 6 seconds..." }));
   try {
-    const data = await post(path, {}, { timeoutMs: 40000 });
+    const data = await post(path, body, { timeoutMs: 40000 });
     const devices = data.devices || [];
-    if (!devices.length) out.replaceChildren(h("p", { class: "muted", text: empty() }));
-    else out.replaceChildren(...devices.map((device) => deviceRow(device, onPick, pickLabel)));
+    // pickLabel may depend on the device (a function), as may what picking it does.
+    const label = (device) => (typeof pickLabel === "function" ? pickLabel(device) : pickLabel);
+    const rows = devices.map((device) => deviceRow(device, onPick, label(device)));
+    if (!devices.length) rows.push(h("p", { class: "muted", text: empty() }));
+    if (after) rows.push(after());
+    out.replaceChildren(...rows);
+    return devices;
   } catch (error) {
     out.replaceChildren(h("p", { class: "error", role: "alert", text: error.message }));
   } finally {
@@ -241,19 +259,124 @@ export async function scanInto(out, button, { path, empty, onPick, pickLabel }) 
   }
 }
 
-function scanTreadmills() {
-  scanInto($("tm-scan-out"), $("tm-scan"), {
+/** A device from "all Bluetooth devices": connect to it and see whether Walka can read it. */
+async function tryDevice(device, button) {
+  const row = button.closest(".device");
+  const note = h("p", { class: "muted small device-note", text: "Connecting to it, to see what it offers..." });
+  row.after(note);
+  let result;
+  button.disabled = true;
+  try {
+    result = await post("/api/treadmill/identify", { address: device.address }, { timeoutMs: 60000 });
+  } catch (error) {
+    note.className = "error small device-note";
+    note.textContent = t("Could not look at it: {1}", error.message);
+    return;
+  } finally {
+    button.disabled = false;
+  }
+  const found = result.device;
+  note.textContent = found.readable
+    ? t("Walka can read it: it sends {1}. Connecting.", tr(found.how))
+    : t("Walka cannot read it as a treadmill. It offers: {1}.", found.services.map((name) => tr(name)).join(", ") || tr("nothing it names"));
+  if (found.readable) note.className = "small device-note ok";
+}
+
+/** Shared by the treadmill card and the first-run guide. */
+export function scanTreadmills(out = $("tm-scan-out"), button = $("tm-scan"), { all = false } = {}) {
+  scanInto(out, button, {
     path: "/api/treadmill/scan",
-    pickLabel: "Connect",
+    body: all ? { all: true } : {},
+    pickLabel: (device) => (device.candidate === false ? "Check" : "Connect"),
+    after: () => {
+      const toggle = h("button", {
+        class: "btn quiet small",
+        type: "button",
+        text: all ? "Show treadmills only" : "Show all Bluetooth devices",
+      });
+      toggle.addEventListener("click", () => scanTreadmills(out, button, { all: !all }));
+      return h("div", { class: "btn-row" }, toggle);
+    },
     empty: () =>
       last && last.treadmill.kind === "simulated"
         ? "Nothing to scan for: this is the simulated treadmill. Start the companion without --simulate or --demo to look for a real pad."
         : "No treadmill found. Is it switched on and in range, and is its own phone app closed? A treadmill that is already connected - here or to a phone - does not show up.",
     onPick: (device, button) =>
-      run(button, () => post("/api/treadmill/connect", { address: device.address }), {
-        success: `Connecting to ${device.name || device.address}.`,
-      }),
+      // Not a treadmill by its name or service, or one read another way than now: look at it first.
+      device.candidate === false || (device.protocol && last && device.protocol !== last.treadmill.kind)
+        ? tryDevice(device, button)
+        : run(button, () => post("/api/treadmill/connect", { address: device.address }), {
+            success: `Connecting to ${device.name || device.address}.`,
+          }),
   });
+}
+
+// ---- "Check my treadmill" ---------------------------------------------------------------------------
+
+const ISSUE_FORM = "https://github.com/AntonyPerez0/walka-addon/issues/new?template=my-treadmill.yml";
+let checkKey = null;
+
+function downloadLink(name, label) {
+  return h("a", {
+    class: "btn small",
+    href: `/api/treadmill/check/${encodeURIComponent(name)}`,
+    download: name,
+    text: label,
+  });
+}
+
+function updateCheck(s) {
+  const check = s.check;
+  const simulated = s.treadmill.kind === "simulated";
+  setShown($("tm-check-box"), !simulated);
+  if (!check || simulated) return;
+  $("tm-check").disabled = check.running;
+  setText($("tm-check"), check.running ? "Checking..." : "Check my treadmill");
+  const key = JSON.stringify([check.running, check.seconds, check.line, check.report, check.error]);
+  if (key === checkKey) return;
+  checkKey = key;
+  const out = $("tm-check-out");
+  if (check.running) {
+    out.replaceChildren(
+      h("p", {}, h("strong", { text: `Checking - ${check.seconds || 0} s of about ${check.expected_s} s.` })),
+      h("p", {
+        text: "While it listens: start the belt with the treadmill's own remote, change the speed, pause, and stop. Walka is not connected to the treadmill until the check is done.",
+      }),
+      check.line ? h("p", { class: "muted small mono", text: check.line }) : null,
+    );
+    setShown(out, true);
+    return;
+  }
+  if (!check.report && !check.error) {
+    setShown(out, false);
+    return;
+  }
+  const rows = [];
+  if (check.error) rows.push(h("p", { class: "error", text: check.error }));
+  if (check.report) {
+    rows.push(
+      h("p", {
+        text: check.error
+          ? "What was heard is in the report."
+          : `Done. The report${check.recording ? ` and a recording of ${check.notifications} messages from the treadmill are` : " is"} saved. Both are made to be posted: no other devices, Bluetooth addresses cut short, no serial number.`,
+      }),
+      h(
+        "div",
+        { class: "btn-row" },
+        downloadLink(check.report, "Save the report"),
+        check.recording ? downloadLink(check.recording, "Save the recording") : null,
+        h("a", {
+          class: "btn small quiet",
+          href: ISSUE_FORM,
+          target: "_blank",
+          rel: "noopener noreferrer",
+          text: "Post it on GitHub",
+        }),
+      ),
+    );
+  }
+  out.replaceChildren(...rows);
+  setShown(out, true);
 }
 
 // ---- other links ------------------------------------------------------------------------------------
@@ -314,7 +437,8 @@ function updateLinks(s, links, online) {
   setShown($("addon-install"), !addon.installed);
 }
 
-export function installAddon(button, addonsDir) {
+/** stay: do not go to the addon settings when it fails (the first-run guide). */
+export function installAddon(button, addonsDir, { stay = false } = {}) {
   return run(button, async () => {
     try {
       const data = await post("/api/addon/install", addonsDir ? { addons_dir: addonsDir } : {});
@@ -324,7 +448,7 @@ export function installAddon(button, addonsDir) {
       );
       return data;
     } catch (error) {
-      if (!addonsDir && !location.hash.startsWith("#settings")) location.hash = "#settings/set-addon";
+      if (!addonsDir && !stay && !location.hash.startsWith("#settings")) location.hash = "#settings/set-addon";
       throw error;
     }
   });
@@ -391,7 +515,10 @@ export function initLive() {
     run(event.currentTarget, () => post("/api/treadmill/connect", {})),
   );
 
-  $("tm-scan").addEventListener("click", scanTreadmills);
+  $("tm-scan").addEventListener("click", () => scanTreadmills());
+  $("tm-check").addEventListener("click", (event) =>
+    run(event.currentTarget, () => post("/api/treadmill/check", {}, { timeoutMs: 15000 })),
+  );
   $("tm-connect").addEventListener("click", (event) =>
     run(event.currentTarget, () => post("/api/treadmill/connect", {})),
   );
@@ -424,6 +551,7 @@ export function updateLive(s, view, links, online) {
   if (!s) return;
   updateSession(s, online);
   updateTreadmill(s, links.treadmill);
+  updateCheck(s);
   updateLinks(s, links, online);
   updateLog(s);
   updateSetup(s);

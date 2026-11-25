@@ -5,6 +5,7 @@ import { $, U, api, del, fmt, h, icon, run, setShown, setText, toast } from "./u
 import { SessionChart, WeekChart } from "./charts.js";
 import { SOURCE_LABEL } from "./status.js";
 import { otherAccountWalkWords, sentWalkWords } from "./walkaaccount.js";
+import { tr } from "./i18n.js";
 
 const FIRST_PAGE = 200;
 const ALL = 2000;
@@ -312,7 +313,7 @@ export function initHistory() {
     const button = event.currentTarget;
     const asTable = button.getAttribute("aria-pressed") !== "true";
     button.setAttribute("aria-pressed", String(asTable));
-    button.textContent = asTable ? "Show as chart" : "Show as table";
+    button.textContent = tr(asTable ? "Show as chart" : "Show as table");
     $("week-table").hidden = !asTable;
     $("week-chart").hidden = asTable;
   });

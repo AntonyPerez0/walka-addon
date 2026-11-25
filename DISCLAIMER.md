@@ -16,8 +16,8 @@ not, what is yours to check, and what its authors do not promise.
   ([docs/SAFETY.md](docs/SAFETY.md) says how that is made sure of).
   Versions up to 0.6 did drive the belt. They have been withdrawn: do not
   use one.
-* **A free hobby project, and an early one.** Its author has not yet run it
-  against a physical treadmill (see
+* **A free hobby project, and an early one.** It has been checked on one
+  physical treadmill so far, a UREVO Strol 2E with Windows 11 (see
   [What has and has not been verified](docs/SAFETY.md#what-has-and-has-not-been-verified)).
 * **Not a safety device.** Walka cannot stop a belt. The treadmill's own
   stop button, remote and safety key are what stops it - keep them within
@@ -31,7 +31,7 @@ not, what is yours to check, and what its authors do not promise.
   numbers. Most treadmills accept one such connection at a time, so the
   maker's own app cannot be connected while Walka is.
 * **Not approved by Blizzard.** See
-  [Is this allowed?](README.md#is-this-allowed)
+  [Is this allowed?](docs/HOW-IT-WORKS.md#is-this-allowed)
 
 ## Before you walk
 

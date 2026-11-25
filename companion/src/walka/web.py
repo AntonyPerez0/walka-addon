@@ -170,15 +170,42 @@ def create_app(app: App) -> web.Application:
 
     # ---- treadmill -------------------------------------------------------------
     @routes.post("/api/treadmill/scan")
-    async def scan(_request: web.Request) -> web.Response:
+    async def scan(request: web.Request) -> web.Response:
         discover = getattr(app.treadmill, "discover", None)
         if discover is None:
             return ok(devices=[])
+        every = (await _body(request)).get("all") is True
         try:
-            found = await discover(6.0)
+            found = await (discover(6.0, all_devices=True) if every else discover(6.0))
         except Exception as exc:
             return web.json_response({"ok": False, "error": f"Bluetooth scan failed: {exc}"}, status=500)
-        return ok(devices=[device.to_dict() for device in found])
+        from .treadmill.known import known_treadmill
+
+        def shown(device):
+            data = device.to_dict(candidate=app.treadmill.is_candidate(device)) if every else device.to_dict()
+            known = known_treadmill(device.name)
+            if known is not None and app.treadmill.kind not in (known.protocol, "simulated"):
+                data["protocol"] = known.protocol  # (read another way than now: picking it checks first)
+            return data
+
+        return ok(devices=[shown(device) for device in found])
+
+    @routes.post("/api/treadmill/identify")
+    async def identify(request: web.Request) -> web.Response:
+        """A device picked from "all Bluetooth devices": can Walka read it? (Connects,
+        lists what it offers, lets go: nothing is written.) If it can, Walka connects to it."""
+        address = (await _body(request)).get("address")
+        check = getattr(app.treadmill, "identify", None)
+        if check is None or not isinstance(address, str) or not address:
+            raise web.HTTPBadRequest(text="not available on this treadmill")
+        try:
+            found = await check(address)
+        except Exception as exc:
+            raise web.HTTPConflict(text=str(exc)) from None
+        if found["readable"]:
+            await app.use_reader(found["reader"])  # (the same reader, mostly: then nothing changes)
+            app.connect(found["address"])
+        return ok(device=found)
 
     @routes.post("/api/treadmill/connect")
     async def connect(request: web.Request) -> web.Response:
@@ -197,6 +224,31 @@ def create_app(app: App) -> web.Application:
         app.forget_treadmill()
         return ok()
 
+    @routes.post("/api/treadmill/check")
+    async def check(_request: web.Request) -> web.Response:
+        """"Check my treadmill": the read-only probe, run from the dashboard."""
+        try:
+            app.start_check()
+        except ValueError as exc:
+            raise web.HTTPConflict(text=str(exc)) from None
+        return ok()
+
+    @routes.get("/api/treadmill/check/{name}")
+    async def check_file(request: web.Request) -> web.StreamResponse:
+        """A saved report or recording, to download (and nothing else of the folder)."""
+        from .treadmill_check import report_file
+
+        path = report_file(app.reports_dir, request.match_info["name"])
+        if path is None:
+            raise web.HTTPNotFound(text="no such report")
+        kind = "application/json" if path.suffix == ".json" else "text/plain"
+        return web.Response(
+            body=path.read_bytes(),
+            content_type=kind,
+            charset="utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{path.name}"'},
+        )
+
     @routes.post("/api/treadmill/press")
     async def press(request: web.Request) -> web.Response:
         """The simulated treadmill's remote (--simulate, --demo), and only
@@ -205,7 +257,11 @@ def create_app(app: App) -> web.Application:
         data = await _body(request)
         button = data.get("button")
         treadmill = app.treadmill
-        if treadmill.kind != "simulated" or button not in SIMULATOR_BUTTONS:
+        if (
+            treadmill.kind != "simulated"
+            or button not in SIMULATOR_BUTTONS
+            or not hasattr(treadmill, f"press_{button}")
+        ):
             raise web.HTTPBadRequest(text="not available on this treadmill")
         getattr(treadmill, f"press_{button}")()
         return ok()
@@ -309,15 +365,36 @@ def create_app(app: App) -> web.Application:
 
     # ---- heart rate ------------------------------------------------------------
     @routes.post("/api/heart-rate/scan")
-    async def hr_scan(_request: web.Request) -> web.Response:
+    async def hr_scan(request: web.Request) -> web.Response:
         monitor = app.heart_rate
         if monitor is None:
             return ok(devices=[])
+        every = (await _body(request)).get("all") is True
         try:
-            found = await monitor.discover(6.0)
+            found = await (monitor.discover(6.0, all_devices=True) if every else monitor.discover(6.0))
         except Exception as exc:
             return web.json_response({"ok": False, "error": f"Bluetooth scan failed: {exc}"}, status=500)
         return ok(devices=found)
+
+    @routes.post("/api/heart-rate/peek")
+    async def hr_peek(request: web.Request) -> web.Response:
+        """One sensor's heart rate right now, for the scan list (it listens only)."""
+        monitor = app.heart_rate
+        address = (await _body(request)).get("address")
+        if monitor is None or not isinstance(address, str) or not address:
+            raise web.HTTPBadRequest(text="heart-rate support is not available")
+        try:
+            bpm = await monitor.peek(address)
+        except Exception as exc:
+            raise web.HTTPConflict(text=str(exc) or type(exc).__name__) from None
+        return ok(bpm=bpm)
+
+    @routes.post("/api/heart-rate/network/code")
+    async def hr_network_code(_request: web.Request) -> web.Response:
+        """A new pairing code for heart rate over the local network (the old one stops working)."""
+        if app.heart_rate is None:
+            raise web.HTTPBadRequest(text="heart-rate support is not available")
+        return ok(code=app.new_hr_network_code())
 
     @routes.post("/api/heart-rate/connect")
     async def hr_connect(request: web.Request) -> web.Response:
@@ -325,10 +402,16 @@ def create_app(app: App) -> web.Application:
         monitor = app.heart_rate
         if monitor is None:
             raise web.HTTPBadRequest(text="heart-rate support is not available")
-        address = str(data.get("address") or "")
         enabled = bool(data.get("enabled", True))
-        app.update_config({"heart_rate": {"enabled": enabled, "address": address, "name": str(data.get("name") or "")}})
+        # Turned off, the sensor is remembered (unless "forget" is asked for), to be turned on again.
+        remembered = app.config.heart_rate
+        if "address" in data or data.get("forget"):
+            address, name = str(data.get("address") or ""), str(data.get("name") or "")
+        else:
+            address, name = remembered.address, remembered.name
+        app.update_config({"heart_rate": {"enabled": enabled, "address": address, "name": name}})
         monitor.configure(enabled=enabled, address=address)
+        monitor.name = name
         return ok()
 
     # ---- Walka account ---------------------------------------------------------

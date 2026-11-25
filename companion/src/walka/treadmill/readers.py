@@ -1,0 +1,104 @@
+"""What Walka can read a treadmill from, by what a device offers.
+
+A device is worth connecting to as a treadmill when it has one of the
+characteristics below. The first that matches decides how it is read (see
+``ftms_ble.FtmsTreadmill``, which picks the protocol on connecting). Used by
+"show all Bluetooth devices" in the dashboard's scan, to say of any device
+whether Walka can read it.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterable
+from dataclasses import dataclass
+
+from .. import ftms
+
+
+@dataclass(frozen=True)
+class Reader:
+    key: str
+    characteristic: str  # the one the walk comes from
+    words: str  # for the dashboard
+    # For a protocol on a generic vendor characteristic (0xFFF1 is on many devices): it is
+    # only this protocol when the device's name says so too.
+    names: tuple[str, ...] = ()
+
+
+READERS: tuple[Reader, ...] = (
+    Reader("ftms", ftms.TREADMILL_DATA, "standard treadmill data (Bluetooth FTMS)"),
+    Reader("rsc", ftms.RSC_MEASUREMENT, "running speed and cadence (a foot pod or a treadmill's sensor)"),
+    # Makers' own protocols (treadmill/proprietary.py): after the standards, so that a pad that
+    # speaks both is read the standard way.
+    Reader("walkingpad", ftms.uuid16(0xFE01), "the WalkingPad protocol (older KingSmith pads)"),
+    Reader("pitpat", ftms.uuid16(0xFBA2), "the PitPat protocol (PitPat, SupeRun and similar pads)"),
+    Reader("fitshow", ftms.uuid16(0xFFF1), "the FitShow protocol", names=("FS-",)),
+)
+KINDS = tuple(reader.key for reader in READERS)
+
+
+def build(kind: str, address: str | None, *, name_prefixes=None, units: str = "auto", backend=None):
+    """The reader for ``kind`` (one of KINDS), for the treadmill at ``address``."""
+    if kind == "rsc":
+        from .rsc import RscTreadmill
+
+        return RscTreadmill(address or None, units=units, backend=backend)
+    if kind == "fitshow":
+        from .fitshow import FitShowTreadmill
+
+        return FitShowTreadmill(address or None, units=units, backend=backend)
+    if kind == "pitpat":
+        from .pitpat import PitPatTreadmill
+
+        return PitPatTreadmill(address or None, units=units, backend=backend)
+    if kind == "walkingpad":
+        from .walkingpad import WalkingPadTreadmill
+
+        return WalkingPadTreadmill(address or None, units=units, backend=backend)
+    from .ftms_ble import FtmsTreadmill
+
+    kwargs = {"units": units, "backend": backend}
+    if name_prefixes is not None:
+        kwargs["name_prefixes"] = name_prefixes
+    return FtmsTreadmill(address or None, **kwargs)
+
+
+# Names for the services a device may offer, so that "what it has" reads as words.
+SERVICE_NAMES = {
+    ftms.FTMS_SERVICE: "Fitness Machine",
+    ftms.HEART_RATE_SERVICE: "Heart Rate",
+    ftms.RSC_SERVICE: "Running Speed and Cadence",
+    ftms.DEVICE_INFORMATION_SERVICE: "Device Information",
+    ftms.uuid16(0x180F): "Battery",
+    ftms.uuid16(0x1816): "Cycling Speed and Cadence",
+    ftms.uuid16(0x1818): "Cycling Power",
+    ftms.uuid16(0x1800): "Generic Access",
+    ftms.uuid16(0x1801): "Generic Attribute",
+    ftms.uuid16(0xFE00): "WalkingPad (KingSmith)",
+    ftms.uuid16(0xFBA0): "PitPat",
+}
+
+
+def reader_for(characteristics: Iterable[str], name: str | None = None) -> Reader | None:
+    """How Walka would read a device with these characteristics (and this name), if it can."""
+    present = {uuid.lower() for uuid in characteristics}
+    upper = (name or "").upper()
+
+    def named(reader: Reader) -> bool:
+        return not reader.names or any(upper.startswith(prefix.upper()) for prefix in reader.names)
+
+    return next((reader for reader in READERS if reader.characteristic in present and named(reader)), None)
+
+
+def service_words(services: Iterable[str]) -> list[str]:
+    """The services, as names where they have one ("vendor service fff0" otherwise)."""
+    words = []
+    for uuid in services:
+        uuid = uuid.lower()
+        name = SERVICE_NAMES.get(uuid)
+        if name is None:
+            short = uuid[4:8] if uuid.endswith("-0000-1000-8000-00805f9b34fb") else uuid[:8]
+            name = f"vendor service {short}"
+        if name not in words:
+            words.append(name)
+    return words

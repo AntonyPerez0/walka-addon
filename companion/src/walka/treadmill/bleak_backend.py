@@ -146,5 +146,32 @@ class BleakBackend:
             return None
         return max(nameless.values(), key=lambda d: d.rssi if d.rssi is not None else -999)
 
+    async def identify(self, device: FoundDevice, timeout: float = 20.0) -> tuple[list[str], list[str]]:
+        """Connect, list what the device offers - its services and their
+        characteristics - and let go. Reads nothing, writes nothing."""
+        prepare_windows_threading()
+        async with BleakClient(device.handle or device.address, timeout=timeout) as client:
+            services = [service.uuid.lower() for service in client.services]
+            characteristics = [char.uuid.lower() for service in client.services for char in service.characteristics]
+        return services, characteristics
+
+    async def watch(self, address: str, on_seen: Callable[[], None]) -> None:
+        """Listen to advertisements, and call ``on_seen`` for each one from
+        ``address``, until cancelled. Listening only: nothing is connected to,
+        so a treadmill in standby is not woken."""
+        prepare_windows_threading()
+        wanted = address.upper()
+        async with BleakScanner() as scanner:
+            async with aclosing(scanner.advertisement_data()) as advertisements:
+                async for device, _adv in advertisements:
+                    if device.address.upper() == wanted:
+                        on_seen()
+
+    def query_client(self, device: FoundDevice, on_disconnect: Callable[[], None], protocol: str):
+        """The door for a vendor protocol that answers only when asked: see query_link.py."""
+        from .query_link import QueryClientAdapter
+
+        return QueryClientAdapter(device.handle or device.address, on_disconnect, protocol)
+
     def client(self, device: FoundDevice, on_disconnect: Callable[[], None]) -> BleakClientAdapter:
         return BleakClientAdapter(device.handle or device.address, on_disconnect)

@@ -347,8 +347,13 @@ def test_no_route_of_the_api_reaches_a_real_treadmill(rig: Rig):
                 raise AssertionError(f"the companion reached for treadmill.{name}")
             raise AttributeError(name)
 
+    async def no_treadmill_in_range(**kwargs):  # "Check my treadmill": its probe would scan for real
+        kwargs["report"].append("No treadmill found.")
+        return kwargs["report"]
+
     async def scenario(client: TestClient):
         rig.app.treadmill = Tripwired()
+        rig.app.probe_fn = no_treadmill_in_range
         routes = sorted(
             (route.method, route.resource.canonical)
             for route in client.app.router.routes()
@@ -457,7 +462,7 @@ def test_press_is_not_available_on_a_real_treadmill(rig: Rig):
 def test_config_read_and_clamped_update(rig: Rig):
     async def scenario(client: TestClient):
         config = await (await client.get("/api/config")).json()
-        assert set(config) == {"units", "profile", "treadmill", "heart_rate", "wow", "web", "overlay"}
+        assert set(config) == {"units", "profile", "treadmill", "heart_rate", "wow", "web", "overlay", "updates", "welcome_done"}
         response = await post(
             client,
             "/api/config",
@@ -753,8 +758,9 @@ def test_heart_rate_endpoints_with_a_monitor(rig: Rig):
         assert monitor.configured == (True, "11:22:33:44:55:66")
         assert rig.config.heart_rate.enabled is True and rig.config.heart_rate.name == "HRM-Dual"
         response = await post(client, "/api/heart-rate/connect", {"enabled": False})
-        assert response.status == 200 and monitor.configured == (False, "")
-        assert rig.config.heart_rate.enabled is False
+        # Turned off, the sensor is remembered, to be turned on again with one press.
+        assert response.status == 200 and monitor.configured == (False, "11:22:33:44:55:66")
+        assert rig.config.heart_rate.enabled is False and rig.config.heart_rate.name == "HRM-Dual"
 
     serve(rig, scenario)
 

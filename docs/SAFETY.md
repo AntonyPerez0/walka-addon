@@ -28,12 +28,41 @@ When the companion connects to a treadmill it:
    set to another speed) and *Training Status* (its countdown).
 
 That is everything. Switching a notification on is the only thing Walka
-ever writes to a treadmill, and it is what every app that shows a
-treadmill's numbers has to do.
+ever writes to a standard (FTMS) treadmill, and it is what every app that
+shows a treadmill's numbers has to do.
+
+**One exception, for pads that only report when asked.** Some walking pads
+do not speak the standard: they speak their maker's own protocol, and send
+their numbers only in answer to a question. For those - and only those -
+Walka sends **one fixed "report your numbers" query per protocol, and
+nothing else**:
+
+| Protocol | Written to | The bytes, always these | How often |
+|---|---|---|---|
+| WalkingPad (older KingSmith pads) | `0xFE02` | `F7 A2 00 00 A2 FD` ("your current status") | once a second |
+| PitPat / SupeRun | - | nothing: these pads report by themselves | - |
+| FitShow (`FS-...` machines only) | `0xFFF2` | `02 51 51 03` ("your status") | once a second |
+
+These are the complete list. Walka cannot send any other bytes: the code
+that sends them takes no bytes from anywhere - it looks up its protocol's
+one entry in a fixed table - and a test fails if a byte of that table
+changes, if anything else in Walka writes to a Bluetooth characteristic,
+or if a query could reach the FTMS control point. None of these queries
+starts, stops or changes the speed of a belt. The readers for these
+protocols have not been tried on hardware with Walka.
 
 The treadmill's *Fitness Machine Control Point* - the one channel through
 which an app can start, stop or steer a belt - is never written to and
 never listened to. Walka does not ask the treadmill for control.
+
+## Nothing leaves your computer unless you switch it on
+
+Two things reach outside this computer, and both are off until you switch
+them on in Settings: the update notice (it asks GitHub which version is the
+newest) and heart rate over the local network (Walka then listens, on a
+port of its own and with a pairing code, for a heart rate from a watch app
+on your home network - see [HEART-RATE.md](HEART-RATE.md#heart-rate-over-the-local-network)).
+The dashboard itself answers this computer only.
 
 ## How that is made sure of
 
@@ -129,8 +158,11 @@ simulated treadmill and against an emulated one at the Bluetooth level,
 both modelled on the documented behaviour of UREVO firmware. The reader
 listens to the same standard characteristics as open-source projects that
 work with UREVO pads, including one that lists the Strol 2E (URTM030) as
-verified on hardware. But this software has **not yet been run against a
-physical treadmill** by its author.
+verified on hardware. It has been run against **one physical treadmill**:
+a UREVO Strol 2E (URTM030), from Windows 11, in November 2026 - the speed,
+distance and steps on the dashboard matched the pad's own display, and
+walks were filed under the character in the game. No other treadmill, and
+no Mac, has been tried with it yet.
 
 What that leaves open is whether your walks are *counted right* - whether
 a particular treadmill is found, and whether its numbers are read as it

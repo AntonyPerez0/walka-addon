@@ -1,40 +1,129 @@
-"""Treadmills Walka knows by their Bluetooth name.
+"""Treadmills Walka knows by their Bluetooth name - a table, with the evidence.
 
 Any treadmill that reports its data over standard Bluetooth FTMS can be
 read: it is found by the service it advertises, or picked from a scan in
 the dashboard. A name listed here buys one thing - the pad is taken as soon
 as it is heard, rather than at the end of the scan.
 
-A name belongs here when there is evidence that the machine sends its speed
-as plain FTMS Treadmill Data. docs/HARDWARE.md says where each entry comes
-from.
+Every entry says how much is known about it (``evidence``) and where that
+comes from (``source``). The table of treadmills in docs/TREADMILLS.md is
+made from this one (tools/treadmill_table.py; a test keeps it current), so
+a new entry goes here, and nowhere else.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
+# How much is known about an entry.
+VERIFIED = "verified by a Walka user"  # walked on with Walka, numbers checked against the display
+REPORTED = "reported by another project"  # another program reads it the same way; untested with Walka
+
+EVIDENCE_LEVELS = (VERIFIED, REPORTED)
+
 
 @dataclass(frozen=True)
 class KnownTreadmill:
     prefix: str  # what the Bluetooth name starts with (letter case is ignored)
     brand: str
+    model: str = ""  # for people; "" when the entry is for a whole make
+    protocol: str = "ftms"  # how it is read: treadmill/readers.py
+    evidence: str = REPORTED
+    checked: str = ""  # for VERIFIED: on what and when
+    source: str = ""  # where the evidence is (a sentence, may hold a link)
+    notes: str = ""
 
 
 KNOWN_TREADMILLS: tuple[KnownTreadmill, ...] = (
-    # UREVO pads advertise their model code: URTM030 is the Strol 2E.
-    KnownTreadmill("URTM", "UREVO"),
-    # WELLFIT treadmills (TM029 Pro and others) advertise two names: "WELLFIT
-    # TM Linker" is the one for apps, "WELLFIT TM Audio" is the loudspeaker -
-    # hence the whole name, not "WELLFIT TM".
-    KnownTreadmill("WELLFIT TM Linker", "WELLFIT"),
+    # Most specific first: known_treadmill() takes the first entry that matches.
+    KnownTreadmill(
+        "URTM030",
+        "UREVO",
+        "Strol 2E (URTM030)",
+        evidence=VERIFIED,
+        checked="Windows 11, November 2026",
+        source="A Walka user: speed, distance and steps match the pad's own display, "
+        "and walks are filed under the character in the game.",
+        notes="Sends steps in its treadmill data.",
+    ),
+    KnownTreadmill(
+        # UREVO pads advertise their model code.
+        "URTM",
+        "UREVO",
+        "pads (URTM054, URTM059, URTM041, ...)",
+        source="[qdomyos-zwift](https://github.com/cagnulein/qdomyos-zwift) reads every `URTM...` "
+        "device as a standard FTMS treadmill; others measured sibling models.",
+    ),
+    KnownTreadmill(
+        # WELLFIT treadmills advertise two names: "WELLFIT TM Linker" is the one for
+        # apps, "WELLFIT TM Audio" is the loudspeaker - hence the whole name.
+        "WELLFIT TM Linker",
+        "WELLFIT",
+        "TM029 Pro and other WELLFIT treadmills",
+        source="[qdomyos-zwift issue 2659](https://github.com/cagnulein/qdomyos-zwift/issues/2659): "
+        "a WELLFIT owner and the project's author got it working over FTMS.",
+    ),
 )
 
-DEFAULT_NAME_PREFIXES: tuple[str, ...] = tuple(known.prefix for known in KNOWN_TREADMILLS)
+
+# Makers' own protocols (treadmill/proprietary.py). The name is a first guess only: which protocol
+# a pad speaks is decided on connecting, by the services it has.
+WALKINGPAD_SOURCE = (
+    "[ph4r05/ph4-walkingpad](https://github.com/ph4r05/ph4-walkingpad) (MIT), "
+    "[qdomyos-zwift](https://github.com/cagnulein/qdomyos-zwift), "
+    "[klassm/walkingpad_macos_client](https://github.com/klassm/walkingpad_macos_client): "
+    "the WiLink protocol on service 0xFE00."
+)
+KNOWN_TREADMILLS = KNOWN_TREADMILLS + (
+    KnownTreadmill("WalkingPad", "KingSmith", "WalkingPad A1, R1, C1 (older models)", "walkingpad", source=WALKINGPAD_SOURCE),
+    KnownTreadmill("KS-ST-A1P", "KingSmith", "WalkingPad A1 Pro", "walkingpad", source=WALKINGPAD_SOURCE),
+    KnownTreadmill("KS-BLC", "KingSmith", "WalkingPad C2", "walkingpad", source=WALKINGPAD_SOURCE),
+    KnownTreadmill("KS-BLR", "KingSmith", "WalkingPad R2", "walkingpad", source=WALKINGPAD_SOURCE),
+    KnownTreadmill(
+        "PitPat-T",
+        "PitPat",
+        "PitPat-T01 (also sold as SupeRun, DeerRun and others)",
+        "pitpat",
+        source="[lapo-luchini/pitpat-exporter](https://github.com/lapo-luchini/pitpat-exporter) (ISC, with "
+        "hardware captures), [KeiranY/PitPat-WebBT](https://github.com/KeiranY/PitPat-WebBT), "
+        "[qdomyos-zwift](https://github.com/cagnulein/qdomyos-zwift) (`deerruntreadmill`): service 0xFBA0, "
+        "or 0xFFFF on some boards.",
+    ),
+    KnownTreadmill(
+        "FS-",
+        "FitShow",
+        "treadmills and pads for the FitShow app",
+        "fitshow",
+        source="the FitShow protocol document ([limdongkyu/fitshow-device-protocol]"
+        "(https://github.com/limdongkyu/fitshow-device-protocol)), [qdomyos-zwift](https://github.com/cagnulein/qdomyos-zwift) "
+        "(`fitshowtreadmill`), [sstjohn/milltender](https://github.com/sstjohn/milltender), "
+        "[Palaszontko/treadmillbar](https://github.com/Palaszontko/treadmillbar). Some also speak FTMS: then that is used.",
+    ),
+)
+
+
+def _minimal_prefixes(entries: tuple[KnownTreadmill, ...], protocol: str) -> tuple[str, ...]:
+    """The name prefixes to listen for, in the table's order: each one that
+    no shorter prefix of the table already covers ("URTM" covers "URTM030")."""
+    mine = [entry.prefix for entry in entries if entry.protocol == protocol]
+    kept: list[str] = []
+    for prefix in mine:
+        covered = any(other != prefix and prefix.upper().startswith(other.upper()) for other in mine)
+        if not covered and prefix not in kept:
+            kept.append(prefix)
+    return tuple(kept)
+
+
+DEFAULT_NAME_PREFIXES: tuple[str, ...] = _minimal_prefixes(KNOWN_TREADMILLS, "ftms")
 
 # What DEFAULT_NAME_PREFIXES was before other makes were added. A settings
 # file written then holds this list, and is moved on to the current one.
 LEGACY_NAME_PREFIXES: tuple[str, ...] = ("URTM",)
+
+
+def prefixes_for(protocol: str) -> tuple[str, ...]:
+    """The names (their start) a protocol's pads are listened for by."""
+    return _minimal_prefixes(KNOWN_TREADMILLS, protocol)
 
 
 def known_treadmill(name: str | None) -> KnownTreadmill | None:

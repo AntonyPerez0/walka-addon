@@ -9,6 +9,7 @@
 // colour.
 
 import { fmt, tooltip } from "./util.js";
+import { tr } from "./i18n.js";
 
 const NS = "http://www.w3.org/2000/svg";
 
@@ -229,7 +230,7 @@ export class SessionChart {
     if (samples.length < 2) {
       const note = document.createElement("p");
       note.className = "chart-empty";
-      note.textContent = "This walk was too short to draw.";
+      note.textContent = tr("This walk was too short to draw.");
       this.host.replaceChildren(note);
       return;
     }

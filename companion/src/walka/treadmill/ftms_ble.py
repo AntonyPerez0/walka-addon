@@ -73,8 +73,11 @@ class FoundDevice:
     # not say.
     treadmill: bool | None = None
 
-    def to_dict(self) -> dict:
-        return {"name": self.name, "address": self.address, "rssi": self.rssi, "ftms": self.ftms}
+    def to_dict(self, candidate: bool | None = None) -> dict:
+        data = {"name": self.name, "address": self.address, "rssi": self.rssi, "ftms": self.ftms}
+        if candidate is not None:
+            data["candidate"] = candidate  # (in a scan of all devices: one Walka would take for a treadmill)
+        return data
 
 
 class BleClient(Protocol):
@@ -104,6 +107,15 @@ class BleBackend(Protocol):
         such name is heard during the whole ``timeout``, a device that merely
         advertises the Fitness Machine Service (and does not say that it is
         some other kind of machine than a treadmill)."""
+        ...
+
+    async def identify(self, device: FoundDevice) -> tuple[list[str], list[str]]:
+        """Connect, list the services and characteristics, let go. Writes nothing."""
+        ...
+
+    async def watch(self, address: str, on_seen: Callable[[], None]) -> None:
+        """Call ``on_seen`` for every advertisement from ``address`` until
+        cancelled. Listens only: connects to nothing."""
         ...
 
     def client(self, device: FoundDevice, on_disconnect: Callable[[], None]) -> BleClient: ...
@@ -148,6 +160,11 @@ def describe_bluetooth_error(exc: BaseException, timeout_hint: str = PAD_TIMEOUT
 
 class FtmsTreadmill(Treadmill):
     kind = "ftms"
+    # The characteristic the walk comes from; a device without it is refused.
+    # (A reader of another protocol - treadmill/rsc.py - changes these two and
+    # _setup, and keeps the rest: finding, connecting, a lost link.)
+    DATA_CHARACTERISTIC = ftms.TREADMILL_DATA
+    NOT_READABLE = "does not send FTMS treadmill data"
 
     def __init__(
         self,
@@ -177,18 +194,58 @@ class FtmsTreadmill(Treadmill):
             self._backend = BleakBackend()
         return self._backend
 
-    async def discover(self, timeout: float = 6.0) -> list[FoundDevice]:
-        """Scan for treadmill candidates (does not connect)."""
+    async def discover(self, timeout: float = 6.0, *, all_devices: bool = False) -> list[FoundDevice]:
+        """Scan for treadmill candidates (does not connect). ``all_devices``:
+        every Bluetooth device heard, candidates first."""
         try:
             found = await self._get_backend().discover(timeout)
         except Exception as exc:  # no adapter, Bluetooth switched off, ...
             raise TreadmillError(describe_bluetooth_error(exc)) from exc
-        services = (ftms.FTMS_SERVICE,)
-        return [
-            d
-            for d in found
-            if is_treadmill_candidate(d.name, services if d.ftms else (), self.name_prefixes, d.treadmill)
-        ]
+        if all_devices:
+            return sorted(found, key=lambda d: not self.is_candidate(d))
+        return [d for d in found if self.is_candidate(d)]
+
+    def is_candidate(self, device: FoundDevice) -> bool:
+        """A treadmill for this reader - or a pad Walka knows by name that another reader reads."""
+        from .known import known_treadmill
+
+        services = (ftms.FTMS_SERVICE,) if device.ftms else ()
+        if is_treadmill_candidate(device.name, services, self.name_prefixes, device.treadmill):
+            return True
+        return known_treadmill(device.name) is not None
+
+    async def identify(self, address: str) -> dict[str, Any]:
+        """Connect to any device, see whether Walka can read it as a treadmill,
+        and let go. For "show all Bluetooth devices" in the dashboard."""
+        from .readers import reader_for, service_words
+
+        backend = self._get_backend()
+        try:
+            device = await backend.find(address, (), self.scan_timeout_s)
+            if device is None:
+                raise TreadmillError("not found - is it switched on and in range?")
+            services, characteristics = await backend.identify(device)
+        except TreadmillError:
+            raise
+        except Exception as exc:
+            raise TreadmillError(describe_bluetooth_error(exc, "is it switched on and in range?")) from exc
+        reader = reader_for(characteristics, device.name)
+        return {
+            "name": device.name,
+            "address": device.address,
+            "readable": reader is not None,
+            "reader": reader.key if reader else None,
+            "how": reader.words if reader else "",
+            "services": service_words(services),
+        }
+
+    async def watch(self, on_seen: Callable[[], None]) -> None:
+        """Listen for this treadmill's advertisements (never connecting) and
+        call ``on_seen`` for each, until cancelled. Needs an address: only the
+        treadmill Walka is tied to is listened for."""
+        if not self.address:
+            raise TreadmillError("no treadmill to listen for")
+        await self._get_backend().watch(self.address, on_seen)
 
     # ---- connection ------------------------------------------------------------
     async def connect(self) -> None:
@@ -209,6 +266,9 @@ class FtmsTreadmill(Treadmill):
             )
             raise TreadmillError(status.detail)
 
+        if not self._accepts(device):
+            status.detail = f"{device.name or device.address} is not a treadmill this reader is for"
+            raise TreadmillError(status.detail)
         status.detail = f"connecting to {device.name or device.address}"
         client: BleClient | None = None
 
@@ -217,11 +277,11 @@ class FtmsTreadmill(Treadmill):
             # must not be taken for the loss of the current one.
             self._on_disconnect(client)
 
-        client = backend.client(device, link_lost)
+        client = self._make_client(backend, device, link_lost)
         try:
             await client.connect()
-            if not client.has_characteristic(ftms.TREADMILL_DATA):
-                raise TreadmillError(f"{device.name or device.address} does not send FTMS treadmill data")
+            if not any(client.has_characteristic(uuid) for uuid in self.data_characteristics()):
+                raise TreadmillError(f"{device.name or device.address} {self.NOT_READABLE}")
             self._client = client
             await asyncio.wait_for(self._setup(client), SETUP_TIMEOUT_S)
             # The link can drop during set-up without any step failing (the
@@ -259,6 +319,19 @@ class FtmsTreadmill(Treadmill):
             " (mph firmware)" if status.mph_grid else "",
         )
         self._emit(TreadmillEvent.CONNECTED)
+
+    def _accepts(self, device: FoundDevice) -> bool:
+        """Is this device one to connect to at all? (A protocol on a generic
+        vendor characteristic says yes only to its own names.)"""
+        return True
+
+    def data_characteristics(self) -> tuple[str, ...]:
+        """Where the walk may come from; a device with none of these is refused."""
+        return (self.DATA_CHARACTERISTIC,)
+
+    def _make_client(self, backend: BleBackend, device: FoundDevice, on_disconnect: Callable[[], None]) -> BleClient:
+        """The door to the link: for FTMS, one that cannot write at all."""
+        return backend.client(device, on_disconnect)
 
     async def _setup(self, client: BleClient) -> None:
         """Read what the treadmill says it is, and start listening to it."""

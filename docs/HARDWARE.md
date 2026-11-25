@@ -7,19 +7,33 @@ is known about other makes - the WELLFIT TM029 Pro first of all - is under
 [Other treadmills](#other-treadmills).
 
 What is known about reading the Strol 2E over Bluetooth, where it comes
-from, and what still needs confirming on a real unit. None of this was
-measured by Walka's author; it is collected from the manual and from
-open-source projects that work with UREVO pads. Run `walka probe` on your
-pad to check it. Like the companion itself, the probe never sends a
+from, and what still needs confirming on a real unit. Most of it is
+collected from the manual and from open-source projects that work with
+UREVO pads; what a Walka user saw on a real Strol 2E is under
+[Verified on hardware](#verified-on-hardware). Run `walka probe` on your
+pad to check the rest. Like the companion itself, the probe never sends a
 command; the only thing it writes is the switch that turns notifications
 on.
+
+## Verified on hardware
+
+| Model | Computer | When | What was checked |
+|---|---|---|---|
+| UREVO Strol 2E (`URTM030`) | Windows 11 | November 2026 | Found and read by Walka. Speed, distance and steps on the dashboard match the pad's own display. The *Live* screen captions under Steps and Distance say *treadmill counter*: the pad sends both itself. With the game running, walks were filed under the character. |
+
+That is one pad, one owner and one computer. Not checked yet on it: the
+items under [Still unknown](#still-unknown-for-the-urtm030-specifically),
+and a heart-rate source (a Garmin watch was tried; how that went is not
+written down yet). No other treadmill, and no Mac, has been tried with
+Walka.
 
 ## Summary
 
 | | |
 |---|---|
 | Bluetooth name | `URTM030` (UREVO pads advertise their model code) |
-| Protocol | Standard Bluetooth FTMS (Fitness Machine Service `0x1826`). No vendor handshake needed. |
+| Protocol | Standard Bluetooth FTMS (Fitness Machine Service `0x1826`). No vendor handshake needed - confirmed on a real Strol 2E (above). |
+| Steps | Sent by the pad itself, in Treadmill Data - confirmed on a real Strol 2E. |
 | Pairing | None. **Do not pair it in Windows (or macOS) Bluetooth settings.** |
 | Connections | One at a time. The UREVO phone app must be closed or the pad is invisible - and while Walka is connected, the phone app cannot be. |
 | Which device Walka picks | The address you chose in the dashboard, if any. Otherwise a device whose Bluetooth name is a known one (`URTM...`, `WELLFIT TM Linker`); some other Fitness Machine is only used if no such name is heard during the whole 15-second scan, and then the one with the strongest signal. A machine that says in its advertisement that it is not a treadmill (a bike trainer, a rower) is never used. |
@@ -40,9 +54,9 @@ on.
 * [qdomyos-zwift](https://github.com/cagnulein/qdomyos-zwift) routes every
   device named `URTM...` to its generic FTMS treadmill driver.
 
-How strong is that? Moderate. The ftms-js project is one person's report
-from a repository that was a few days old when this was written, and VRTI's
-list is community-reported. Everything else comes from sibling models
+How strong was that, before a Walka user tried it? Moderate. The ftms-js
+project is one person's report from a repository that was a few days old
+when this was written, and VRTI's list is community-reported. Everything else comes from sibling models
 (URTM054, URTM059, URTM041), which share a firmware family but are not the
 same pad. That is why the probe is there.
 
@@ -94,22 +108,28 @@ Walka needs.
 
 ## Still unknown for the URTM030 specifically
 
-Found by reading the probe report:
+Settled by a Walka user on a real pad (see
+[Verified on hardware](#verified-on-hardware)): the URTM030 reports its
+steps and its distance in Treadmill Data, and Walka reads both - steps
+being the 24-bit counter flagged by bit `0x2000`, the only place Walka
+reads steps from.
+
+Still to be found by reading a probe report (none has been posted yet):
 
 * the exact speed range and step it advertises, folded and unfolded;
-* where (or whether) it reports steps - its manual and at least one review
-  describe a display with speed, distance, time and calories only, while
-  UREVO's product page mentions steps. By default the probe listens to the
-  standard services only; `walka probe --all` also switches on the
-  notifications of the vendor's own channels (`0xFFF1` and the like), which
-  is where a step counter would show. What switching those on does on this
-  firmware is not known - nothing, on the sibling models;
+* what its vendor channels (`0xFFF1` and the like) carry; `walka probe
+  --all` switches those on. Walka does not need them for steps on this
+  pad;
 * how it reports what is done at the pad: whether a start, a pause and a
   stop with the remote each come as a status event, and whether a change of
   speed does;
 * whether it switches itself off, and drops the connection, after a long
-  pause (siblings do; Walka then reconnects when you next start a session
-  in the game, or when you press *Connect*).
+  pause (siblings do), and whether it keeps advertising while it is in
+  standby. Walka listens for the pad it is tied to without connecting, and
+  connects again when the pad is heard after at least 20 seconds of
+  silence (switched off and on); also when you next start a session in the
+  game, or when you press *Connect*. A pad that advertises all through
+  standby is not connected to by that rule, so it is not woken.
 
 ## Other treadmills
 
@@ -189,13 +209,128 @@ their own there.
 
 To add a treadmill to the names Walka knows:
 
-1. Run `walka probe` on it and keep the report: it shows the advertised
-   name, the services, the speed range and the feature bits.
+1. Run `walka probe --record` on it and keep the report and the recording
+   next to it (`walka-probe-....txt` and `.json`): the report shows the
+   advertised name, the services, the speed range and the feature bits;
+   the recording holds every notification heard, with its time, so the
+   walk can be played back - in Walka's tests, or on the dashboard with
+   `walka run --replay walka-probe-....json`. Both are made to be posted:
+   fitness machines only, addresses cut short, no serial number.
 2. Walk on it with the companion running, and check the dashboard against
    the treadmill's own display: speed, distance, steps.
-3. Add a line to `KNOWN_TREADMILLS` in `treadmill/known.py` - the start of
-   the Bluetooth name, as exactly as the make allows - and a paragraph
-   here saying what was seen and on which model.
+3. Add an entry to `KNOWN_TREADMILLS` in `treadmill/known.py` - the start
+   of the Bluetooth name, as exactly as the make allows, the model, how
+   much is known (`evidence`: *verified by a Walka user* only for a walk
+   checked against the treadmill's display, with `checked` saying on what
+   and when; otherwise *reported by another project*) and where that comes
+   from - then run `python tools/treadmill_table.py`, which remakes the
+   table in [TREADMILLS.md](TREADMILLS.md). And a paragraph here saying
+   what was seen and on which model.
+
+## Running Speed and Cadence sensors (foot pods, treadmill sensors)
+
+Walka can also read a standard Bluetooth *Running Speed and Cadence*
+sensor (service `0x1814`, RSC Measurement `0x2A53`): a foot pod on a shoe,
+or a treadmill's own speed sensor. This reader
+([`treadmill/rsc.py`](../companion/src/walka/treadmill/rsc.py)) is
+**untested on hardware**: it is built from the Bluetooth specification and
+tested against recordings put together from it.
+
+* Pick the sensor under *Treadmill → Scan → Show all Bluetooth devices →
+  Check*. If it sends RSC, Walka switches to reading it that way (and
+  remembers it).
+* **Speed** is the sensor's. RSC has no "stopped" or "paused" events: the
+  belt counts as moving while the speed is above a crawl.
+* **Steps** are counted from the cadence, so they are real steps, not an
+  estimate. Some sensors report strides (one per two steps): a cadence
+  under 75 a minute at walking speed is taken for strides and doubled. If
+  your step count comes out half or double, please say so in an issue,
+  with a `walka probe --record` recording.
+* **Distance** is the sensor's own total if it sends one; otherwise Walka
+  works it out from the speed.
+* A foot pod measures your feet, not the belt: on a treadmill the two
+  agree closely, but not exactly.
+
+## Makers' own protocols (untested on hardware)
+
+These readers are written from public open-source projects and tested
+against recordings put together from them. None has been tried on a real
+pad with Walka yet: if you have one, please post a report (*Check my
+treadmill*, or `walka probe --record`) in a ["My treadmill"
+issue](https://github.com/AntonyPerez0/walka-addon/issues/new?template=my-treadmill.yml).
+Each may send one fixed status query, and nothing else - see
+[SAFETY.md](SAFETY.md#what-walka-does-to-a-treadmill-all-of-it). Which
+protocol a pad speaks is decided on connecting, by the services it has; a
+pad that also speaks FTMS is read through FTMS.
+
+### Older KingSmith / Xiaomi WalkingPads ("WiLink")
+
+| | |
+|---|---|
+| Models | WalkingPad A1, A1 Pro, R1, C1, C2, R2 - not the newer KS-HD models (Z1 and others), which speak FTMS |
+| Bluetooth names | `WalkingPad`, `KS-ST-A1P`, `KS-BLC`, `KS-BLR` (others are found by *Show all Bluetooth devices*) |
+| Service | `0xFE00`: notifications on `0xFE01`, queries to `0xFE02` (write without response) |
+| Query | `F7 A2 00 00 A2 FD`, once a second (the maker's app asks about every 0.75 s) |
+| Answer | 20 bytes: `F8 A2`, belt state (0 stopped, 1 running, 5 standby, 7-9 counting down), speed in 0.1 km/h, mode, time (3 bytes, big-endian, s), distance (3 bytes, 10 m), steps (3 bytes), 4 bytes, checksum (sum of bytes 1-17), `FD` |
+| Ignored | anything else: the "last record" answer (`F8 A7`), a packet with a wrong checksum |
+
+Sources: [ph4r05/ph4-walkingpad](https://github.com/ph4r05/ph4-walkingpad)
+(MIT; `ph4_walkingpad/pad.py` - the query, the checksum and the layout, and
+82 captured packets that the layout and checksum were checked against),
+[cagnulein/qdomyos-zwift](https://github.com/cagnulein/qdomyos-zwift)
+(`src/devices/kingsmithr1protreadmill/`), [klassm/walkingpad_macos_client](https://github.com/klassm/walkingpad_macos_client)
+(`0xFE02` takes only writes without response), [darnfish/walkingpad](https://github.com/darnfish/walkingpad),
+[madmatah/hass-walkingpad](https://github.com/madmatah/hass-walkingpad) and
+[mcdax/walkingpad-controller](https://github.com/mcdax/walkingpad-controller)
+(belt states, names). Where they disagree, Walka follows the majority and
+the captured data: speed in 0.1 km/h (one project scales it otherwise),
+steps as 3 bytes (one reads 2). Other apps send set-up packets after
+connecting (a mode, preferences); Walka sends none of them.
+
+### PitPat / SupeRun / DeerRun pads ("PitPat" app)
+
+| | |
+|---|---|
+| Bluetooth names | `PitPat-T01` (also on pads sold as SupeRun, DeerRun and others: they appear to share one maker's board) |
+| Service | `0xFBA0`, notifications on `0xFBA2`; on some boards (an ESP32) `0xFFFF`, notifications on `0xFF02`, each frame wrapped in `4D 04 <sequence> <length>` |
+| Query | **none**: these pads send their status by themselves, and Walka writes nothing to them. (Other apps send a keep-alive after each status; several working ones never do.) |
+| Status | start byte `0x66`/`0x67`/`0x68`, its length, ..., XOR of bytes 1 to n-3, `0x43`. Big-endian: speed (bytes 3-4, km/h x 1000, also when the pad shows mph), distance (7-10, m), calories (18-19), time (20-23; ms from firmware 20 on), flags (26: `0x18` bits stopped / running / paused / starting) |
+| Steps | 4 bytes at 14 by the maker's app - always 0 on the captured pads - else 2 bytes at 43 of the 47- and 50-byte frames, which matched a hand count (86 of 86) |
+
+Sources: [lapo-luchini/pitpat-exporter](https://github.com/lapo-luchini/pitpat-exporter)
+(ISC; `SPEC.md` and some 1,800 captured frames - the layout above was
+checked against them), [KeiranY/PitPat-WebBT](https://github.com/KeiranY/PitPat-WebBT),
+[azmke/pitpat-treadmill-control](https://github.com/azmke/pitpat-treadmill-control),
+[moritzWa/pitpat-menubar](https://github.com/moritzWa/pitpat-menubar),
+[Rick-Pro/stride-android](https://github.com/Rick-Pro/stride-android),
+[omrilotan/walk](https://github.com/omrilotan/walk),
+[sirfergy/HomeAssistantWalkingPad](https://github.com/sirfergy/HomeAssistantWalkingPad)
+and [qdomyos-zwift](https://github.com/cagnulein/qdomyos-zwift)
+(`src/devices/deeruntreadmill/`). Not known: what a pad does if it is never
+sent a keep-alive (the captured ones kept talking), and a third transport
+on `0xFFF0` that one project mentions - Walka does not read that one,
+because FitShow machines use the same service.
+
+### FitShow treadmills and pads ("FitShow" app)
+
+| | |
+|---|---|
+| Bluetooth names | `FS-...` (for example `FS-3D6CD7`). Some FitShow machines speak FTMS as well: those are read through FTMS, with no query |
+| Service | `0xFFF0`: notifications on `0xFFF1`, commands to `0xFFF2` (two other variants, on `0xFFE0` and `0xAE00`, are not read) |
+| Query | `02 51 51 03` (SYS_STATUS), once a second - and only to a device named `FS-...`, because `0xFFF1`/`0xFFF2` are on many other devices too |
+| Answer | `02 51 <state> ...`, the XOR of command and data, `03`; little-endian. State 0 idle, 1 ended, 2 counting down, 3 running, 4 slowing down, 5 error, 6 safety key out, 9 ready, 10 paused. With 1/3/4/10: speed (byte 3, 0.1 km/h - 0.1 mph on a machine set to miles), incline (4), time (5-6, s), steps (11-12) |
+| Not read | distance (7-8) and calories (9-10): projects disagree about their units, so Walka works both out itself. Machine information and workout frames are ignored. |
+| Miles | the status does not say. A machine that shows mph: *Settings → Treadmill → Advanced → Firmware speed grid → mph*. (Finding out by itself would take a second query, which Walka does not send.) |
+
+Sources: the FitShow protocol document as published in
+[limdongkyu/fitshow-device-protocol](https://github.com/limdongkyu/fitshow-device-protocol)
+(framing, status codes), [qdomyos-zwift](https://github.com/cagnulein/qdomyos-zwift)
+(`src/devices/fitshowtreadmill/`), and - on real machines -
+[sstjohn/milltender](https://github.com/sstjohn/milltender) (a LifeSpan TX6,
+`FS-3D6CD7`, which works with nothing but the status query) and
+[Palaszontko/treadmillbar](https://github.com/Palaszontko/treadmillbar)
+(MIT; an HS-750WP pad). Merach machines need an extra "unlock" packet in
+other apps; Walka does not send it, so they may not work.
 
 ## Windows notes
 
@@ -208,8 +343,9 @@ To add a treadmill to the names Walka knows:
 * The companion has a window of its own, drawn by Microsoft Edge WebView2
   (part of Windows 11; on Windows 10 it comes with Edge's updates and with
   Office). GitHub's Windows machines open that window in every build,
-  load the dashboard in it and close it again; it has not been looked at
-  on a real PC yet. A PC without WebView2 gets the dashboard in the
+  load the dashboard in it and close it again. Walka has been used on one
+  real Windows 11 PC (November 2026); on Windows 10 it has not been tried.
+  A PC without WebView2 gets the dashboard in the
   browser, and a message box to close the companion with.
 * The window makes its thread a single-threaded COM apartment, which the
   Windows Runtime's Bluetooth cannot be used from. So with a window, the

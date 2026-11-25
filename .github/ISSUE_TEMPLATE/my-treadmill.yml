@@ -1,0 +1,72 @@
+name: My treadmill
+description: Tell us how Walka does with your walking pad or treadmill - whether it works or not.
+title: "[Treadmill] <make and model>"
+labels: ["treadmill"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you - a report like this is how a treadmill becomes supported.
+        Walka only listens to a treadmill: it never starts, stops or changes the speed of the belt, and the probe below sends it no commands either.
+
+        **The report file.** Make one with *Check my treadmill* on the dashboard, or from a command prompt with
+        `Walka.exe probe --record` (on a Mac, typed in Terminal as *On a Mac* in docs/INSTALL.md shows).
+        While it listens, start the belt with the treadmill's remote, change the speed, pause and stop.
+        It saves two files, `walka-probe-....txt` and `walka-probe-....json`. Both are made to be posted:
+        they list fitness machines only, cut Bluetooth addresses short and leave out the serial number.
+  - type: input
+    id: model
+    attributes:
+      label: Make and model
+      description: As printed on the treadmill or its box, e.g. "UREVO Strol 2E (URTM030)".
+    validations:
+      required: true
+  - type: input
+    id: name
+    attributes:
+      label: Bluetooth name
+      description: What the treadmill is called in the probe report or in *Treadmill → Scan*, e.g. `URTM030`.
+  - type: dropdown
+    id: computer
+    attributes:
+      label: Computer
+      options:
+        - Windows 11
+        - Windows 10
+        - Mac with an Apple chip
+        - Mac with an Intel processor
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Walka version
+      description: At the bottom of the dashboard, e.g. 0.10.0.
+    validations:
+      required: true
+  - type: checkboxes
+    id: checked
+    attributes:
+      label: What you checked
+      description: Tick only what you checked yourself.
+      options:
+        - label: Walka found and connected to the treadmill.
+        - label: The speed on the dashboard matches the treadmill's own display.
+        - label: After a walk, the distance matches the treadmill's display.
+        - label: After a walk, the steps match the treadmill's display.
+        - label: The captions under Steps and Distance on the Live screen say "treadmill counter".
+        - label: With the game running, the walk was filed under my character.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What worked, what did not, and anything that looked wrong.
+    validations:
+      required: true
+  - type: textarea
+    id: report
+    attributes:
+      label: The report files
+      description: Drag both files (`walka-probe-....txt` and `.json`) in here. If you cannot, paste the text of the `.txt` report.
+    validations:
+      required: true

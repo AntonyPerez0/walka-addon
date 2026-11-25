@@ -3,6 +3,8 @@
 // The backend is always metric (km/h, metres, kg, cm, seconds). Everything the
 // user sees goes through `U`, which follows snapshot.units.
 
+import { tr } from "./i18n.js";
+
 export const KMH_PER_MPH = 1.609344;
 export const M_PER_MILE = 1609.344;
 export const LB_PER_KG = 2.2046226218;
@@ -37,18 +39,21 @@ function changed(el, key, value) {
 
 export function setText(el, value) {
   const text = value == null ? "" : String(value);
-  if (changed(el, "text", text)) el.textContent = text;
+  if (changed(el, "text", text)) el.textContent = tr(text); // (translated, if there is a translation)
 }
 
 export function setShown(el, shown) {
   if (changed(el, "shown", !!shown)) el.hidden = !shown;
 }
 
+// Attributes that are words for people (and so translated).
+const WORDS = new Set(["aria-label", "title", "placeholder", "alt"]);
+
 export function setAttr(el, name, value) {
   const text = value == null ? null : String(value);
   if (!changed(el, `@${name}`, text)) return;
   if (text === null) el.removeAttribute(name);
-  else el.setAttribute(name, text);
+  else el.setAttribute(name, WORDS.has(name) ? tr(text) : text);
 }
 
 export function setDisabled(el, disabled) {
@@ -74,10 +79,10 @@ export function h(tag, props, ...children) {
   for (const [key, value] of Object.entries(props || {})) {
     if (value == null || value === false) continue;
     if (key === "class") el.className = value;
-    else if (key === "text") el.textContent = value;
+    else if (key === "text") el.textContent = tr(value);
     else if (key.startsWith("on")) el.addEventListener(key.slice(2), value);
     else if (key in el && typeof value !== "string") el[key] = value;
-    else el.setAttribute(key, value === true ? "" : value);
+    else el.setAttribute(key, value === true ? "" : WORDS.has(key) ? tr(value) : value);
   }
   for (const child of children.flat()) {
     if (child == null || child === false) continue;

@@ -67,14 +67,23 @@ def _data_dir(args: argparse.Namespace) -> Path:
     return Path(args.data_dir) if getattr(args, "data_dir", None) else config_module.default_data_dir()
 
 
+def _build_replay(cfg: config_module.Config, path: str):
+    """--replay: a recording made with ``probe --record``, played back."""
+    from .recording import load
+    from .treadmill.replay import ReplayTreadmill
+
+    return ReplayTreadmill(load(path), units=cfg.treadmill.units)
+
+
 def _build_treadmill(cfg: config_module.Config, simulate: bool):
     if simulate or cfg.treadmill.kind == "simulated":
         from .treadmill.simulated import SimulatedTreadmill
 
         return SimulatedTreadmill(us_firmware=cfg.units == "mph")
-    from .treadmill.ftms_ble import FtmsTreadmill
+    from .treadmill import readers
 
-    return FtmsTreadmill(
+    return readers.build(
+        cfg.treadmill.kind if cfg.treadmill.kind in readers.KINDS else "ftms",
         cfg.treadmill.address or None,
         name_prefixes=cfg.treadmill.name_prefixes,
         units=cfg.treadmill.units,
@@ -483,6 +492,7 @@ def _start_logging(verbose: bool, stream=None, file: Path | None = None) -> Call
     def stop() -> None:
         root.removeHandler(handler)
         root.setLevel(previous_level)
+
         # Write out what is still queued - but a stuck console must not keep
         # the program from exiting either.
         def flush() -> None:
@@ -667,16 +677,19 @@ async def _run(
             goes = "browser"  # nobody is here to open one
     if args.port:
         cfg.web.port = args.port
-    simulate = bool(args.simulate or args.demo)
+    replay = getattr(args, "replay", None)
+    simulate = bool(args.simulate or args.demo or replay)
 
-    treadmill = _build_treadmill(cfg, simulate)
+    treadmill = _build_replay(cfg, replay) if replay else _build_treadmill(cfg, simulate)
     if args.demo:
         beacon = _build_beacon(cfg, read_screen=False)
     elif args.no_capture:
         beacon = None
     else:
         beacon = _build_beacon(cfg)
-    heart_rate = None if simulate else HeartRateMonitor(enabled=cfg.heart_rate.enabled, address=cfg.heart_rate.address)
+    heart_rate = None if simulate else HeartRateMonitor(
+        enabled=cfg.heart_rate.enabled, address=cfg.heart_rate.address, name=cfg.heart_rate.name
+    )
     app = App(
         cfg,
         data_dir,
@@ -721,7 +734,9 @@ async def _run(
         print(f"Walka companion {__version__}")
         print(f"  dashboard: {url}")
         print(f"  data:      {data_dir}")
-        if simulate:
+        if replay:
+            print(f"  treadmill: PLAYING BACK {replay} (no Bluetooth)")
+        elif simulate:
             print("  treadmill: SIMULATED (no Bluetooth)")
         if in_window:
             print("Close Walka's window to quit (the walk being recorded is saved first).")
@@ -957,21 +972,28 @@ async def _scan(args: argparse.Namespace) -> int:
 
 async def _probe(args: argparse.Namespace) -> int:
     from . import probe
+    from .recording import Recording, recording_path
     from .treadmill.ftms_ble import describe_bluetooth_error
 
     cfg = config_module.load(_data_dir(args))
+    recording = Recording(walka=__version__) if args.record else None
     try:
         lines = await probe.probe(
             address=args.address or cfg.treadmill.address or None,
             name_prefixes=cfg.treadmill.name_prefixes,
             listen_s=args.seconds,
             all_characteristics=args.all,
+            recording=recording,
         )
     except Exception as exc:  # no adapter, Bluetooth switched off, the pad dropped the link, ...
         print(f"Bluetooth problem: {describe_bluetooth_error(exc)}")
         return 2
     path = probe.save_report(lines, Path(args.out) if args.out else Path.cwd())
     print(f"\nReport saved to {path}")
+    if recording is not None and recording.services:
+        print(
+            f"Recording saved to {recording.save(recording_path(path))} ({len(recording.notifications)} notifications)"
+        )
     print(
         "The saved report is made to be posted: it lists fitness machines only, cuts Bluetooth addresses short\n"
         "and leaves out the treadmill's serial number. (What you see above is the whole of it.)"
@@ -1385,6 +1407,11 @@ def build_parser() -> argparse.ArgumentParser:
             help="do not show the dashboard at all (it is still served, for whoever opens its address)",
         )
         target.add_argument("--port", type=int, help="dashboard port (default 8787)")
+        target.add_argument(
+            "--replay",
+            metavar="FILE",
+            help="play back a recording made with 'probe --record' instead of using Bluetooth",
+        )
 
     scan = sub.add_parser("scan", help="list nearby Bluetooth treadmills")
     scan.add_argument("--seconds", type=float, default=8.0)
@@ -1397,6 +1424,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--all",
         action="store_true",
         help="also listen to the vendor's own channels (switches their notifications on)",
+    )
+    probe.add_argument(
+        "--record",
+        action="store_true",
+        help="also save every notification heard, with its time, next to the report (for replaying)",
     )
 
     beacon = sub.add_parser("beacon", help="check that the addon's beacon can be read off the screen")

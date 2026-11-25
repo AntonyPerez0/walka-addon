@@ -417,6 +417,28 @@ def parse_heart_rate(data: bytes) -> int | None:
     return data[1]
 
 
+@dataclass(frozen=True)
+class HeartRateMeasurement:
+    bpm: int
+    # Skin contact: None when the sensor does not say, else whether it touches the skin.
+    contact: bool | None = None
+
+
+def parse_heart_rate_measurement(data: bytes) -> HeartRateMeasurement | None:
+    """Heart Rate Measurement with its sensor-contact bits (flags bit 2: the
+    sensor can tell; bit 1: it is touching the skin)."""
+    bpm = parse_heart_rate(data)
+    if bpm is None:
+        return None
+    flags = data[0]
+    contact = bool(flags & 0x02) if flags & 0x04 else None
+    return HeartRateMeasurement(bpm, contact)
+
+
+BATTERY_SERVICE = uuid16(0x180F)
+BATTERY_LEVEL = uuid16(0x2A19)
+
+
 # ---- Running Speed and Cadence Measurement (0x2A53) ----------------------------
 
 

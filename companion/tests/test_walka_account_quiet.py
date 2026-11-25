@@ -216,9 +216,13 @@ async def read_every_page(client: TestClient, app: App) -> int:
                 path += "?character=0123abcd"
             elif path == "/static":
                 path += "/index.html"
+            # ("Check my treadmill"'s files: there are none here, and the route says so.)
+            no_report = "{name}" in path
+            path = path.replace("{name}", "walka-probe-none.txt")
             response = await client.get(path)
             await response.read()
-            assert response.status < 500 and (response.status == 200 or walk == "nothing"), (path, response.status)
+            ok = response.status == 200 or walk == "nothing" or (no_report and response.status == 404)
+            assert response.status < 500 and ok, (path, response.status)
         read += 1
     return read
 
@@ -258,6 +262,14 @@ QUIET_BUTTONS: dict[str, tuple[tuple[str, Any, tuple[int, dict]], ...]] = {
 async def press_what_asks_nobody(client: TestClient, rig: Rig, app: App, state: str) -> int:
     """Every POST and DELETE of the dashboard that does not say it asks the Walka account. Gives how many."""
     pressed = 0
+
+    async def no_treadmill_in_range(**kwargs):
+        # "Check my treadmill" scans over Bluetooth (D-Bus here), which is not what is watched for: the
+        # probe is the one part that stands in, and the route around it is pressed like the rest.
+        kwargs["report"].append("No treadmill found.")
+        return kwargs["report"]
+
+    app.probe_fn = no_treadmill_in_range
     for method, path in every_route_that_changes_something(client):
         if path in ROUTES:
             continue

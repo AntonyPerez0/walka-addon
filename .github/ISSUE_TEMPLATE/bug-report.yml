@@ -1,0 +1,53 @@
+name: Bug report
+description: Something in Walka does not work as it should.
+title: "[Bug] <short description>"
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        If the problem is how Walka reads your treadmill or heart-rate sensor, the *My treadmill* or *My heart-rate sensor* form asks the right questions.
+        Please do not report a security problem here: see SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: Walka version
+      description: At the bottom of the dashboard, e.g. 0.10.0.
+    validations:
+      required: true
+  - type: dropdown
+    id: computer
+    attributes:
+      label: Computer
+      options:
+        - Windows 11
+        - Windows 10
+        - Mac with an Apple chip
+        - Mac with an Intel processor
+    validations:
+      required: true
+  - type: input
+    id: treadmill
+    attributes:
+      label: Treadmill
+      description: Make and model, or "none" / "simulated".
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: report
+    attributes:
+      label: Report and log files
+      description: |
+        Attach the probe report if the treadmill is involved (*Check my treadmill* on the dashboard, or `Walka.exe probe --record`) - it is made to be posted.
+        `walka.log` (in the folder with your settings and walks) helps too, but it is not filtered: look it over first - it can hold your treadmill's full Bluetooth address and your user folder's name.
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: The belt
+      options:
+        - label: The belt started, stopped or changed speed without me doing it at the treadmill. (Walka cannot do this - if it ever seems to happen, say so here first.)

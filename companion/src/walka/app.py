@@ -34,6 +34,9 @@ from .road import RoadBook
 from .session import SessionRecord, SessionRecorder, SessionStore
 from .sources import BeaconSource, Reading
 from .treadmill import Treadmill, TreadmillError, TreadmillEvent
+from .treadmill_check import REPORTS_DIR, CheckState, run_check
+from .updates import UpdateState
+from .updates import check as check_for_update
 
 log = logging.getLogger(__name__)
 
@@ -47,6 +50,28 @@ SIGNAL_TIMEOUT_S = 3.0  # a look at the game older than this counts as lost
 STALE_DATA_S = 5.0  # treadmill data older than this is not trusted
 MOVING_KMH = 0.05  # a belt reporting more than this is moving
 STATE_FILE = "state.json"
+# A lost treadmill is listened for (advertisements only, never a connection
+# attempt). Heard again after at least this long without a word, it was
+# switched off and on: Walka connects. One that keeps advertising - in
+# standby - is left alone.
+RETURN_GAP_S = 20.0
+WATCH_RETRY_S = 30.0  # after the Bluetooth listening failed (adapter off, ...)
+
+
+class ReturnDetector:
+    """Tells a treadmill switched off and on from one in standby, by the gap
+    in its advertisements."""
+
+    def __init__(self, now: float, gap_s: float = RETURN_GAP_S) -> None:
+        self.last = now  # listening began: silence is counted from here
+        self.gap_s = gap_s
+
+    def seen(self, now: float) -> bool:
+        """An advertisement at ``now``. True if it ends a long enough silence."""
+        returned = now - self.last >= self.gap_s
+        self.last = now
+        return returned
+
 
 
 class App:
@@ -96,8 +121,23 @@ class App:
         # to (a connection attempt wakes a pad that was switched off).
         self._eager_connect = True
         self._switch_treadmill = False
+        # "Check my treadmill" (treadmill_check): while it runs, the probe
+        # holds the treadmill's one connection and the loop leaves it be.
+        self.check = CheckState()
+        self._checking = False
+        self._check_task: asyncio.Task | None = None
+        self.probe_fn: Any = None  # tests hand in a stand-in for probe.probe
+        # The update notice (updates.py): nothing is asked unless it is switched on.
+        self.update = UpdateState()
+        self._update_task: asyncio.Task | None = None
+        self.update_fetch: Any = None  # tests hand in a stand-in for updates.fetch_latest
+        # Heart rate over the local network (hr_network.py): nothing listens unless switched on.
+        self.hr_network: Any = None
+        self._side_tasks: set[asyncio.Task] = set()
 
         self._connect_now = asyncio.Event()
+        self.watching = False  # listening for the lost treadmill's advertisements
+        self._watch_after = 0.0  # (after the listening failed: not again before this)
         self._stopping = asyncio.Event()
         self._tasks: list[asyncio.Task] = []
         self._last_checkpoint = 0.0
@@ -150,7 +190,8 @@ class App:
             status = self.treadmill.status
             self.connect_error = ""
             self._eager_connect = False
-            self.log_event(f"Treadmill connected: {status.name or status.address}. Walka only listens to it.")
+            # ("Walka only listens" is said once, under the belt's state on the Live screen.)
+            self.log_event(f"Treadmill connected: {status.name or status.address}.")
             self._pin_treadmill()
             self._state["treadmill"] = {"name": status.name}
             self._save_state()
@@ -208,6 +249,7 @@ class App:
             if self.treadmill.status.connected:  # (a belt out of reach has not been heard to stop)
                 self.log_event("The belt is moving." if moving else "The belt has stopped.")
         self._record(wall, reading, speed)
+        self._maybe_check_for_update()
 
     # ---- recording ---------------------------------------------------------------
     def _wanted_recording(self, reading: Reading, moving: bool) -> tuple[str, int | None] | None:
@@ -428,6 +470,32 @@ class App:
         self._eager_connect = True
         self._connect_now.set()
 
+    async def use_reader(self, kind: str) -> None:
+        """Read the treadmill another way (treadmill/readers.py): a device picked
+        from all Bluetooth devices that speaks another protocol. The old reader
+        lets go first; the walk being recorded ends where its listening ends."""
+        from .treadmill import readers
+
+        if kind == self.treadmill.kind or kind not in readers.KINDS or self.treadmill.kind == "simulated":
+            return
+        old = self.treadmill
+        try:
+            await old.disconnect()
+        except Exception as exc:
+            log.debug("letting go of the old reader failed: %s", exc)
+        new = readers.build(
+            kind,
+            self.config.treadmill.address or None,
+            name_prefixes=self.config.treadmill.name_prefixes,
+            units=self.config.treadmill.units,
+            backend=getattr(old, "_backend", None),
+        )
+        new.on_event = self._on_treadmill_event
+        self.treadmill = new
+        self.config.treadmill.kind = kind
+        self.save_config()
+        self.log_event(f"Walka now reads the treadmill as {kind.upper()}.")
+
     def forget_treadmill(self) -> None:
         """Forget which treadmill Walka is tied to, so that the next one it
         finds is taken (and remembered in turn)."""
@@ -446,7 +514,7 @@ class App:
 
     def connection_wanted(self) -> bool:
         """Should the connection loop be trying to reach the treadmill now?"""
-        if not self.want_connected:
+        if not self.want_connected or self._checking:
             return False
         if self._eager_connect:
             return True
@@ -455,6 +523,112 @@ class App:
         # in the game.
         reading = self._last_reading
         return self.recorder is not None or (reading.active and reading.age_s <= SIGNAL_TIMEOUT_S)
+
+    # ---- "Check my treadmill" -------------------------------------------------------
+    @property
+    def reports_dir(self) -> Path:
+        return self.data_dir / REPORTS_DIR
+
+    def start_check(self) -> None:
+        """Run the probe from the dashboard (see treadmill_check). Raises
+        ValueError, in words for the dashboard, when it cannot run."""
+        if self.treadmill.kind == "simulated":
+            raise ValueError("The check is for a real treadmill. This is the simulated one.")
+        if self._checking:
+            raise ValueError("A check is already running.")
+        self._checking = True
+        self.check = CheckState(running=True, started=self.wall(), line="Letting go of the treadmill ...")
+        self._check_task = asyncio.create_task(self._run_check(), name="walka-check")
+
+    async def _run_check(self) -> None:
+        was_wanted = self.want_connected
+        try:
+            self.log_event(
+                "Checking the treadmill: Walka lets go of it for about 45 seconds, so that the check can connect. "
+                "Like Walka, the check only listens."
+            )
+            try:
+                await self.treadmill.disconnect()
+            except Exception as exc:
+                log.debug("letting go of the treadmill for the check failed: %s", exc)
+            await run_check(
+                self.check,
+                self.reports_dir,
+                address=self.config.treadmill.address or None,
+                name_prefixes=self.config.treadmill.name_prefixes,
+                probe_fn=self.probe_fn,
+                wall=self.wall,
+            )
+            if self.check.error:
+                self.log_event(f"Treadmill check: {self.check.error}", "warning")
+            else:
+                self.log_event(f"Treadmill check done: the report is saved as {self.check.report}.")
+        finally:
+            self._checking = False
+            self.connect_error = ""
+            if was_wanted:
+                self.connect()
+
+    # ---- heart rate over the local network -----------------------------------------------
+    async def apply_hr_network(self) -> None:
+        """Listen for heart rate over the local network - or stop - as the setting says."""
+        from . import hr_network
+
+        wanted = self.config.heart_rate.network and self.heart_rate is not None and not self._stopping.is_set()
+        current = self.hr_network
+        if current is not None and (not wanted or current.port != self.config.heart_rate.network_port):
+            self.hr_network = None
+            await current.stop()
+            current = None
+        if not wanted:
+            return
+        if not self.config.heart_rate.network_code:
+            self.config.heart_rate.network_code = hr_network.new_code()
+            self.save_config()
+        if current is None:
+            self.hr_network = hr_network.NetworkHeartRate(
+                self.heart_rate.feed_network,
+                code=self.config.heart_rate.network_code,
+                port=self.config.heart_rate.network_port,
+            )
+            await self.hr_network.start()
+        self.hr_network.code = self.config.heart_rate.network_code
+
+    def new_hr_network_code(self) -> str:
+        from . import hr_network
+
+        self.config.heart_rate.network_code = hr_network.new_code()
+        self.save_config()
+        if self.hr_network is not None:
+            self.hr_network.code = self.config.heart_rate.network_code
+        return self.config.heart_rate.network_code
+
+    # ---- the update notice ------------------------------------------------------------
+    def _maybe_check_for_update(self) -> None:
+        """From the tick: start a check when it is switched on and one is due."""
+        if not self.config.updates.check or self._stopping.is_set():
+            return
+        if self._update_task is not None and not self._update_task.done():
+            return
+        mono = self.mono()
+        if mono < self.update.next_at:
+            return
+        fetch = self.update_fetch
+        if fetch is None:
+            from .updates import fetch_latest as fetch
+        self.update.next_at = mono + 60.0  # (not twice while this one runs)
+        self._update_task = asyncio.create_task(
+            check_for_update(self.update, fetch=fetch, wall=self.wall(), mono=mono), name="walka-update-check"
+        )
+
+    def _spawn_soon(self, coro: Any) -> None:
+        try:
+            task = asyncio.get_running_loop().create_task(coro)
+        except RuntimeError:  # no loop (a test calling update_config outside one): not now
+            coro.close()
+            return
+        self._side_tasks.add(task)
+        task.add_done_callback(self._side_tasks.discard)
 
     def save_config(self) -> None:
         try:
@@ -481,6 +655,15 @@ class App:
         self.save_config()
         if isinstance(patch.get("overlay"), dict):
             self._apply_overlay()
+        hr_patch = patch.get("heart_rate")
+        if isinstance(hr_patch, dict) and ({"network", "network_port"} & set(hr_patch)):
+            self._spawn_soon(self.apply_hr_network())
+        if isinstance(patch.get("updates"), dict):
+            # Switched on: ask now. Switched off: forget the answer (and ask nothing).
+            self.update = UpdateState()
+            if self._update_task is not None:
+                self._update_task.cancel()
+                self._update_task = None
         self.sync_addon()
 
     # ---- the floating window ---------------------------------------------------------
@@ -510,6 +693,18 @@ class App:
             self.config.overlay.enabled = False
             self.save_config()
 
+    def system_units(self) -> str | None:
+        """The units of the computer's region (the first-run guide's
+        suggestion), looked up once."""
+        if not hasattr(self, "_system_units"):
+            from .locale_units import system_units
+
+            try:
+                self._system_units: str | None = system_units()
+            except Exception:  # a suggestion: never worth a failure
+                self._system_units = None
+        return self._system_units
+
     def profile_is_set(self) -> bool:
         """Has the walker's body profile been entered? Defaults do not count
         until they are saved from the dashboard."""
@@ -535,6 +730,7 @@ class App:
         treadmill = status.to_dict()
         treadmill.update(
             kind=self.treadmill.kind,
+            replay=bool(getattr(self.treadmill, "replay", False)),
             want_connected=self.want_connected,
             error=self.connect_error,
             # Walka is tied to one treadmill (see _pin_treadmill).
@@ -565,13 +761,18 @@ class App:
             "session": self.recorder.live() if self.recorder is not None else None,
             "last_session": self.last_record.summary() if self.last_record is not None else None,
             "totals": self.totals(wall),
-            "heart_rate": hr.to_dict() if hr is not None else None,
+            "heart_rate": None if hr is None else {
+                **hr.to_dict(),
+                "network": self.hr_network.to_dict() if self.hr_network is not None else None,
+            },
             "addon": {
                 "dir": str(self.addon_dir) if self.addon_dir else None,
                 "last_sync": self.last_sync,
                 "error": self.addon_error,
             },
-            "setup": {"profile_set": self.profile_is_set()},
+            "check": self.check.to_dict(self.wall()),
+            "update": self.update.to_dict(self.config.updates.check),
+            "setup": {"profile_set": self.profile_is_set(), "system_units": self.system_units()},
             "config": self.config.to_dict(),
             "events": list(self.events)[:30],
             "journey": self.journeys.summary(),
@@ -603,8 +804,13 @@ class App:
                 self._switch_treadmill = False
                 if self.treadmill.status.connected:
                     await self.treadmill.disconnect()
-            if not self.treadmill.status.connected and self.want_connected and not self.connection_wanted():
-                self.connect_error = "not connected - it reconnects when a session starts in the game, or press Connect"
+            if self._checking:
+                self.connect_error = "let go of for \"Check my treadmill\" - Walka connects again when the check is done"
+            elif not self.treadmill.status.connected and self.want_connected and not self.connection_wanted():
+                self.connect_error = (
+                    "not connected - Walka connects again when the treadmill is switched on, when a session "
+                    "starts in the game, or when you press Connect"
+                )
             if self.connection_wanted() and not self.treadmill.status.connected:
                 try:
                     await self.treadmill.connect()
@@ -620,6 +826,15 @@ class App:
                     backoff = min(60.0, backoff * 1.5)
             else:
                 backoff = 5.0
+            if self.should_watch() and self.mono() >= self._watch_after:
+                # Lost, with no walk to listen to: listen for it to come back
+                # (returns as soon as anything changes, within a second).
+                try:
+                    if await self.watch_once():
+                        continue
+                except Exception as exc:
+                    log.debug("listening for the treadmill failed: %s", exc)
+                    self._watch_after = self.mono() + WATCH_RETRY_S
             self._connect_now.clear()
             try:
                 # Connected, or idle until there is a walk to listen to:
@@ -628,6 +843,53 @@ class App:
                 await asyncio.wait_for(self._connect_now.wait(), timeout=2.0 if idle else backoff)
             except asyncio.TimeoutError:
                 pass
+
+    def should_watch(self) -> bool:
+        """Listen for the lost treadmill coming back? Only for the treadmill
+        Walka is tied to, while it wants one and is not reaching for it anyway."""
+        return (
+            self.want_connected
+            and not self._checking
+            and not self.treadmill.status.connected
+            and not self.connection_wanted()
+            and bool(self.config.treadmill.address)
+            and hasattr(self.treadmill, "watch")
+        )
+
+    async def watch_once(self) -> bool:
+        """Listen until the treadmill comes back (True) or listening is no
+        longer wanted (False). Raises what the Bluetooth listening raises."""
+        detector = ReturnDetector(self.mono())
+        returned = asyncio.Event()
+
+        def seen() -> None:
+            if detector.seen(self.mono()):
+                returned.set()
+
+        self.watching = True
+        task = asyncio.create_task(self.treadmill.watch(seen), name="walka-watch-adverts")
+        try:
+            while not returned.is_set() and self.should_watch() and not self._stopping.is_set():
+                if task.done():
+                    task.result()  # (raises what it raised)
+                    return False
+                try:
+                    await asyncio.wait_for(returned.wait(), 1.0)
+                except asyncio.TimeoutError:
+                    pass
+        finally:
+            self.watching = False
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+        if returned.is_set() and self.should_watch():
+            self.log_event("The treadmill is switched on again: Walka connects to it.")
+            self._eager_connect = True
+            self._connect_now.set()
+            return True
+        return False
 
     async def start(self) -> None:
         """Start the background loops."""
@@ -648,12 +910,18 @@ class App:
                 # no place for that.)
                 log.warning("the Walka account's part did not start: an error of the kind %s", type(exc).__name__)
         self.sync_addon()
+        if self.config.heart_rate.network:
+            await self.apply_hr_network()
 
     async def stop(self) -> None:
         """Close down: save the walk, sync, let go of the treadmill. The
         belt is left as it is - it was never the companion's to stop."""
         self._stopping.set()
         self._connect_now.set()
+        if self._check_task is not None:
+            self._check_task.cancel()
+        if self._update_task is not None:
+            self._update_task.cancel()
         for task in self._tasks:
             task.cancel()
         if self.walka_account is not None:
@@ -672,6 +940,12 @@ class App:
             self._save_unsaved()
         except Exception:
             log.exception("could not save the walk on exit")
+        if self.hr_network is not None:
+            try:
+                await self.hr_network.stop()
+            except Exception:
+                pass
+            self.hr_network = None
         if self.heart_rate is not None:
             try:
                 await self.heart_rate.close()
