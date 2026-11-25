@@ -40,8 +40,9 @@ companion/requirements-dev.lock`, and no install of Walka itself.)
   loaded; it fetches three.js from a CDN). `node tools/record_demo.cjs
   docs/demo/walka-demo.mp4` records it with Playwright's Chromium and
   ffmpeg, frame by frame, and `--frames 3,12` writes stills only. The
-  README's moving picture is made from that video:
-  `ffmpeg -i docs/demo/walka-demo.mp4 -vf "fps=12,scale=720:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=160[p];[b][p]paletteuse=dither=sierra2_4a" docs/images/demo.gif`.
+  README's moving picture is made from that video (an animated WebP, a
+  fifth the size of a GIF):
+  `ffmpeg -i docs/demo/walka-demo.mp4 -vf "fps=12,scale=800:-1:flags=lanczos" -c:v libwebp -quality 55 -compression_level 6 -loop 0 docs/images/demo.webp`.
 * `py -m walka --demo` runs everything against a simulated treadmill, a
   made-up walker who works its remote, and a scripted character.
 * **The one rule for changes:** the companion listens to the treadmill and

@@ -34,6 +34,11 @@
 </p>
 
 <p align="center">
+  <a href="docs/demo/walka-demo.mp4"><img src="docs/images/demo.webp" width="880" alt="A 3D demo: someone walks on a walking pad under a standing desk while playing. They start the belt with the pad's own remote, the Walka dashboard on the upright monitor counts the walk, the game runs on the other monitor with Walka's floating window, and they stop the belt at the end."></a>
+  <br><sub><b>Walka in 3D</b> - <a href="docs/demo/walka-demo.mp4">watch the video</a> (31 s, no sound) · <a href="docs/demo/">the scene itself</a>, made with three.js: open <code>docs/demo/index.html</code> and look around</sub>
+</p>
+
+<p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/images/dashboard-dark.png">
     <img src="docs/images/dashboard-light.png" width="880" alt="The Walka dashboard: the belt's speed as the treadmill reports it, and this walk's time, distance, steps, calories and heart rate (with an optional Bluetooth heart-rate sensor)">
