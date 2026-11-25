@@ -229,7 +229,7 @@ class FtmsTreadmill(Treadmill):
             raise
         except Exception as exc:
             raise TreadmillError(describe_bluetooth_error(exc, "is it switched on and in range?")) from exc
-        reader = reader_for(characteristics)
+        reader = reader_for(characteristics, device.name)
         return {
             "name": device.name,
             "address": device.address,
@@ -266,6 +266,9 @@ class FtmsTreadmill(Treadmill):
             )
             raise TreadmillError(status.detail)
 
+        if not self._accepts(device):
+            status.detail = f"{device.name or device.address} is not a treadmill this reader is for"
+            raise TreadmillError(status.detail)
         status.detail = f"connecting to {device.name or device.address}"
         client: BleClient | None = None
 
@@ -316,6 +319,11 @@ class FtmsTreadmill(Treadmill):
             " (mph firmware)" if status.mph_grid else "",
         )
         self._emit(TreadmillEvent.CONNECTED)
+
+    def _accepts(self, device: FoundDevice) -> bool:
+        """Is this device one to connect to at all? (A protocol on a generic
+        vendor characteristic says yes only to its own names.)"""
+        return True
 
     def data_characteristics(self) -> tuple[str, ...]:
         """Where the walk may come from; a device with none of these is refused."""

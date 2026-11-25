@@ -311,6 +311,27 @@ sent a keep-alive (the captured ones kept talking), and a third transport
 on `0xFFF0` that one project mentions - Walka does not read that one,
 because FitShow machines use the same service.
 
+### FitShow treadmills and pads ("FitShow" app)
+
+| | |
+|---|---|
+| Bluetooth names | `FS-...` (for example `FS-3D6CD7`). Some FitShow machines speak FTMS as well: those are read through FTMS, with no query |
+| Service | `0xFFF0`: notifications on `0xFFF1`, commands to `0xFFF2` (two other variants, on `0xFFE0` and `0xAE00`, are not read) |
+| Query | `02 51 51 03` (SYS_STATUS), once a second - and only to a device named `FS-...`, because `0xFFF1`/`0xFFF2` are on many other devices too |
+| Answer | `02 51 <state> ...`, the XOR of command and data, `03`; little-endian. State 0 idle, 1 ended, 2 counting down, 3 running, 4 slowing down, 5 error, 6 safety key out, 9 ready, 10 paused. With 1/3/4/10: speed (byte 3, 0.1 km/h - 0.1 mph on a machine set to miles), incline (4), time (5-6, s), steps (11-12) |
+| Not read | distance (7-8) and calories (9-10): projects disagree about their units, so Walka works both out itself. Machine information and workout frames are ignored. |
+| Miles | the status does not say. A machine that shows mph: *Settings → Treadmill → Advanced → Firmware speed grid → mph*. (Finding out by itself would take a second query, which Walka does not send.) |
+
+Sources: the FitShow protocol document as published in
+[limdongkyu/fitshow-device-protocol](https://github.com/limdongkyu/fitshow-device-protocol)
+(framing, status codes), [qdomyos-zwift](https://github.com/cagnulein/qdomyos-zwift)
+(`src/devices/fitshowtreadmill/`), and - on real machines -
+[sstjohn/milltender](https://github.com/sstjohn/milltender) (a LifeSpan TX6,
+`FS-3D6CD7`, which works with nothing but the status query) and
+[Palaszontko/treadmillbar](https://github.com/Palaszontko/treadmillbar)
+(MIT; an HS-750WP pad). Merach machines need an extra "unlock" packet in
+other apps; Walka does not send it, so they may not work.
+
 ## Windows notes
 
 * The Bluetooth library (bleak) documents Windows 11 as its supported

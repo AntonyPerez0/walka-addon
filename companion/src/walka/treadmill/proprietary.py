@@ -67,6 +67,16 @@ QUERIES = MappingProxyType(
             every_s=1.0,
             source="ph4r05/ph4-walkingpad ask_stats; also qdomyos-zwift, klassm/walkingpad_macos_client",
         ),
+        "fitshow": Query(
+            protocol="fitshow",
+            service=_vendor(0xFFF0),
+            characteristic=_vendor(0xFFF2),
+            # start 02, command 51 (SYS_STATUS), checksum 51 (XOR of the command and data), end 03
+            payload=bytes.fromhex("02515103"),
+            every_s=1.0,
+            source="FitShow protocol document (limdongkyu/fitshow-device-protocol); qdomyos-zwift, "
+            "sstjohn/milltender, Palaszontko/treadmillbar",
+        ),
     }
 )
 

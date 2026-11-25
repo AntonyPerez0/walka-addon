@@ -89,6 +89,16 @@ KNOWN_TREADMILLS = KNOWN_TREADMILLS + (
         "[qdomyos-zwift](https://github.com/cagnulein/qdomyos-zwift) (`deerruntreadmill`): service 0xFBA0, "
         "or 0xFFFF on some boards.",
     ),
+    KnownTreadmill(
+        "FS-",
+        "FitShow",
+        "treadmills and pads for the FitShow app",
+        "fitshow",
+        source="the FitShow protocol document ([limdongkyu/fitshow-device-protocol]"
+        "(https://github.com/limdongkyu/fitshow-device-protocol)), [qdomyos-zwift](https://github.com/cagnulein/qdomyos-zwift) "
+        "(`fitshowtreadmill`), [sstjohn/milltender](https://github.com/sstjohn/milltender), "
+        "[Palaszontko/treadmillbar](https://github.com/Palaszontko/treadmillbar). Some also speak FTMS: then that is used.",
+    ),
 )
 
 

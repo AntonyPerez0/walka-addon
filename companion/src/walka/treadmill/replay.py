@@ -29,7 +29,7 @@ class ReplayTreadmill(Treadmill):
         self.recording = recording
         self.backend = ReplayBackend(recording, time_scale=time_scale)
         # Read the way the recorded device is read: FTMS, RSC, ... (treadmill/readers.py).
-        reader = reader_for(recording.characteristics())
+        reader = reader_for(recording.characteristics(), recording.name)
         kind = reader.key if reader else "ftms"
         address = self.backend.find_address()
         self._reader: FtmsTreadmill = build(

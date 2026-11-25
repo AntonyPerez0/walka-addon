@@ -22,6 +22,7 @@ SRC = Path(__file__).resolve().parents[1] / "src" / "walka"
 ALLOWED = {
     # protocol: (service, characteristic, payload)
     "walkingpad": (ftms.uuid16(0xFE00), ftms.uuid16(0xFE02), bytes.fromhex("F7 A2 00 00 A2 FD")),
+    "fitshow": (ftms.uuid16(0xFFF0), ftms.uuid16(0xFFF2), bytes.fromhex("02 51 51 03")),
 }
 
 
@@ -44,6 +45,9 @@ def test_each_query_only_asks_for_the_status():
     walkingpad = proprietary.QUERIES["walkingpad"].payload
     # F7 header, A2 message, 00 = "stats" (01 would set a speed, 02 a mode, 04 start), FD footer.
     assert walkingpad[0] == 0xF7 and walkingpad[1:3] == b"\xa2\x00" and walkingpad[-1] == 0xFD
+    fitshow = proprietary.QUERIES["fitshow"].payload
+    # 02 start, 51 = SYS_STATUS (53 would be SYS_CONTROL: start, stop, speed), 51 XOR, 03 end.
+    assert fitshow == bytes([0x02, 0x51, 0x51, 0x03])
     for query in proprietary.QUERIES.values():
         assert query.characteristic != ftms.CONTROL_POINT and query.service != ftms.FTMS_SERVICE
 

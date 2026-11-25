@@ -20,6 +20,9 @@ class Reader:
     key: str
     characteristic: str  # the one the walk comes from
     words: str  # for the dashboard
+    # For a protocol on a generic vendor characteristic (0xFFF1 is on many devices): it is
+    # only this protocol when the device's name says so too.
+    names: tuple[str, ...] = ()
 
 
 READERS: tuple[Reader, ...] = (
@@ -29,6 +32,7 @@ READERS: tuple[Reader, ...] = (
     # speaks both is read the standard way.
     Reader("walkingpad", ftms.uuid16(0xFE01), "the WalkingPad protocol (older KingSmith pads)"),
     Reader("pitpat", ftms.uuid16(0xFBA2), "the PitPat protocol (PitPat, SupeRun and similar pads)"),
+    Reader("fitshow", ftms.uuid16(0xFFF1), "the FitShow protocol", names=("FS-",)),
 )
 KINDS = tuple(reader.key for reader in READERS)
 
@@ -39,6 +43,10 @@ def build(kind: str, address: str | None, *, name_prefixes=None, units: str = "a
         from .rsc import RscTreadmill
 
         return RscTreadmill(address or None, units=units, backend=backend)
+    if kind == "fitshow":
+        from .fitshow import FitShowTreadmill
+
+        return FitShowTreadmill(address or None, units=units, backend=backend)
     if kind == "pitpat":
         from .pitpat import PitPatTreadmill
 
@@ -71,10 +79,15 @@ SERVICE_NAMES = {
 }
 
 
-def reader_for(characteristics: Iterable[str]) -> Reader | None:
-    """How Walka would read a device with these characteristics, if it can."""
+def reader_for(characteristics: Iterable[str], name: str | None = None) -> Reader | None:
+    """How Walka would read a device with these characteristics (and this name), if it can."""
     present = {uuid.lower() for uuid in characteristics}
-    return next((reader for reader in READERS if reader.characteristic in present), None)
+    upper = (name or "").upper()
+
+    def named(reader: Reader) -> bool:
+        return not reader.names or any(upper.startswith(prefix.upper()) for prefix in reader.names)
+
+    return next((reader for reader in READERS if reader.characteristic in present and named(reader)), None)
 
 
 def service_words(services: Iterable[str]) -> list[str]:
