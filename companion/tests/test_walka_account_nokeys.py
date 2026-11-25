@@ -221,6 +221,11 @@ class Served:
             if route.resource.canonical in ("/api/events", "/api/state"):
                 continue
             path = route.resource.canonical.replace("{session_id}", walk)
+            if "{name}" in path:
+                # A "Check my treadmill" report, so that its page is read too.
+                self.app.reports_dir.mkdir(parents=True, exist_ok=True)
+                (self.app.reports_dir / "walka-probe-test.txt").write_text("Walka Bluetooth probe - test\n")
+                path = path.replace("{name}", "walka-probe-test.txt")
             path += {"/api/road": "?character=0123abcd", "/static": "/index.html"}.get(path, "")
             async with self._session.get(self.there + path) as response:
                 assert response.status == 200, path
