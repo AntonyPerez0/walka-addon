@@ -218,9 +218,14 @@ To add a treadmill to the names Walka knows:
    fitness machines only, addresses cut short, no serial number.
 2. Walk on it with the companion running, and check the dashboard against
    the treadmill's own display: speed, distance, steps.
-3. Add a line to `KNOWN_TREADMILLS` in `treadmill/known.py` - the start of
-   the Bluetooth name, as exactly as the make allows - and a paragraph
-   here saying what was seen and on which model.
+3. Add an entry to `KNOWN_TREADMILLS` in `treadmill/known.py` - the start
+   of the Bluetooth name, as exactly as the make allows, the model, how
+   much is known (`evidence`: *verified by a Walka user* only for a walk
+   checked against the treadmill's display, with `checked` saying on what
+   and when; otherwise *reported by another project*) and where that comes
+   from - then run `python tools/treadmill_table.py`, which remakes the
+   table in [TREADMILLS.md](TREADMILLS.md). And a paragraph here saying
+   what was seen and on which model.
 
 ## Windows notes
 

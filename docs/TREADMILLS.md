@@ -10,12 +10,14 @@ a treadmill's speed and distance. If an app other than the maker's own can
 treadmill does not have to be one that apps can control: Walka controls
 nothing.
 
-| Treadmill | How Walka finds it | What is known |
-|---|---|---|
-| **UREVO Strol 2E (URTM030)** | By name (`URTM...`), at once | **Verified by a Walka user** (Windows 11, November 2026): speed, distance and steps match the pad's own display, and walks are filed under the character in the game. |
-| Other UREVO pads | By name (`URTM...`), at once | Other open-source projects read them the same way. Not tried with Walka yet. |
-| **WELLFIT TM029 Pro** and other WELLFIT treadmills | By name (`WELLFIT TM Linker`), at once | Another open-source project works with a WELLFIT over FTMS. |
-| **Any other FTMS treadmill** | By what it advertises, after a 15-second scan - or pick it yourself: dashboard → *Treadmill → Scan* | Depends on the treadmill. Check its numbers as in [Before your first walk](INSTALL.md#before-your-first-walk). |
+<!-- treadmill-table:start (made by tools/treadmill_table.py from treadmill/known.py - edit that) -->
+| Treadmill | Bluetooth name | Read as | Evidence | Where from |
+|---|---|---|---|---|
+| **UREVO Strol 2E (URTM030)** | `URTM030...` | standard Bluetooth FTMS | **verified by a Walka user** (Windows 11, November 2026) | A Walka user: speed, distance and steps match the pad's own display, and walks are filed under the character in the game. Sends steps in its treadmill data. |
+| UREVO pads (URTM054, URTM059, URTM041, ...) | `URTM...` | standard Bluetooth FTMS | reported by another project; untested on hardware with Walka | [qdomyos-zwift](https://github.com/cagnulein/qdomyos-zwift) reads every `URTM...` device as a standard FTMS treadmill; others measured sibling models. |
+| WELLFIT TM029 Pro and other WELLFIT treadmills | `WELLFIT TM Linker...` | standard Bluetooth FTMS | reported by another project; untested on hardware with Walka | [qdomyos-zwift issue 2659](https://github.com/cagnulein/qdomyos-zwift/issues/2659): a WELLFIT owner and the project's author got it working over FTMS. |
+| **Any other FTMS treadmill** | (found by the service it advertises, after a 15-second scan - or pick it: *Treadmill → Scan*) | standard Bluetooth FTMS | depends on the treadmill | Check its numbers as in [Before your first walk](INSTALL.md#before-your-first-walk). |
+<!-- treadmill-table:end -->
 
 Only the UREVO Strol 2E (URTM030) has been tried with Walka on the real
 machine; the warning at the top of this page is for every other one.
