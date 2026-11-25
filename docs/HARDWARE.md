@@ -124,8 +124,12 @@ Still to be found by reading a probe report (none has been posted yet):
   stop with the remote each come as a status event, and whether a change of
   speed does;
 * whether it switches itself off, and drops the connection, after a long
-  pause (siblings do; Walka then reconnects when you next start a session
-  in the game, or when you press *Connect*).
+  pause (siblings do), and whether it keeps advertising while it is in
+  standby. Walka listens for the pad it is tied to without connecting, and
+  connects again when the pad is heard after at least 20 seconds of
+  silence (switched off and on); also when you next start a session in the
+  game, or when you press *Connect*. A pad that advertises all through
+  standby is not connected to by that rule, so it is not woken.
 
 ## Other treadmills
 

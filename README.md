@@ -1030,8 +1030,8 @@ And for you, not for Walka: start slow, and know where the remote is.
 | The floating window is not on top of the game | Run the game in *Windowed* or *Windowed (Fullscreen)* mode: nothing can be drawn over a game in exclusive fullscreen. |
 | No floating window in Settings | It needs Walka's own window: not with `--browser`, `--no-window` or the dashboard in the web browser. |
 | Addon marked out of date after a game patch | Tick *Load out of date AddOns*, and update the `## Interface:` line in `Walka/Walka.toc`. |
-| Walks are no longer recorded after the pad was switched off and on | The companion reconnects when a session starts in the game, or when you press *Connect* on the dashboard. |
-| The pad keeps waking up | The companion only reconnects when a session starts or you press Connect; closing the companion releases the pad entirely. |
+| Walks are no longer recorded after the pad was switched off and on | The companion connects again by itself when it hears the pad come back on after at least 20 seconds of silence; also when a session starts in the game, or when you press *Connect* on the dashboard. If none of that happens, run *Check my treadmill* and post the report. |
+| The pad keeps waking up | While the pad is off or asleep, the companion only listens for it - it does not try to connect, which is what can wake a pad. It connects when a session starts, when you press Connect, or when the pad has been silent for 20 seconds and is heard again (switched off and on). Closing the companion releases the pad entirely. |
 
 ## Ideas for later
 

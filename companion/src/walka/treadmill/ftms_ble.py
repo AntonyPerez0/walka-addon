@@ -106,6 +106,11 @@ class BleBackend(Protocol):
         some other kind of machine than a treadmill)."""
         ...
 
+    async def watch(self, address: str, on_seen: Callable[[], None]) -> None:
+        """Call ``on_seen`` for every advertisement from ``address`` until
+        cancelled. Listens only: connects to nothing."""
+        ...
+
     def client(self, device: FoundDevice, on_disconnect: Callable[[], None]) -> BleClient: ...
 
 
@@ -189,6 +194,14 @@ class FtmsTreadmill(Treadmill):
             for d in found
             if is_treadmill_candidate(d.name, services if d.ftms else (), self.name_prefixes, d.treadmill)
         ]
+
+    async def watch(self, on_seen: Callable[[], None]) -> None:
+        """Listen for this treadmill's advertisements (never connecting) and
+        call ``on_seen`` for each, until cancelled. Needs an address: only the
+        treadmill Walka is tied to is listened for."""
+        if not self.address:
+            raise TreadmillError("no treadmill to listen for")
+        await self._get_backend().watch(self.address, on_seen)
 
     # ---- connection ------------------------------------------------------------
     async def connect(self) -> None:

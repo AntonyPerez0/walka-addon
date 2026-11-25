@@ -48,6 +48,28 @@ SIGNAL_TIMEOUT_S = 3.0  # a look at the game older than this counts as lost
 STALE_DATA_S = 5.0  # treadmill data older than this is not trusted
 MOVING_KMH = 0.05  # a belt reporting more than this is moving
 STATE_FILE = "state.json"
+# A lost treadmill is listened for (advertisements only, never a connection
+# attempt). Heard again after at least this long without a word, it was
+# switched off and on: Walka connects. One that keeps advertising - in
+# standby - is left alone.
+RETURN_GAP_S = 20.0
+WATCH_RETRY_S = 30.0  # after the Bluetooth listening failed (adapter off, ...)
+
+
+class ReturnDetector:
+    """Tells a treadmill switched off and on from one in standby, by the gap
+    in its advertisements."""
+
+    def __init__(self, now: float, gap_s: float = RETURN_GAP_S) -> None:
+        self.last = now  # listening began: silence is counted from here
+        self.gap_s = gap_s
+
+    def seen(self, now: float) -> bool:
+        """An advertisement at ``now``. True if it ends a long enough silence."""
+        returned = now - self.last >= self.gap_s
+        self.last = now
+        return returned
+
 
 
 class App:
@@ -105,6 +127,8 @@ class App:
         self.probe_fn: Any = None  # tests hand in a stand-in for probe.probe
 
         self._connect_now = asyncio.Event()
+        self.watching = False  # listening for the lost treadmill's advertisements
+        self._watch_after = 0.0  # (after the listening failed: not again before this)
         self._stopping = asyncio.Event()
         self._tasks: list[asyncio.Task] = []
         self._last_checkpoint = 0.0
@@ -672,7 +696,10 @@ class App:
             if self._checking:
                 self.connect_error = "let go of for \"Check my treadmill\" - Walka connects again when the check is done"
             elif not self.treadmill.status.connected and self.want_connected and not self.connection_wanted():
-                self.connect_error = "not connected - it reconnects when a session starts in the game, or press Connect"
+                self.connect_error = (
+                    "not connected - Walka connects again when the treadmill is switched on, when a session "
+                    "starts in the game, or when you press Connect"
+                )
             if self.connection_wanted() and not self.treadmill.status.connected:
                 try:
                     await self.treadmill.connect()
@@ -688,6 +715,15 @@ class App:
                     backoff = min(60.0, backoff * 1.5)
             else:
                 backoff = 5.0
+            if self.should_watch() and self.mono() >= self._watch_after:
+                # Lost, with no walk to listen to: listen for it to come back
+                # (returns as soon as anything changes, within a second).
+                try:
+                    if await self.watch_once():
+                        continue
+                except Exception as exc:
+                    log.debug("listening for the treadmill failed: %s", exc)
+                    self._watch_after = self.mono() + WATCH_RETRY_S
             self._connect_now.clear()
             try:
                 # Connected, or idle until there is a walk to listen to:
@@ -696,6 +732,53 @@ class App:
                 await asyncio.wait_for(self._connect_now.wait(), timeout=2.0 if idle else backoff)
             except asyncio.TimeoutError:
                 pass
+
+    def should_watch(self) -> bool:
+        """Listen for the lost treadmill coming back? Only for the treadmill
+        Walka is tied to, while it wants one and is not reaching for it anyway."""
+        return (
+            self.want_connected
+            and not self._checking
+            and not self.treadmill.status.connected
+            and not self.connection_wanted()
+            and bool(self.config.treadmill.address)
+            and hasattr(self.treadmill, "watch")
+        )
+
+    async def watch_once(self) -> bool:
+        """Listen until the treadmill comes back (True) or listening is no
+        longer wanted (False). Raises what the Bluetooth listening raises."""
+        detector = ReturnDetector(self.mono())
+        returned = asyncio.Event()
+
+        def seen() -> None:
+            if detector.seen(self.mono()):
+                returned.set()
+
+        self.watching = True
+        task = asyncio.create_task(self.treadmill.watch(seen), name="walka-watch-adverts")
+        try:
+            while not returned.is_set() and self.should_watch() and not self._stopping.is_set():
+                if task.done():
+                    task.result()  # (raises what it raised)
+                    return False
+                try:
+                    await asyncio.wait_for(returned.wait(), 1.0)
+                except asyncio.TimeoutError:
+                    pass
+        finally:
+            self.watching = False
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+        if returned.is_set() and self.should_watch():
+            self.log_event("The treadmill is switched on again: Walka connects to it.")
+            self._eager_connect = True
+            self._connect_now.set()
+            return True
+        return False
 
     async def start(self) -> None:
         """Start the background loops."""
