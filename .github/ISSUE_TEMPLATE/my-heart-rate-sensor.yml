@@ -36,7 +36,7 @@ body:
     id: version
     attributes:
       label: Walka version
-      description: At the bottom of the dashboard, e.g. 0.9.2.
+      description: At the bottom of the dashboard, e.g. 0.10.0.
     validations:
       required: true
   - type: checkboxes
