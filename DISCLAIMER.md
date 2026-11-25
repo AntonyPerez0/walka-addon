@@ -31,7 +31,7 @@ not, what is yours to check, and what its authors do not promise.
   numbers. Most treadmills accept one such connection at a time, so the
   maker's own app cannot be connected while Walka is.
 * **Not approved by Blizzard.** See
-  [Is this allowed?](README.md#is-this-allowed)
+  [Is this allowed?](docs/HOW-IT-WORKS.md#is-this-allowed)
 
 ## Before you walk
 

@@ -10,7 +10,7 @@ body:
         Walka only listens to a treadmill: it never starts, stops or changes the speed of the belt, and the probe below sends it no commands either.
 
         **The report file.** Make one with *Check my treadmill* on the dashboard, or from a command prompt with
-        `Walka.exe probe --record` (on a Mac, typed in Terminal as the README's *On a Mac* section shows).
+        `Walka.exe probe --record` (on a Mac, typed in Terminal as *On a Mac* in docs/INSTALL.md shows).
         While it listens, start the belt with the treadmill's remote, change the speed, pause and stop.
         It saves two files, `walka-probe-....txt` and `walka-probe-....json`. Both are made to be posted:
         they list fitness machines only, cut Bluetooth addresses short and leave out the serial number.

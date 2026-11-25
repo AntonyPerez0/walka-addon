@@ -10,7 +10,7 @@ body:
         Many watches only do this once you switch broadcasting on - see *Settings → Heart rate* on the dashboard.
 
         **The report file.** With the sensor on (or broadcasting) and on your body, make a report from a command prompt with
-        `Walka.exe probe --record --address <the sensor's address>` (on a Mac, typed in Terminal as the README's *On a Mac* section shows).
+        `Walka.exe probe --record --address <the sensor's address>` (on a Mac, typed in Terminal as *On a Mac* in docs/INSTALL.md shows).
         The address is shown when you scan for sensors under *Settings → Heart rate*. The probe only reads and listens.
         It saves `walka-probe-....txt` and `walka-probe-....json`; both are made to be posted (addresses cut short, no serial number).
         A heart-rate recording holds your heart rate for those seconds: post it only if you are happy to.

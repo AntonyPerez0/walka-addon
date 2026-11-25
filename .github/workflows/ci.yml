@@ -490,13 +490,13 @@ jobs:
           for file in $files; do test -s "$file" || { echo "::error::$file is missing"; exit 1; }; done
           notes="**To get Walka on Windows:** under **Assets** below, click **Walka.exe**, then open it. If Windows says *Windows protected your PC*, click **More info**, then **Run anyway**. The steps are at the top of the [README](https://github.com/$GH_REPO#readme).
 
-          **On a Mac:** click **Walka-mac-apple-silicon.zip** (Macs from late 2020 on) or **Walka-mac-intel.zip** (older ones), open the zip, then open the **Walka** application that is in it. The first time, macOS will not open it until you allow it under *System Settings > Privacy & Security > Open Anyway*: see [On a Mac](https://github.com/$GH_REPO#on-a-mac) in the README. The Mac version is new and has not been tried with the game on a real Mac yet.
+          **On a Mac:** click **Walka-mac-apple-silicon.zip** (Macs from late 2020 on) or **Walka-mac-intel.zip** (older ones), open the zip, then open the **Walka** application that is in it. The first time, macOS will not open it until you allow it under *System Settings > Privacy & Security > Open Anyway*: see [On a Mac](https://github.com/$GH_REPO/blob/$TAG/docs/INSTALL.md#on-a-mac). The Mac version is new and has not been tried with the game on a real Mac yet.
 
-          **Early version:** not yet tried on a real walking pad. Read *Before your first walk* in the README.
+          **Early version:** checked on one walking pad so far - a UREVO Strol 2E (URTM030) with Windows 11. Every other treadmill is untried. Read [Before your first walk](https://github.com/$GH_REPO/blob/$TAG/docs/INSTALL.md#before-your-first-walk).
 
           **Walka only listens to your treadmill:** it cannot start, stop or change the speed of the belt - you set the speed on the treadmill itself. Walking while you play is at your own risk; Walka comes with no warranty and is not a medical device. Read the [disclaimer](https://github.com/$GH_REPO/blob/$TAG/DISCLAIMER.md) before your first walk.
 
-          **Your Walka account (on walka.dev):** optional. Walka works in full without it, and if you never sign in it sends nothing and asks nobody. If you sign in and switch sending on yourself, each walk goes to your Walka account. What is sent, when, and how to stop: [Your Walka account](https://github.com/$GH_REPO/blob/$TAG/README.md#your-walka-account-on-walkadev).
+          **Your Walka account (on walka.dev):** optional. Walka works in full without it, and if you never sign in it sends nothing and asks nobody. If you sign in and switch sending on yourself, each walk goes to your Walka account. What is sent, when, and how to stop: [Your Walka account](https://github.com/$GH_REPO/blob/$TAG/docs/WALKA-ACCOUNT.md#your-walka-account-on-walkadev).
 
           **Virus scan:** before this was published, Microsoft Defender scanned Walka.exe, the Mac programs and the addon's files, and found nothing. *virus-scan.json* under Assets says when, and with which virus definitions. A scan that finds nothing is not proof that a file is harmless: see [Is the download safe?](https://github.com/$GH_REPO#is-the-download-safe)
 
