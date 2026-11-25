@@ -500,6 +500,7 @@ def test_selfcheck_imports_what_this_kind_of_computer_needs():
     assert cli.runtime_modules() == cli.runtime_modules(sys.platform)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
 def test_a_signal_from_outside_asks_for_the_orderly_stop():
     async def scenario() -> bool:
         loop = asyncio.get_running_loop()
