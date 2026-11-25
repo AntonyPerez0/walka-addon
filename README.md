@@ -103,6 +103,6 @@ The whole of it: [docs/SAFETY.md](docs/SAFETY.md) and
 * [How Walka works](docs/HOW-IT-WORKS.md) - what it looks at, why it only listens, [is this allowed?](docs/HOW-IT-WORKS.md#is-this-allowed)
 * [Your Walka account](docs/WALKA-ACCOUNT.md) on walka.dev - optional
 * [Troubleshooting](docs/TROUBLESHOOTING.md) and [the in-game checklist](docs/IN-GAME-CHECKLIST.md)
-* [Developing Walka](docs/DEVELOPMENT.md) and [translating the dashboard](docs/TRANSLATING.md)
+* [Developing Walka](docs/DEVELOPMENT.md), [translating the dashboard](docs/TRANSLATING.md), [ANT+ design note](docs/ANT-PLUS-DESIGN.md)
 
 Walka has a website too: <https://walka.dev/>
