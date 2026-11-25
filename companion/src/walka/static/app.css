@@ -343,14 +343,6 @@ code {
   background: var(--surface-3);
   color: var(--ink-2);
 }
-.chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.chips:empty {
-  display: none;
-}
 .chip {
   background: var(--tint);
   color: var(--accent-ink);
@@ -979,19 +971,6 @@ main {
   font-weight: 600;
   letter-spacing: -0.01em;
   line-height: 1.2;
-}
-.annun-meta {
-  padding: 3px 10px;
-  border: 1px solid var(--line-2);
-  border-radius: 999px;
-  background: var(--surface);
-  color: var(--ink-2);
-  font-size: 13px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-.annun-meta:empty {
-  display: none;
 }
 
 .hero-body {
@@ -2629,9 +2608,6 @@ input[type="checkbox"] {
   }
   .annun-title {
     font-size: 21px;
-  }
-  .annun-meta {
-    display: none;
   }
   .hero-body {
     padding: 22px var(--pad) 18px;
