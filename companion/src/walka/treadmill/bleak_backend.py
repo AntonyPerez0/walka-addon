@@ -146,6 +146,15 @@ class BleakBackend:
             return None
         return max(nameless.values(), key=lambda d: d.rssi if d.rssi is not None else -999)
 
+    async def identify(self, device: FoundDevice, timeout: float = 20.0) -> tuple[list[str], list[str]]:
+        """Connect, list what the device offers - its services and their
+        characteristics - and let go. Reads nothing, writes nothing."""
+        prepare_windows_threading()
+        async with BleakClient(device.handle or device.address, timeout=timeout) as client:
+            services = [service.uuid.lower() for service in client.services]
+            characteristics = [char.uuid.lower() for service in client.services for char in service.characteristics]
+        return services, characteristics
+
     async def watch(self, address: str, on_seen: Callable[[], None]) -> None:
         """Listen to advertisements, and call ``on_seen`` for each one from
         ``address``, until cancelled. Listening only: nothing is connected to,

@@ -51,3 +51,9 @@ Bluetooth range, yours or a neighbour's - with their addresses cut short,
 and without the treadmill's serial number. (The window the probe runs in
 shows everything: that is for your eyes. Post the file, not a screenshot
 of the window.)
+
+**Not in the list when you scan?** *Treadmill → Scan → Show all Bluetooth
+devices* lists everything in range. *Check* next to a device connects to
+it, looks at what it offers, and lets go: if it sends something Walka can
+read, Walka connects to it as your treadmill; if not, it says what the
+device does offer. Checking writes nothing to the device.

@@ -3159,3 +3159,13 @@ body[data-welcome="1"] main {
 .update-note strong {
   color: var(--ink);
 }
+.device-note {
+  margin: -4px 0 4px;
+  padding: 8px 12px;
+  border-radius: var(--r-s);
+  background: var(--surface-2);
+}
+.device-note.ok {
+  background: var(--ok-tint);
+  color: var(--ok-ink);
+}

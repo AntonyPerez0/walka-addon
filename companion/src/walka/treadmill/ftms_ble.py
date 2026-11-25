@@ -73,8 +73,11 @@ class FoundDevice:
     # not say.
     treadmill: bool | None = None
 
-    def to_dict(self) -> dict:
-        return {"name": self.name, "address": self.address, "rssi": self.rssi, "ftms": self.ftms}
+    def to_dict(self, candidate: bool | None = None) -> dict:
+        data = {"name": self.name, "address": self.address, "rssi": self.rssi, "ftms": self.ftms}
+        if candidate is not None:
+            data["candidate"] = candidate  # (in a scan of all devices: one Walka would take for a treadmill)
+        return data
 
 
 class BleClient(Protocol):
@@ -104,6 +107,10 @@ class BleBackend(Protocol):
         such name is heard during the whole ``timeout``, a device that merely
         advertises the Fitness Machine Service (and does not say that it is
         some other kind of machine than a treadmill)."""
+        ...
+
+    async def identify(self, device: FoundDevice) -> tuple[list[str], list[str]]:
+        """Connect, list the services and characteristics, let go. Writes nothing."""
         ...
 
     async def watch(self, address: str, on_seen: Callable[[], None]) -> None:
@@ -182,18 +189,45 @@ class FtmsTreadmill(Treadmill):
             self._backend = BleakBackend()
         return self._backend
 
-    async def discover(self, timeout: float = 6.0) -> list[FoundDevice]:
-        """Scan for treadmill candidates (does not connect)."""
+    async def discover(self, timeout: float = 6.0, *, all_devices: bool = False) -> list[FoundDevice]:
+        """Scan for treadmill candidates (does not connect). ``all_devices``:
+        every Bluetooth device heard, candidates first."""
         try:
             found = await self._get_backend().discover(timeout)
         except Exception as exc:  # no adapter, Bluetooth switched off, ...
             raise TreadmillError(describe_bluetooth_error(exc)) from exc
-        services = (ftms.FTMS_SERVICE,)
-        return [
-            d
-            for d in found
-            if is_treadmill_candidate(d.name, services if d.ftms else (), self.name_prefixes, d.treadmill)
-        ]
+        if all_devices:
+            return sorted(found, key=lambda d: not self.is_candidate(d))
+        return [d for d in found if self.is_candidate(d)]
+
+    def is_candidate(self, device: FoundDevice) -> bool:
+        services = (ftms.FTMS_SERVICE,) if device.ftms else ()
+        return is_treadmill_candidate(device.name, services, self.name_prefixes, device.treadmill)
+
+    async def identify(self, address: str) -> dict[str, Any]:
+        """Connect to any device, see whether Walka can read it as a treadmill,
+        and let go. For "show all Bluetooth devices" in the dashboard."""
+        from .readers import reader_for, service_words
+
+        backend = self._get_backend()
+        try:
+            device = await backend.find(address, (), self.scan_timeout_s)
+            if device is None:
+                raise TreadmillError("not found - is it switched on and in range?")
+            services, characteristics = await backend.identify(device)
+        except TreadmillError:
+            raise
+        except Exception as exc:
+            raise TreadmillError(describe_bluetooth_error(exc, "is it switched on and in range?")) from exc
+        reader = reader_for(characteristics)
+        return {
+            "name": device.name,
+            "address": device.address,
+            "readable": reader is not None,
+            "reader": reader.key if reader else None,
+            "how": reader.words if reader else "",
+            "services": service_words(services),
+        }
 
     async def watch(self, on_seen: Callable[[], None]) -> None:
         """Listen for this treadmill's advertisements (never connecting) and

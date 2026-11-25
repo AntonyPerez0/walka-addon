@@ -170,15 +170,34 @@ def create_app(app: App) -> web.Application:
 
     # ---- treadmill -------------------------------------------------------------
     @routes.post("/api/treadmill/scan")
-    async def scan(_request: web.Request) -> web.Response:
+    async def scan(request: web.Request) -> web.Response:
         discover = getattr(app.treadmill, "discover", None)
         if discover is None:
             return ok(devices=[])
+        every = (await _body(request)).get("all") is True
         try:
-            found = await discover(6.0)
+            found = await (discover(6.0, all_devices=True) if every else discover(6.0))
         except Exception as exc:
             return web.json_response({"ok": False, "error": f"Bluetooth scan failed: {exc}"}, status=500)
+        if every:
+            return ok(devices=[device.to_dict(candidate=app.treadmill.is_candidate(device)) for device in found])
         return ok(devices=[device.to_dict() for device in found])
+
+    @routes.post("/api/treadmill/identify")
+    async def identify(request: web.Request) -> web.Response:
+        """A device picked from "all Bluetooth devices": can Walka read it? (Connects,
+        lists what it offers, lets go: nothing is written.) If it can, Walka connects to it."""
+        address = (await _body(request)).get("address")
+        check = getattr(app.treadmill, "identify", None)
+        if check is None or not isinstance(address, str) or not address:
+            raise web.HTTPBadRequest(text="not available on this treadmill")
+        try:
+            found = await check(address)
+        except Exception as exc:
+            raise web.HTTPConflict(text=str(exc)) from None
+        if found["readable"]:
+            app.connect(found["address"])
+        return ok(device=found)
 
     @routes.post("/api/treadmill/connect")
     async def connect(request: web.Request) -> web.Response:

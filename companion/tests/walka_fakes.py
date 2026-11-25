@@ -502,6 +502,16 @@ class FakeBackend:
                     return self._found(pad)
         return None
 
+    async def identify(self, device: FoundDevice) -> tuple[list[str], list[str]]:
+        """Connect, list what the pad offers, let go (a connection that is counted)."""
+        await asyncio.sleep(0)
+        pad = device.handle
+        pad.connects += 1
+        characteristics = list(pad.characteristics())
+        services = ([ftms.FTMS_SERVICE] if pad.has_ftms else []) + list(getattr(pad, "extra_services", []))
+        characteristics += list(getattr(pad, "extra_characteristics", []))
+        return services, characteristics
+
     async def watch(self, address: str, on_seen: Callable[[], None]) -> None:
         """Listening to advertisements: ``advertise()`` is a round of them."""
         self.watchers.append((address.upper(), on_seen))
