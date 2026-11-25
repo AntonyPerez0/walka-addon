@@ -35,6 +35,13 @@ companion/requirements-dev.lock`, and no install of Walka itself.)
 * `tests/addon/` - loads the real addon files into a mock of the game's
   API that is checked against Blizzard's published API documentation for
   this client build (`tools/gen_api_snapshot.py` regenerates the snapshot).
+* `docs/demo/index.html` - the 3D demo at the top of the README: a walking
+  pad under a standing desk, drawn in three.js (no models or pictures are
+  loaded; it fetches three.js from a CDN). `node tools/record_demo.cjs
+  docs/demo/walka-demo.mp4` records it with Playwright's Chromium and
+  ffmpeg, frame by frame, and `--frames 3,12` writes stills only. The
+  README's moving picture is made from that video:
+  `ffmpeg -i docs/demo/walka-demo.mp4 -vf "fps=12,scale=720:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=160[p];[b][p]paletteuse=dither=sierra2_4a" docs/images/demo.gif`.
 * `py -m walka --demo` runs everything against a simulated treadmill, a
   made-up walker who works its remote, and a scripted character.
 * **The one rule for changes:** the companion listens to the treadmill and
