@@ -10,6 +10,7 @@
 import { $, CM_PER_INCH, U, api, fmt, h, post, run, setShown, setText, setTone, toast } from "./util.js";
 import { installAddon, scanInto, syncAddon } from "./live.js";
 import { initWalkaAccount, updateWalkaAccount } from "./walkaaccount.js";
+import { tr } from "./i18n.js";
 
 let config = null; // the last config seen
 let configKey = "";
@@ -209,7 +210,7 @@ class HeightField extends Field {
     const imperial = U.mph;
     this.minor.hidden = !imperial;
     this.minorUnit.hidden = !imperial;
-    this.major.setAttribute("aria-label", imperial ? "Height, feet" : "Height in centimetres");
+    this.major.setAttribute("aria-label", tr(imperial ? "Height, feet" : "Height in centimetres"));
     setText(this.majorUnit, imperial ? "ft" : "cm");
     if (cm == null) this.base = ["", ""];
     else if (imperial) {
