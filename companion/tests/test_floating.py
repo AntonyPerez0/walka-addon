@@ -245,6 +245,7 @@ def test_it_opens_on_top_of_everything_and_out_of_the_way(webview: FakeWebview):
 
 
 def test_it_opens_where_it_was_left(webview: FakeWebview):
+    webview.screens.append(types.SimpleNamespace(x=-1920, y=0, width=1920, height=1080))  # a screen to the left
     floating = Heard().window(place=lambda: (-1500, 300))
     floating.can_open()
     floating.set_shown(True)
@@ -258,6 +259,51 @@ def test_without_a_screen_the_system_places_it():
     assert window.default_floating_place([object()]) is None
     screen = types.SimpleNamespace(x=-1920, y=0, width=1920, height=1080)
     assert window.default_floating_place([screen]) == (-1920 + 1920 - 240 - 24, 96)
+
+
+def test_on_a_scaled_display_it_still_opens_on_the_screen():
+    """Windows at 150 %: Walka is aware of scaling, so the screen is listed
+    in pixels (3840 wide), but pywebview multiplies a window's place by 1.5
+    itself. Worked out in pixels, the corner landed at x = 5364 - off the
+    screen, where the window was open and could not be seen."""
+    screen = types.SimpleNamespace(x=0, y=0, width=3840, height=2160)
+    x, y = window.default_floating_place([screen], scale=1.5)
+    assert (x, y) == (2560 - 240 - 24, 96)
+    assert x * 1.5 + window.FLOATING_SIZE[0] * 1.5 <= 3840, "on the screen once pywebview has scaled it"
+    assert window.on_a_screen((x, y), [screen], scale=1.5)
+    assert not window.on_a_screen((3576, 96), [screen], scale=1.5), "the place the bug put it"
+
+
+def test_it_opens_on_the_main_screen():
+    left = types.SimpleNamespace(x=-1920, y=0, width=1920, height=1080)
+    main = types.SimpleNamespace(x=0, y=0, width=2560, height=1440)
+    assert window.default_floating_place([left, main]) == (2560 - 240 - 24, 96)
+
+
+def test_a_place_on_no_screen_is_not_where_it_opens(webview: FakeWebview, monkeypatch):
+    """Remembered on a screen that is gone (or worked out wrong): the corner
+    of the main screen instead, so that it can be seen and dragged."""
+    monkeypatch.setattr(window, "pywebview_scale", lambda: 1.5)
+    webview.screens = [types.SimpleNamespace(x=0, y=0, width=3840, height=2160)]
+    floating = Heard().window(place=lambda: (3576, 96))
+    floating.can_open()
+    floating.set_shown(True)
+    assert eventually(lambda: floating.shown)
+    assert (webview.windows[0].options["x"], webview.windows[0].options["y"]) == (2560 - 264, 96)
+    floating.finish()
+
+
+def test_which_places_count_as_on_a_screen():
+    screens = [types.SimpleNamespace(x=0, y=0, width=1920, height=1080),
+               types.SimpleNamespace(x=-1920, y=0, width=1920, height=1080)]
+    assert window.on_a_screen((100, 100), screens)
+    assert window.on_a_screen((-1500, 300), screens), "a screen left of the main one"
+    assert window.on_a_screen((1800, 50), screens), "half off the edge is still reachable"
+    assert not window.on_a_screen((2000, 100), screens)
+    assert not window.on_a_screen((100, -400), screens)
+    assert not window.on_a_screen((100, 1070), screens), "its top strip below the bottom edge"
+    assert window.on_a_screen((5000, 5000), []), "no screens known: nothing to judge by"
+    assert window.pywebview_scale("darwin") == 1.0 and window.pywebview_scale("linux") == 1.0
 
 
 def test_where_it_is_dragged_is_told_once_the_drag_is_over(webview: FakeWebview, monkeypatch):
