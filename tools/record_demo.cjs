@@ -1,13 +1,17 @@
 // Records docs/demo/index.html to a video, frame by frame.
 //
-//   node tools/record_demo.cjs [out.mp4] [--fps 30] [--size 1280x720] [--frames 0,5.5,12]
+//   node tools/record_demo.cjs [out.mp4] [--fps 24] [--samples 6] [--size 1280x720] [--frames 0,5.5,12]
 //
 // Needs Node, Playwright with Chromium (`npm i -g playwright` and
 // `npx playwright install chromium`), ffmpeg, and the network for three.js.
 // The page is opened with ?record: it has no clock of its own, and each
 // frame is drawn for an exact time, so the video is smooth however slow the
-// machine (or its software WebGL) is. With --frames it only writes PNG
-// stills at those seconds, next to the output, for a quick look.
+// machine (or its software WebGL) is. Each frame is the average of
+// --samples renders (soft shadows, depth of field, motion blur): more is
+// smoother and slower - about a second per sample and frame without a
+// graphics card, so an hour and a quarter for the whole video. With
+// --frames it only writes PNG stills at those seconds, next to the output,
+// for a quick look.
 const { chromium } = require('playwright');
 const { spawn } = require('child_process');
 const path = require('path');
@@ -15,11 +19,12 @@ const fs = require('fs');
 
 const args = process.argv.slice(2);
 const opt = (name, dflt) => { const i = args.indexOf(name); return i >= 0 ? args.splice(i, 2)[1] : dflt; };
-const fps = Number(opt('--fps', 30));
+const fps = Number(opt('--fps', 24));
+const samples = Number(opt('--samples', 6));
 const [width, height] = opt('--size', '1280x720').split('x').map(Number);
 const stills = opt('--frames', null);
 const out = path.resolve(args[0] || 'walka-demo.mp4');
-const page_url = 'file://' + path.resolve(__dirname, '..', 'docs', 'demo', 'index.html') + '?record';
+const page_url = 'file://' + path.resolve(__dirname, '..', 'docs', 'demo', 'index.html') + '?record&samples=' + samples;
 
 (async () => {
   const browser = await chromium.launch({ args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
@@ -43,7 +48,7 @@ const page_url = 'file://' + path.resolve(__dirname, '..', 'docs', 'demo', 'inde
   }
 
   const ffmpeg = spawn('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'image2pipe', '-framerate', String(fps), '-c:v', 'mjpeg', '-i', '-',
-    '-c:v', 'libx264', '-preset', 'slow', '-crf', '20', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', out], { stdio: ['pipe', 'inherit', 'inherit'] });
+    '-c:v', 'libx264', '-preset', 'slow', '-crf', '21', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', out], { stdio: ['pipe', 'inherit', 'inherit'] });
   const frames = Math.round(duration * fps);
   const started = Date.now();
   for (let i = 0; i < frames; i++) {
