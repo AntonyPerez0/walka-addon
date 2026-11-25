@@ -68,7 +68,6 @@ from test_walka_account_wiring import (
 from walka import cli
 from walka.app import App
 from walka.session import SessionStore
-from walka.sources import BeaconSource
 from walka.walka_account import keystore, ledger, project, service
 from walka.walka_account.service import WalkaAccount
 from walka_account_rig import PAD, Rig
@@ -419,7 +418,6 @@ def test_the_part_walka_has_by_default_asks_nobody_either_while_nobody_has_signe
                 a_config(tmp_path),
                 rig.dir,
                 treadmill=pad,
-                beacon=BeaconSource(None, clock=rig.clock.mono),
                 walka_account=part,
                 wall_clock=rig.clock.wall,
                 mono_clock=rig.clock.mono,

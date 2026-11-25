@@ -2,16 +2,18 @@
 --
 -- This file is the addon's core: saved settings, the walking session
 -- (start / pause / resume / stop), and the ten-times-a-second tick that
--- reads the character's state, counts the walk and paints the beacon for
--- the companion app. The character's journey is kept by Tracker.lua, which
--- this file drives.
+-- reads the character's state and counts the walk. The character's journey
+-- is kept by Tracker.lua, which this file drives.
 --
--- The addon draws no windows of its own: it is the game's end of the
+-- The addon draws nothing on the screen: it is the game's end of the
 -- connection to the Walka app, which shows everything - on its dashboard,
--- and in a floating window it can put on top of the game. In game there
--- is the strip the app reads, a few slash commands, and Walka's entry in
--- the game's AddOns menu by the minimap (click: start or pause the
--- session; right-click: stop it).
+-- and in a floating window it can put on top of the game. The two never
+-- talk while the game runs. The addon keeps its sessions in its saved
+-- variables, which the game writes to a file at logout and on /reload, and
+-- the app reads that file to know which character each walk was for
+-- (docs/PROTOCOL.md). In game there are a few slash commands and Walka's
+-- entry in the game's AddOns menu by the minimap (click: start or pause
+-- the session; right-click: stop it).
 --
 -- Walka only counts. The walker sets the belt's speed at the treadmill;
 -- nothing here - and nothing in the companion app - starts, stops or
@@ -19,11 +21,9 @@
 
 local ADDON_NAME, ns = ...
 
-local Protocol = ns.Protocol
 local Metrics = ns.Metrics
 local SessionLog = ns.SessionLog
 local Game = ns.Game
-local Beacon = ns.Beacon
 local Tracker = ns.Tracker
 local RoadRecorder = ns.RoadRecorder
 
@@ -31,11 +31,10 @@ local Walka = {}
 ns.Walka = Walka
 _G.Walka = Walka
 
-local FLAG = Protocol.FLAG
 local KMH_PER_MPH = Metrics.KMH_PER_MPH
 
 Walka.PREFIX = "|cff4fc3f7Walka|r: "
-Walka.TICK_SECONDS = 0.1      -- game state sampling + beacon refresh
+Walka.TICK_SECONDS = 0.1      -- game state sampling
 Walka.UI_SECONDS = 0.25       -- how often the windows are told to redraw
 Walka.MIN_SESSION_SECONDS = 20 -- shorter sessions are not kept
 Walka.RESUME_WINDOW_SECONDS = 180 -- a session survives a /reload this long
@@ -61,7 +60,6 @@ local function buildDefaults()
             weightKg = Metrics.DEFAULT_PROFILE.weightKg,
             heightCm = Metrics.DEFAULT_PROFILE.heightCm,
         },
-        beacon = { enabled = true, cellPx = Beacon.DEFAULT_CELL_PX },
         autoPauseAFK = true,
         -- Start the session by itself once the character is in the game,
         -- so that nobody has to type a command: see Walka:StartAutoSession.
@@ -188,14 +186,10 @@ end
 
 --- Rebuild everything that depends on settings. Call after changing any.
 function Walka:ApplySettings()
-    local settings = self.db.settings
-    Beacon.SetCellSize(settings.beacon.cellPx)
-    settings.beacon.cellPx = Beacon.GetCellSize()
-    Beacon.SetVisible(settings.beacon.enabled)
     self:Fire("SETTINGS")
 end
 
---- Change one setting by dotted path, e.g. Walka:Set("beacon.cellPx", 4).
+--- Change one setting by dotted path, e.g. Walka:Set("profile.weightKg", 80).
 function Walka:Set(path, value)
     local node = self.db.settings
     local last
@@ -372,7 +366,8 @@ function Walka:StartSession(auto)
     }
     if auto then
         if db.settings.announce then
-            self:Print("connected to the Walka app - walks on your walking pad count for this character. "
+            self:Print("Walka is on - walks on your walking pad count for this character "
+                .. "(the Walka app sees which when you log out or /reload). "
                 .. "Click Walka in the AddOns menu to pause.")
         end
         self:Fire("SESSION", "start")
@@ -552,26 +547,6 @@ end
 -- The tick
 ----------------------------------------------------------------------------
 
--- (`target`: the strip's frame still has the field in which the addon once
--- asked for a belt speed. Since 0.7 nothing asks: it is always 0.)
-local beaconFrame = { seq = 0, session = 0, flags = 0, target = 0, charSpeed = 0 }
-
--- What of the character's state goes onto the strip: what the companion
--- shows on its dashboard - how the character is moving, and whether anyone
--- is there. Nothing else leaves the game: not whether it is
--- fighting, dead, falling or resting (the addon knows, and keeps it).
-local function stateFlags(state)
-    local flags = 0
-    if state.moving then flags = flags + FLAG.MOVING end
-    if state.mounted then flags = flags + FLAG.MOUNTED end
-    if state.taxi then flags = flags + FLAG.TAXI end
-    if state.swimming then flags = flags + FLAG.SWIMMING end
-    if state.flying then flags = flags + FLAG.FLYING end
-    if state.afk then flags = flags + FLAG.AFK end
-    if state.estimated then flags = flags + FLAG.ESTIMATED end
-    return flags
-end
-
 --- Advance everything by `dt` seconds. Called ten times a second.
 function Walka:Tick(dt)
     local state = Game.Read()
@@ -583,7 +558,6 @@ function Walka:Tick(dt)
         self:StartAutoSession()
     end
     local session = self.session
-    local flags = stateFlags(state)
 
     if session then
         if session.paused and session.pauseReason == "afk" then
@@ -597,19 +571,7 @@ function Walka:Tick(dt)
             self:PauseSession("afk")
         end
 
-        flags = flags + FLAG.ACTIVE
-        if session.paused then
-            flags = flags + FLAG.PAUSED
-            -- On a paused frame the AFK flag says *why* it is paused: set
-            -- for the automatic pause and only for it - also when the
-            -- player pauses by hand while the game still shows them AFK.
-            local automatic = session.pauseReason == "afk"
-            if automatic and not state.afk then
-                flags = flags + FLAG.AFK
-            elseif state.afk and not automatic then
-                flags = flags - FLAG.AFK
-            end
-        else
+        if not session.paused then
             session.yards = session.yards + state.speed * dt
             if session.auto then
                 -- Time only: whether anybody walked is the treadmill's to say.
@@ -619,18 +581,6 @@ function Walka:Tick(dt)
             end
         end
     end
-
-    beaconFrame.seq = (beaconFrame.seq + 1) % 256
-    -- Every fifth redraw shows one number of the character's journey in
-    -- place of the live frame (docs/PROTOCOL.md, section 4). Everything
-    -- above has run as on any other tick; only the picture differs.
-    if Tracker.SendStat(beaconFrame.seq) then
-        return
-    end
-    beaconFrame.session = session and session.id or 0
-    beaconFrame.flags = flags
-    beaconFrame.charSpeed = Protocol.ypsToRaw(state.speed)
-    Beacon.Send(beaconFrame)
 end
 
 local tickElapsed, uiElapsed = 0, 0
@@ -675,6 +625,9 @@ local function initDatabase()
     db.settings.hud = nil
     db.settings.worldMap = nil
     db.settings.dailyStepGoal = nil
+    -- Until 0.11 the addon drew a strip of squares in the corner of the
+    -- screen for the app to read. The app reads the saved variables now.
+    db.settings.beacon = nil
     db.settings.paceKmh = numberWithin(db.settings.paceKmh, Metrics.MIN_PACE_KMH, Metrics.MAX_PACE_KMH)
         or Metrics.DEFAULT_PACE_KMH
     -- The body profile feeds every step and calorie: a height of zero from a
@@ -707,7 +660,7 @@ local function restoreSession(self)
         end
     end
     -- The rest is made sound rather than checked (a top speed that is text
-    -- would raise on every tick, with the beacon frozen meanwhile).
+    -- would raise on every tick, and stop the count).
     session.maxKmh = tonumber(session.maxKmh) or 0
     session.paused = session.paused and true or false
     if session.pauseReason ~= "afk" and session.pauseReason ~= "user" then
@@ -744,14 +697,17 @@ function Walka:OnLoad()
     -- the history, which the tracker has to hear about.
     Tracker.Load(self)
 
-    Beacon.Create()
     self:ApplySettings()
     restoreSession(self)
     Tracker.Settle()
     -- The road recorder runs on its own timer; nothing it does can reach
     -- the tick below.
     pcall(RoadRecorder.Load, self)
-    Beacon.GetFrame():SetScript("OnUpdate", onUpdate)
+    -- The tick runs from a frame of its own. It has no size and draws
+    -- nothing: a frame that is shown gets OnUpdate on every redraw.
+    local ticker = CreateFrame("Frame", "WalkaTickFrame", nil)
+    ticker:SetScript("OnUpdate", onUpdate)
+    self.ticker = ticker
     self.loaded = true
     self:Fire("LOADED")
 end
@@ -803,7 +759,6 @@ local HELP = {
     "/walka weight 180lb (or 82kg) - your weight, for calorie estimates",
     "/walka height 5'11 (or 180cm) - your height, for step estimates",
     "/walka units mph | kmh",
-    "/walka beacon on | off | size <2-8>",
 }
 
 local function slash(message)
@@ -962,16 +917,9 @@ local function slash(message)
             self:Print("usage: /walka units mph  or  /walka units kmh")
         end
     elseif command == "beacon" then
-        local arg, value = string.match(string.lower(rest), "^(%S*)%s*(%S*)")
-        if arg == "on" or arg == "off" then
-            self:Set("beacon.enabled", arg == "on")
-            self:Print("beacon " .. arg .. ".")
-        elseif arg == "size" and tonumber(value) then
-            self:Set("beacon.cellPx", tonumber(value))
-            self:Print("beacon cell size is now " .. Beacon.GetCellSize() .. " px.")
-        else
-            self:Print("usage: /walka beacon on | off | size <2-8>")
-        end
+        -- (Until 0.11: the strip of squares the app read off the screen.)
+        self:Print("Walka no longer draws anything on the screen: the app reads your sessions from "
+            .. "the game's saved file when you log out or /reload.")
     else
         for index = 1, #HELP do
             self:Print(HELP[index])

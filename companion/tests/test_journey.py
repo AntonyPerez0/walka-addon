@@ -1,8 +1,8 @@
-"""The journey numbers: put together from stat frames, checked, remembered.
+"""A character's journey: read from the record the addon keeps in its saved
+variables (``WalkaDB.journeys``), checked number by number, and remembered
+in the journey book.
 
-``JourneyCollector`` receives ``(stat id, value)`` pairs the way the screen
-reader delivers them - twice, late, or not at all - and must only ever pass
-on a set of numbers that belongs to one character.
+The game writes the record at logout and on /reload; ``game_file`` finds it.
 """
 
 from __future__ import annotations
@@ -17,457 +17,165 @@ import pytest
 
 from walka import journey
 from walka.journey import (
-    GAP_MAX_S,
-    LIVE_FOR_S,
     MAX_CHARACTERS,
-    ROUND_MAX_S,
     Journey,
     JourneyBook,
-    JourneyCollector,
+    character_id,
     character_steps,
     clean_name,
-)
-from walka.protocol import (
-    NAME_STATS,
-    STAT_CYCLE,
-    STAT_MAX_VALUE,
-    Faction,
-    Flags,
-    Frame,
-    InfoFlags,
-    Stat,
-    StatFrame,
+    demo_journey,
     djb2,
-    name_to_chunks,
-    pack_char_info,
+    name_of,
 )
-from walka.sources import BeaconSource
 
-NOW = 1_800_000_000.0  # the wall clock of these tests
-SINCE = int(NOW) - 20 * 86400
+NOW = 1_800_000_000.0
+SINCE = 1_790_000_000
 
 
 class Clock:
-    """Wall and monotonic time, moved by hand."""
-
     def __init__(self) -> None:
-        self.mono_now = 500.0
-        self.wall_now = NOW
+        self.now = NOW
+        self.mono_now = 100.0
+
+    def wall(self) -> float:
+        return self.now
 
     def mono(self) -> float:
         return self.mono_now
 
-    def wall(self) -> float:
-        return self.wall_now
-
     def advance(self, seconds: float) -> None:
+        self.now += seconds
         self.mono_now += seconds
-        self.wall_now += seconds
 
 
-def stats_of(name: str = "Thrall", realm: str = "Durotar", **changes: int) -> dict[Stat, int]:
-    """One round of stat values, in the order the addon sends them."""
-    values: dict[Stat, int] = {Stat.CHAR_KEY: djb2(f"{name}-{realm}")}
-    values.update(zip(NAME_STATS, name_to_chunks(name), strict=True))
-    values.update(
-        {
-            Stat.CHAR_INFO: pack_char_info(17, 60, 7, Faction.HORDE),
-            Stat.PLAYED_S: 77_100,
-            Stat.FOOT_YD: 82_025,
-            Stat.TRAVEL_YD: 190_000,
-            Stat.REAL_STEPS: 105_937,
-            Stat.REAL_M: 85_300,
-            Stat.REAL_KCAL: 8_200,
-            Stat.REAL_S: 61_000,
-            Stat.WALKS: 14,
-            Stat.SINCE: SINCE,
-            Stat.INFO_FLAGS: 0,
-        }
-    )
-    for stat_name, value in changes.items():
-        values[Stat[stat_name]] = value
-    assert list(values) == list(STAT_CYCLE)
-    return values
+def record_of(**changes) -> dict:
+    """One record of WalkaDB.journeys as the addon saves it."""
+    record = {
+        "since": SINCE,
+        "footYd": 82_025.4,
+        "travelYd": 190_000,
+        "level": 17,
+        "maxLevel": 60,
+        "classId": 7,
+        "faction": 2,
+        "played": 70_000,
+        "playedHeard": True,
+        "real": {"walks": 10, "seconds": 50_000, "distanceM": 70_000, "steps": 90_000, "kcal": 7_000, "estimated": False},
+        "shared": {
+            "savedAt": NOW - 30,
+            "played": 77_100,
+            "walks": 14,
+            "seconds": 61_000,
+            "distanceM": 85_300,
+            "steps": 105_937,
+            "kcal": 8_200,
+            "estimated": False,
+        },
+    }
+    for key, value in changes.items():
+        if key in record["shared"] and key not in ("played",):
+            record["shared"][key] = value
+        else:
+            record[key] = value
+    return record
 
 
-class Feed:
-    """A collector with its clock, fed the way the addon sends: a stat every half second."""
-
-    def __init__(self) -> None:
-        self.clock = Clock()
-        self.published: list[Journey] = []
-        self.collector = JourneyCollector(self.published.append, wall=self.clock.wall, mono=self.clock.mono)
-
-    def send(self, stat: int, value: int, *, after: float = 0.5, times: int = 1) -> None:
-        self.clock.advance(after)
-        for _ in range(times):
-            self.collector.on_stat(stat, value)
-
-    def round(self, values: dict[Stat, int], *, skip: tuple[Stat, ...] = (), times: int = 1) -> None:
-        for stat, value in values.items():
-            if stat not in skip:
-                self.send(stat, value, times=times)
-
-    def key(self, values: dict[Stat, int]) -> None:
-        self.send(Stat.CHAR_KEY, values[Stat.CHAR_KEY])
-
-
-THRALL = stats_of()
-JAINA = stats_of(
-    "Jaina",
-    "Theramore",
-    CHAR_INFO=pack_char_info(42, 60, 8, Faction.ALLIANCE),
-    PLAYED_S=300_000,
-    FOOT_YD=500_000,
-    TRAVEL_YD=900_000,
-    REAL_STEPS=11,
-    REAL_M=9,
-    REAL_KCAL=1,
-    REAL_S=7,
-    WALKS=1,
-    INFO_FLAGS=1,
-)
-
-
-def is_thrall(found: Journey) -> bool:
-    return (found.name, found.level, found.real_steps, found.foot_yd) == ("Thrall", 17, 105_937, 82_025)
-
-
-def is_jaina(found: Journey) -> bool:
-    return (found.name, found.level, found.real_steps, found.foot_yd) == ("Jaina", 42, 11, 500_000)
-
-
-# ---- a round ---------------------------------------------------------------------------------
-
-
-def test_a_round_is_published_when_its_own_key_comes_round_again():
-    feed = Feed()
-    feed.round(THRALL)
-    assert feed.published == []  # the round is whole, but nothing has closed it yet
-    feed.key(THRALL)
-    (found,) = feed.published
-    assert found.key == djb2("Thrall-Durotar") and found.id == f"{found.key:08x}"
-    assert (found.name, found.level, found.max_level, found.class_id, found.faction) == ("Thrall", 17, 60, 7, "horde")
-    assert (found.played_s, found.foot_yd, found.travel_yd) == (77_100, 82_025, 190_000)
-    assert (found.real_steps, found.real_m, found.real_kcal, found.real_s, found.walks) == (
-        105_937,
-        85_300,
-        8_200,
-        61_000,
-        14,
-    )
-    assert found.since == SINCE and found.estimated is False
-    assert found.seen_at == feed.clock.wall_now
-
-
-def test_every_following_round_is_published_with_its_newer_numbers():
-    feed = Feed()
-    feed.round(THRALL)
-    feed.round(stats_of(REAL_STEPS=105_950, PLAYED_S=77_108))
-    feed.round(stats_of(REAL_STEPS=105_963, PLAYED_S=77_116))
-    assert [found.real_steps for found in feed.published] == [105_937, 105_950]
-    feed.key(THRALL)
-    assert [found.played_s for found in feed.published] == [77_100, 77_108, 77_116]
-
-
-def test_frames_seen_twice_change_nothing():
-    """The screen is read faster than the strip is redrawn: most frames arrive twice."""
-    feed = Feed()
-    feed.round(THRALL, times=2)
-    feed.send(Stat.CHAR_KEY, THRALL[Stat.CHAR_KEY], times=3)
-    assert len(feed.published) == 1 and is_thrall(feed.published[0])
-
-
-@pytest.mark.parametrize("missing", [stat for stat in STAT_CYCLE if stat is not Stat.CHAR_KEY])
-def test_a_round_with_a_missed_frame_is_not_published(missing: Stat):
-    feed = Feed()
-    feed.round(THRALL, skip=(missing,))
-    feed.key(THRALL)
-    assert feed.published == []
-    # ... and the next whole round is.
-    feed.round(THRALL, skip=(Stat.CHAR_KEY,))
-    feed.key(THRALL)
-    assert len(feed.published) == 1 and is_thrall(feed.published[0])
-
-
-def test_a_missed_closing_key_only_delays_the_numbers():
-    feed = Feed()
-    feed.round(THRALL)
-    feed.round(stats_of(REAL_STEPS=106_000), skip=(Stat.CHAR_KEY,))  # the key between the rounds was not seen
-    assert feed.published == []
-    feed.key(THRALL)
-    assert [found.real_steps for found in feed.published] == [106_000]
-
-
-def test_stats_before_any_key_belong_to_nobody():
-    """The companion starts while the game is running, in the middle of a round."""
-    feed = Feed()
-    feed.round(THRALL, skip=(Stat.CHAR_KEY, *NAME_STATS))
-    feed.key(THRALL)
-    assert feed.published == []
-    feed.round(THRALL, skip=(Stat.CHAR_KEY,))
-    feed.key(THRALL)
-    assert len(feed.published) == 1
-
-
-# ---- two characters are never mixed ----------------------------------------------------------
-
-
-def test_another_character_starts_afresh():
-    feed = Feed()
-    feed.round(THRALL)
-    feed.key(THRALL)
-    feed.round(THRALL, skip=(Stat.CHAR_KEY,))
-    feed.round(JAINA)
-    # Thrall's second round was whole, but it was not his own key that ended
-    # it: it stays unpublished (his numbers from eight seconds earlier stand).
-    assert len(feed.published) == 1 and is_thrall(feed.published[0])
-    feed.key(JAINA)
-    assert len(feed.published) == 2 and is_jaina(feed.published[1])
-    assert feed.published[1].estimated is True and feed.published[1].faction == "alliance"
-
-
-def test_a_switch_in_the_middle_of_a_round_publishes_neither_half():
-    feed = Feed()
-    half = list(THRALL.items())[:8]
-    for stat, value in half:
-        feed.send(stat, value)
-    feed.round(JAINA)  # opens with Jaina's key: Thrall's half round is dropped
-    feed.key(JAINA)
-    assert len(feed.published) == 1 and is_jaina(feed.published[0])
-
-
-def test_a_switch_whose_first_key_was_missed_is_not_filed_under_the_character_before():
-    """The dangerous one: Thrall's round is open, Jaina logs in, and the frame
-    that says so is the one the capture missed. Jaina's numbers arrive under
-    Thrall's open key - and complete his round."""
-    feed = Feed()
-    for stat, value in list(THRALL.items())[:3]:
-        feed.send(stat, value)
-    feed.round(JAINA, skip=(Stat.CHAR_KEY,))  # no gap at all between the two
-    feed.key(JAINA)  # the first key that is seen: it does not match the round it closes
-    assert feed.published == []
-    feed.round(JAINA, skip=(Stat.CHAR_KEY,))
-    feed.key(JAINA)
-    assert len(feed.published) == 1 and is_jaina(feed.published[0])
-
-
-def test_after_a_silence_the_open_round_is_given_up():
-    """Logging out shows a loading screen: the strip is gone for a while. Even
-    if the same key then closes the round, what came after the silence may be
-    somebody else's (the other character's key could have been missed twice)."""
-    feed = Feed()
-    half = list(THRALL.items())
-    for stat, value in half[:6]:
-        feed.send(stat, value)
-    feed.send(*list(JAINA.items())[6], after=GAP_MAX_S + 0.5)
-    for stat, value in list(JAINA.items())[7:]:
-        feed.send(stat, value)
-    feed.key(THRALL)
-    assert feed.published == []
-
-
-def test_a_gap_just_inside_the_limit_is_tolerated():
-    feed = Feed()
-    for stat, value in THRALL.items():
-        feed.send(stat, value, after=1.5)  # a slow game: a redraw every 0.3 s
-    feed.send(Stat.CHAR_KEY, THRALL[Stat.CHAR_KEY], after=GAP_MAX_S - 0.1)
-    assert len(feed.published) == 1
-
-
-def test_a_frozen_picture_counts_as_silence():
-    """The picture freezes on one stat frame (the same frame is decoded over
-    and over), and when it moves again another character is in the game."""
-    feed = Feed()
-    items = list(THRALL.items())
-    for stat, value in items[:5]:
-        feed.send(stat, value)
-    for _ in range(100):
-        feed.send(*items[4], after=0.1)  # ten seconds of the same frame
-    for stat, value in list(JAINA.items())[5:]:
-        feed.send(stat, value)
-    feed.key(THRALL)
-    assert feed.published == []
-
-
-def test_a_round_that_drags_on_is_not_trusted():
-    feed = Feed()
-    spacing = (ROUND_MAX_S + 1.0) / len(STAT_CYCLE)
-    assert spacing < GAP_MAX_S  # no single silence: only the round as a whole is too long
-    for stat, value in THRALL.items():
-        feed.send(stat, value, after=spacing)
-    feed.send(Stat.CHAR_KEY, THRALL[Stat.CHAR_KEY], after=spacing)
-    assert feed.published == []
-
-
-def test_interleaved_with_live_frames_through_the_beacon_source():
-    """The real path: live frames and stat frames share the strip."""
-    clock = Clock()
-    source = BeaconSource(None, clock=clock.mono)
-    published: list[Journey] = []
-    source.on_stat = JourneyCollector(published.append, wall=clock.wall, mono=clock.mono).on_stat
-    seq = 0
-    queue = [*THRALL.items(), *THRALL.items(), (Stat.CHAR_KEY, THRALL[Stat.CHAR_KEY])]
-    while queue:
-        for _ in range(4):
-            seq += 1
-            clock.advance(0.1)
-            source.inject(Frame(seq=seq % 256, session=1, flags=Flags.ACTIVE | Flags.MOVING, target_raw=300))
-        seq += 1
-        clock.advance(0.1)
-        stat, value = queue.pop(0)
-        source.inject(StatFrame(seq=seq % 256, stat_id=stat, value=value))
-        source.inject(StatFrame(seq=seq % 256, stat_id=stat, value=value))  # captured twice
-    assert len(published) == 2 and all(is_thrall(found) for found in published)
-
-
-# ---- what arrives is checked --------------------------------------------------------------------
-
-
-def one(**changes: int) -> Journey:
-    feed = Feed()
-    values = stats_of(**changes)
-    feed.round(values)
-    feed.key(values)
-    (found,) = feed.published
+def one(key: str = "Thrall-Durotar", **changes) -> Journey:
+    found = Journey.from_record(key, record_of(**changes), NOW)
+    assert found is not None
     return found
 
 
+# ---- one record ----------------------------------------------------------------------------------
+
+
+def test_a_record_is_read():
+    found = one()
+    assert (found.key, found.id) == (djb2("Thrall-Durotar"), character_id("Thrall-Durotar"))
+    assert found.name == "Thrall", "the name alone: the realm is never kept"
+    assert (found.level, found.max_level, found.class_id, found.faction) == (17, 60, 7, "horde")
+    assert (found.foot_yd, found.travel_yd, found.played_s) == (82_025, 190_000, 77_100)
+    assert (found.real_steps, found.real_m, found.real_kcal, found.real_s, found.walks) == (105_937, 85_300, 8_200, 61_000, 14)
+    assert found.since == SINCE and found.estimated is False
+    assert found.seen_at == NOW - 30, "when the addon saved it"
+
+
+def test_a_record_from_before_the_addon_saved_its_totals_has_the_settled_ones():
+    record = record_of()
+    del record["shared"]
+    found = Journey.from_record("Jaina-Theramore", record, NOW - 500)
+    assert found is not None and found.name == "Jaina"
+    assert (found.real_steps, found.walks, found.played_s) == (90_000, 10, 70_000)
+    assert found.seen_at == NOW - 500, "the file's own date"
+
+
+@pytest.mark.parametrize("key", ["", "?", "?-Realm", 7, None, "-Realm"])
+def test_a_record_of_nobody_is_no_journey(key):
+    assert Journey.from_record(key, record_of(), NOW) is None
+
+
+@pytest.mark.parametrize("record", [None, 5, "x", [1, 2]])
+def test_what_is_no_record_is_no_journey(record):
+    assert Journey.from_record("Thrall-Durotar", record, NOW) is None
+
+
 @pytest.mark.parametrize(
-    "stat, field, limit",
+    "field, attribute",
     [
-        ("PLAYED_S", "played_s", journey.MAX_PLAYED_S),
-        ("FOOT_YD", "foot_yd", journey.MAX_YARDS),
-        ("TRAVEL_YD", "travel_yd", journey.MAX_YARDS),
-        ("REAL_STEPS", "real_steps", journey.MAX_REAL_STEPS),
-        ("REAL_M", "real_m", journey.MAX_REAL_M),
-        ("REAL_KCAL", "real_kcal", journey.MAX_REAL_KCAL),
-        ("REAL_S", "real_s", journey.MAX_REAL_S),
-        ("WALKS", "walks", journey.MAX_WALKS),
+        ("footYd", "foot_yd"),
+        ("travelYd", "travel_yd"),
+        ("steps", "real_steps"),
+        ("distanceM", "real_m"),
+        ("kcal", "real_kcal"),
+        ("seconds", "real_s"),
+        ("walks", "walks"),
     ],
 )
-def test_a_number_that_cannot_be_true_is_left_out(stat: str, field: str, limit: int):
-    assert getattr(one(**{stat: limit}), field) == limit
-    for absurd in (limit + 1, STAT_MAX_VALUE):  # the addon clamps what overflows to the largest value
-        found = one(**{stat: absurd})
-        assert getattr(found, field) is None
-        # ... and only that one: the rest of the round is fine.
-        assert found.name == "Thrall" and found.level == 17
-        others = {"real_steps", "foot_yd", "walks"} - {field}
-        assert all(getattr(found, other) is not None for other in others)
+@pytest.mark.parametrize("value", [-1, float("nan"), float("inf"), 10**20, "far", True, None, {}])
+def test_a_number_that_cannot_be_true_is_left_out(field: str, attribute: str, value):
+    assert getattr(one(**{field: value}), attribute) is None
 
 
 def test_zero_is_a_number_except_where_it_means_not_known():
-    found = one(PLAYED_S=0, FOOT_YD=0, REAL_STEPS=0, REAL_KCAL=0, WALKS=0, SINCE=0)
-    assert found.played_s is None and found.since is None
-    assert (found.foot_yd, found.real_steps, found.real_kcal, found.walks) == (0, 0, 0, 0)
+    found = one(footYd=0, steps=0, walks=0, level=0, maxLevel=0, played=0)
+    assert found.foot_yd == 0 and found.real_steps == 0 and found.walks == 0
+    assert found.level is None and found.max_level is None, "the game had not said"
+    record = record_of()
+    record["shared"]["played"] = 0
+    assert Journey.from_record("Thrall-Durotar", record, NOW).played_s is None
 
 
-@pytest.mark.parametrize(
-    "since, kept",
-    [
-        (SINCE, True),
-        (journey.SINCE_MIN, True),
-        (journey.SINCE_MIN - 1, False),  # before there was anything to track
-        (int(NOW) + 86400, True),  # a clock that was set back since
-        (int(NOW) + 30 * 86400, False),
-        (STAT_MAX_VALUE, False),
-    ],
-)
+def test_a_level_above_the_cap_drops_the_cap():
+    found = one(level=70, maxLevel=60)
+    assert found.level == 70 and found.max_level is None
+
+
+@pytest.mark.parametrize("since, kept", [(SINCE, True), (1_500_000_000, False), (NOW + 10 * 86400, False), (-5, False)])
 def test_the_start_of_tracking_must_be_a_believable_date(since: int, kept: bool):
-    assert (one(SINCE=since).since == since) is kept
+    assert (one(since=since).since == since) is kept
 
 
-@pytest.mark.parametrize(
-    "info, level, cap, faction",
-    [
-        (pack_char_info(1, 60, 1, Faction.ALLIANCE), 1, 60, "alliance"),
-        (pack_char_info(60, 60, 11, Faction.HORDE), 60, 60, "horde"),
-        (pack_char_info(0, 60, 1, Faction.UNKNOWN), None, 60, None),  # the game has not said yet
-        (pack_char_info(17, 0, 1, Faction.UNKNOWN), 17, None, None),
-        (pack_char_info(70, 60, 1, 9), 70, None, None),  # a level above the cap, a faction that does not exist
-        (2**32 + 17, None, None, None),  # more than the four bytes it is made of
-        (STAT_MAX_VALUE, None, None, None),
-    ],
-)
-def test_character_info_is_taken_apart_carefully(info: int, level, cap, faction):
-    found = one(CHAR_INFO=info)
-    assert (found.level, found.max_level, found.faction) == (level, cap, faction)
+@pytest.mark.parametrize("faction, word", [(1, "alliance"), (2, "horde"), (0, None), (3, None), ("Horde", None)])
+def test_the_faction(faction, word):
+    assert one(faction=faction).faction == word
 
 
-def test_only_the_flags_this_build_knows_are_read():
-    assert one(INFO_FLAGS=InfoFlags.ESTIMATED).estimated is True
-    assert one(INFO_FLAGS=0b1110).estimated is False
-    assert one(INFO_FLAGS=STAT_MAX_VALUE).estimated is True
-
-
-@pytest.mark.parametrize("value", [-1, STAT_MAX_VALUE + 1, 2.5, "7", None, True])
-def test_values_that_are_not_stat_values_are_ignored(value):
-    feed = Feed()
-    feed.round(THRALL, skip=(Stat.WALKS,))
-    feed.clock.advance(0.5)
-    feed.collector.on_stat(Stat.WALKS, value)
-    feed.key(THRALL)
-    assert feed.published == []  # WALKS was never really seen
-
-
-@pytest.mark.parametrize("stat_id", [0, 13, 15, 20, 63, 64, -1])
-def test_stat_ids_this_build_does_not_know_are_ignored(stat_id: int):
-    feed = Feed()
-    feed.round(THRALL)
-    feed.send(stat_id, 123)  # a newer addon may send more
-    feed.key(THRALL)
-    assert len(feed.published) == 1 and is_thrall(feed.published[0])
-
-
-def test_a_key_that_is_no_hash_opens_no_round():
-    feed = Feed()
-    bad = dict(THRALL)
-    bad[Stat.CHAR_KEY] = 2**32
-    feed.round(bad)
-    feed.key(bad)
-    assert feed.published == []
-
-
-# ---- names -----------------------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("name", ["Thrall", "A", "Ñandú", "Þórr", "Абвгдежзик", "阿尔萨斯", "아서스왕자님"])
-def test_names_arrive_as_they_were_sent(name: str):
-    feed = Feed()
-    values = stats_of(name)
-    feed.round(values)
-    feed.key(values)
-    assert feed.published[0].name == name
-
-
-def name_from_bytes(raw: bytes) -> str:
-    padded = raw.ljust(20, b"\0")
-    chunks = {stat: int.from_bytes(padded[i * 5 : i * 5 + 5], "big") for i, stat in enumerate(NAME_STATS)}
-    return one(**{stat.name: value for stat, value in chunks.items()}).name
-
-
-def test_bytes_that_are_not_text_do_not_break_anything():
-    assert name_from_bytes(b"Thr\xff\xfell") == "Thr\ufffd\ufffdll"
-    assert name_from_bytes(b"\xe9\x98") == "\ufffd"  # a character cut in half
-    assert name_from_bytes(b"") == ""
+def test_estimated_is_only_ever_a_plain_true():
+    assert one(estimated=True).estimated is True
+    assert one(estimated=1).estimated is False and one(estimated="yes").estimated is False
 
 
 def test_a_name_is_text_from_a_stranger():
-    """Anything on screen that looks like the strip is decoded, so the name
-    could be anything. It is kept as plain text, without what could disturb
-    whoever shows it."""
-    assert name_from_bytes(b"Ab\x07c\x1bd\x7f") == "Abcd"
-    assert name_from_bytes("ab\u202ecd\u200b".encode()) == "abcd"  # a direction override, a zero-width space
-    assert name_from_bytes(b"  Two \t\n words  ") == "Two words"
-    assert name_from_bytes("a\u2028b".encode()) == "a b"
+    """The name comes from a file: it is kept as plain text, without what
+    could disturb whoever shows it."""
+    assert name_of("Ab\x07c\x1bd\x7f-Realm") == "Abcd"
+    assert name_of("ab‮cd​-Realm") == "abcd"  # a direction override, a zero-width space
+    assert clean_name("  Two \t\n words  ") == "Two words"
+    assert clean_name("a b") == "a b"
     # Markup is not interpreted here or anywhere else: it stays the text it is.
-    assert name_from_bytes(b"<img src=x onerror=1>") == "<img src=x onerror=1>"[:20]
+    assert name_of("<img src=x onerror=1>-x") == "<img src=x onerror=1>"
     assert clean_name("x" * 100) == "x" * journey.NAME_MAX_CHARS
-    assert clean_name("") == ""
-
-
-# ---- the convention behind "character steps" -------------------------------------------------------
+    assert name_of("Ñandú-Ragnaros") == "Ñandú"
 
 
 @pytest.mark.parametrize(
@@ -478,9 +186,15 @@ def test_character_steps_are_yards_over_point_eight_eight(yards: int, steps: int
     assert steps == round(yards / 0.88)
 
 
+def test_djb2():
+    assert djb2("A") == 5381 * 33 + 65
+    assert djb2(b"A") == djb2("A")
+    assert character_id("A") == "0002b5e6"
+
+
 def test_what_the_dashboard_gets():
     found = one()
-    data = found.to_api(found.seen_at + 3)
+    data = found.to_api()
     assert data == {
         "id": f"{djb2('Thrall-Durotar'):08x}",
         "name": "Thrall",
@@ -501,21 +215,28 @@ def test_what_the_dashboard_gets():
         "estimated": False,
         "since": SINCE,
         "seen_at": found.seen_at,
-        "live": True,
     }
     json.dumps(data)  # plain JSON
-    assert found.to_api(found.seen_at + LIVE_FOR_S + 1)["live"] is False
-    unknown = one(FOOT_YD=STAT_MAX_VALUE).to_api(NOW)
+    unknown = one(footYd=-1).to_api()
     assert unknown["character_steps"] is None and unknown["character_miles"] is None
+
+
+def test_the_demo_character_is_plausible():
+    found = demo_journey(wall=lambda: NOW)
+    assert found.name == "Maerwyn" and found.id == character_id(journey.DEMO_KEY)
+    assert found.level == 23 and found.max_level == 60 and found.faction == "alliance"
+    assert found.real_steps > 100_000 and found.walks == 19 and found.since < NOW
 
 
 # ---- the book: every character's latest journey ------------------------------------------------------
 
 
-def journey_of(name: str, seen_at: float, **changes: int) -> Journey:
-    values = stats_of(name, **changes)
-    key = values.pop(Stat.CHAR_KEY)
-    return Journey.from_stats(key, values, seen_at)
+def journey_of(name: str, seen_at: float, **changes) -> Journey:
+    record = record_of(**changes)
+    record["shared"]["savedAt"] = seen_at
+    found = Journey.from_record(f"{name}-Realm", record, seen_at)
+    assert found is not None
+    return found
 
 
 def test_the_book_keeps_the_latest_journey_of_each_character(tmp_path: Path):
@@ -523,44 +244,27 @@ def test_the_book_keeps_the_latest_journey_of_each_character(tmp_path: Path):
     book = JourneyBook(tmp_path / "journey.json", wall=clock.wall, mono=clock.mono)
     assert book.summary() == {"rev": 0, "characters": 0, "demo": False}
     assert book.to_api() == {"rev": 0, "demo": False, "current": None, "characters": [], "steps_per_mile": 2000}
+    assert book.latest() is None
 
-    book.add(journey_of("Thrall", NOW - 86400))
-    book.add(journey_of("Jaina", NOW - 5))
-    book.add(journey_of("Thrall", NOW - 3600, REAL_STEPS=200_000))
+    assert book.update([journey_of("Thrall", NOW - 86400), journey_of("Jaina", NOW - 5)])
+    assert book.update([journey_of("Thrall", NOW - 3600, steps=200_000)])
     data = book.to_api()
-    assert data["rev"] == 3
-    assert [(entry["name"], entry["steps"], entry["live"]) for entry in data["characters"]] == [
-        ("Jaina", 105_937, True),
-        ("Thrall", 200_000, False),
-    ]
-    assert data["current"] == data["characters"][0]["id"]
-    assert book.summary() == {"rev": 3, "characters": 2, "demo": False}
-
-    clock.advance(LIVE_FOR_S + 10)
-    assert book.to_api()["current"] is None  # nobody is in the game any more
+    assert data["rev"] == 2
+    assert [(entry["name"], entry["steps"]) for entry in data["characters"]] == [("Jaina", 105_937), ("Thrall", 200_000)]
+    assert data["current"] == data["characters"][0]["id"], "the one saved last"
+    assert book.summary() == {"rev": 2, "characters": 2, "demo": False}
+    assert book.latest() == {"name": "Jaina", "level": 17, "max_level": 60, "seen_at": NOW - 5}
 
 
-def test_the_book_says_which_character_is_in_the_game_now(tmp_path: Path):
-    """For the dashboard's "Playing" line: the character whose numbers are
-    arriving, by name and level - nobody, once they stop."""
-    clock = Clock()
-    book = JourneyBook(tmp_path / "journey.json", wall=clock.wall, mono=clock.mono)
-    assert book.playing() is None
-    book.add(journey_of("Thrall", NOW - 86400))
-    assert book.playing() is None, "seen yesterday is not playing now"
-    book.add(journey_of("Jaina", NOW - 5))
-    assert book.playing() == {"name": "Jaina", "level": 17, "max_level": 60}
-    clock.advance(LIVE_FOR_S + 10)
-    assert book.playing() is None
-
-
-def test_the_collector_of_a_book_fills_it(tmp_path: Path):
-    clock = Clock()
-    book = JourneyBook(tmp_path / "journey.json", wall=clock.wall, mono=clock.mono)
-    for stat, value in [*THRALL.items(), (Stat.CHAR_KEY, THRALL[Stat.CHAR_KEY])]:
-        clock.advance(0.5)
-        book.collector.on_stat(stat, value)
-    assert [entry["name"] for entry in book.to_api()["characters"]] == ["Thrall"]
+def test_an_older_record_does_not_replace_a_newer_one(tmp_path: Path):
+    """Two game folders (an old install) can hold the same character: the
+    numbers saved last win, and the same numbers again are no change."""
+    book = JourneyBook(tmp_path / "journey.json")
+    newer = journey_of("Thrall", NOW, steps=200_000)
+    assert book.update([newer])
+    assert not book.update([journey_of("Thrall", NOW - 3600)])
+    assert not book.update([newer])
+    assert book.journeys() == [newer] and book.summary()["rev"] == 1
 
 
 def test_the_book_survives_a_restart(tmp_path: Path):
@@ -569,7 +273,7 @@ def test_the_book_survives_a_restart(tmp_path: Path):
     book = JourneyBook(path, wall=clock.wall, mono=clock.mono)
     assert book.save() is False and not path.exists()  # nothing to write
     book.add(journey_of("Thrall", NOW - 50))
-    book.add(journey_of("Ñandú", NOW - 20, PLAYED_S=0, REAL_KCAL=STAT_MAX_VALUE, INFO_FLAGS=1))
+    book.add(journey_of("Ñandú", NOW - 20, played=0, kcal=-1, estimated=True))
     assert book.save() is True
     assert book.save() is False  # unchanged since
     assert not list(path.parent.glob("*.tmp"))
@@ -610,13 +314,15 @@ def test_the_number_of_remembered_characters_is_capped(tmp_path: Path):
         "not json",
         "[]",
         "{}",
-        '{"version": 1, "characters": "many"}',
-        '{"version": 1, "characters": [null, 7, "x", {}, {"key": 1}, {"key": "1", "seen_at": 5, "stats": {}}]}',
-        '{"characters": [{"key": -4, "seen_at": 1700000000, "stats": {}}, {"key": 5, "seen_at": "now", "stats": {}}]}',
-        '{"characters": [{"key": 5, "seen_at": true, "stats": {}}, {"key": 5, "seen_at": 1e300, "stats": {}}]}',
+        '{"version": 2, "characters": "many"}',
+        '{"version": 2, "characters": [null, 7, "x", {}, {"key": 1}, {"key": "1", "seen_at": 5, "name": "A"}]}',
+        '{"version": 2, "characters": [{"key": -4, "seen_at": 1700000000, "name": "A"}, {"key": 5, "seen_at": "now"}]}',
+        '{"version": 2, "characters": [{"key": 5, "seen_at": true, "name": "A"}, {"key": 5, "seen_at": 1e300}]}',
+        # What 0.10 wrote: the stat frames read off the screen. Not read: the game's file says it all again.
+        '{"version": 1, "characters": [{"key": 5, "seen_at": 1700000000, "stats": {"FOOT_YD": 5}}]}',
     ],
 )
-def test_a_damaged_cache_file_is_ignored(tmp_path: Path, content: str):
+def test_a_damaged_or_old_cache_file_is_ignored(tmp_path: Path, content: str):
     path = tmp_path / "journey.json"
     path.write_text(content, "utf-8")
     assert JourneyBook(path).journeys() == []
@@ -627,23 +333,23 @@ def test_a_cache_file_goes_through_the_same_checks_as_the_game(tmp_path: Path):
     entry = {
         "key": 77,
         "seen_at": NOW,
-        "stats": {
-            "CHAR_KEY": 1,  # not a number of the round: the entry's own key counts
-            "NAME_0": int.from_bytes(b"Ed\x07it", "big"),
-            "CHAR_INFO": pack_char_info(60, 60, 4, Faction.HORDE),
-            "REAL_STEPS": 10**15,  # edited by hand
-            "REAL_M": "far",
-            "WALKS": -3,
-            "FOOT_YD": 1760,
-            "MADE_UP": 5,
-            "INFO_FLAGS": True,
-        },
+        "name": "Ed\x07it",
+        "level": 60,
+        "max_level": 300,
+        "class_id": "x",
+        "faction": "pirates",
+        "real_steps": 10**15,  # edited by hand
+        "real_m": "far",
+        "walks": -3,
+        "foot_yd": 1760,
+        "made_up": 5,
+        "estimated": 1,
     }
-    path.write_text(json.dumps({"version": 1, "characters": [entry, {"key": 78}]}), "utf-8")
+    path.write_text(json.dumps({"version": 2, "characters": [entry, {"key": 78}]}), "utf-8")
     (found,) = JourneyBook(path).journeys()
-    assert (found.key, found.name, found.level, found.foot_yd) == (77, "Edit", 60, 1760)
-    assert (found.real_steps, found.real_m, found.walks, found.played_s) == (None, None, None, None)
-    assert found.estimated is False
+    assert (found.key, found.name, found.level, found.max_level, found.foot_yd) == (77, "Edit", 60, None, 1760)
+    assert (found.real_steps, found.real_m, found.walks, found.played_s, found.class_id) == (None, None, None, None, 0)
+    assert found.faction is None and found.estimated is False
 
 
 def test_a_failed_save_is_tried_again(tmp_path: Path, monkeypatch):
@@ -696,9 +402,7 @@ def test_the_saver_writes_while_the_companion_runs(tmp_path: Path):
     assert [found.name for found in JourneyBook(path).journeys()] == ["Thrall"]
 
 
-def test_attach_wires_a_beacon_and_tolerates_none(tmp_path: Path):
-    source = BeaconSource(None)
-    book = journey.attach(tmp_path, source)
-    assert source.on_stat == book.collector.on_stat
+def test_attach_keeps_the_book_in_the_data_folder(tmp_path: Path):
+    book = journey.attach(tmp_path)
     assert book.path == tmp_path / journey.JOURNEY_FILE
-    assert journey.attach(tmp_path, None).journeys() == []
+    assert book.journeys() == []

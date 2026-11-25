@@ -29,7 +29,7 @@ DT = 0.2
 
 
 def recorder(source: str = "wow") -> SessionRecorder:
-    return SessionRecorder(source=source, beacon_session=3, treadmill="URTM030", started_at=T0)
+    return SessionRecorder(source=source, treadmill="URTM030", started_at=T0)
 
 
 def walk(rec: SessionRecorder, seconds: float, speed: float, *, start: float | None = None, profile=PROFILE, **kwargs):
@@ -460,7 +460,7 @@ def test_finished_record_fields():
     assert record.kcal == pytest.approx(metrics.kcal_per_minute(3.2, PROFILE) * 5, abs=0.06)
     assert record.max_kmh == 3.2 and record.avg_kmh == pytest.approx(3.2, abs=0.01)
     assert record.avg_hr == 95 and record.max_hr == 95
-    assert (record.source, record.beacon_session, record.treadmill) == ("wow", 3, "URTM030")
+    assert (record.source, record.game_session, record.treadmill) == ("wow", None, "URTM030")
     assert record.samples == rec.samples and record.samples is not rec.samples
     json.dumps(record.to_json())
     summary = record.summary()
@@ -494,6 +494,14 @@ def test_record_from_json_ignores_unknown_keys_and_needs_the_required_ones():
     assert record.id == "x" and record.source == "manual" and record.samples == []
     with pytest.raises(TypeError):
         SessionRecord.from_json({"id": "x"})
+
+
+def test_a_record_of_an_earlier_version_keeps_its_game_session():
+    """Up to 0.10 the session's number was read off the screen, as beacon_session."""
+    data = {"id": "x", "start": 1.0, "end": 2.0, "seconds": 1.0, "distance_m": 0.5, "steps": 1, "kcal": 0.1}
+    record = SessionRecord.from_json({**data, "source": "wow", "beacon_session": 7})
+    assert (record.source, record.game_session, record.character) == ("wow", 7, "")
+    assert "beacon_session" not in record.to_json()
 
 
 # ---- SessionStore -----------------------------------------------------------------------

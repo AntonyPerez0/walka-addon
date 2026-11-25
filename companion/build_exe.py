@@ -59,11 +59,9 @@ WINRT_HIDDEN_IMPORTS = (
 )
 
 
-# What only a Mac build needs: the screen capture's macOS backend and the
-# companion's own questions to macOS. "Walka selfcheck" imports them too.
+# What only a Mac build needs: the Bluetooth backend of macOS. "Walka
+# selfcheck" imports them too.
 MACOS_HIDDEN_IMPORTS = (
-    "mss.darwin",
-    "walka.macos",
     "bleak.backends.corebluetooth.scanner",
     "bleak.backends.corebluetooth.client",
 )

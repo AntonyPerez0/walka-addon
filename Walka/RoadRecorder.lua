@@ -5,8 +5,8 @@
 -- saved per character (WalkaCharDB), so it costs nothing when another
 -- character logs in.
 --
--- It runs on a timer of its own, apart from the tick that feeds the
--- beacon, and every look is wrapped in pcall: whatever a client build may
+-- It runs on a timer of its own, apart from the tick that counts the
+-- walk, and every look is wrapped in pcall: whatever a client build may
 -- do to these calls, an error here can never reach the session's count.
 --
 -- The calls and their order are the ones Road to Sixty's recorder uses in

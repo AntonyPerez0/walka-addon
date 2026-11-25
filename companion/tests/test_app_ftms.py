@@ -1,4 +1,4 @@
-"""End to end with the real Bluetooth reader: beacon frames and an emulated
+"""End to end with the real Bluetooth reader: an emulated
 UREVO pad (GATT level) -> FtmsTreadmill -> recorded walk. What matters here
 is what reaches the *pad*: nothing. ``FakePad.writes`` holds every byte
 written to it over Bluetooth, and every scenario ends with it empty."""
@@ -17,8 +17,6 @@ from test_app import Clock
 from walka import ftms
 from walka.app import FREE_WALK_GRACE_S, TICK_S, App
 from walka.config import Config
-from walka.protocol import Flags, Frame, kmh_to_raw
-from walka.sources import BeaconSource
 from walka.treadmill import BeltState, ftms_ble
 from walka.treadmill.ftms_ble import FtmsTreadmill
 from walka_fakes import FakeBackend, FakePad
@@ -35,7 +33,6 @@ class PadRig:
         self.backend = FakeBackend(self.pad)
         self.treadmill = FtmsTreadmill(backend=self.backend, **driver_kwargs)
         self.config = Config()
-        self.beacon = BeaconSource(None, clock=lambda: self.clock.mono)
         self.addon = tmp_path / "AddOns" / "Walka"
         self.addon.mkdir(parents=True)
         (self.addon / "Walka.toc").write_text("## Interface: 16001\n")
@@ -44,42 +41,27 @@ class PadRig:
             self.config,
             tmp_path / "data",
             treadmill=self.treadmill,
-            beacon=self.beacon,
             wall_clock=lambda: self.clock.wall,
             mono_clock=lambda: self.clock.mono,
         )
-        self.seq = 0
 
-    async def run(
-        self, seconds: float, *, active=True, paused=False, moving=True, signal=True, session=1, legacy_target=0.0
-    ) -> None:
+    async def run(self, seconds: float) -> None:
         for _ in range(int(round(seconds / TICK_S))):
             self.clock.advance(TICK_S)
-            if signal:
-                self.seq = (self.seq + 1) % 256
-                flags = Flags(0)
-                if active:
-                    flags |= Flags.ACTIVE
-                if paused:
-                    flags |= Flags.PAUSED
-                if moving:
-                    flags |= Flags.MOVING
-                self.beacon.inject(
-                    Frame(
-                        seq=self.seq,
-                        session=session if active else 0,
-                        flags=flags,
-                        target_raw=kmh_to_raw(legacy_target),
-                    )
-                )
             await self.app.tick()
             self.pad.advance(TICK_S)
 
+    async def end_walk(self) -> None:
+        """The walker stops the belt (if it is not stopped yet), and the walk
+        ends a minute later."""
+        self.pad.press_stop()
+        await self.run(FREE_WALK_GRACE_S + 5)
+
     async def walking(self, kmh: float = 2.0 * MPH, seconds: float = 40) -> None:
-        """Connected, a session marked in the game, and the walker on the
-        belt: start on the remote, the countdown, then ``kmh``."""
+        """Connected, and the walker on the belt: start on the remote, the
+        countdown, then ``kmh``."""
         await self.treadmill.connect()
-        await self.run(1, active=False)
+        await self.run(1)
         self.pad.press_start()
         await self.run(4)
         self.pad.press_speed(kmh)
@@ -103,11 +85,11 @@ def test_walk_on_the_emulated_urevo_pad(tmp_path: Path, monkeypatch):
         assert rig.app.snapshot()["treadmill"]["moving"] is True
         rig.pad.press_stop()
         await rig.run(5)
-        await rig.run(3, active=False)
+        await rig.end_walk()
 
     run(scenario())
     (record,) = rig.app.store.records
-    assert record.source == "wow" and record.treadmill == "URTM030"
+    assert record.source == "free" and record.treadmill == "URTM030"
     assert 290 <= record.seconds <= 310
     assert record.distance_m == pytest.approx(2.0 * MPH / 3.6 * 300, rel=0.05)
     assert record.steps_source == "treadmill" and record.distance_source == "treadmill"
@@ -140,10 +122,10 @@ def test_the_walker_stops_the_belt_and_walka_writes_it_down(tmp_path: Path, monk
     async def scenario():
         await rig.walking(seconds=60)
         getattr(rig.pad, how)()
-        await rig.run(300)  # the game goes on showing a session, a moving character ...
+        await rig.run(300)
         assert rig.pad.speed_kmh == 0 and rig.pad.state in ("idle", "paused")  # ... and the belt stays as it was left
         assert rig.app.snapshot()["treadmill"]["moving"] is False
-        await rig.run(3, active=False)
+        await rig.end_walk()
 
     run(scenario())
     (record,) = rig.app.store.records
@@ -163,10 +145,10 @@ def test_link_loss_and_reconnect_with_the_pad_still_running(tmp_path: Path, monk
         await rig.treadmill.connect()
         await rig.run(60)
         assert rig.pad.speed_kmh == pytest.approx(2.0 * MPH) and rig.pad.target_tenths == 20
-        await rig.run(3, active=False)
+        await rig.end_walk()
 
     run(scenario())
-    (record,) = [r for r in rig.app.store.records if r.source == "wow"]
+    (record,) = rig.app.store.records
     assert 115 <= record.seconds <= 130  # the half minute nobody heard is not made up
     assert rig.pad.connects == 2 and rig.heard_nothing_from_walka()
 
@@ -186,7 +168,7 @@ def test_closing_walka_changes_nothing_at_the_pad(tmp_path: Path, monkeypatch):
 
 @pytest.mark.parametrize("seed", range(4))
 def test_soak_on_the_emulated_pad(tmp_path: Path, monkeypatch, seed: int):
-    """Anything the game, the dashboard or the radio can do, for a long
+    """Anything the dashboard or the radio can do, for a long
     time - and at the end the pad has still not been sent a single byte."""
     rng = random.Random(seed)
     rig = PadRig(tmp_path, monkeypatch, FakePad(us_firmware=bool(seed % 2), steps_in_data=True))
@@ -212,18 +194,9 @@ def test_soak_on_the_emulated_pad(tmp_path: Path, monkeypatch, seed: int):
                 rig.app.forget_treadmill()
             elif event == "config":
                 rig.app.update_config({"profile": {"weight_kg": rng.uniform(50, 100)}, "limits": {"max_speed_kmh": 1}})
-            game = rng.choice(["session", "paused", "none", "lost", "asks"])
-            await rig.run(
-                rng.uniform(0.2, 30),
-                active=game != "none",
-                paused=game == "paused",
-                moving=rng.random() < 0.7,
-                signal=game != "lost",
-                session=rng.randint(1, 3),
-                legacy_target=rng.uniform(0, 40) if game == "asks" else 0.0,
-            )
+            await rig.run(rng.uniform(0.2, 30))
             assert rig.heard_nothing_from_walka()
-        await rig.run(FREE_WALK_GRACE_S + 5, active=False)
+        await rig.run(FREE_WALK_GRACE_S + 5)
         await rig.app.stop()
 
     run(scenario())
@@ -308,7 +281,7 @@ def test_soak_on_the_emulated_pad_through_every_route_of_the_dashboard_with_a_wa
                 await house.walking(seconds=120)
                 house.pad.press_stop()
                 await house.run(5)
-                await house.run(3, active=False)
+                await house.end_walk()
                 await rig.idle()
                 assert len(rig.fake.walks(user)) == 1 and house.heard_nothing_from_walka()
                 # Then every route once, in its turn: which of them chance picks below is Python's business.
@@ -339,18 +312,10 @@ def test_soak_on_the_emulated_pad_through_every_route_of_the_dashboard_with_a_wa
                         await press("POST", "/api/walka-account/sending")
                     else:
                         await press(*event)
-                    game = rng.choice(["session", "paused", "none", "lost"])
-                    await house.run(
-                        rng.uniform(0.2, 30),
-                        active=game != "none",
-                        paused=game == "paused",
-                        moving=rng.random() < 0.7,
-                        signal=game != "lost",
-                        session=rng.randint(1, 3),
-                    )
+                    await house.run(rng.uniform(0.2, 30))
                     await rig.idle()
                     assert house.heard_nothing_from_walka()
-                await house.run(FREE_WALK_GRACE_S + 5, active=False)
+                await house.run(FREE_WALK_GRACE_S + 5)
                 await rig.idle()
                 walked.update(record.id for record in app.store.records)
                 await app.stop()
@@ -381,7 +346,7 @@ def test_walk_on_an_emulated_wellfit(tmp_path: Path, monkeypatch):
     async def scenario():
         await rig.walking(6.0 * MPH, seconds=120)
         assert rig.pad.target_tenths == 60
-        await rig.run(3, active=False)
+        await rig.end_walk()
 
     run(scenario())
     (record,) = rig.app.store.records
@@ -397,7 +362,7 @@ def test_a_treadmill_that_takes_no_commands_at_all_is_just_as_good(tmp_path: Pat
 
     async def scenario():
         await rig.walking(seconds=60)
-        await rig.run(3, active=False)
+        await rig.end_walk()
 
     run(scenario())
     assert len(rig.app.store.records) == 1

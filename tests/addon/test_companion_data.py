@@ -22,7 +22,7 @@ WalkaCompanionData = {{
     sessions = {{
         {{ start = {NOW - 2 * 3600}, ["end"] = {NOW - 2 * 3600 + 1800}, seconds = 1790, distanceM = 1502,
           steps = 2710, kcal = 118.4, maxKmh = 3.3, avgHr = 104, maxHr = 121, source = "wow",
-          beaconSession = 3, stepsSource = "treadmill" }},
+          gameSession = 3, stepsSource = "treadmill" }},
         {{ start = {NOW - 3 * DAY}, ["end"] = {NOW - 3 * DAY + 900}, seconds = 900, distanceM = 700,
           steps = 1300, kcal = 55.0, maxKmh = 3.0, source = "manual", stepsSource = "treadmill" }},
     }},
@@ -122,19 +122,7 @@ def test_a_limits_table_from_an_older_companion_is_ignored(make_rt, rt, limits):
     assert counted == walk_a_minute(rt)
     assert counted["maxKmh"] == DEFAULT_PACE_KMH
     assert counted["distanceM"] == pytest.approx(DEFAULT_PACE_KMH / 3.6 * 60, rel=1e-6)
-    assert set(decoded_targets(with_limits)) == {0}, "and nothing of it reaches the strip"
     with_limits.reload()
-
-
-def decoded_targets(rt) -> list[int]:
-    rt.slash("/walka start")
-    rt.set(speed=14.0, mounted=True)
-    targets = []
-    for _ in range(40):
-        rt.tick()
-        targets.append(rt.live_frame().target_raw)
-    rt.slash("/walka stop")
-    return targets
 
 
 # ---- history and totals -----------------------------------------------------------------------
@@ -248,7 +236,7 @@ def test_file_written_by_the_companion_loads_and_merges(make_rt, tmp_path):
     records = [
         SessionRecord(id="a", start=NOW - 2 * 3600 + 0.4, end=NOW - 2 * 3600 + 1799.2, seconds=1790.3,
                       distance_m=1502.4, steps=2710, kcal=118.44, max_kmh=3.301, avg_hr=104.4, max_hr=121,
-                      source="wow", beacon_session=3, steps_source="treadmill"),
+                      source="wow", game_session=3, steps_source="treadmill"),
         SessionRecord(id="b", start=NOW - 3 * DAY, end=NOW - 3 * DAY + 900, seconds=900, distance_m=700,
                       steps=1300, kcal=55.0, max_kmh=3.0, source="manual"),
     ]

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "walka"
-version = "0.10.0"
+version = "0.11.0"
 description = "Walka companion for Windows and macOS: records your walks on an under-desk walking pad while you play World of Warcraft. It only listens to the pad."
 readme = "README.md"
 license = { text = "MIT" }
@@ -13,9 +13,6 @@ dependencies = [
     "aiohttp>=3.9",
     # 3.1 fixes WinRT errors on disconnect and on fast reconnects.
     "bleak>=3.1,<4",
-    # 10.2: the capture class, and on macOS every pixel of a Retina display
-    # when asked (walka.capture). 11 changes the capture API.
-    "mss>=10.2,<11",
     # Walka's own window (walka.window): shows the dashboard with what the
     # system has for it - Edge WebView2 on Windows, WebKit on a Mac. Where
     # it is not installed (Linux), the dashboard opens in the browser.

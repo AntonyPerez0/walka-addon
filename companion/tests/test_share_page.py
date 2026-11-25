@@ -175,7 +175,6 @@ def character(**changes: Any) -> dict[str, Any]:
         "estimated": False,
         "since": SINCE,
         "seen_at": SEEN,
-        "live": False,
     }
     entry.update(changes)
     return entry

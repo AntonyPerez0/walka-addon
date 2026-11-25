@@ -22,22 +22,22 @@ What a green run proves
 * Every widget method it calls exists on that widget type in this client;
   script handlers, events, templates, font objects, frame strata, draw
   layers and anchor points are valid; frames are not anchored in cycles.
-* The beacon the addon paints decodes with the companion's real decoder,
-  both cell by cell and as rendered pixels at several resolutions.
+* The addon draws nothing on the screen. What the companion needs - the
+  sessions and the journeys - is in the saved variables the game writes at
+  logout and on /reload, and the companion's own reader reads it from the
+  file as the game writes it (test_saved_file.py).
 * With unit stats "secret" (Midnight combat rules) nothing errors and no
   secret value ends up in the saved variables, the session, the addon's
   tables, its widgets or the upvalues of its functions.
-* The logic: protocol, speed model, calorie/step estimates, session
+* The logic: speed model, calorie/step estimates, session
   lifecycle, history merge and totals, slash commands.
 * A character's journey: distance on foot and in all (walking, riding,
   flying, swimming, as a ghost, in combat with the speed hidden), level-up,
   the bookkeeping of /played, and the real-world totals - which include the
   session in progress, count no walk twice and do not shrink when the
   history is pruned or the companion's file drops old walks
-  (test_journey.py). Every fifth redraw of the beacon carries one of these
-  numbers as a stat frame, never two in a row, and a whole round read off
-  the screen decodes to the journey with the companion's decoder
-  (test_stat_frames.py).
+  (test_journey.py). At logout they are saved with the journey for the
+  companion (test_saved_file.py).
 * The addon has no windows of its own (the app shows everything): every
   file in the TOC loads, the session is worked from slash commands and the
   game's AddOns menu, and the commands of the windows it once had point to

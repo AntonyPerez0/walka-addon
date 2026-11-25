@@ -2,26 +2,28 @@
 //
 // Pure functions from a snapshot to what the page should say: what the belt
 // is doing and what Walka makes of it, as a headline with the next thing to
-// do, and the health of each link (treadmill, game signal, heart-rate sensor,
-// addon). No DOM in here.
+// do, and the health of each link (treadmill, the game's saved file,
+// heart-rate sensor, addon). No DOM in here.
 //
 // Walka only listens to the treadmill, so nothing here is something Walka
 // does to the belt: the belt is started, stopped and set at the treadmill.
+// Nothing about the game is live either: Walka reads what the game saved
+// (at logout or /reload), and files walks under the game's sessions then.
 
 import { fmt, sentence } from "./util.js";
 
 const PAD_ADVICE =
   "Switch the treadmill on and close its own phone app - most treadmills accept only one Bluetooth connection. No pairing in the computer's Bluetooth settings is needed.";
-const WINDOW_ADVICE = "Bring the game window to the front; nothing may cover its top-left corner.";
-const NOT_FILED = "Screen reading is off, so walks are not filed under a game session.";
+const FILED_LATER =
+  "Walks are filed under the game's sessions when the game saves its file: when you log out or type /reload.";
 
 /** What a walk is filed under. ("manual": walks recorded by a version that had dashboard sessions.) */
-export const SOURCE_LABEL = { wow: "World of Warcraft", free: "No game session", manual: "Manual session" };
+export const SOURCE_LABEL = { wow: "In game", free: "No game session", manual: "Manual session" };
 
-/** What the walk being recorded is filed under, as shown next to the state. */
-export function sourceLabel(s) {
-  if (s.session) return SOURCE_LABEL[s.session.source] || "";
-  return s.source.kind === "wow" ? SOURCE_LABEL.wow : "";
+/** A walk of the history, in a few words: "In game · Thrall". */
+export function walkLabel(walk) {
+  const label = SOURCE_LABEL[walk.source] || walk.source || "";
+  return walk.character ? `${label} · ${walk.character}` : label;
 }
 
 // ---- links -----------------------------------------------------------------------
@@ -66,80 +68,50 @@ export function treadmillHealth(s) {
   };
 }
 
+function plural(count, one, many) {
+  return `${fmt.int(count)} ${count === 1 ? one : many}`;
+}
+
+/** The game's saved file: whether it was found, and when the game last wrote it. Never live. */
 export function gameHealth(s) {
-  const beacon = s.source.beacon;
-  if (!beacon) {
+  const game = s.game;
+  if (!game) {
+    return { tone: "idle", pill: "unknown", state: "unknown", detail: FILED_LATER };
+  }
+  if (game.demo) {
     return {
-      tone: "idle",
-      pill: "off",
-      state: "off",
-      detail:
-        "Screen reading is switched off (the companion was started with --no-capture). Walks are still recorded, just not filed under a game session.",
+      tone: "ok",
+      pill: "demo",
+      state: "demo",
+      detail: "This is the demo: its game sessions and characters are made up, and no game is read.",
     };
   }
-  const age = beacon.age_s;
-  const ageText =
-    age == null
-      ? ""
-      : age < 10
-        ? `${age.toFixed(1)} s`
-        : age < 120
-          ? `${Math.round(age)} s`
-          : `${Math.round(age / 60)} min`;
-  let health;
-  switch (beacon.state) {
-    case "ok":
-      health = { tone: "ok", pill: "live", state: `live · ${ageText}`, detail: "" };
-      break;
-    case "frozen":
-      health = {
-        tone: "warn",
-        pill: "frozen",
-        state: `frozen · ${ageText}`,
-        detail: "The game picture is visible but not updating - usually a loading screen. It recovers by itself.",
-      };
-      break;
-    case "game_closed":
-      health = {
-        tone: "idle",
-        pill: "closed",
-        state: "game closed",
-        detail: "The game was closed, so its session has ended.",
-      };
-      break;
-    case "error":
-      health = {
-        tone: "bad",
-        pill: "error",
-        state: "error",
-        // (On a Mac the reason says which switch in System Settings it is.)
-        detail: /System Settings/.test(beacon.detail || "")
-          ? sentence(beacon.detail)
-          : `${sentence(beacon.detail || "screen capture is unavailable")} Restart the companion on the same desktop as the game.`,
-      };
-      break;
-    case "starting":
-      health = { tone: "idle", pill: "starting", state: "starting", detail: "Starting to watch the screen." };
-      break;
-    default:
-      if (!beacon.frames) {
-        health = {
-          tone: "idle",
-          pill: "waiting",
-          state: "not seen yet",
-          detail:
-            "No signal yet. Start World of Warcraft, enable the Walka addon (AddOns button on the character screen), and run the game windowed or borderless with the top-left corner of its window visible.",
-        };
-      } else {
-        health = {
-          tone: "warn",
-          pill: "lost",
-          state: ageText ? `lost · ${ageText}` : "lost",
-          detail: `The signal is not visible: the game is minimised, covered, or on a loading screen. ${WINDOW_ADVICE}`,
-        };
-      }
+  if (game.files > 0) {
+    const ago = game.saved_at == null ? "" : ` ${fmt.ago(s.time - game.saved_at)}`;
+    const held = `${plural(game.sessions, "game session", "game sessions")} and ${plural(game.characters, "character", "characters")}`;
+    return {
+      tone: "ok",
+      pill: "found",
+      state: `saved${ago}`,
+      detail: `The game last saved Walka's file${ago}, with ${held}. ${FILED_LATER}`,
+    };
   }
-  return health;
+  if (game.game_found) {
+    return {
+      tone: "idle",
+      pill: "no file yet",
+      state: "no saved file yet",
+      detail:
+        "World of Warcraft is on this computer, but it has not saved Walka's file yet. It does when you log out or type /reload with the Walka addon on. Walks are recorded all the same, and filed under the game's sessions once it has.",
+    };
+  }
+  return {
+    tone: "idle",
+    pill: "not found",
+    state: "game not found",
+    detail:
+      "World of Warcraft was not found on this computer, so walks are not filed under a game session. They are recorded all the same. If the game is somewhere unusual, set its AddOns folder in Settings.",
+  };
 }
 
 export function heartHealth(s) {
@@ -299,23 +271,14 @@ export function describe(s) {
     return { tone: "warn", icon: "warn", title: "No data from the treadmill", short: "No data", detail: link.detail };
   }
 
-  const inGame = s.source.kind === "wow"; // a walking session is marked in the game, and in view
-  const frame = s.source.frame;
-
   if (t.moving) {
-    let detail;
-    if (s.session && s.session.source === "wow") {
-      detail = "The belt is moving, and Walka counts the walk for the session marked in World of Warcraft.";
-      if (inGame && frame && frame.paused) {
-        detail += " That session is paused in game; the walk is recorded all the same.";
-      }
-    } else if (s.source.beacon) {
-      detail =
-        "The belt is moving. No session is marked in a game, so the walk is recorded on its own. In World of Warcraft the session starts by itself when you log in (or click Walka in the game's AddOns menu).";
-    } else {
-      detail = `The belt is moving. ${NOT_FILED}`;
-    }
-    return { tone: "ok", icon: "go", title: "Recording your walk", short: "Recording", detail };
+    return {
+      tone: "ok",
+      icon: "go",
+      title: "Recording your walk",
+      short: "Recording",
+      detail: `The belt is moving, and Walka records the walk from the treadmill. ${FILED_LATER}`,
+    };
   }
 
   if (t.state === "starting") {
@@ -338,7 +301,8 @@ export function describe(s) {
     };
   }
 
-  if (s.session && s.session.source === "free") {
+  if (s.session) {
+    // (A walk being recorded is always on its own: the game session it was in is known later.)
     return {
       tone: "idle",
       icon: "idle",
@@ -348,26 +312,12 @@ export function describe(s) {
         "The walk stays open for about a minute: start the belt again at the treadmill and it carries on. Otherwise it is saved as it is.",
     };
   }
-  if (inGame || s.session) {
-    return {
-      tone: "idle",
-      icon: "idle",
-      title: "The belt is standing still",
-      short: "Standing still",
-      detail:
-        "A walking session is marked in World of Warcraft. Start the belt with the treadmill's own remote - Walka records the walk and counts it for your character.",
-    };
-  }
   return {
     tone: "idle",
     icon: "idle",
     title: "Ready",
     short: "Ready",
-    detail: `Start the belt with the treadmill's own remote - Walka records the walk by itself. ${
-      s.source.beacon
-        ? "In World of Warcraft the session starts by itself when you log in, and the walk counts for your character."
-        : NOT_FILED
-    }`,
+    detail: `Start the belt with the treadmill's own remote - Walka records the walk by itself. ${FILED_LATER}`,
   };
 }
 
@@ -383,11 +333,10 @@ export const OFFLINE = {
 
 /** The four first-run steps, ticked from the snapshot. */
 export function setupSteps(s) {
-  const beacon = s.source.beacon;
   return {
     treadmill: !!s.treadmill.connected,
     addon: !!s.addon.dir,
-    game: !!(beacon && beacon.frames > 0),
+    game: !!(s.game && s.game.files > 0), // the game's saved file was found (optional)
     profile: !!(s.setup && s.setup.profile_set),
   };
 }

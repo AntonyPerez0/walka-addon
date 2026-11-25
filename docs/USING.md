@@ -11,8 +11,9 @@
   the dashboard, and in a small floating window on top of the game while
   you play. A walk is recorded
   whenever the belt moves, with a game or without.
-- 🧙 **Your walks, per character.** Start a session in the game and the
-  walk counts for the character you are playing.
+- 🧙 **Your walks, per character.** Play with the addon and the walk
+  counts for the character you are playing - filed under it once the game
+  has saved, when you log out or type `/reload`.
 - 🗺️ **Your road on the map.** The path your character has travelled,
   drawn on the map of the world on the dashboard's Share picture -
   brightest where you really walked.
@@ -20,9 +21,10 @@
   your own computer. You choose what is on it and where it goes.
 - 🔒 **Stays on your computer.** Nothing is uploaded unless you sign in to
   [your Walka account (on walka.dev)](WALKA-ACCOUNT.md#your-walka-account-on-walkadev) and
-  switch sending on yourself. Walka never presses keys, moves the mouse or
-  reads the game's memory - it looks at the top-left corner of the game
-  window ([what it looks at, exactly](HOW-IT-WORKS.md#what-walka-looks-at)).
+  switch sending on yourself. Walka never presses keys, moves the mouse,
+  reads the game's memory or looks at your screen - it reads only the file
+  the game saves for its addon
+  ([what it looks at, exactly](HOW-IT-WORKS.md#what-walka-looks-at)).
 
 <p align="center">
   <img src="images/share-card.jpg" width="360" alt="A Share picture: real-world steps and miles walked, the character's level, time played, and the road it travelled on a map of the world">
@@ -67,9 +69,8 @@ Everything below is the long version, for when you want it.
 Log in to the game with the addon: a walking session starts by itself for
 the character you are playing (a chat line says so). Step onto the pad and
 start the belt with the treadmill's remote, at whatever speed you like.
-The addon draws nothing in game but the signal strip: the walk is on the
-dashboard, and in the [floating window](#the-floating-window) if you
-switch it on.
+The addon draws nothing on the screen: the walk is on the dashboard, and
+in the [floating window](#the-floating-window) if you switch it on.
 
 The session that starts by itself counts nothing on its own: Walka cannot
 see the pad from inside the game. It only says whose walks are walked now;
@@ -79,12 +80,24 @@ walk is no walk.
 The companion records the walk from what the treadmill reports. A walk is
 whatever the belt does:
 
-* it is counted while the belt moves, and not while it stands still;
-* with a session running in the game it is filed under that session, and
-  so under your character;
-* with no session - another game, no game at all - it is recorded all the
-  same, as a walk of its own (*No game session* in the dashboard's
-  history).
+* it is counted while the belt moves, and not while it stands still; when
+  the belt has stood still for a minute, the walk is over and saved;
+* the game tells the companion nothing while it runs. The addon keeps its
+  sessions in its saved file, which the game writes when you log out, type
+  `/reload` or are disconnected. The companion reads that file, and a walk
+  that overlaps a session there (for at least half of the shorter of the
+  two) is filed under that session, and so under your character. Until
+  then the walk is listed under *No game session*;
+* with no session at all - another game, no game - it is recorded all the
+  same, as a walk of its own, and stays under *No game session*.
+
+The dashboard says when the game last saved its file. It does not show
+what goes on in the game from moment to moment - whether the session is
+paused, how your character is moving - because it no longer sees the game
+while it runs. If the game crashes, the sessions since its last save are
+lost and the walk stays under *No game session*; the walk itself is
+recorded all the same. `Walka.exe game` (`Walka game` on a Mac) prints
+what the game has saved for Walka.
 
 **Pause** the session by clicking *Walka* in the game's AddOns menu (by
 the minimap) - click again to carry on - and right-click it to stop it
@@ -112,7 +125,6 @@ nothing on the dashboard, which always shows what the treadmill measured.
 | `/walka road on` \| `off` | record your character's road for the Share picture, or stop |
 | `/walka weight 180lb` · `/walka height 5'11` | your body, if you do not run the companion |
 | `/walka units mph` \| `kmh` | units of the addon's chat messages |
-| `/walka beacon on` \| `off` \| `size 2-8` | the signal strip |
 
 ### The floating window
 
@@ -125,12 +137,13 @@ addon used to draw in game, but its numbers are measured, live, rather
 than estimated.
 
 * **Drag it** anywhere; it opens there next time. It first opens in the
-  top-right corner of the screen - keep it away from the top-left corner
-  of the game, where the strip is that Walka reads.
+  top-right corner of the screen.
 * **Its ×** closes it (the setting goes off with it).
 * **Clicking it** does not take the keyboard from the game.
 * It shows over the game when the game runs in *Windowed* or *Windowed
-  (Fullscreen)* mode - as it has to for Walka to see the game at all.
+  (Fullscreen)* mode. Nothing can be drawn over a game in exclusive
+  fullscreen - Walka works all the same, but the panel is hidden behind
+  the game.
 * It needs Walka's own window: started with `--browser` or `--no-window`,
   or with its dashboard in the web browser, Walka has no floating window.
 
@@ -191,10 +204,10 @@ reached, its time played and how far it has travelled on foot - and next to
 that the real walking *you* did while playing it. The dashboard's
 **Share** page shows it, and turns it into a picture you can post.
 
-1. Log in with the companion running. The character's numbers reach the
-   companion within about ten seconds (over the same strip as everything
-   else) and are remembered there, so the picture can also be made later,
-   with the game closed.
+1. Play with the addon, then log out or type `/reload`: the game saves
+   the character's numbers in the addon's file, and the companion reads
+   them within a few seconds. It remembers them, so the picture can also
+   be made later, with the game closed.
 2. Dashboard → *Share*. Pick the character if you have several, change the
    words, tick what should be on the picture, and choose a theme (Sapphire,
    Ember, Wildwood, Frost or Parchment) and a size: portrait 1080×1350,
@@ -212,7 +225,7 @@ What is on it:
 | **Time played** | The game's own `/played` for this character. |
 | **Character steps** | How far the character has gone on foot since Walka began tracking it, as steps, with the in-game distance under it. |
 | **Calories** | The same estimate as everywhere else in Walka (see [Calories and steps](#calories-and-steps)), rounded. |
-| *Totals through ...* | The day the numbers were last received from the game. |
+| *Totals through ...* | The day the game last saved the numbers (at a logout or `/reload`). |
 
 A `~` in front of a number means "about":
 
@@ -225,8 +238,9 @@ A `~` in front of a number means "about":
   installed, not from level 1.
 * **Calories** are always an estimate.
 * **Your own steps** carry a `~` only while part of them is still the
-  addon's estimate, until the game has loaded what the treadmill measured
-  (*Sync*, or the next login).
+  addon's estimate: until the addon has had what the treadmill measured
+  (the game loads it at a login or `/reload` after the walk was filed
+  under your character) and the game has saved the numbers again.
 
 ### The road on the picture
 
@@ -276,13 +290,13 @@ of the world (it is no part of that world, so it is not drawn to its
 scale), with the passage from it - the airship - as a dashed arc. The
 picture shows the three lands with the most road.
 
-The road is far too much for the strip on the screen, so it takes the slow
-way: **the game saves it when you log out or type `/reload`**, and the
+The road reaches the companion the way everything from the game does:
+**the game saves it when you log out or type `/reload`**, and the
 companion reads it from the game's own file
 (`WTF\Account\...\SavedVariables\Walka.lua` in the game's folder). So the
-road on the picture is as of your last logout or `/reload` - the Share page
-says when that was - while the numbers next to it are live. Type `/reload`
-before you make the picture and both are current.
+road on the picture, like the numbers next to it, is as of your last logout
+or `/reload` - the Share page says when that was. Type `/reload` before you
+make the picture and it is current.
 
 The companion has to know where the game is for this; it does when the
 addon is installed (*Settings → Game addon*). The file is only ever read, never
@@ -297,8 +311,9 @@ Private by default:
   the names of the continents (or of another land your road is on, such as
   Zephras Isle) - no zones, no place names, no coordinates.
 * Your character's name, and the small line with your weight and average
-  pace, are **off** until you tick them. The realm never leaves the game:
-  the companion is only sent a number that tells your characters apart.
+  pace, are **off** until you tick them. The realm is in the game's file,
+  but the companion only uses it to tell your characters apart: it is
+  never shown, kept or sent.
 * The downloaded file is named after the date, never after the character.
 * The design is Walka's own and is drawn by the page itself: no game
   artwork, logos or fonts are used. The continents on the map are Walka's

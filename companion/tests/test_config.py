@@ -21,7 +21,7 @@ def test_defaults():
     assert config.treadmill.name_prefixes == ["URTM", "WELLFIT TM Linker"]
     assert config.treadmill.auto_connect is True
     assert config.heart_rate.enabled is False
-    assert config.wow.origin is None and config.wow.addon_dir == "" and config.wow.capture_fps == 15.0
+    assert config.wow.addon_dir == "" and set(config.to_dict()["wow"]) == {"addon_dir"}  # nothing reads the screen
     assert config.web.host == "127.0.0.1" and config.web.port == 8787  # local only
     json.dumps(config.to_dict())
 
@@ -35,7 +35,7 @@ def test_there_is_nothing_to_set_about_the_belt():
     assert set(Config().to_dict()["overlay"]) == {"enabled", "step_goal", "x", "y"}  # a window, and where it is
     assert set(Config().to_dict()["treadmill"]) == {"kind", "address", "name_prefixes", "units", "auto_connect"}
     # (heart_rate: the port of heart rate over the local network.)
-    assert {section for section, _name in _BOUNDS} == {"profile", "wow", "web", "overlay", "heart_rate"}
+    assert {section for section, _name in _BOUNDS} == {"profile", "web", "overlay", "heart_rate"}
 
 
 def test_defaults_are_inside_their_own_bounds():
@@ -70,23 +70,21 @@ def test_every_bounded_field_is_clamped(section: str, name: str):
 def test_a_typo_cannot_put_nonsense_into_the_numbers():
     config = apply_update(
         Config(),
-        {"profile": {"weight_kg": 7500, "height_cm": 1.72, "step_calibration": 100}, "wow": {"capture_fps": 0}},
+        {"profile": {"weight_kg": 7500, "height_cm": 1.72, "step_calibration": 100}},
     )
     assert config.profile.weight_kg == 250.0 and config.profile.height_cm == 120.0
     assert config.profile.step_calibration == _BOUNDS[("profile", "step_calibration")][1]
-    assert config.wow.capture_fps == 2.0
 
 
 @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
 def test_non_finite_numbers_are_made_safe(bad: float):
     config = apply_update(
         Config(),
-        {"profile": {"weight_kg": bad, "height_cm": bad}, "wow": {"capture_fps": bad}, "web": {"port": bad}},
+        {"profile": {"weight_kg": bad, "height_cm": bad}, "web": {"port": bad}},
     )
     lo, hi = _BOUNDS[("profile", "weight_kg")]
     assert lo <= config.profile.weight_kg <= hi
     assert 120.0 <= config.profile.height_cm <= 230.0
-    assert 2.0 <= config.wow.capture_fps <= 60.0
     assert isinstance(config.web.port, int) and 1 <= config.web.port <= 65535
 
 
@@ -119,9 +117,8 @@ def test_bad_types_are_ignored_and_leave_the_defaults(patch: dict):
 def test_numeric_strings_and_ints_are_coerced():
     config = apply_update(
         Config(),
-        {"wow": {"capture_fps": "20.5"}, "web": {"port": "9000"}, "profile": {"weight_kg": 80, "height_cm": "181"}},
+        {"web": {"port": "9000"}, "profile": {"weight_kg": 80, "height_cm": "181"}},
     )
-    assert config.wow.capture_fps == 20.5 and isinstance(config.wow.capture_fps, float)
     assert config.profile.height_cm == 181.0 and isinstance(config.profile.height_cm, float)
     assert config.web.port == 9000 and isinstance(config.web.port, int)
     assert config.profile.weight_kg == 80.0 and isinstance(config.profile.weight_kg, float)
@@ -155,12 +152,12 @@ def test_unknown_keys_are_ignored():
         Config(),
         {
             "surprise": 1,
-            "wow": {"capture_fps": 20.0, "warp_factor": 9},
+            "wow": {"addon_dir": "here", "warp_factor": 9},
             "profile": {"shoe_size": 44},
             "new_section": {"a": 1},
         },
     )
-    assert config.wow.capture_fps == 20.0
+    assert config.wow.addon_dir == "here"
     data = config.to_dict()
     assert "surprise" not in data and "new_section" not in data
     assert "warp_factor" not in data["wow"] and "shoe_size" not in data["profile"]
@@ -176,10 +173,10 @@ def test_enumerated_settings_fall_back_when_invalid():
 def test_partial_updates_leave_everything_else_alone():
     config = Config()
     apply_update(config, {"profile": {"weight_kg": 82.5}})
-    apply_update(config, {"wow": {"capture_fps": 30.0}})
+    apply_update(config, {"wow": {"addon_dir": "here"}})
     apply_update(config, {})
     assert config.profile.weight_kg == 82.5 and config.profile.height_cm == 172.0
-    assert config.wow.capture_fps == 30.0 and config.wow.origin is None
+    assert config.wow.addon_dir == "here"
 
 
 def test_update_mutates_the_profile_object_in_place():
@@ -222,32 +219,14 @@ def test_unknown_sex_values_are_refused(sex):
     assert config.profile.sex == "male"
 
 
-def test_capture_origin_can_be_set_and_cleared():
-    config = Config()
-    apply_update(config, {"wow": {"origin": [1920, 0]}})
-    assert config.wow.origin == [1920, 0]
-    apply_update(config, {"wow": {"origin": [-1280, 300]}})  # a monitor to the left
-    assert config.wow.origin == [-1280, 300]
-    apply_update(config, {"wow": {"origin": None}})
-    assert config.wow.origin is None
-
-
-@pytest.mark.parametrize(
-    "origin", ["0,0", 5, [1], [1, 2, 3], ["a", "b"], {"x": 1, "y": 2}, [None, None], [1.5e400, 0], True]
-)
-def test_malformed_capture_origin_is_refused(origin):
-    """It ends up as screen coordinates for the capture thread: anything but
-    two numbers would break (or silently disable) reading the beacon."""
-    config = apply_update(Config(), {"wow": {"origin": origin}})
-    assert config.wow.origin is None
-    config = apply_update(Config(), {"wow": {"origin": [10, 20]}})
-    apply_update(config, {"wow": {"origin": origin}})
-    assert config.wow.origin == [10, 20]
-
-
-def test_capture_origin_is_stored_as_whole_pixels():
-    config = apply_update(Config(), {"wow": {"origin": [10.0, "20"]}})
-    assert config.wow.origin == [10, 20] and all(isinstance(v, int) for v in config.wow.origin)
+def test_the_screen_settings_of_earlier_versions_are_ignored():
+    """Up to 0.10 the app read the addon's strip off the screen, at a frame
+    rate and - for odd setups - from a corner given by hand. Nothing reads
+    the screen now: a config that still has them loads, and they are gone."""
+    config = apply_update(Config(), {"wow": {"capture_fps": 30.0, "origin": [1920, 0], "addon_dir": "here"}})
+    assert config.wow.addon_dir == "here"
+    assert not hasattr(config.wow, "capture_fps") and not hasattr(config.wow, "origin")
+    assert config.to_dict()["wow"] == {"addon_dir": "here"}
 
 
 @pytest.mark.parametrize("prefixes", ["URTM", 5, [1, 2], [["URTM"]], {"a": 1}, [None]])
@@ -293,7 +272,7 @@ def test_save_load_round_trip(tmp_path: Path):
             "profile": {"weight_kg": 68.5, "height_cm": 181.0, "age": 33, "sex": "female"},
             "treadmill": {"address": "AA:BB:CC:DD:EE:FF", "units": "mph", "auto_connect": False},
             "heart_rate": {"enabled": True, "address": "11:22", "name": "HRM-Dual"},
-            "wow": {"addon_dir": r"C:\Games\WoW\_forever_\Interface\AddOns\Walka", "origin": [100, 50]},
+            "wow": {"addon_dir": r"C:\Games\WoW\_forever_\Interface\AddOns\Walka"},
             "web": {"port": 9123, "open_browser": False},
         },
     )
@@ -346,7 +325,7 @@ def test_hand_edited_file_with_out_of_range_and_junk_values(tmp_path: Path):
     assert config.profile.weight_kg == 250.0 and config.profile.height_cm == 172.0 and config.profile.age is None
     assert isinstance(config.web.port, int) and 1 <= config.web.port <= 65535
     assert config.web.host == "127.0.0.1", "anything that is not this computer itself is refused"
-    assert config.wow.capture_fps == 60.0 and config.wow.origin is None
+    assert config.to_dict()["wow"] == {"addon_dir": ""}
     assert config.treadmill.name_prefixes == ["URTM", "WELLFIT TM Linker"]
 
 

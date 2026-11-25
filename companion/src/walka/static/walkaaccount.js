@@ -119,7 +119,7 @@ const REFUSAL = {
 // The question that stands before sending. Every switching-on passes it.
 const QUESTION = {
   title: "Send my walks to my Walka account?",
-  goes: "What goes, of each walk: when it started and ended, the day, and how far this computer's clock was from world time; how long the belt moved; distance, steps and calories (estimates), and how many of the calories were on top of sitting; how each number was come by (for the calories: from speed or from heart rate - the word, not the heart rate); whether a walking session was running in the game; and the walk's name on this computer, which is its start time. Each walk goes under a random number made for it, and says that it came from Walka.",
+  goes: "What goes, of each walk: when it started and ended, the day, and how far this computer's clock was from world time; how long the belt moved; distance, steps and calories (estimates), and how many of the calories were on top of sitting; how each number was come by (for the calories: from speed or from heart rate - the word, not the heart rate); whether the walk was filed under a session in the game when it went (the game says so only when it saves, at a logout or /reload); and the walk's name on this computer, which is its start time. Each walk goes under a random number made for it, and says that it came from Walka.",
   stays:
     "What stays here: the samples, the heart rate, the top speed, the treadmill's name, the character, your weight, height, age and sex.",
   where: (host) => `Where: your Walka account, in the database the site's owner runs (${host}).`,

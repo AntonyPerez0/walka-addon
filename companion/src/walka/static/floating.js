@@ -14,18 +14,13 @@ const STALE_AFTER_MS = 3000;
 let lastMessageAt = 0;
 let snapshot = null;
 
-/** What the panel's header says: [state, words]. */
+/** What the panel's header says: [state, words]. From the treadmill alone. */
 function headline(s) {
-  const walk = s.session;
-  const frame = s.source && s.source.beacon && s.source.beacon.state === "ok" ? s.source.frame : null;
   const t = s.treadmill;
   if (!t.connected) return ["off", t.want_connected ? "Looking for the treadmill" : "No treadmill"];
-  // (A session in the game now runs from login on: "walking" is the belt.)
-  if (t.moving) {
-    if (frame && frame.active && frame.paused) return ["paused", "Paused in game"];
-    return ["walking", walk && walk.source === "wow" ? "Walking" : "Walking - no game session"];
-  }
-  if (frame && frame.active) return ["off", frame.paused ? "Paused in game" : "Ready - start the belt"];
+  if (t.moving) return ["walking", "Walking"];
+  if (t.state === "starting") return ["off", "Counting down"];
+  if (t.state === "paused") return ["paused", "Paused at the treadmill"];
   return ["off", "Belt stopped"];
 }
 

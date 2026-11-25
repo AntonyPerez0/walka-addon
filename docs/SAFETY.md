@@ -80,11 +80,12 @@ that moved the belt are gone:
   value and switch notifications on. It has no write. The treadmill reader
   built on it (`Treadmill` in `treadmill/base.py`) can connect and
   disconnect, and nothing else.
-* **Nothing the game shows reaches the treadmill.** The strip in the
-  corner of the game window says one thing the companion uses: which
-  walking session of which character a walk is filed under. The old "belt
-  speed wanted" field of the strip is always zero now, and a companion
-  ignores it whatever an older addon puts there.
+* **Nothing the game saves reaches the treadmill.** The addon's saved
+  file, which the game writes at a logout or `/reload`, says one thing the
+  companion uses for the walk: which walking session of which character it
+  is filed under - after the walk, never while it runs. (Until 0.10 the
+  addon drew a strip of squares on the screen for the companion; a field
+  in it once asked for a belt speed. The strip is gone.)
 * **Nothing the dashboard does reaches the treadmill either.** Its buttons
   connect and disconnect the companion, change settings, install the addon,
   delete walks, sign Walka in to a Walka account and out of it, and switch
@@ -97,22 +98,27 @@ adapter have no method that could write; that no command builder exists;
 that an emulated treadmill which records every byte written to it has
 recorded none after long runs of everything the game, the dashboard and
 the radio can do; and that a belt does the same, tick for tick, whether or
-not a companion is listening to it and whatever the game shows meanwhile.
+not a companion is listening to it and whatever the game saves meanwhile.
 
 ## What the addon does
 
-The addon in the game does not move anything either - it never could; it
-only ever drew the strip.
+The addon in the game does not move anything either - it never could. It
+cannot reach the companion while the game runs at all: what it keeps, the
+game writes to a file at a logout or `/reload`, and the companion reads
+that.
 
 * A walking session - which starts by itself at login, or with
-  `/walka start` - says "the walks now are this character's". The
-  companion files the walk it records under that session. Clicking
+  `/walka start` - says "the walks now are this character's". Once the
+  game has saved it, the companion files the walk it recorded under that
+  session. Clicking
   *Walka* in the game's AddOns menu pauses it.
-* The addon has no windows: it draws only the strip. The numbers it keeps
-  for the character's journey are estimates, counted from the pace you
-  tell it (`/walka pace`): an addon cannot be told what the treadmill is
-  really doing while the game runs. What the treadmill measured replaces
-  them after the next `/reload` or login.
+* The addon has no windows and draws nothing on the screen. The numbers
+  it keeps for the character's journey are estimates, counted from the
+  pace you tell it (`/walka pace`): an addon cannot be told what the
+  treadmill is really doing while the game runs. What the treadmill
+  measured replaces them once the walk has been filed under the session
+  and the game has loaded the companion's file, at a later login or
+  `/reload`.
 * The companion's floating window shows the walk on top of the game. It
   is a window like any other: it shows numbers, and has no button for the
   belt.

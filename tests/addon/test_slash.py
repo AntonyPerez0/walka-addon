@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import pytest
-from walka import beacon
 
 from .conftest import DEFAULT_PACE_KMH, KMH_PER_MPH
 from .harness import lua_plain
@@ -216,7 +215,6 @@ def test_pace_sets_what_walka_counts_with(rt, units, text, kmh, said):
     rt.slash("/walka start")
     rt.tick(300)
     assert rt.walka.GetSession(rt.walka).distanceM == pytest.approx(kmh / 3.6 * 30)
-    assert rt.live_frame().target_raw == 0, "the pace is not sent anywhere"
 
 
 @pytest.mark.parametrize(
@@ -259,35 +257,21 @@ def test_the_commands_that_set_belt_speeds_are_gone(rt):
     assert settings(rt) == before
 
 
-# ---- beacon ---------------------------------------------------------------------------
+# ---- the strip of earlier versions --------------------------------------------------------
 
 
-def test_beacon_on_off(rt):
-    rt.slash("/walka beacon off")
-    assert settings(rt)["beacon"]["enabled"] is False and "beacon off" in last(rt)
-    rt.slash("/walka beacon ON")
-    assert settings(rt)["beacon"]["enabled"] is True and "beacon on" in last(rt)
+@pytest.mark.parametrize("text", ["beacon", "beacon off", "beacon on", "beacon size 4"])
+def test_the_beacon_command_says_that_nothing_is_drawn_any_more(rt, text):
+    before = settings(rt)
+    rt.slash("/walka " + text)
+    assert "no longer draws anything on the screen" in last(rt)
+    assert settings(rt) == before
+    assert "beacon" not in settings(rt)
 
 
-@pytest.mark.parametrize("text, size", [("2", 2), ("5", 5), ("8", 8), ("1", 2), ("99", 8), ("3.4", 3), ("0", 2), ("-4", 2)])
-def test_beacon_size(rt, text, size):
-    rt.slash("/walka beacon size " + text)
-    assert settings(rt)["beacon"]["cellPx"] == size
-    assert f"{size} px" in last(rt)
-    rt.tick()
-    assert beacon.decode_row(rt.render_beacon_row(0)).cell_px == pytest.approx(size, abs=0.02)
-
-
-@pytest.mark.parametrize("text", ["", "size", "size big", "bigger", "size nan", "size -nan", "size inf", "size 1e999", "size 0x"])
-def test_bad_beacon_arguments_leave_a_working_beacon(rt, text):
-    rt.slash("/walka beacon " + text)
-    size = settings(rt)["beacon"]["cellPx"]
-    assert size == size and 2 <= size <= 8, "the stored cell size must be a real number in range"
-    assert settings(rt)["beacon"]["enabled"] is True
-    rt.tick()
-    assert beacon.decode_row(rt.render_beacon_row(0)) is not None
-    # ... and the saved variables must still be writable by the client.
-    assert rt.reload().db.settings.beacon.cellPx == size
+def test_the_beacon_setting_of_an_older_version_is_dropped(make_rt):
+    old = make_rt(saved_variables={"WalkaDB": "{ settings = { beacon = { enabled = true, cellPx = 4 } } }"})
+    assert "beacon" not in settings(old)
 
 
 # ---- status, help, session commands ---------------------------------------------------------
@@ -339,9 +323,9 @@ def test_unknown_command_prints_help(rt):
     rt.slash("/walka frobnicate")
     assert len(rt.printed) >= 8
     assert all(line.startswith("|cff4fc3f7Walka|r: /walka") for line in rt.printed)
-    for word in ("start", "pace", "road", "status", "weight", "height", "units", "beacon"):
+    for word in ("start", "pace", "road", "status", "weight", "height", "units"):
         assert any(word in line for line in rt.printed), word
-    for word in ("history", "journey", "options", "hud", "/walka map"):
+    for word in ("history", "journey", "options", "hud", "/walka map", "beacon"):
         assert not any(word in line.lower() for line in rt.printed), f"the addon has no {word} any more"
     assert (
         "|cff4fc3f7Walka|r: /walka pace 1.5 - the speed your treadmill is set to, "

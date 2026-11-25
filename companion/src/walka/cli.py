@@ -20,10 +20,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from . import __version__, addon_sync, capture
+from . import __version__, addon_sync
 from . import config as config_module
-from .journey import DEMO_KEY, DemoJourney
-from .protocol import Flags, Frame, yps_to_raw
+from .journey import DEMO_KEY, demo_journey, djb2, name_of
 from .road import demo_road
 
 log = logging.getLogger("walka")
@@ -206,66 +205,33 @@ def _build_walka_account(data_dir: Path, treadmill, environ=os.environ):
     return None
 
 
-def _build_beacon(cfg: config_module.Config, *, read_screen: bool = True):
-    from .sources import BeaconSource
-
-    if not read_screen:
-        return BeaconSource(None)  # frames are injected (demo)
-
-    def make_reader() -> capture.BeaconReader:
-        capture.require_screen_access()  # (macOS: without the permission there is no game to see)
-        return capture.BeaconReader(
-            capture.MssGrabber(),
-            capture.default_window_finder(),
-            manual_origin=cfg.wow.origin,
-        )
-
-    return BeaconSource(make_reader, fps=cfg.wow.capture_fps)
-
-
 DEMO_SESSION_STARTS_AFTER_S = 2.0
-DEMO_REDRAW_S = 0.1  # the addon redraws its strip ten times a second
+DEMO_SAVES_EVERY_S = 10.0  # how often the made-up game "saves its file"
 
 
-async def _demo_character(beacon, stop: asyncio.Event) -> None:
-    """--demo: feed the beacon source a scripted character so the whole
-    pipeline can be watched without the game.
+async def _demo_game(app, stop: asyncio.Event) -> None:
+    """--demo: a made-up game for the walks to be filed under.
 
-    Like a real player it first stands there with no session, then marks
-    one in the game.
+    A real game says what it did only in its saved file, at a logout or
+    /reload. The demo's game "saves" every few seconds: one walking session,
+    marked from a moment after the start and still running, and the journey
+    of a made-up character for the Share page."""
+    from .game_file import GameSession, SavedGame
 
-    And like the addon it shows, every few redraws, one number of the
-    character's journey in place of its live state: the Share page gets a
-    made-up character to make a picture of.
-    """
-    seq = 0
-    started = time.monotonic()
-    journey = DemoJourney()
+    started = time.time() + DEMO_SESSION_STARTS_AFTER_S
+    journey = demo_journey()
     while not stop.is_set():
-        t = time.monotonic() - started
-        seq = (seq + 1) % 256
-        stat = journey.frame(seq, t)
-        if stat is not None:
-            beacon.inject(stat)
-            await asyncio.sleep(DEMO_REDRAW_S)
-            continue
-        if t < DEMO_SESSION_STARTS_AFTER_S:
-            beacon.inject(Frame(seq=seq, session=0, flags=Flags(0)))
-            await asyncio.sleep(DEMO_REDRAW_S)
-            continue
-        phase = (t - DEMO_SESSION_STARTS_AFTER_S) % 120
-        if phase < 50:
-            yps, flags = 7.0, Flags.MOVING  # running
-        elif phase < 60:
-            yps, flags = 0.0, Flags(0)  # looting
-        elif phase < 95:
-            yps, flags = 14.0, Flags.MOVING | Flags.MOUNTED
-        elif phase < 105:
-            yps, flags = 0.0, Flags.ESTIMATED
-        else:
-            yps, flags = 2.5, Flags.MOVING  # walking
-        beacon.inject(Frame(seq=seq, session=1, flags=flags | Flags.ACTIVE, char_speed_raw=yps_to_raw(yps)))
-        await asyncio.sleep(DEMO_REDRAW_S)
+        # (A real game's file says how long a running session had gone on
+        # when it was saved. The demo's says: until its next save - so that
+        # a walk that ends before then is filed under it too.)
+        until = max(time.time(), started) + DEMO_SAVES_EVERY_S
+        session = GameSession(started, until, 1, djb2(DEMO_KEY), name_of(DEMO_KEY), running=True)
+        app.game.use_demo(SavedGame((session,), (journey,)))
+        app.take_game_file()
+        try:
+            await asyncio.wait_for(stop.wait(), DEMO_SAVES_EVERY_S)
+        except asyncio.TimeoutError:
+            pass
 
 
 DEMO_WALK_STARTS_AFTER_S = 3.0
@@ -666,8 +632,9 @@ async def _run(
     from . import web
     from .app import App
     from .hr import HeartRateMonitor
+    from .window import enable_dpi_awareness
 
-    capture.enable_dpi_awareness()
+    enable_dpi_awareness()
     data_dir = _data_dir(args)
     if cfg is None:
         cfg = config_module.load(data_dir)
@@ -681,12 +648,6 @@ async def _run(
     simulate = bool(args.simulate or args.demo or replay)
 
     treadmill = _build_replay(cfg, replay) if replay else _build_treadmill(cfg, simulate)
-    if args.demo:
-        beacon = _build_beacon(cfg, read_screen=False)
-    elif args.no_capture:
-        beacon = None
-    else:
-        beacon = _build_beacon(cfg)
     heart_rate = None if simulate else HeartRateMonitor(
         enabled=cfg.heart_rate.enabled, address=cfg.heart_rate.address, name=cfg.heart_rate.name
     )
@@ -694,7 +655,6 @@ async def _run(
         cfg,
         data_dir,
         treadmill=treadmill,
-        beacon=beacon,
         heart_rate=heart_rate,
         walka_account=_build_walka_account(data_dir, treadmill),
     )
@@ -713,8 +673,8 @@ async def _run(
     runner = None
     demo_tasks: list[asyncio.Task] = []
     try:
-        if args.demo and beacon is not None:
-            demo_tasks.append(asyncio.create_task(_demo_character(beacon, stop)))
+        if args.demo:
+            demo_tasks.append(asyncio.create_task(_demo_game(app, stop)))
             demo_tasks.append(asyncio.create_task(_demo_walker(treadmill, stop)))
         await app.start()
         port = cfg.web.port
@@ -1001,95 +961,38 @@ async def _probe(args: argparse.Namespace) -> int:
     return 0
 
 
-def _frame_text(decoded) -> str:
-    """One decoded strip in words, for ``walka beacon``."""
-    stat = decoded.stat
-    if stat is not None:
-        # Every few frames the addon shows one number of the character's
-        # journey instead of its live state.
-        name = stat.stat.name if stat.stat is not None else f"number {stat.stat_id}"
-        return f"seq={stat.seq} journey {name}={stat.value}"
-    frame = decoded.frame
-    flags = ",".join(flag.name for flag in Flags if flag in frame.flags) or "-"
-    return f"seq={frame.seq} session={frame.session} char={frame.char_speed_yps:.2f} yd/s [{flags}]"
+def _game(args: argparse.Namespace) -> int:
+    """What the game has saved for Walka: the files found and what they hold."""
+    from .game_file import GameFiles
 
-
-def _beacon(args: argparse.Namespace) -> int:
-    """Diagnose screen capture: print what is decoded from the screen."""
-    capture.enable_dpi_awareness()
     cfg = config_module.load(_data_dir(args))
-    try:
-        capture.require_screen_access()
-    except capture.ScreenAccessError as exc:
-        print(f"{exc}.")
-        return 2
-    reader = capture.BeaconReader(capture.MssGrabber(), capture.default_window_finder(), manual_origin=cfg.wow.origin)
-    print("Looking for the Walka beacon (top-left corner of the game window). Ctrl+C to stop.")
-    deadline = time.monotonic() + args.seconds
-    seen = 0
-    counters: set[int] = set()
-    last_line = ""
-    window = None
-    try:
-        while time.monotonic() < deadline:
-            result = reader.read()
-            decoded = result.decoded
-            window = reader.window or window
-            if decoded is None:
-                found = reader.window
-                line = "no beacon" + (
-                    f" (game window found: {found.width}x{found.height} at {found.left},{found.top})"
-                    if found
-                    else " (game window not found)"
-                )
-            else:
-                seen += 1
-                counters.add(decoded.seq)
-                line = (
-                    f"OK via {result.where} at {result.origin} cell={decoded.cell_px:.2f}px "
-                    f"contrast={decoded.white - decoded.black} | {_frame_text(decoded)}"
-                )
-            if line != last_line:
-                print(line)
-                last_line = line
-            time.sleep(0.2)
-    except KeyboardInterrupt:
-        pass
-    finally:
-        reader.close()
-    print(f"{seen} frame(s) decoded.")
-    if seen and len(counters) < 3:
+    folders = addon_sync.game_dirs(cfg.wow.addon_dir or None)
+    if not folders:
+        print("World of Warcraft was not found. Install the Walka addon (walka install-addon), or set its folder in")
+        print("the dashboard's Settings.")
+        return 1
+    files = GameFiles(lambda: folders)
+    files.scan(force=True)
+    status = files.status()
+    if not status["files"]:
+        print("The game has not saved anything for Walka yet. It does when you log out or type /reload, with the")
+        print("Walka addon enabled (AddOns button on the character screen).")
+        return 1
+    when = time.strftime("%Y-%m-%d %H:%M", time.localtime(status["saved_at"])) if status["saved_at"] else "?"
+    print(f"The game's saved file: {status['files']} account(s), last written {when}.")
+    sessions = files.sessions()
+    print(f"  {len(sessions)} walking session(s) marked in the game.")
+    if sessions:
+        last = sessions[-1]
+        whose = f" for {last.character}" if last.character else ""
         print(
-            "The strip was read, but its counter did not move: the companion only believes a strip that ticks. "
-            "Is the game frozen, or on a loading screen?"
+            f"  The newest: {time.strftime('%Y-%m-%d %H:%M', time.localtime(last.start))} to "
+            f"{time.strftime('%H:%M', time.localtime(last.end))}{whose}"
+            + (" (still running when the game saved)." if last.running else ".")
         )
-    if not seen and window is not None:
-        _beacon_elsewhere(window)
-    return 0 if seen else 1
-
-
-def _beacon_elsewhere(window: capture.GameWindow) -> None:
-    """The game window was found but no strip at its corner. The companion
-    looks nowhere else, so say whether there is a strip somewhere else on
-    screen: that would mean the window's position is being worked out wrong
-    (worth reporting), rather than the addon not drawing."""
-    searcher = capture.BeaconReader(capture.MssGrabber(), None)
-    try:
-        result = searcher.read()
-    finally:
-        searcher.close()
-    if result.decoded is None:
-        print(
-            "No strip anywhere on screen either. Is the Walka addon enabled, and is the top-left corner of the "
-            "game window uncovered? (In game, /walka status should print a line.)"
-        )
-    else:
-        print(
-            f"A strip was found on screen at {result.origin}, but the game window's corner is at "
-            f"({window.left}, {window.top}). Walka only reads that corner, so it will not see this strip. "
-            "Please report these two positions, your display scaling and whether the game is windowed."
-            + (" (On a Mac these positions are in points, not pixels.)" if sys.platform == "darwin" else "")
-        )
+    names = ", ".join(sorted({journey.name for journey in files.journeys()})) or "none yet"
+    print(f"  Characters: {names}.")
+    return 0
 
 
 def _install_addon(args: argparse.Namespace) -> int:
@@ -1123,9 +1026,9 @@ def _install_addon(args: argparse.Namespace) -> int:
 RUNTIME_MODULES: tuple[str, ...] = (
     "aiohttp.web",
     "bleak",
-    "mss",
     "walka.web",
     "walka.probe",
+    "walka.game_file",
     "walka.treadmill.bleak_backend",
     # What asks a Walka account (walka/walka_account), every module of it.
     # aiohttp starts without "ssl" and says nothing: only naming it shows
@@ -1154,8 +1057,6 @@ WINDOWS_RUNTIME_MODULES: tuple[str, ...] = (
     "bleak.backends.winrt.scanner",
     "bleak.backends.winrt.client",
     "bleak.backends.winrt.util",
-    "mss.windows",
-    "mss.windows.gdi",
     # Walka's window: pywebview, .NET (pythonnet) and the WebView2 libraries it brings.
     "webview",
     "webview.platforms.winforms",
@@ -1164,8 +1065,6 @@ WINDOWS_RUNTIME_MODULES: tuple[str, ...] = (
 MACOS_RUNTIME_MODULES: tuple[str, ...] = (
     "bleak.backends.corebluetooth.scanner",
     "bleak.backends.corebluetooth.client",
-    "mss.darwin",
-    "walka.macos",
     # Walka's window: pywebview on WebKit.
     "webview",
     "webview.platforms.cocoa",
@@ -1386,13 +1285,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--data-dir", help="folder for config and recorded walks")
     parser.add_argument("-v", "--verbose", action="store_true", help="debug logging")
     # (The metavar lists the commands meant for people; "selfcheck" and "httpscheck" are for the build.)
-    sub = parser.add_subparsers(dest="command", metavar="{run,scan,probe,beacon,install-addon,licenses}")
+    sub = parser.add_subparsers(dest="command", metavar="{run,scan,probe,game,install-addon,licenses}")
 
     run = sub.add_parser("run", help="run the companion and its dashboard (default)")
     for target in (parser, run):
         target.add_argument("--simulate", action="store_true", help="use a simulated treadmill (no Bluetooth)")
         target.add_argument("--demo", action="store_true", help="simulated treadmill, walker AND game character")
-        target.add_argument("--no-capture", action="store_true", help="do not read the screen (walks are still recorded)")
+        # (Up to 0.10: do not read the screen. Nothing reads it now; still taken, for old shortcuts.)
+        target.add_argument("--no-capture", action="store_true", help=argparse.SUPPRESS)
         target.add_argument(
             "--browser",
             action="store_true",
@@ -1431,7 +1331,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="also save every notification heard, with its time, next to the report (for replaying)",
     )
 
-    beacon = sub.add_parser("beacon", help="check that the addon's beacon can be read off the screen")
+    sub.add_parser("game", help="show what the game has saved for Walka (its sessions and characters)")
+    # (Up to 0.10 "beacon" checked the strip on the screen. There is none now.)
+    beacon = sub.add_parser("beacon")
     beacon.add_argument("--seconds", type=float, default=30.0)
 
     install = sub.add_parser("install-addon", help="copy the Walka addon into the game's AddOns folder")
@@ -1464,8 +1366,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             return asyncio.run(_scan(args))
         if command == "probe":
             return asyncio.run(_probe(args))
+        if command == "game":
+            return _game(args)
         if command == "beacon":
-            return _beacon(args)
+            print("Walka no longer reads anything off the screen: the game tells it what it needs in its saved file.")
+            print("'walka game' shows what that file holds.")
+            return 0
         if command == "install-addon":
             return _install_addon(args)
         if command == "licenses":

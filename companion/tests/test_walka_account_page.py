@@ -66,7 +66,7 @@ GOES = (
     "What goes, of each walk: when it started and ended, the day, and how far this computer's clock was from "
     "world time; how long the belt moved; distance, steps and calories (estimates), and how many of the calories "
     "were on top of sitting; how each number was come by (for the calories: from speed or from heart rate - the "
-    "word, not the heart rate); whether a walking session was running in the game; and the walk's name on this "
+    "word, not the heart rate); whether the walk was filed under a session in the game when it went (the game says so only when it saves, at a logout or /reload); and the walk's name on this "
     "computer, which is its start time. Each walk goes under a random number made for it, and says that it came "
     "from Walka."
 )
@@ -403,7 +403,7 @@ NAMED_IN_THE_QUESTION = {
     "steps_source": "how each number was come by",
     "distance_source": "how each number was come by",
     "calories_source": "for the calories: from speed or from heart rate - the word, not the heart rate",
-    "session": "whether a walking session was running in the game",
+    "session": "whether the walk was filed under a session in the game when it went (the game says so only when it saves, at a logout or /reload)",
     "client_id": "the walk's name on this computer, which is its start time",
     "id": "Each walk goes under a random number made for it",
     "origin": "says that it came from Walka",

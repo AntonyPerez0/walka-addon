@@ -87,9 +87,9 @@ jobs:
           $version = Walka "--version"
           if ($code -ne 0 -or $version -notmatch "walka \d+\.\d+") { throw "version check failed" }
           # Everything the frozen app imports only at run time (the Windows
-          # Runtime modules behind Bluetooth, the screen capture backend,
-          # what draws its window), the dashboard page and the bundled
-          # addon. The runner has no Bluetooth adapter, so the scan below
+          # Runtime modules behind Bluetooth, what draws its window), the
+          # dashboard page and the bundled addon. The runner has no
+          # Bluetooth adapter, so the scan below
           # stops before it would touch most of these: this is what
           # notices a module missing from the bundle.
           $check = Walka "selfcheck"
@@ -117,7 +117,8 @@ jobs:
             $state = $null
             foreach ($i in 1..60) {
               Start-Sleep -Milliseconds 500
-              try { $state = Invoke-RestMethod "http://127.0.0.1:8791/api/state"; if ($state.treadmill.speed_kmh -gt 0) { break } } catch { }
+              # (The walk is recorded from the tick after the belt is first seen moving: wait for both.)
+              try { $state = Invoke-RestMethod "http://127.0.0.1:8791/api/state"; if ($state.treadmill.speed_kmh -gt 0 -and $state.session) { break } } catch { }
             }
             if (-not $state) { throw "the dashboard API did not come up" }
             # (The demo has a made-up walker who presses start on the
@@ -247,9 +248,8 @@ jobs:
           [ "$(plutil -extract CFBundleShortVersionString raw "$app/Contents/Info.plist")" = "$version" ] || fail "the application does not carry Walka's version ($version)"
           "$exe" --version || fail "version check failed"
           # Everything the frozen app imports only at run time (the
-          # CoreBluetooth modules behind Bluetooth, the screen capture
-          # backend, what it asks macOS, what draws its window), the
-          # dashboard page and the bundled addon.
+          # CoreBluetooth modules behind Bluetooth, what draws its
+          # window), the dashboard page and the bundled addon.
           "$exe" selfcheck || fail "selfcheck failed: something the app needs at run time is missing from Walka"
           # The licences of the libraries packed into the program go with it.
           "$exe" licenses > "$RUNNER_TEMP/licences.txt" || fail "Walka does not print the licences of what is packed into it"
@@ -276,7 +276,8 @@ jobs:
             sleep 0.5
             state=$(curl -fsS http://127.0.0.1:8791/api/state 2>/dev/null || true)
             speed=$(echo "$state" | python3 -c 'import json, sys; print(json.load(sys.stdin)["treadmill"]["speed_kmh"])' 2>/dev/null || echo 0)
-            if python3 -c "import sys; sys.exit(0 if float('$speed') > 0 else 1)"; then break; fi
+            # (The walk is recorded from the tick after the belt is first seen moving: wait for both.)
+            if echo "$state" | python3 -c 'import json, sys; s = json.load(sys.stdin); sys.exit(0 if s["treadmill"]["speed_kmh"] > 0 and s["session"] else 1)' 2>/dev/null; then break; fi
           done
           [ -n "$state" ] || giveup "the dashboard API did not come up"
           # (The demo has a made-up walker who presses start on the

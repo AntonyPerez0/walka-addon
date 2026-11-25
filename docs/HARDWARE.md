@@ -19,7 +19,7 @@ on.
 
 | Model | Computer | When | What was checked |
 |---|---|---|---|
-| UREVO Strol 2E (`URTM030`) | Windows 11 | November 2026 | Found and read by Walka. Speed, distance and steps on the dashboard match the pad's own display. The *Live* screen captions under Steps and Distance say *treadmill counter*: the pad sends both itself. With the game running, walks were filed under the character. |
+| UREVO Strol 2E (`URTM030`) | Windows 11 | November 2026 | Found and read by Walka. Speed, distance and steps on the dashboard match the pad's own display. The *Live* screen captions under Steps and Distance say *treadmill counter*: the pad sends both itself. With the game running, walks were filed under the character (with version 0.10, which read a strip the addon drew on the screen; filing from the game's saved file, from 0.11, has not been checked on hardware yet). |
 
 That is one pad, one owner and one computer. Not checked yet on it: the
 items under [Still unknown](#still-unknown-for-the-urtm030-specifically),
@@ -368,33 +368,26 @@ other apps; Walka does not send it, so they may not work.
 The Mac version is new. GitHub's Macs build it and run the tests, and the
 finished application is started there: it opens its window, loads the
 dashboard in it, records a walk on the simulated pad and closes down in an
-orderly way when it is told to end. It has not been tried with the game, a
-real screen or a walking pad yet - and nobody has clicked in its window.
+orderly way when it is told to end. It has not been tried with the game or
+a walking pad yet - and nobody has clicked in its window.
 
 * Bluetooth goes through macOS' CoreBluetooth (by way of bleak). macOS
   does not show a device's Bluetooth address: the "address" the companion
   stores for the pad is an identifier macOS makes up for it, different on
   every Mac. A settings file copied from a Windows PC will not find the
   pad by its address: clear *Treadmill -> address* (or press *Scan*).
-* macOS asks before a program may use Bluetooth or record the screen.
-  Walka is an application, so both are asked for, and granted to, Walka
-  (*System Settings -> Privacy & Security*) - or to Terminal, when a
-  command is run from there. The application is signed "ad hoc", with no
-  developer's name: macOS then knows it by its exact contents, and may
-  ask again for a new version. Without the
-  Bluetooth permission the scan fails; without Screen Recording macOS hands
-  over a picture with no game in it, which is why the companion asks
-  macOS first and says so on the dashboard instead of *no game signal*.
-* The screen is measured in points, and a Retina display has two pixels
-  to the point. The companion asks for every pixel, so `Walka beacon`
-  reports cell sizes in real pixels (`cell=4.00px` by default) and
-  positions in points.
-* macOS says where the game's window is, but not how tall its title bar
-  is. The strip is looked for from the window's top edge down to 48
-  points below it - a title bar is 28, and in full screen under a
-  MacBook's camera notch the picture can begin 38 down - and nowhere
-  else. If `Walka beacon` finds the window but no strip, please report
-  the two positions it prints.
+* macOS asks before a program may use Bluetooth. Walka is an
+  application, so it is asked for, and granted to, Walka (*System
+  Settings -> Privacy & Security*) - or to Terminal, when a command is run
+  from there. The application is signed "ad hoc", with no developer's
+  name: macOS then knows it by its exact contents, and may ask again for a
+  new version. Without the Bluetooth permission the scan fails. (Versions
+  up to 0.10 also needed Screen Recording, to read a strip the addon drew
+  on the screen. From 0.11 Walka does not look at the screen.)
+* The game's saved files are looked for under
+  `/Applications/World of Warcraft/_forever_/WTF/Account`, or wherever the
+  addon is installed. `Walka game`, typed in Terminal as under
+  [On a Mac](INSTALL.md#on-a-mac), says whether they were found.
 * Closing the window and *Quit* reach the companion through the window,
   which is not allowed to close until the walk is saved; logging out and
   shutting down ask the application to quit the same way. Being told to

@@ -3,7 +3,7 @@
 
 import { $, U, api, del, fmt, h, icon, run, setShown, setText, toast } from "./util.js";
 import { SessionChart, WeekChart } from "./charts.js";
-import { SOURCE_LABEL } from "./status.js";
+import { walkLabel } from "./status.js";
 import { otherAccountWalkWords, sentWalkWords } from "./walkaaccount.js";
 import { tr } from "./i18n.js";
 
@@ -111,7 +111,7 @@ function cell(value, unit, unitClass = "unit") {
 function rowLabel(walk) {
   const parts = [
     fmt.dateTime(walk.start),
-    SOURCE_LABEL[walk.source] || walk.source,
+    walkLabel(walk),
     fmt.span(walk.seconds),
     fmt.distU(walk.distance_m),
     `${fmt.int(walk.steps)} steps`,
@@ -144,6 +144,8 @@ function renderDetail(panel, walk, record) {
     fact("Distance", from(walk.distance_source, "treadmill", "from belt speed")),
     fact("Calories", walk.calories_source === "heart_rate" ? "from heart rate" : "estimate from speed"),
     fact("Treadmill", walk.treadmill || "-"),
+    // Filed under a session of the game's once its saved file showed one; the character is the one played then.
+    walk.source === "wow" && walk.character ? fact("Character", walk.character) : null,
   );
 
   const confirm = h("div", { class: "confirm", hidden: true });
@@ -252,7 +254,7 @@ function renderList() {
           "aria-label": rowLabel(walk),
         },
         h("span", { class: "when", text: fmt.dateTime(walk.start) }),
-        h("span", { class: "src", text: SOURCE_LABEL[walk.source] || walk.source }),
+        h("span", { class: "src", text: walkLabel(walk) }),
         cell(fmt.clock(walk.seconds)),
         cell(fmt.dist(walk.distance_m), U.distUnit),
         cell(fmt.int(walk.steps), "steps", "unit narrow-only"),

@@ -12,15 +12,26 @@ cannot see `==` against a plain value, truth tests or table-key use.)
 from __future__ import annotations
 
 import pytest
-from walka.protocol import Flags
 
 from .conftest import DEFAULT_PACE_KMH
-from .harness import lua_dict, lua_list, lua_plain
+from .harness import State, lua_dict, lua_list, lua_plain
+
+
+class Seen:
+    """The state after the last tick, and the character's speed as the
+    addon counts with it (a plain number, estimated while the game hides it)."""
+
+    def __init__(self, rt):
+        self.flags = rt.state()
+        self.char_speed_yps = float(rt.walka.gameState.speed)
+        self.char_speed_raw = round(self.char_speed_yps / 0.02)
+
+    def has(self, flag):
+        return flag in self.flags
 
 
 def frame(rt):
-    """The live frame on the strip (one tick later if a stat frame is showing)."""
-    return rt.live_frame()
+    return Seen(rt)
 
 
 def tick_checked(rt, count=1):
@@ -127,17 +138,17 @@ def test_combat_never_errors_and_frames_are_flagged_estimated(rt):
     rt.set(speed=7.0)
     rt.slash("/walka start")
     tick_checked(rt, 50)
-    assert not frame(rt).has(Flags.ESTIMATED)
+    assert not frame(rt).has(State.ESTIMATED)
 
     rt.enter_combat()
     tick_checked(rt, 100)
     current = frame(rt)
-    assert current.has(Flags.ESTIMATED) and current.has(Flags.MOVING)
+    assert current.has(State.ESTIMATED) and current.has(State.MOVING)
     assert rt.walka.GetGameState(rt.walka).estimated is True
 
     rt.leave_combat()
     tick_checked(rt, 5)
-    assert not frame(rt).has(Flags.ESTIMATED)
+    assert not frame(rt).has(State.ESTIMATED)
     assert rt.walka.GetGameState(rt.walka).estimated is False
 
 
@@ -149,12 +160,12 @@ def test_speed_is_zero_when_standing_and_the_remembered_run_speed_when_moving(rt
     rt.set(speed=0)                         # standing: IsPlayerMoving() is false
     tick_checked(rt, 3)
     assert frame(rt).char_speed_raw == 0
-    assert not frame(rt).has(Flags.MOVING)
+    assert not frame(rt).has(State.MOVING)
 
     rt.set(speed=5.3)                       # moving, real speed hidden (a slow, say)
     tick_checked(rt, 3)
     assert frame(rt).char_speed_yps == pytest.approx(7.0), "the estimate is the remembered run speed"
-    assert frame(rt).has(Flags.MOVING)
+    assert frame(rt).has(State.MOVING)
 
 
 def test_remembered_speeds_come_only_from_readable_samples(rt):
@@ -181,7 +192,7 @@ def test_mounted_and_swimming_estimates(rt):
     rt.set(speed=14.0, mounted=True)
     tick_checked(rt, 2)
     assert frame(rt).char_speed_yps == pytest.approx(7.0 * 1.6, abs=0.011)
-    assert frame(rt).flags & Flags.MOUNTED
+    assert frame(rt).flags & State.MOUNTED
 
     # Seen mounted out of combat: use that.
     rt.leave_combat()
@@ -196,7 +207,7 @@ def test_mounted_and_swimming_estimates(rt):
     rt.set(mounted=False, swimming=True, speed=4.0, runSpeed=7.0)
     tick_checked(rt, 2)
     assert frame(rt).char_speed_yps == pytest.approx(4.7222, abs=0.011)
-    assert frame(rt).flags & Flags.SWIMMING
+    assert frame(rt).flags & State.SWIMMING
 
 
 def test_session_keeps_working_through_combat(rt):
@@ -227,7 +238,7 @@ def test_reload_in_combat_writes_clean_saved_variables(rt):
     fresh = rt.reload()                     # the serialiser refuses secrets
     assert fresh.walka.IsActive(fresh.walka)
     tick_checked(fresh, 20)
-    assert frame(fresh).has(Flags.ESTIMATED)
+    assert frame(fresh).has(State.ESTIMATED)
 
 
 def test_login_in_combat(make_rt):
@@ -236,7 +247,7 @@ def test_login_in_combat(make_rt):
     assert rt.find_secrets() == []
     tick_checked(rt, 5)
     assert frame(rt).char_speed_yps == pytest.approx(7.0)
-    assert frame(rt).has(Flags.ESTIMATED)
+    assert frame(rt).has(State.ESTIMATED)
 
 
 @pytest.mark.parametrize(
@@ -254,7 +265,7 @@ def test_defence_in_depth(rt, state):
     rt.set(**{"statsSecret": True, **state})
     rt.slash("/walka start")
     tick_checked(rt, 30)
-    assert frame(rt).has(Flags.ESTIMATED)
+    assert frame(rt).has(State.ESTIMATED)
     assert frame(rt).char_speed_yps == pytest.approx(7.0)
     rt.set(speed=0)
     tick_checked(rt, 2)
@@ -265,7 +276,7 @@ def test_a_failing_predicate_with_readable_values_is_treated_as_hidden(rt):
     # Cautious: if the client will not say, do not touch the values.
     rt.set(speed=7.0, predicateErrors=True)
     tick_checked(rt, 3)
-    assert frame(rt).has(Flags.ESTIMATED)
+    assert frame(rt).has(State.ESTIMATED)
 
 
 def test_afk_status_hidden_by_chat_lockdown(rt):
@@ -273,7 +284,7 @@ def test_afk_status_hidden_by_chat_lockdown(rt):
     rt.slash("/walka start")
     rt.set(afk=True, chatLockdown=True)
     tick_checked(rt, 10)
-    assert not frame(rt).has(Flags.AFK), "a hidden AFK state reads as not AFK"
+    assert not frame(rt).has(State.AFK), "a hidden AFK state reads as not AFK"
     assert not rt.walka.IsPaused(rt.walka)
     rt.set(chatLockdown=False)
     tick_checked(rt, 2)

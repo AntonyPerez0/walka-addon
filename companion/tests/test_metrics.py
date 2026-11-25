@@ -262,7 +262,7 @@ def test_lua_walk_accumulates_like_the_python_recorder(lua, lua_metrics):
     profile = Profile(weight_kg=82.0, height_cm=178.0)
     lua_profile = lua.table(weightKg=profile.weight_kg, heightCm=profile.height_cm)
     totals = lua.table()
-    recorder = SessionRecorder(source="wow", beacon_session=1, treadmill="", started_at=1_000_000.0)
+    recorder = SessionRecorder(treadmill="", started_at=1_000_000.0)
 
     dt = 0.25  # exactly representable: both sides add identical floats
     script = [  # (seconds, the pace the walker told the addon, km/h)

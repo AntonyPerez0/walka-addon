@@ -14,7 +14,7 @@ from aiohttp.test_utils import TestClient, TestServer
 
 from test_app import Rig
 from walka import web
-from walka.protocol import djb2
+from walka.journey import djb2
 from walka.session import SessionRecord
 from walka.treadmill import BeltState
 
@@ -238,18 +238,19 @@ def test_responses_are_not_cached_or_sniffed(rig: Rig):
 def test_state_snapshot(rig: Rig):
     async def scenario(client: TestClient):
         await rig.connect()
-        await rig.run(1, active=False)
+        await rig.run(1)
         await rig.walk(3.2)
         await rig.run(30)
         response = await client.get("/api/state")
         assert response.status == 200
         state = await response.json()
-        assert {"version", "time", "units", "treadmill", "source", "session", "totals", "config", "events"} <= set(state)
+        assert {"version", "time", "units", "treadmill", "game", "session", "totals", "config", "events"} <= set(state)
+        assert "source" not in state, "nothing about the game is live"
         assert not {"governor", "terms", "hotkey"} & set(state)
         assert state["treadmill"]["connected"] and state["treadmill"]["kind"] == "simulated"
         assert state["treadmill"]["speed_kmh"] > 2.5 and state["treadmill"]["moving"] is True
-        assert state["source"]["kind"] == "wow" and state["source"]["frame"]["active"] is True
-        assert state["session"]["source"] == "wow"
+        assert state["game"]["files"] == 0 and state["game"]["demo"] is False
+        assert state["session"]["source"] == "free"
 
     serve(rig, scenario)
 
@@ -395,7 +396,7 @@ def test_treadmill_endpoints(rig: Rig):
         # The simulated pad's remote (--simulate, --demo): the only buttons there are.
         response = await post(client, "/api/treadmill/press", {"button": "start"})
         assert response.status == 200 and rig.treadmill.status.state is BeltState.STARTING
-        await rig.run(5, signal=False)
+        await rig.run(5)
         response = await post(client, "/api/treadmill/press", {"button": "faster"})
         assert response.status == 200 and rig.treadmill.status.target_kmh > rig.treadmill.status.min_kmh
         response = await post(client, "/api/treadmill/press", {"button": "pause"})
@@ -407,7 +408,7 @@ def test_treadmill_endpoints(rig: Rig):
 
         # Forgetting and disconnecting are never refused, and touch no belt.
         response = await post(client, "/api/treadmill/press", {"button": "start"})
-        await rig.run(5, signal=False)
+        await rig.run(5)
         response = await post(client, "/api/treadmill/forget")
         assert response.status == 200 and rig.config.treadmill.address == ""
         response = await post(client, "/api/treadmill/disconnect")
@@ -469,7 +470,7 @@ def test_config_read_and_clamped_update(rig: Rig):
             {
                 "limits": {"max_speed_kmh": 99, "accel_kmh_per_s": 50, "signal_timeout_s": 0},
                 "stop_hotkey": "f13",
-                "wow": {"capture_fps": 5000},
+                "wow": {"capture_fps": 5000, "origin": [3, 4]},
                 "profile": {"weight_kg": 82.5, "age": 41, "sex": "female"},
                 "units": "kmh",
                 "bogus": {"x": 1},
@@ -479,7 +480,7 @@ def test_config_read_and_clamped_update(rig: Rig):
         body = await response.json()
         assert body["ok"] is True
         assert "limits" not in body["config"] and "stop_hotkey" not in body["config"]  # nothing left for them to set
-        assert body["config"]["wow"]["capture_fps"] == 60.0  # clamped, not obeyed
+        assert body["config"]["wow"] == {"addon_dir": rig.config.wow.addon_dir}  # nothing to read the screen with
         assert body["config"]["profile"] == {
             "weight_kg": 82.5,
             "height_cm": 172.0,
@@ -516,7 +517,7 @@ def test_config_update_with_bad_input_never_breaks_the_settings(rig: Rig, raw: s
         assert 30.0 <= rig.config.profile.weight_kg <= 250.0
         assert isinstance(rig.config.web.port, int) and 1 <= rig.config.web.port <= 65535
         assert rig.config.profile.age is None
-        assert rig.config.wow.origin is None and rig.config.treadmill.name_prefixes == ["URTM", "WELLFIT TM Linker"]
+        assert rig.config.treadmill.name_prefixes == ["URTM", "WELLFIT TM Linker"]
         json.dumps(rig.app.snapshot())
 
     serve(rig, scenario)

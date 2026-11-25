@@ -13,14 +13,14 @@ character.
 
 It is two pieces:
 
-* **the addon** (`Walka/`) - marks your walking sessions, knows which
-  character they belong to, and sends the app your character's journey
-  and road. It draws no windows in game: it is the game's end of the
-  connection, and the app shows everything;
+* **the addon** (`Walka/`) - marks your walking sessions and knows which
+  character they belong to, and keeps your character's journey and road.
+  It draws nothing on the screen: it is the game's end of the connection,
+  and the app shows everything;
 * **the companion** (`companion/`, the `Walka.exe` you download above, or
-  `Walka` on a Mac) - a small app that reads the addon's signal off the
-  screen, listens to the treadmill over Bluetooth, records your walks, and
-  shows a live dashboard in a window of its own.
+  `Walka` on a Mac) - a small app that listens to the treadmill over
+  Bluetooth, records your walks, reads what the addon has saved, and shows
+  a dashboard in a window of its own.
 
 Neither of them moves the belt. Until version 0.6 the companion did: the
 belt followed your character. That was taken out - a motorised belt under
@@ -37,48 +37,62 @@ without any game: a walk is recorded whenever the belt moves.
 
 ```mermaid
 flowchart TB
-  addon["Walka addon<br/>in the game"] -- "draws a strip of squares;<br/>Walka reads it off the screen" --> exe["Walka.exe (Walka on a Mac)<br/>on your computer"]
+  addon["Walka addon<br/>in the game"] -- "its saved file, written by the game<br/>at logout and /reload" --> exe["Walka.exe (Walka on a Mac)<br/>on your computer"]
   pad["Walking pad"] -- "Bluetooth: speed, distance, steps<br/>(one way: Walka only listens)" --> exe
   exe -. "a file the game loads at login" .-> addon
   classDef box fill:#256abf,stroke:#256abf,color:#ffffff
   class addon,exe,pad box
 ```
 
-An addon cannot use Bluetooth, files or the network, so it *draws* its state
-as a thin strip of black and white squares in the top-left corner of the
-game window, ten times a second. The companion takes a tiny screenshot of
-that corner and decodes it. **Walka never sends input to the game** - no
-key presses, no mouse input, no memory reading.
+An addon cannot use Bluetooth, files or the network. What it can do is keep
+data in its *saved variables*, which the game writes to a file of its own
+when you log out, type `/reload`, or are disconnected. The addon keeps its
+walking sessions there - when each began and ended, and for which
+character - and the companion reads that file. **Walka never sends input to
+the game** - no key presses, no mouse input, no memory reading - and it
+does not look at the screen.
+
+The walk itself comes from the treadmill alone: the companion records it
+while the belt moves, game or no game, and ends it when the belt has stood
+still for a minute. Once the game has saved its file, a walk that overlaps
+one of the addon's sessions (by at least half of the shorter of the two) is
+filed under that session and the character's name. So a walk shows which
+character it was for only after a logout or `/reload`; until then it is
+listed as a walk with no game session. If the game crashes, the sessions
+since its last save are lost - the walk itself is still recorded.
 
 ### What Walka looks at
 
-* **The top-left corner of the game window** - a picture about 700 pixels
-  wide and 12 high, some fifteen times a second. On Windows and on a Mac
-  Walka asks the system where the game window is, and once it has found
-  the game it looks nowhere else.
-* **From when Walka is started until it first finds the game window** -
-  that is, while the game is not running yet - it also looks at the
-  top-left corner of each monitor and, every five seconds, takes one
-  picture of the whole screen to search it for the strip. (So does a
-  system that cannot say where a window is, all the time.) `Walka.exe
-  beacon`, the command that checks whether the strip can be read, does the
-  same once.
-* **What happens to a picture:** it is searched for the strip, in the
-  computer's memory, and then dropped. No picture is saved or sent
-  anywhere, and of what is on it nothing is kept but the strip's ten bytes.
-* **What the strip says:** whether a walking session is running or paused,
-  how fast the character is going and how (on foot, mounted, swimming,
-  flying, on a flight path), whether you are AFK, and the numbers of the
-  [journey](USING.md#your-journey-and-a-picture-to-share). Not whether your
-  character is fighting, dead or resting - the companion does not need to
-  know, so the addon does not say.
+* **Not the screen.** The companion takes no screenshots and does not
+  capture the game window or anything else on screen. (Until version 0.10
+  it read a strip of squares the addon drew in the corner of the game
+  window. That is gone, and so is everything that came with it: the game no
+  longer has to run in a window, and on a Mac no screen recording
+  permission is asked for.)
+* **Two files the game writes for the addon,** and only these: the addon's
+  saved file in `WTF\Account\<account>\SavedVariables\Walka.lua`, which it
+  looks at every few seconds and reads again only when the game has
+  rewritten it, and the per-character `Walka.lua` files a few folders
+  further down (`WTF\Account\<account>\<realm>\<character>\...`), read
+  when the Share page asks for your character's road. It never writes to
+  them.
+* **What it takes from them:** the walking sessions the addon marked (when
+  each began and ended, the character's name and realm), and each
+  character's [journey](USING.md#your-journey-and-a-picture-to-share):
+  level, time played, how far it has travelled, the real-world walking done
+  while playing it, and its road. Not whether your character fought, died
+  or rested - the addon does not keep that for the companion. The realm is
+  used only to tell characters apart, and is never shown, sent or logged.
 
 An addon also cannot receive live data, so the addon itself only keeps an
 estimate (counted from the pace you tell it: see
-[Using it](USING.md#using-it)), for the journey numbers it sends; the companion's
-*measured* numbers are written to a file the game loads at login or on
-`/reload`. The dashboard - and the floating window on top of the game -
-always show the measured numbers live.
+[Using it](USING.md#using-it)) for your character's journey; the
+companion's *measured* numbers are written to a file the game loads at
+login or on `/reload`. The dashboard - and the floating window on top of
+the game - always show the measured numbers live. What they do not show any
+more is the game's state from moment to moment (whether a session is
+running or paused, how your character is moving): the dashboard says when
+the game last saved its file.
 
 Details: [docs/PROTOCOL.md](PROTOCOL.md).
 
@@ -142,27 +156,28 @@ What Walka does and does not do:
 * The addon uses only the public addon API, is free and unobfuscated, and
   follows the addon policy.
 * The companion never sends input to the game, never automates anything
-  in the game and never reads the game's memory. Of the game's files it
-  touches only Walka's own: the addon folder (it installs the addon and
-  writes `CompanionData.lua` there) and the addon's saved file
-  `WTF\Account\...\SavedVariables\Walka.lua`, which it only reads. It
-  looks at the corner of the game window, the way a screenshot tool does
-  ([exactly what](#what-walka-looks-at)), and what it reads there is your
-  own character's movement state - not whether it is fighting, dead or
-  resting, which the addon does not put on the strip. With sending to
+  in the game, never reads the game's memory and does not look at the
+  screen. Of the game's files it touches only Walka's own: the addon folder
+  (it installs the addon and writes `CompanionData.lua` there) and the
+  files the game saves for the addon, `WTF\Account\...\SavedVariables\Walka.lua`,
+  which it only reads ([exactly what](#what-walka-looks-at)). What it
+  learns from them is what the addon kept, after the fact: your walking
+  sessions and your character's journey - not whether it fought, died or
+  rested. With sending to
   [your Walka account](WALKA-ACCOUNT.md#your-walka-account-on-walkadev) switched on, one
-  thing read off the game goes with each walk: whether a walking session
-  was running. Not your character, its name, its realm or its road.
+  thing from the game goes with each walk: whether it had been filed under
+  a walking session in the game when it was sent. Not your character, its
+  name, its realm or its road.
 * Walka is free, and stays free: no paid version, no advertising and no
   asking for money - in the game or outside it.
 * When the game hides a value from addons (speed in combat), Walka does not
-  relay it; it estimates instead.
+  try to get around it; the addon estimates instead.
 
 Blizzard's enforcement statements target automation, input broadcasting,
 client modification and tools that get around addon restrictions for an
 advantage; Walka is none of those. But Blizzard's EULA is written broadly
 (it prohibits unauthorised software that "reads" information from the
 game), Blizzard does not pre-approve third-party tools, and no statement
-says a passive screen reader like this is fine. Similar addon-plus-reader
-projects exist publicly for this client; that is not the same as
-permission.
+says that an app reading its own addon's saved file, as Walka's does, is
+fine. Many addons have companion apps that read their saved files - that is
+not the same as permission.

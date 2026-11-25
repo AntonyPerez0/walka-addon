@@ -3,8 +3,8 @@ Tracker.lua (what the game feeds into it).
 
 Per character the addon keeps how far it travelled - on foot and in all -
 its level, its /played time, and the real-world walking done while playing
-it. The stat frames that carry these numbers to the companion are in
-test_stat_frames.py.
+it. How these numbers reach the companion - saved with the journey at
+logout - is in test_saved_file.py.
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ def companion(*walks: str, more: str = "", written: int | None = None) -> dict[s
 
 
 def summary(rt) -> dict:
-    """What the Journey window and the stat frames are made from."""
+    """What the numbers saved for the companion are made from."""
     result = rt.ns.Tracker.GetSummary()
     rt.check_errors()
     return lua_plain(result)
@@ -392,7 +392,7 @@ def test_level_class_and_faction_are_read_at_login(make_rt):
                         "faction": "Horde"})
     journey = summary(rt)
     assert (journey["level"], journey["maxLevel"], journey["classId"], journey["faction"]) == (42, 60, 11, 2)
-    assert rt.ns.Protocol.FACTION.HORDE == 2
+    assert rt.ns.Journey.FACTION.HORDE == 2
 
 
 @pytest.mark.parametrize("tag, faction", [("Alliance", 1), ("Horde", 2), ("Neutral", 0), ("", 0)])

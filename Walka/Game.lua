@@ -221,12 +221,12 @@ local function smallCount(value)
     return 0
 end
 
-local FACTION = ns.Protocol.FACTION
+local FACTION = ns.Journey.FACTION
 local FACTION_BY_TAG = { Alliance = FACTION.ALLIANCE, Horde = FACTION.HORDE }
 
 local character = { level = 0, maxLevel = 0, classId = 0, faction = 0 }
 
---- Level, level cap, class id and faction (Protocol.FACTION) of the
+--- Level, level cap, class id and faction (Journey.FACTION) of the
 -- character, each a plain whole number - 0 where the game does not say, or
 -- hides it. Returns a table that is reused between calls.
 function Game.CharacterInfo()

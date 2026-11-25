@@ -1,7 +1,7 @@
 // The Share view: make a picture of a character's journey to post somewhere.
 //
 // The numbers come from the game (GET /api/journey: one entry per character
-// the companion has seen, remembered while the game is closed) or from the
+// in the file the game saves at logout or /reload, remembered) or from the
 // companion's own all-time totals (in every state snapshot). The picture is
 // drawn on a canvas in this page by card.js; nothing leaves the computer
 // until the user saves or copies it. The choices made here are kept in this
@@ -95,7 +95,7 @@ function change(patch) {
 
 const characters = () => (journey ? journey.characters : []);
 
-/** The character the picture is about: the one picked here, else whoever is playing, else the last seen. */
+/** The character the picture is about: the one picked here, else the one the game saved last. */
 function chosen() {
   const list = characters();
   return (
@@ -113,15 +113,16 @@ function describe(entry) {
   return level ? `${name} - ${level}` : name;
 }
 
-function lastSeen(entry, now) {
-  if (entry.live) return "in the game now, numbers update as you play";
+/** When the game saved this character's numbers (at logout or /reload): they are as of then. */
+function lastSaved(entry, now) {
+  if (entry.seen_at == null) return "not saved by the game yet";
   const days = Math.floor((now - entry.seen_at) / 86400);
   const when = new Date(entry.seen_at * 1000).toLocaleDateString([], {
     day: "numeric",
     month: "short",
     year: "numeric",
   });
-  return days < 1 ? "last seen today" : `last seen ${when}`;
+  return days < 1 ? "saved by the game today" : `saved by the game on ${when}`;
 }
 
 const allTotals = () => (snapshot && snapshot.totals ? snapshot.totals.all : null);
@@ -179,7 +180,7 @@ function fillCharacters(list, character) {
   const key = JSON.stringify(list.map((entry) => [entry.id, describe(entry)]));
   if (select.dataset.key !== key) {
     select.dataset.key = key;
-    // Names come off the screen: they are only ever written as text.
+    // Names come from the file the game saved: they are only ever written as text.
     select.replaceChildren(...list.map((entry) => h("option", { value: entry.id, text: describe(entry) })));
   }
   if (character) select.value = character.id;
@@ -204,7 +205,7 @@ function refresh() {
   setDisabled($("share-copy"), !canDraw || !canCopy());
 
   fillCharacters(list, character);
-  setText($("share-character-line"), character ? `${describe(character)}: ${lastSeen(character, now)}.` : "");
+  setText($("share-character-line"), character ? `${describe(character)}: ${lastSaved(character, now)}.` : "");
   setShown($("share-character-line"), !!character);
 
   const fromGame = !!character && options.source !== "all";

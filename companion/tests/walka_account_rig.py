@@ -515,7 +515,7 @@ class Rig:
             avg_hr=None,
             max_hr=None,
             source="manual",
-            beacon_session=None,
+            game_session=None,
             steps_source="estimate",
             distance_source="speed",
             calories_source="speed",

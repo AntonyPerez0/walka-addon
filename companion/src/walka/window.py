@@ -221,8 +221,7 @@ class DashboardWindow:
 FLOATING_TITLE = "Walka - walk"
 FLOATING_SIZE = (240, 132)
 # Out of the way where it first opens: the top-right corner of the main
-# screen, this far in. Never the top-left corner - that is where the game
-# draws the strip Walka reads.
+# screen, this far in.
 FLOATING_MARGIN = (24, 96)
 FLOATING_BACKGROUND = "#14171c"
 # A drag sends the window's place many times a second; it is remembered
@@ -230,10 +229,32 @@ FLOATING_BACKGROUND = "#14171c"
 MOVED_SETTLE_S = 1.0
 
 
+def enable_dpi_awareness() -> None:
+    """Make this process per-monitor DPI aware, so that the places of
+    windows and screens are in physical pixels (Windows only)."""
+    if sys.platform != "win32":
+        return
+    import ctypes
+
+    try:
+        # DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4
+        if ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4)):
+            return
+    except (AttributeError, OSError):
+        pass
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)  # PROCESS_PER_MONITOR_DPI_AWARE
+    except (AttributeError, OSError):
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except (AttributeError, OSError):
+            pass
+
+
 def pywebview_scale(platform: str = sys.platform) -> float:
     """How many screen pixels one unit of a window's place is to pywebview.
 
-    Walka is aware of display scaling (``capture.enable_dpi_awareness``), so
+    Walka is aware of display scaling (``enable_dpi_awareness``), so
     the screens pywebview lists are in pixels. But on Windows pywebview
     takes a window's x and y in scaled units and multiplies them by the
     display's scale (150 % -> 1.5) itself: a corner worked out in pixels

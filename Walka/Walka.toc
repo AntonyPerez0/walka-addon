@@ -2,7 +2,7 @@
 ## Title: Walka
 ## Notes: Connects the game to the Walka app: it tells the app which character your walking-pad walks are for. Everything is shown in the app.
 ## Author: Walka
-## Version: 0.10.0
+## Version: 0.11.0
 ## X-License: MIT
 ## SavedVariables: WalkaDB
 ## SavedVariablesPerCharacter: WalkaCharDB
@@ -11,13 +11,11 @@
 ## Category: Miscellaneous
 
 CompanionData.lua
-Core\Protocol.lua
 Core\Metrics.lua
 Core\SessionLog.lua
 Core\Journey.lua
 Core\Road.lua
 Game.lua
-Beacon.lua
 Tracker.lua
 RoadRecorder.lua
 Walka.lua

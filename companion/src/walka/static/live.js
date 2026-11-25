@@ -2,7 +2,7 @@
 // the treadmill, the other links, the first-run checklist and the event log.
 
 import { $, U, fmt, h, post, run, setAttr, setShown, setText, setTone, setTransform, toast } from "./util.js";
-import { SOURCE_LABEL, setupSteps, sourceLabel } from "./status.js";
+import { setupSteps } from "./status.js";
 import { t, tr } from "./i18n.js";
 
 const SETUP_KEY = "walka.setup.hidden";
@@ -25,8 +25,8 @@ function remember(key, value) {
 // no companion). Never a zero: an unseen belt may well be moving.
 const NO_SPEED = "No reading"; // said in words: a dash at this size reads as a glitch
 
-// The character in the game right now, as the addon's journey numbers say:
-// "Name · level 42". (Its speed in the game is no business of the belt's.)
+// The character the game saved last (at logout or /reload), as the addon's
+// journey numbers say: "Name · level 42". Not live: whoever was played last.
 function characterText(character) {
   if (!character) return "-";
   const name = character.name || "Your character";
@@ -59,8 +59,7 @@ function updateHero(s, view, online) {
     setText($("speed-num"), NO_SPEED);
     setAttr($("speed-num"), "data-void", "1");
     setAttr($("speed-num"), "data-wide", null);
-    setText($("hero-meta"), "");
-    for (const id of ["ro-set", "ro-game", "ro-char"]) setText($(id), "-");
+    for (const id of ["ro-set", "ro-char"]) setText($(id), "-");
     setText($("ro-belt"), s ? "unknown" : "-");
     setTransform($("meter-fill"), "scaleX(0)");
     setText($("meter-max"), "");
@@ -68,19 +67,13 @@ function updateHero(s, view, online) {
   }
 
   const t = s.treadmill;
-  const frame = s.source.frame;
   const speedText = t.connected ? fmt.speed(t.speed_kmh) : NO_SPEED;
   setText($("speed-num"), speedText);
   setAttr($("speed-num"), "data-void", t.connected ? null : "1");
   setAttr($("speed-num"), "data-wide", t.connected && speedText.length > 3 ? "1" : null); // "12.0": shrink to fit
-  setText($("hero-meta"), sourceLabel(s));
 
-  // Readout: what the pad says it is set to, and what the game says.
+  // Readout: what the pad says it is set to, and the character the game saved last.
   setText($("ro-set"), t.connected && t.target_kmh != null ? fmt.speedU(t.target_kmh) : "-");
-  const beaconLive = s.source.beacon && s.source.beacon.state === "ok" && frame;
-  let game = "-";
-  if (beaconLive) game = !frame.active ? "none" : frame.paused ? "paused in game" : "marked";
-  setText($("ro-game"), game);
   setText($("ro-char"), characterText(s.character));
   setText($("ro-belt"), t.connected ? BELT_WORDS[t.state] || t.state : "not connected");
 
@@ -99,8 +92,6 @@ function updateHero(s, view, online) {
 
 // ---- session ------------------------------------------------------------------------------
 
-const WALK_TITLE = { wow: "This walk - World of Warcraft", free: "This walk" };
-
 function tile(n, label, value, unit, source) {
   setText($(`t${n}-k`), label);
   setText($(`t${n}-v`), value);
@@ -113,7 +104,8 @@ function updateSession(s, online) {
   const live = s.session;
   setShown($("howto"), !live);
   if (live) {
-    setText($("session-title"), WALK_TITLE[live.source] || SOURCE_LABEL[live.source] || "This walk");
+    // (Which game session it was in is known once the game saves its file: it is filed then.)
+    setText($("session-title"), "This walk");
     // Without the companion these are the last numbers heard, not a running clock.
     setText($("session-sub"), online ? `since ${fmt.timeOfDay(live.started_at)}` : "last known");
     tile(1, "Time", fmt.clock(live.seconds), "", online ? "belt moving" : "when the companion was last heard");
@@ -381,44 +373,20 @@ function updateCheck(s) {
 
 // ---- other links ------------------------------------------------------------------------------------
 
-const FLAG_HELP = {
-  ACTIVE: "A walking session is marked in game",
-  PAUSED: "The session is paused in game",
-  MOVING: "The character is moving",
-  MOUNTED: "On a mount",
-  TAXI: "On a flight path",
-  SWIMMING: "Swimming",
-  FLYING: "Flying",
-  AFK: "Away from keyboard",
-  ESTIMATED: "The game hides the character's movement from addons in combat: the addon is estimating it",
-};
-
-let flagsKey = null;
+/** "Wed 25 Nov, 18:40": when the game saved its file, or when Walka last looked at it. */
+const when = (epoch) => (epoch == null ? "-" : fmt.dateTime(epoch));
 
 function updateLinks(s, links, online) {
-  // Game signal. Offline, the last frame is old: no sentence about it, no flags.
+  // The game's saved file. Offline, the facts are old: dashes.
   const game = links.game;
-  const beacon = online ? s.source.beacon : null;
-  const frame = online ? s.source.frame : null;
+  const known = online && s.game ? s.game : null;
   setTone($("link-game"), game.tone);
   setText($("game-state"), game.state);
-  let detail = game.detail;
-  if (beacon && beacon.state === "ok" && frame) {
-    detail = frame.active
-      ? `Session ${frame.session}${frame.paused ? " (paused in game)" : ""}${s.character && s.character.name ? ` for ${s.character.name}` : ""}. Walks are filed under this session.`
-      : "The addon is visible, but no session is marked in game, so a walk would not count for your character. The session starts by itself when you log in; if it was paused or stopped, click Walka in the game's AddOns menu, by the minimap.";
-  }
-  setText($("game-detail"), detail);
-  const showFlags = beacon && frame && (beacon.state === "ok" || beacon.state === "frozen");
-  const key = showFlags ? frame.flags.join(",") : "";
-  if (key !== flagsKey) {
-    flagsKey = key;
-    $("game-flags").replaceChildren(
-      ...(showFlags ? frame.flags : []).map((flag) =>
-        h("span", { class: flag === "ESTIMATED" ? "chip note" : "chip", title: FLAG_HELP[flag] || null, text: flag }),
-      ),
-    );
-  }
+  setText($("game-detail"), game.detail);
+  setText($("game-saved"), known && known.files > 0 ? when(known.saved_at) : "-");
+  setText($("game-read"), known ? when(known.read_at) : "-");
+  setText($("game-sessions"), known ? fmt.int(known.sessions) : "-");
+  setText($("game-characters"), known ? fmt.int(known.characters) : "-");
 
   // Heart rate.
   const hr = links.hr;

@@ -1,7 +1,7 @@
 """The licences of what is packed into Walka.exe (and Walka on a Mac).
 
 The packaged program is not only Walka's code: it carries Python itself and
-the libraries Walka uses - aiohttp, bleak, mss and what those need in turn.
+the libraries Walka uses - aiohttp, bleak, pywebview and what those need in turn.
 Their licences (MIT, BSD, Apache 2.0, the Python licence) allow that, on one
 condition they all share: the copyright notice and the licence text go with
 every copy. This script collects them into one text file,

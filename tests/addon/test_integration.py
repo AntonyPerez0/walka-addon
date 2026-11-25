@@ -254,33 +254,6 @@ def test_totals_can_be_computed_from_a_history_already_merged(make_rt):
 # ---- garbage on the tick ----------------------------------------------------------------------------------
 
 
-def test_packing_a_frame_allocates_nothing(rt):
-    """Ten frames a second, for hours: the packer must not leave a table
-    behind each time."""
-    grown = rt.run(
-        "local protocol = ... "
-        "local frame, out = { seq = 0, session = 3, flags = 5, target = 320, charSpeed = 350 }, {} "
-        "protocol.packBits(frame, out) "
-        "collectgarbage('collect') collectgarbage('collect') collectgarbage('stop') "
-        "local before = collectgarbage('count') "
-        "for i = 1, 2000 do frame.seq = i % 256 frame.target = i protocol.packBits(frame, out) end "
-        "local after = collectgarbage('count') "
-        "collectgarbage('restart') "
-        "return (after - before) * 1024",
-        rt.ns.Protocol,
-    )
-    assert grown == 0, f"packBits left {grown:.0f} bytes of garbage in 2000 calls"
-
-
-def test_packing_still_gives_independent_results(rt):
-    protocol = rt.ns.Protocol
-    first = lua_list(protocol.packBytes(rt.to_lua({"seq": 1, "session": 2, "flags": 3, "target": 100, "charSpeed": 350})))
-    second = lua_list(protocol.packBytes(rt.to_lua({"seq": 9})))
-    again = lua_list(protocol.packBytes(rt.to_lua({"seq": 1, "session": 2, "flags": 3, "target": 100, "charSpeed": 350})))
-    assert first == again and first != second
-    assert second[2:8] == [0] * 6, "fields left out of one frame do not inherit the previous frame's values"
-
-
 def test_the_companions_profile_is_not_rebuilt_on_every_tick(make_rt):
     rt = make_rt(files={"CompanionData.lua": COMPANION})
     walka = rt.walka

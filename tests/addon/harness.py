@@ -16,14 +16,13 @@ import functools
 import gzip
 import json
 import re
-from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import enum
+
 from lupa.lua51 import LuaRuntime
-from walka import beacon
-from walka.protocol import Frame, StatFrame
 
 HERE = Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent.parent
@@ -498,97 +497,57 @@ class WowRuntime:
         self.M.hover(widget, False)
         self.check_errors()
 
-    # ---- the beacon, as the companion sees it ---------------------------------
-    def beacon_frame(self) -> Any:
-        frame = self.M.get_global("WalkaBeaconFrame")
-        if frame is None:
-            raise AssertionError("the addon has not created WalkaBeaconFrame")
-        return frame
+    # ---- the state of the session and the character ---------------------
+    def state(self) -> State:
+        """The session and the character as the addon holds them after the
+        last tick: whether a session runs and is paused (and whether for
+        being AFK), and what the game said of the character.
 
-    def beacon_textures(self) -> list[dict[str, Any]]:
-        """The strip's textures with their on-screen geometry, back to front."""
-        textures = [self.inspect(region) for region in self.M.regions(self.beacon_frame()).values()]
-        layers = dict(self.M.draw_layers.items())
-        textures.sort(key=lambda t: (layers[t["layer"]], t["subLevel"] or 0, t["serial"]))
-        return textures
+        Read from the addon's own fields (Walka.session, Walka.gameState).
+        Nothing of it leaves the game while it runs: the app sees the
+        sessions only in the saved variables, at logout and on /reload."""
+        flags = State(0)
+        game = self.walka.gameState
+        for name, flag in (
+            ("moving", State.MOVING),
+            ("mounted", State.MOUNTED),
+            ("taxi", State.TAXI),
+            ("swimming", State.SWIMMING),
+            ("flying", State.FLYING),
+            ("afk", State.AFK),
+            ("estimated", State.ESTIMATED),
+        ):
+            if game[name]:
+                flags |= flag
+        session = self.walka.session
+        if session is not None:
+            flags |= State.ACTIVE
+            if session.paused:
+                flags |= State.PAUSED
+                # While paused, AFK says why: the pause is the automatic one.
+                flags &= ~State.AFK
+                if session.pauseReason == "afk":
+                    flags |= State.AFK
+        return flags
 
-    def beacon_cells(self) -> list[int]:
-        """The cell values painted right now (1 = white), left to right,
-        read from the textures the addon coloured."""
-        cells = [t for t in self.beacon_textures() if t["layer"] == "OVERLAY"]
-        cells.sort(key=lambda t: t["left"])
-        values = []
-        for cell in cells:
-            red, green, blue, alpha = (cell["color"][i] for i in (1, 2, 3, 4))
-            if not (red == green == blue) or red not in (0, 1) or alpha != 1:
-                raise AssertionError(f"beacon cell is not pure black or white: {(red, green, blue, alpha)}")
-            values.append(int(red))
-        return values
+    def session_id(self) -> int:
+        """The number of the session in progress (0: none)."""
+        session = self.walka.session
+        return 0 if session is None else int(session.id)
 
-    def shown_frame(self) -> Frame | StatFrame:
-        """What the strip shows right now, decoded with the companion's
-        decoder: a live frame or - on every fifth redraw - a stat frame."""
-        return beacon.decode_cells(self.beacon_cells())
 
-    def live_frame(self) -> Frame:
-        """The live frame on the strip, as the companion reads the state
-        of the session.
+class State(enum.IntFlag):
+    """What ``WowRuntime.state`` reports."""
 
-        Every fifth redraw carries one number of the character's journey
-        instead (a stat frame, docs/PROTOCOL.md section 4), which says
-        nothing of the session: the companion goes by the next live frame, a
-        tenth of a second later. So does this - if a stat frame is showing, one more tick is
-        let pass. (Two stat frames never follow each other.)"""
-        frame = self.shown_frame()
-        if isinstance(frame, StatFrame):
-            self.tick()
-            frame = self.shown_frame()
-        assert isinstance(frame, Frame), "two stat frames in a row"
-        return frame
-
-    def render_beacon_row(
-        self,
-        row: int = 0,
-        *,
-        width: int | None = None,
-        background: int | Iterable[int] = 0,
-    ) -> bytes:
-        """Rasterise one physical pixel row of the game window where the
-        beacon is, from the sizes, offsets and scale the addon really set.
-
-        ``background`` is the brightness of the game world behind the strip
-        (a constant or one value per pixel). A pixel takes a texture's colour
-        when its centre lies inside the texture, as a GPU would decide.
-        """
-        game = self.game
-        physical_width, physical_height = int(game.physicalWidth), int(game.physicalHeight)
-        width = width or physical_width
-        if isinstance(background, int):
-            pixels = [background] * width
-        else:
-            pixels = list(background)[:width]
-        frame = self.inspect(self.beacon_frame())
-        if not frame["visible"]:
-            return bytes(pixels)
-        unit = physical_height / 768.0        # physical pixels per screen unit
-        center_y = row + 0.5
-        for texture in self.beacon_textures():
-            if not texture["visible"] or texture["color"] is None or texture["left"] is None:
-                continue
-            alpha = texture["alpha"] * texture["color"][4]
-            if alpha <= 0:
-                continue
-            left = texture["left"] * unit
-            right = left + texture["width"] * unit
-            top = physical_height - (texture["bottom"] + texture["height"]) * unit
-            bottom = physical_height - texture["bottom"] * unit
-            if not top <= center_y < bottom:
-                continue
-            brightness = 255 * texture["color"][1]
-            for x in range(max(0, int(left) - 1), min(width, int(right) + 2)):
-                if left <= x + 0.5 < right:
-                    pixels[x] = int(round(brightness * alpha + pixels[x] * (1 - alpha)))
-        return bytes(pixels)
+    ACTIVE = 1
+    PAUSED = 2
+    MOVING = 4
+    MOUNTED = 8
+    TAXI = 16
+    SWIMMING = 32
+    FLYING = 64
+    AFK = 512
+    ESTIMATED = 4096
 
 
 def lua_list(table: Any) -> list[Any]:

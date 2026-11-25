@@ -1,374 +1,161 @@
-# The Walka beacon protocol
+# How the addon and the app share data
 
-How the addon talks to the companion app. Version 1.
+How the addon and the companion app tell each other what they know.
 
 A World of Warcraft addon runs in a sandbox: no files, no network, no
-Bluetooth. The one thing it can do that the outside world can see is draw. So
-the addon draws its state as a tiny strip of black and white squares in the
-top-left corner of the game window, and the companion reads the strip with an
-ordinary screen capture. Nothing is ever sent *to* the game.
+Bluetooth, and nothing can reach it while the game runs. But the game reads
+and writes files for it, at fixed moments:
 
-Implementations: `Walka/Core/Protocol.lua` + `Walka/Beacon.lua` (addon) and
-`companion/src/walka/protocol.py` + `beacon.py` (companion). The test-suite
-checks them against each other.
+* **From the game to the app:** what the addon keeps in its *saved
+  variables*, the game writes to disk when the player logs out, types
+  `/reload`, or is disconnected. The app reads those files. They are the
+  only way anything leaves the game.
+* **From the app to the game:** the game loads the Lua files in the addon's
+  own folder at login and on `/reload`. The app writes one of them,
+  `CompanionData.lua`.
 
-## 1. The frame
+Nothing passes between the two while the game runs. Nothing is drawn on the
+screen for the app, and the app does not look at the screen. (Until 0.10 the
+addon drew a strip of black and white squares in the corner of the game
+window, and the app read it with a screen capture. That is gone.)
 
-Ten bytes: eight payload bytes followed by a CRC-16.
+Implementations: `Walka/Walka.lua`, `Walka/Tracker.lua`,
+`Walka/Core/Journey.lua`, `Walka/Core/SessionLog.lua` and
+`Walka/RoadRecorder.lua` (addon); `companion/src/walka/game_file.py`,
+`journey.py`, `road.py`, `savedvars.py` and `addon_sync.py` (app). The
+test-suite checks the two sides against each other.
 
-There are two kinds of frame, told apart by the frame type. This section
-describes the *live frame*: the addon's state from moment to moment - the
-walking session it has marked, and how the character is moving. The other
-kind, the *stat frame*, carries the
-numbers of a character's journey and is described in
-[section 4](#4-stat-frames).
+## 1. The files
 
-Payload of the live frame, most-significant bit first:
+| File | Written by | When | Read by | When |
+|------|-----------|------|---------|------|
+| `WTF/Account/<account>/SavedVariables/Walka.lua` (`WalkaDB`) | the game, for the addon | logout, `/reload`, disconnect | the app | looked at every 5 seconds, read again only when it has changed |
+| `WTF/Account/<account>/<realm>/<character>/SavedVariables/Walka.lua` (`WalkaCharDB`) | the game, for the addon | the same | the app | when the Share page asks for a road |
+| `Interface/AddOns/Walka/CompanionData.lua` (`WalkaCompanionData`) | the app | after every walk, when walks are filed, at start-up | the game, for the addon | login, `/reload` |
 
-| Bits   | Width | Field           | Meaning |
-|--------|------:|-----------------|---------|
-| 0–3    | 4     | version         | `1` |
-| 4–5    | 2     | frame type      | `0` = live frame. (`1` = stat frame, section 4. `2` and `3` are not assigned.) |
-| 6–13   | 8     | seq             | Heartbeat. +1 on every redraw (10 per second) of either kind of frame, wraps at 256. |
-| 14–21  | 8     | session         | Walking-session counter, 1–255. `0` = no session. |
-| 22–37  | 16    | flags           | See below. |
-| 38–49  | 12    | -               | Not used: `0`. (Until 0.6: a belt speed the addon asked for, in 0.01 km/h.) |
-| 50–61  | 12    | character speed | Character's speed in 0.02 yd/s (0–81.9). |
-| 62–63  | 2     | reserved        | `0` |
+All paths are under the game's folder (the one that holds `Interface` and
+`WTF`). The app finds it where the addon is installed, and looks in every
+other install it finds too.
 
-CRC: CRC-16/CCITT-FALSE (polynomial `0x1021`, initial value `0xFFFF`, no
-reflection, no final XOR) over the eight payload bytes, appended big-endian.
-Check value: the CRC of the ASCII string `123456789` is `0x29B1`.
+Nothing can make the game write its files sooner, and if the game crashes,
+what the addon kept since the last save is lost. The walk itself is not:
+the app records it from the treadmill.
 
-### Flags
+## 2. The account-wide file: `WalkaDB`
 
-Bit 0 is the least-significant bit of the 16-bit field.
-
-| Value | Name      | Meaning |
-|------:|-----------|---------|
-| 1     | ACTIVE    | A walking session is marked in the game: the walk the companion records is filed under it. |
-| 2     | PAUSED    | The session is paused in the game. |
-| 4     | MOVING    | The character is moving. |
-| 8     | MOUNTED   | |
-| 16    | TAXI      | On a flight path. |
-| 32    | SWIMMING  | |
-| 64    | FLYING    | |
-| 128   | -         | Not used: see below. |
-| 256   | -         | Not used. |
-| 512   | AFK       | |
-| 1024  | -         | Not used. |
-| 2048  | -         | Not used. |
-| 4096  | ESTIMATED | The character speed is an estimate (see below). |
-
-ACTIVE - with the session number - is the one thing the companion acts on:
-it says which session a walk belongs to. The rest are for display. The
-strip says how the character is moving and whether anyone is there, and
-nothing more: until version 0.5 the four bits marked *not
-used* said that the character was dead (128), in combat (256), falling
-(1024) or resting (2048). The companion never acted on any of them, so the
-addon no longer sets them. A companion still takes a frame that carries
-one for a frame of the addon's - an older addon may be drawing it - and
-shows the flag nowhere.
-
-AFK together with PAUSED says what kind of pause it is: the addon pauses a
-session by itself when the player goes AFK (if that option is on), and
-keeps the AFK flag set for as long as that automatic pause lasts. A pause
-without it is one the player asked for.
-
-**Nothing on the strip reaches the treadmill.** The companion only listens
-to that ([SAFETY.md](SAFETY.md)). The 12 bits that used to carry a belt
-speed are zero; a companion takes a frame from an older addon that still
-fills them in, and does nothing with them.
-
-### Why "ESTIMATED" exists
-
-WoW: Forever runs on the modern client, which hides some values from addons
-during combat ("secret values"). The character's exact speed is one of them.
-Walka does not try to get around that: while the real speed is hidden the
-addon estimates it from what is still public (is the character moving? is it
-mounted or swimming? what was its run speed last time it was readable?) and
-sets this flag. A hidden value is never drawn on screen.
-
-### What the fields mean to the companion
-
-* **seq** proves the game is alive. If valid frames keep arriving but `seq`
-  stops changing, the picture is frozen (a loading screen over a stale frame,
-  a hung client) and the companion treats the signal as lost. Only the `seq`
-  of live frames counts here (section 4).
-* **session** with ACTIVE says what the walk is filed under. The walk
-  itself is whatever the belt does: the companion records while the belt
-  reports a speed, with or without a session, paused in the game or not. A
-  session number that changes starts a new recording; no session, with the
-  belt moving, is a walk of its own (the history calls it "no game
-  session"). While the strip is out of view in the middle of a session - a
-  loading screen, another window on top - the walk stays with that
-  session; when the game is closed, the session is over.
-
-## 2. The strip
-
-The 80 frame bits are drawn as one row of square cells, white = 1, black = 0,
-framed by fixed guard cells:
-
-```
-cell:   0 1 2 3 | 4 .............. 83 | 84 85
-        W B W B |    80 frame bits    |  W  B
-        preamble                        postamble
+```lua
+WalkaDB = {
+    settings = { ... },          -- the addon's own; the app does not read them
+    sessionCounter = 12,
+    sessions = {                 -- walking sessions marked in the game, oldest first
+        { id = 11, start = 1795000000, ["end"] = 1795003600,
+          character = "Name-Realm", auto = true,
+          seconds = 3600, distanceM = 0, steps = 0, kcal = 0, yards = 9200, maxKmh = 0 },
+        ...
+    },
+    active = {                   -- the session still running when the game saved
+        savedAt = 1795007200,
+        session = { id = 12, start = 1795005000, character = "Name-Realm", ... },
+    },
+    journeys = {                 -- one record per character, under "Name-Realm"
+        ["Name-Realm"] = { ... },   -- section 3
+    },
+}
 ```
 
-86 cells in total. Every cell is `N`×`N` physical pixels (`N` = 4 by default,
-adjustable 2–8), so the strip is 344×4 pixels at the default size. It sits at
-the top-left corner of the game's client area, on top of everything else,
-with a black margin one cell wide to its right and below it.
+### Sessions
 
-Why only black and white, when colour could carry three bits per cell or
-more: brightness, contrast and gamma settings, HDR tone-mapping, night-light
-filters, colour-blind modes and sharpening all shift colours, and projects
-that used multi-level colour cells report misreads in the field. Black versus
-white survives all of them, because the decoder only asks "brighter or darker
-than halfway?" and measures where halfway is from the preamble of every
-frame.
+A *walking session* is the time the addon counted for a character: from when
+it started (by itself once the character is in the game, or with
+`/walka start`) to when it stopped. The addon keeps the newest 400. The app
+reads of each one:
 
-### Drawing it (addon)
+* `start`, `end` - Unix time, in seconds;
+* `id` - the addon's session counter, 1-255;
+* `character` - the character's "Name-Realm". A session whose name the game
+  hid when it began (it starts with `?`) belongs to nobody;
+* `auto` - the addon started it by itself.
 
-The strip's frame has no parent and is anchored to the screen itself, so it
-is unaffected by the UI scale, is not hidden with the rest of the UI (Alt+Z),
-and does not move when the game letterboxes the world view for a cinematic.
-Its own scale is set to `768 / physicalScreenHeight`: WoW's UI coordinate
-space is always 768 units high, so at that scale one unit is exactly one
-physical pixel. The scale is re-applied when the resolution or UI scale
-changes. Cell positions and sizes are whole pixels, so the strip does not
-depend on the client's pixel-snapping (which some UI replacement addons turn
-off for every texture).
+The rest of a record (the addon's own estimates) is for the addon.
 
-### Reading it (companion)
+`active` is the session that was still running when the game saved the
+file. If the player comes back within three minutes (a `/reload`, a quick
+relog), the addon carries it on; otherwise it closes it at `savedAt`. To the
+app it is a session that ran from its `start` until at least `savedAt`; the
+next file says how long it really lasted.
 
-The decoder works on rows of pixel brightness values and does not assume a
-cell size. A frame is only accepted if the picture is what the addon draws:
+### How a walk is filed under a session
 
-1. **The opening.** Every frame begins the same way: the preamble, the
-   protocol version and the first bit of the frame type - as runs of pixels:
-   a white, a black and a white cell, four cells of black, a white cell. The
-   decoder looks for that pattern (cells of one width, at least about 1.9 px
-   wide) and measures the cell pitch and the black and white levels from it.
-   "Bright" is judged from the pixels right there, not from the whole row,
-   so a strip whose white is dimmer than highlights in the game world next
-   to it (HDR, Auto-HDR) is still found.
-2. **The cells.** The centre of each of the 86 cells is sampled at that
-   pitch; pitches a fraction of a pixel either side are tried too (this is
-   what makes fractional cell sizes work, e.g. when the game window is being
-   scaled). Preamble, postamble and CRC-16 must match.
-3. **The content.** The frame must be one the addon can have sent: a known
-   frame type, reserved bits zero, no unassigned flag bits, and for a stat
-   frame a known stat id.
-4. **The surroundings.** To the right of the last white cell it must be
-   black for two cells (the last cell and the quiet margin). The rows next
-   to the row that decoded must show the very same cells over a height of
-   one cell - the cells are squares - and right under them it must be black
-   across the strip's width.
+The app records a walk from the treadmill alone: a walk begins when the belt
+moves and ends when the belt has stood still for 60 seconds. It is saved as
+source `free` - walked, with no game session known yet.
 
-Text, tables and window decorations are rows of light and dark runs too, and
-a 16-bit CRC by itself does not keep them out: before these checks, about
-one screenful of source code in a hundred "decoded". They make that rare.
-What makes it harmless is the next rule.
+Whenever the file has changed, the app compares every `free` walk with the
+sessions in it. A walk belongs to the session it shares the most time with,
+if that shared time is at least **half of the shorter of the two**. The walk
+is then filed under that session: source `wow`, the session's number, and the
+character's name (never the realm). A walk once filed stays filed, even when
+the addon no longer lists the session.
 
-### Believing it
+The addon uses the same rule (`SessionLog.sameWalk`) to match the app's
+walks in `CompanionData.lua` with its own sessions. One session can hold
+several walks - the session the addon starts by itself lasts the whole
+login, while a walk ends whenever the belt stands for a minute. Each such
+walk is counted for the character, and the yards the character travelled
+during the session are shared out among the walks by how much each one
+overlaps it.
 
-**One decoded frame is never acted on.** The addon redraws the strip ten
-times a second and every redraw carries the next value of `seq`. A place on
-the screen is believed only after it has been watched ticking:
+So a walk is filed under its game session only after the game has saved -
+at a logout or `/reload`. Until then the dashboard lists it as a walk with no
+game session.
 
-* frames decoded at the same place with the same cell size,
-* whose `seq` goes up by no more than the time between two looks allows
-  (one step per tenth of a second, plus a little for a hitch),
-* agreeing on the session id,
-* for three frames in a row at the game window's corner, six anywhere else.
+## 3. A character's journey
 
-Until then the companion behaves exactly as if nothing had been decoded.
-Belief is lost when `seq` has not moved for 1.5 seconds or the strip turns
-up somewhere else, and has to be earned again (about a quarter of a second
-for the real strip). A still picture never passes - a screenshot, a paused
-video, text that decodes by accident - because its counter does not move;
-two pictures taking turns do not either, because the counter would have to
-run backwards.
+Each record in `WalkaDB.journeys` is what the addon knows of one character
+since it began tracking it (`Walka/Core/Journey.lua`):
 
-### Where it looks
-
-When the system can say where the game window is (Windows and macOS), the
-strip is at the top-left corner of that window's client area or it is
-nowhere: nothing else on the screen is looked at, so nothing else on the
-screen can be mistaken for the strip. If the game is minimised or closed,
-nothing is read.
-
-macOS gives the window's frame with its title bar, and not the height of
-that bar. There the corner is looked for from the window's top edge down
-to 48 points below it, and the first strip found is the one. Positions on
-a Mac are in points; the picture is read at the display's full resolution
-(two pixels to the point on a Retina display), so a cell is as many pixels
-wide as the addon drew it.
-
-Only where the window cannot be asked for (other platforms, or a window
-search that has never found the game since the companion started) the
-reader falls back to the top-left corner of each monitor and, at most every
-few seconds, a search of the whole screen. A place found that way has to
-tick for twice as long before it is believed, and a place whose picture does
-not move is given up and remembered.
-
-`walka beacon` prints what the reader sees; if the game window is found but
-no strip is at its corner, it says whether there is a strip anywhere else
-on screen.
-
-### When the strip is not visible
-
-The strip is not drawn during loading screens, and the companion cannot see
-it while the game is minimised or another window covers that corner. That is
-expected, and nothing depends on it but the filing: the walk is recorded
-all the same.
-
-## 3. The return path
-
-There is no live return path - an addon cannot receive anything while the
-game runs. The companion writes `Walka/CompanionData.lua` (one global table,
-`WalkaCompanionData`: measured sessions, body profile, the treadmill's
-name), and the game loads it at login and on `/reload`, like the data files
-written by other addon companion apps. Until then the addon's journey
-numbers (section 4) count with its own estimates, from the pace the walker
-tells it (`/walka pace`). The addon shows nothing in game: the companion
-shows the walk, measured, on its dashboard and in its floating window.
-
-There is one more way out of the game, a slow one: what an addon keeps in
-its saved variables, the game writes to a file at logout and on `/reload`.
-The road a character has travelled reaches the companion that way: see
-[5. The saved file](#5-the-saved-file-the-road).
-
-## 4. Stat frames
-
-Besides marking walking sessions, the addon keeps a record of each
-character's journey: its level and time played, how far it has travelled on foot, and
-the real-world walking done while playing it. The companion's dashboard
-turns those numbers into a picture to share. The game only writes an addon's
-saved data to disk at logout or `/reload`, so to reach the companion while
-the game runs the numbers take the same road as everything else: the strip.
-
-A stat frame carries one number. It has the same ten bytes, the same CRC and
-the same place on the strip as a live frame; only the payload differs:
-
-| Bits   | Width | Field      | Meaning |
-|--------|------:|------------|---------|
-| 0–3    | 4     | version    | `1` |
-| 4–5    | 2     | frame type | `1` |
-| 6–13   | 8     | seq        | The same counter as in live frames: +1 on every redraw of either kind. |
-| 14–19  | 6     | stat id    | Which number this is: see below. |
-| 20–59  | 40    | value      | An unsigned whole number. |
-| 60–63  | 4     | reserved   | `0` |
-
-### The stats
-
-| Id    | Name             | Value |
-|------:|------------------|-------|
-| 1     | CHAR_KEY         | A hash of the character's "Name-Realm" (below). Tells characters apart. |
-| 2     | CHAR_INFO        | `level` + `level cap` × 2^8 + `class id` × 2^16 + `faction` × 2^24, one byte each. Faction: `0` unknown, `1` Alliance, `2` Horde. |
-| 3     | PLAYED_S         | Total time played (`/played`), in seconds. `0` = not known yet. |
-| 4     | FOOT_YD          | Yards travelled on foot since Walka began tracking this character. |
-| 5     | TRAVEL_YD        | Yards travelled by any means: mounts, flight paths and swimming included. |
-| 6     | REAL_STEPS       | Real-world steps walked while playing this character, over all its walks. |
-| 7     | REAL_M           | Real-world distance walked, in metres. |
-| 8     | REAL_KCAL        | Energy used, in kilocalories (gross, whole number). |
-| 9     | REAL_S           | Seconds on the moving belt. |
-| 10    | WALKS            | Number of walks counted. |
-| 11    | SINCE            | When tracking began for this character: Unix time, in seconds. |
-| 12    | INFO_FLAGS       | Bit 0 (value 1): the real-world totals include estimates the companion has not confirmed yet. |
-| 16–19 | NAME_0 to NAME_3 | The character's name (below). |
+| Field | Meaning |
+|-------|---------|
+| `since` | When tracking began: Unix time, in seconds. |
+| `footYd` | Yards travelled on foot. |
+| `travelYd` | Yards travelled by any means: mounts, flight paths, flying and swimming included. |
+| `level`, `maxLevel`, `classId`, `faction` | As last read from the game; `0` = not known. Faction: `1` Alliance, `2` Horde. |
+| `played` | The game's `/played` total, in seconds; `0` = not known yet. |
+| `real` | The real-world walking that is settled: `{ walks, seconds, distanceM, steps, kcal, estimated }`. |
+| `shared` | What the app reads, written at logout and on `/reload`: `{ savedAt, played, walks, seconds, distanceM, steps, kcal, estimated }`. |
 
 "On foot" means moving while not mounted, not on a flight path, not flying
 and not swimming; running as a ghost and jumping count.
 
-Ids 0, 13–15 and 20–63 are not assigned. The addon never sends 0, and the
-companion ignores ids it does not know, so stats can be added later without
-a new protocol version.
+`shared` holds the real-world totals as they stood when the game saved: the
+walks counted for the character, the seconds on the moving belt, metres,
+steps and kilocalories, all whole numbers. `estimated` is `true` when they
+include walks the app has not yet confirmed with its measured numbers (the
+addon counts those from the pace the walker tells it, `/walka pace`).
+`savedAt` is when they were taken. A record from an addon that did not write
+`shared` yet is read from `real`.
 
-Every value is a whole number that fits the field. The addon rounds, and
-clamps instead of wrapping: a number too large for 40 bits is sent as
-2^40 - 1, a negative or unusable one as 0.
+The app turns these into the numbers on the Share page (`journey.py`). It
+checks every number against what can be true and leaves out one that
+cannot be; it keeps only the name from "Name-Realm" and treats it as text
+from a stranger. It tells characters apart by a hash of the whole
+"Name-Realm" - djb2 over its UTF-8 bytes, kept to 32 bits (start with
+`h = 5381`, then `h = (h × 33 + byte) mod 2^32` for every byte) - so the
+realm itself is never passed on or kept. The latest numbers of every
+character are remembered in the app's `journey.json`, so a picture can still
+be made when the game's files are out of reach.
 
-**CHAR_KEY** is the djb2 hash of the UTF-8 bytes of the "Name-Realm" string,
-kept to 32 bits: start with `h = 5381`, then `h = (h × 33 + byte) mod 2^32`
-for every byte. Check value: the hash of the ASCII string `hello` is
-`261238937`. A hash is sent, and not the text, so that the realm is never
-drawn on screen; the companion only needs to know *that* two sets of numbers
-belong to different characters.
-
-**NAME_0 to NAME_3** carry the character's name without the realm - which the
-game shows on screen anyway - as UTF-8: up to 20 bytes, five per frame,
-padded with zero bytes. Within a value the first byte is the most
-significant. A name longer than 20 bytes is cut between two characters,
-never inside one (twelve Cyrillic letters are 24 bytes: the first ten are
-sent).
-
-### When they are sent
-
-Every 5th redraw is a stat frame instead of a live frame - never two in a
-row - so the live state is still on the strip four times out of five, and
-the longest gap between two live frames grows from 0.1 to 0.2 seconds. The stats
-go round in a fixed order:
-
-```
-CHAR_KEY, NAME_0, NAME_1, NAME_2, NAME_3, CHAR_INFO, PLAYED_S, FOOT_YD,
-TRAVEL_YD, REAL_STEPS, REAL_M, REAL_KCAL, REAL_S, WALKS, SINCE, INFO_FLAGS
-```
-
-Sixteen stats, two a second: a full round takes about 8 seconds. CHAR_KEY
-opens the round, and what follows belongs to that character; a different
-CHAR_KEY means another character has logged in.
-
-### A stat frame is never a live frame
-
-A stat frame says nothing about the walking session, and the companion
-makes sure it can never be mistaken for a frame that does:
-
-* Only live frames (type 0) feed the live reading: its content, its age,
-  the frozen-picture check and the "game window closed" rule. To all of
-  these a stat frame is the same as no frame at all.
-* Stat frames are handed to the part of the companion that keeps the
-  journey numbers, and to nothing else.
-* A frame of type 2 or 3, like a frame of another version, is refused: for
-  the companion there is no beacon in that picture.
-* So a picture that froze while a stat frame was on the strip is a lost
-  signal like any other, although a valid frame can still be read from it.
-
-The frame type is covered by the CRC like every other bit, so a misread
-pixel cannot turn one kind of frame into the other.
-
-### Putting a round together
-
-The companion reads the strip through a screen capture, so it sees most
-frames twice and now and then misses one - also the CHAR_KEY of a character
-who has just logged in. To be sure that two characters' numbers are never
-mixed, it keeps a round only if the CHAR_KEY that ends it is the one that
-began it, every other stat was seen in between, and the strip never went
-away for more than a few seconds meanwhile (a loading screen, a frozen
-picture). Anything else is dropped and the next round is waited for, so the
-numbers it holds are about eight seconds old. Each value is checked against
-what can be true, and the name is treated as text from a stranger.
-
-Implementations: `Protocol.packStatBits` in the addon; `protocol.decode`,
-`beacon.Decoded` (which keeps the two kinds in separate fields),
-`stat_route.py` and `journey.py` (the rounds, and the cache of every
-character's latest numbers) in the companion.
-
-## 5. The saved file (the road)
+## 4. The per-character file: the road
 
 The road a character travels (`Walka/Core/Road.lua`) is a megabyte by level
-60 - nothing for a strip that carries 40 bits five times a second. It is
-only wanted for the picture on the Share page, which can wait, so it goes
-the way every addon's data goes: the per-character saved variable
-`WalkaCharDB`, which the game writes to
+60, and only wanted for the picture on the Share page, so it is kept in the
+per-character saved variable `WalkaCharDB`, which the game writes to
 
 ```
 <game>\WTF\Account\<account>\<realm>\<character>\SavedVariables\Walka.lua
 ```
 
-when the player logs out, reloads the interface or quits. Nothing can make
-the game write it sooner.
+at the same moments as the account-wide file.
 
 The table:
 
@@ -376,7 +163,7 @@ The table:
 WalkaCharDB = {
     version = 1,
     guid = "Player-...",        -- a new character with an old one's name starts afresh
-    key = "Name-Realm",         -- what CHAR_KEY is the djb2 hash of
+    key = "Name-Realm",         -- whose road this is
     yards = 12345, beltYards = 6789,
     maps = {                    -- per continent id: the game's map that shows that land
         [1] = { id = 1414, name = "Kalimdor" },
@@ -404,25 +191,15 @@ neither. So the first time the character stands on a land, the addon goes
 up from the map the game shows it on to the largest map that still shows
 that land alone (its continent's map, where it has one; never a map of a
 whole world) and keeps that map's id and name. The addon's own road window
-draws the land on that map; the companion uses the name.
+draws the land on that map; the app uses the name.
 
-How the companion reads it (`savedvars.py`, `road.py`):
+How the app reads it (`road.py`):
 
-* **Whose road.** The companion knows a character by the hash the beacon
-  sends as `CHAR_KEY`. It hashes each file's `key` the same way and takes
-  the file whose hash matches (the newest, if the character exists in two
+* **Whose road.** The app hashes each file's `key` the same way as a
+  journey's "Name-Realm" (section 3) and takes the file whose hash matches
+  the character asked for (the newest, if the character exists in two
   account folders). The folder names are not relied on, and neither they
   nor the realm are passed on or logged.
-* **Data, not a program.** The file is Lua source, but it is not run: the
-  reader accepts assignments of tables, strings, numbers, booleans and nil,
-  and refuses anything else - a call, an operator, a name used as a value.
-  A file cut short (the game was writing it, or crashed while it did) can
-  therefore never be mistaken for a whole one: its tables do not close.
-* **Out of the game's way.** The file is read in one go and never held
-  open, with every kind of sharing allowed on Windows, so the game can
-  replace it at any moment. A file changed within the last two seconds is
-  left for the next look; one that cannot be read is tried again only once
-  it has changed, and the road read before it stands meanwhile.
 * **Only when asked.** The files are looked at when the Share page asks for
   a road (`GET /api/road?character=<id>`), at most every three seconds, and
   each is read again only when its size or date has changed. None of this
@@ -446,3 +223,74 @@ How the companion reads it (`savedvars.py`, `road.py`):
   reach of where the character went on foot or mounted, plus whatever that
   encloses. The page draws it in place of a map, on a plate of its own.
 
+## 5. Reading the game's files
+
+Both files are read the same way (`savedvars.py`, `game_file.py`,
+`road.py`):
+
+* **Data, not a program.** A saved file is Lua source, but it is not run:
+  the reader accepts assignments of tables, strings, numbers, booleans and
+  nil, and refuses anything else - a call, an operator, a name used as a
+  value. A file cut short (the game was writing it, or crashed while it
+  did) can therefore never be mistaken for a whole one: its tables do not
+  close.
+* **Out of the game's way.** A file is read in one go and never held open,
+  with every kind of sharing allowed on Windows, so the game can replace it
+  at any moment. A file changed within the last two seconds is left for the
+  next look; one that cannot be read is tried again only once it has
+  changed, and what was read before it stands meanwhile.
+* **Off the recording loop.** The files are read on a worker thread, never
+  on the loop that records the walk, so a slow disk cannot hold up a walk.
+* **Checked.** Every time and number is checked against what can be true
+  (a session cannot begin before 2020 or last longer than a week), and a
+  file, a session or a journey that does not pass is left out.
+* **Private.** Nothing read from these files leaves the computer, and
+  neither the account's folder name nor a character's realm is passed on or
+  logged.
+
+`walka game` (`Walka.exe game` on Windows) prints what the app finds: how
+many accounts' files, when the game last wrote them, how many sessions, the
+newest one and whose it was, and the characters.
+
+## 6. The other way: `CompanionData.lua`
+
+The app writes `Walka/CompanionData.lua` in the addon's folder: one global
+table, `WalkaCompanionData`. The game loads it at login and on `/reload`,
+like the data files written by other addon companion apps. The app rewrites
+it after every walk, when walks are filed under game sessions, when a
+setting changes, and at start-up; it replaces the file in one step, so the
+game never loads half of one.
+
+```lua
+WalkaCompanionData = {
+    version = 1,
+    written = 1795007300,        -- when the app wrote it (Unix time)
+    profile = { weightKg = 82, heightCm = 180, stepCalibration = 1.0 },
+    treadmill = "URTM030",       -- the name of the treadmill in use, if known
+    sessions = {                 -- the newest 300 walks, newest first
+        { start = 1795000100, ["end"] = 1795003500,
+          seconds = 3400, distanceM = 3100, steps = 4300, kcal = 210.5,
+          maxKmh = 3.5, avgHr = 98, maxHr = 121,
+          source = "wow",        -- "free", "wow", "manual", ...
+          gameSession = 11,      -- the addon's session number, if filed under one
+          stepsSource = "treadmill" },
+        ...
+    },
+    older = {                    -- everything before those, added up
+        sessions = 40, seconds = ..., distanceM = ..., steps = ..., kcal = ...,
+        ["until"] = 1790000000,  -- every walk that began before this is in the sum
+    },
+}
+```
+
+(Until 0.10 the per-walk key was `beaconSession`.)
+
+The addon matches these walks with its own sessions by the rule in
+section 2 and shows the measured numbers in place of its estimates: in the
+character's journey and in its session history. Until it has them - the
+walk is filed only after the game has saved, and the addon reads the app's
+file only at the next login or `/reload` - it counts with its own estimates
+and marks the totals `estimated`.
+
+Nothing in this file, or anywhere else, reaches the treadmill: the app only
+listens to it ([SAFETY.md](SAFETY.md)).

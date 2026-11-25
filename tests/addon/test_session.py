@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import pytest
-from walka.protocol import Flags
 
 from .conftest import DEFAULT_PACE_KMH
-from .harness import lua_dict, lua_list, lua_plain
+from .harness import State, lua_dict, lua_list, lua_plain
 
 PACE = DEFAULT_PACE_KMH     # what a fresh install counts with
 
@@ -26,9 +25,8 @@ def live_speed(rt):
 
 
 def flags(rt):
-    """The flags of the live frame on the strip (one tick later if a stat
-    frame is showing: every fifth redraw carries a number of the journey)."""
-    return rt.live_frame().flags
+    """The state of the session and the character after the last tick."""
+    return rt.state()
 
 
 def collect_events(rt):
@@ -86,7 +84,7 @@ def test_full_session_lifecycle(rt):
     assert ("SESSION", "pause") in events
     assert live_speed(rt) == 0
     rt.tick(30)
-    assert flags(rt) & Flags.PAUSED
+    assert flags(rt) & State.PAUSED
     frozen = session(rt)
     rt.tick(100)
     assert session(rt) == frozen, "nothing accumulates while paused"
@@ -234,7 +232,7 @@ def test_session_ids_run_from_1_to_255_and_never_0(rt):
         rt.slash("/walka start")
         seen.append(session(rt)["id"])
         rt.slash("/walka stop")
-    assert seen == [255, 1, 2]              # 0 means "no session" in the beacon
+    assert seen == [255, 1, 2]              # 0 is never a session's number
 
 
 def test_announcements_can_be_turned_off(rt):
@@ -265,7 +263,7 @@ def test_the_first_session_has_no_notice_of_its_own(make_rt):
 # ---- AFK ------------------------------------------------------------------------------
 
 
-AFK_PAUSED = Flags.ACTIVE | Flags.PAUSED | Flags.AFK
+AFK_PAUSED = State.ACTIVE | State.PAUSED | State.AFK
 
 
 def afk_paused_session(rt, events=None):
@@ -299,15 +297,15 @@ def test_afk_pauses_and_moving_again_resumes(rt):
     assert session(rt).get("pauseReason") is None
     assert events.count(("SESSION", "resume")) == 1
     assert any("session resumed" in line for line in rt.printed)
-    assert flags(rt) == Flags.ACTIVE | Flags.MOVING
+    assert flags(rt) == State.ACTIVE | State.MOVING
     assert live_speed(rt) == PACE
 
 
 def test_afk_ending_alone_does_not_resume_the_session(rt):
     """Back at the keyboard, but the character stands still - typing a chat
     line, say. That is not walking on: the session stays paused, and the
-    beacon goes on calling it the automatic (AFK) pause, although the game's
-    own AFK state is gone."""
+    pause stays the automatic (AFK) one, although the game's own AFK state
+    is gone."""
     events = collect_events(rt)
     afk_paused_session(rt, events)
     frozen = session(rt)
@@ -325,7 +323,7 @@ def test_afk_ending_alone_does_not_resume_the_session(rt):
     rt.set(combat=True, resting=True, mounted=True)
     rt.tick(20)
     assert rt.walka.IsPaused(rt.walka)
-    assert flags(rt) == AFK_PAUSED | Flags.MOUNTED
+    assert flags(rt) == AFK_PAUSED | State.MOUNTED
 
 
 def test_the_session_resumes_when_the_character_moves_after_afk(rt):
@@ -341,7 +339,7 @@ def test_the_session_resumes_when_the_character_moves_after_afk(rt):
     assert session(rt).get("pauseReason") is None
     assert events.count(("SESSION", "resume")) == 1
     assert any("session resumed" in line for line in rt.printed)
-    assert flags(rt) == Flags.ACTIVE | Flags.MOVING, "neither PAUSED nor AFK any more"
+    assert flags(rt) == State.ACTIVE | State.MOVING, "neither PAUSED nor AFK any more"
     assert live_speed(rt) == PACE
     # ... and it is an ordinary session again: it counts on,
     before = session(rt)["seconds"]
@@ -351,7 +349,7 @@ def test_the_session_resumes_when_the_character_moves_after_afk(rt):
     rt.set(speed=0)
     rt.tick(300)
     assert not rt.walka.IsPaused(rt.walka)
-    assert flags(rt) == Flags.ACTIVE
+    assert flags(rt) == State.ACTIVE
     assert session(rt)["seconds"] == pytest.approx(before + 60)
 
 
@@ -362,7 +360,7 @@ def test_moving_while_still_afk_does_not_resume(rt):
     rt.set(speed=7.0)
     rt.tick(20)
     assert rt.walka.IsPaused(rt.walka)
-    assert flags(rt) == AFK_PAUSED | Flags.MOVING, "the AFK flag is set once, not twice"
+    assert flags(rt) == AFK_PAUSED | State.MOVING, "the AFK flag is set once, not twice"
     # ... but the moment the game says the player is back, a character that
     # is moving is all it takes. (Until 0.7 it had to be seen standing
     # first: that rule was there so that a belt would not start under
@@ -370,7 +368,7 @@ def test_moving_while_still_afk_does_not_resume(rt):
     rt.set(afk=False)
     rt.tick()
     assert not rt.walka.IsPaused(rt.walka)
-    assert flags(rt) == Flags.ACTIVE | Flags.MOVING
+    assert flags(rt) == State.ACTIVE | State.MOVING
 
 
 def test_an_afk_pause_on_a_flight_path_ends_when_the_player_is_back(rt):
@@ -387,7 +385,7 @@ def test_an_afk_pause_on_a_flight_path_ends_when_the_player_is_back(rt):
     rt.set(afk=False)
     rt.tick()
     assert not rt.walka.IsPaused(rt.walka)
-    assert flags(rt) == Flags.ACTIVE | Flags.MOVING | Flags.TAXI
+    assert flags(rt) == State.ACTIVE | State.MOVING | State.TAXI
 
 
 def test_an_afk_paused_session_restored_after_a_reload_still_ends_by_moving(rt):
@@ -451,7 +449,7 @@ def test_an_afk_pause_has_no_time_limit(rt):
     rt.set(afk=False, speed=7.0)
     rt.tick()
     assert not rt.walka.IsPaused(rt.walka)
-    assert flags(rt) == Flags.ACTIVE | Flags.MOVING
+    assert flags(rt) == State.ACTIVE | State.MOVING
 
 
 def test_a_paused_session_saved_by_an_older_version_loads_without_its_belt_rules(rt):
@@ -493,7 +491,7 @@ def test_an_afk_pause_survives_a_reload_and_still_waits_for_movement(rt):
     fresh.set(speed=7.0)
     fresh.tick()
     assert not fresh.walka.IsPaused(fresh.walka)
-    assert flags(fresh) == Flags.ACTIVE | Flags.MOVING
+    assert flags(fresh) == State.ACTIVE | State.MOVING
 
 
 def test_resuming_by_hand_ends_an_afk_pause_without_moving(rt):
@@ -503,7 +501,7 @@ def test_resuming_by_hand_ends_an_afk_pause_without_moving(rt):
     rt.slash("/walka resume")
     rt.tick()
     assert not rt.walka.IsPaused(rt.walka)
-    assert flags(rt) == Flags.ACTIVE, "the AFK flag goes with the pause"
+    assert flags(rt) == State.ACTIVE, "the AFK flag goes with the pause"
     assert live_speed(rt) == PACE
 
 
@@ -516,15 +514,15 @@ def test_a_pause_by_hand_is_not_undone_by_afk_ending(rt):
     # On a paused frame the AFK flag means "this is the automatic pause". A
     # pause made by hand goes out without it, even while the game shows the
     # player AFK.
-    assert flags(rt) == Flags.ACTIVE | Flags.PAUSED
+    assert flags(rt) == State.ACTIVE | State.PAUSED
     rt.set(afk=False)
     rt.tick(5)
     assert rt.walka.IsPaused(rt.walka), "only an AFK pause resumes by itself"
-    assert flags(rt) == Flags.ACTIVE | Flags.PAUSED
+    assert flags(rt) == State.ACTIVE | State.PAUSED
     rt.set(speed=7.0)
     rt.tick(50)
     assert rt.walka.IsPaused(rt.walka), "... and moving does not undo it either"
-    assert flags(rt) == Flags.ACTIVE | Flags.PAUSED | Flags.MOVING
+    assert flags(rt) == State.ACTIVE | State.PAUSED | State.MOVING
     assert live_speed(rt) == 0
 
 
@@ -534,7 +532,7 @@ def test_afk_pause_can_be_switched_off(rt):
     rt.set(afk=True)
     rt.tick(20)
     assert not rt.walka.IsPaused(rt.walka)
-    assert flags(rt) & Flags.AFK and not flags(rt) & Flags.PAUSED
+    assert flags(rt) & State.AFK and not flags(rt) & State.PAUSED
 
 
 def test_no_afk_handling_without_a_session(rt):
@@ -561,8 +559,8 @@ def test_reload_in_mid_session_restores_it(rt):
     assert live_speed(fresh) == PACE
     assert fresh.db.active is None, "the saved copy is consumed"
     fresh.tick()
-    assert flags(fresh) == Flags.ACTIVE | Flags.MOVING
-    assert fresh.live_frame().session == before["id"]
+    assert flags(fresh) == State.ACTIVE | State.MOVING
+    assert fresh.session_id() == before["id"]
     fresh.tick(100)
     assert session(fresh)["seconds"] == pytest.approx(before["seconds"] + 10.1)
     fresh.slash("/walka stop")
@@ -580,7 +578,7 @@ def test_reload_keeps_a_paused_session_paused(rt):
     assert session(fresh)["pauseReason"] == "user"
     fresh.tick(50)
     assert live_speed(fresh) == 0
-    assert flags(fresh) & Flags.PAUSED
+    assert flags(fresh) & State.PAUSED
     fresh.slash("/walka resume")
     assert live_speed(fresh) == PACE
 
@@ -608,7 +606,7 @@ def test_a_stale_session_is_closed_into_the_history(rt):
     assert records[0]["seconds"] == round(before["seconds"])
     assert live_speed(fresh) == 0
     fresh.tick()
-    assert flags(fresh) == Flags.MOVING
+    assert flags(fresh) == State.MOVING
 
 
 def test_a_stale_session_that_was_too_short_just_disappears(rt):
@@ -648,7 +646,6 @@ def test_settings_of_a_fresh_install(make_rt):
         "units": "mph",                                     # an enUS client
         "paceKmh": 2.414,                                   # 1.5 mph
         "profile": {"weightKg": 75, "heightCm": 172},
-        "beacon": {"enabled": True, "cellPx": 4},
         "autoPauseAFK": True,
         "autoSession": True,
         "recordRoad": True,
@@ -827,11 +824,13 @@ def test_an_error_in_a_subscriber_reaches_the_error_handler_and_does_not_stop_th
     def broken(*_):
         raise RuntimeError("boom")
 
+    rt.set(speed=7.0)
+    rt.slash("/walka start")
     rt.walka.On(rt.walka, "TICK", rt.lua.eval("function() error('boom from a window') end"))
     with pytest.raises(AddonError, match="boom from a window"):
         rt.tick(10)
-    # The beacon kept going regardless.
-    assert rt.shown_frame().seq == 10
+    # The count kept going regardless.
+    assert session(rt)["seconds"] == pytest.approx(1.0)
 
 
 def test_pausing_by_hand_during_an_afk_pause_makes_it_stick(rt):
@@ -853,19 +852,19 @@ def test_pausing_by_hand_during_an_afk_pause_makes_it_stick(rt):
     rt.tick(20)
     assert rt.walka.IsPaused(rt.walka)
     assert live_speed(rt) == 0
-    # The player's own pause now: the beacon no longer calls it the AFK one.
-    assert flags(rt) == Flags.ACTIVE | Flags.PAUSED
+    # The player's own pause now: no longer the AFK one.
+    assert flags(rt) == State.ACTIVE | State.PAUSED
     rt.set(speed=7.0)
     rt.tick(50)
     assert rt.walka.IsPaused(rt.walka), "moving does not resume a pause made by hand"
     assert session(rt)["pauseReason"] == "user"
     assert live_speed(rt) == 0
-    assert flags(rt) == Flags.ACTIVE | Flags.PAUSED | Flags.MOVING
+    assert flags(rt) == State.ACTIVE | State.PAUSED | State.MOVING
     assert ("SESSION", "resume") not in events
     rt.slash("/walka resume")
     assert not rt.walka.IsPaused(rt.walka)
     rt.tick()
-    assert flags(rt) == Flags.ACTIVE | Flags.MOVING
+    assert flags(rt) == State.ACTIVE | State.MOVING
 
 
 def test_pausing_by_hand_after_afk_has_ended_also_makes_it_stick(rt):
@@ -878,7 +877,7 @@ def test_pausing_by_hand_after_afk_has_ended_also_makes_it_stick(rt):
     rt.slash("/walka pause")
     rt.tick()
     assert session(rt)["pauseReason"] == "user"
-    assert flags(rt) == Flags.ACTIVE | Flags.PAUSED
+    assert flags(rt) == State.ACTIVE | State.PAUSED
     rt.set(speed=7.0)
     rt.tick(50)
     assert rt.walka.IsPaused(rt.walka)
@@ -931,11 +930,11 @@ def test_format_number(rt, value, text):
 def test_set_and_get_by_path(rt):
     walka = rt.walka
     events = collect_events(rt)
-    assert walka.Get(walka, "beacon.cellPx") == 4
-    walka.Set(walka, "beacon.cellPx", 6)
-    assert walka.Get(walka, "beacon.cellPx") == 6
-    assert rt.db.settings.beacon.cellPx == 6
-    assert walka.Get(walka, "beacon") is not None
+    assert walka.Get(walka, "profile.weightKg") == 75
+    walka.Set(walka, "profile.weightKg", 80)
+    assert walka.Get(walka, "profile.weightKg") == 80
+    assert rt.db.settings.profile.weightKg == 80
+    assert walka.Get(walka, "profile") is not None
     assert walka.Get(walka, "no.such.setting") is None
     assert walka.Get(walka, "units.deeper") is None
     walka.Set(walka, "brand.new.key", 1)

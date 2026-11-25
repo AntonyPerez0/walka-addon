@@ -48,7 +48,9 @@
 **Walka** is a free program for Windows and Mac, plus an addon for World of
 Warcraft: Forever. It listens to your walking pad over Bluetooth, writes
 down each walk - steps, distance, calories - and files it under the
-character you are playing. **You need:** a Windows 10 or 11 PC or a Mac
+character you are playing, once the game has saved (when you log out or
+type `/reload`). Walka does not look at your screen: it reads only the
+file the game saves for its addon. **You need:** a Windows 10 or 11 PC or a Mac
 with Bluetooth, and a walking pad that shows its numbers to apps over
 Bluetooth ([which treadmills work](docs/TREADMILLS.md)).
 
@@ -69,7 +71,9 @@ Bluetooth ([which treadmills work](docs/TREADMILLS.md)).
    Bluetooth settings), installs the game addon, and asks your weight and
    height.
 3. **Start the belt with the treadmill's own remote** and play. Walka
-   records the walk by itself, with the game or without it.
+   records the walk by itself, with the game or without it. When you log
+   out (or type `/reload`), the game saves which character you played, and
+   Walka files the walk under it.
 
 > [!NOTE]
 > **Walka only listens to your treadmill.** It cannot start, stop or change
@@ -105,7 +109,7 @@ The whole of it: [docs/SAFETY.md](docs/SAFETY.md) and
 * [Installing Walka](docs/INSTALL.md) - step by step, on a Mac, Walka's window, [is the download safe?](docs/INSTALL.md#is-the-download-safe), [before your first walk](docs/INSTALL.md#before-your-first-walk)
 * [Using Walka](docs/USING.md) - the dashboard, the floating window, your journey and a picture to share; [heart rate](docs/HEART-RATE.md)
 * [Which treadmills work](docs/TREADMILLS.md) and [hardware notes](docs/HARDWARE.md)
-* [How Walka works](docs/HOW-IT-WORKS.md) - what it looks at, why it only listens, [is this allowed?](docs/HOW-IT-WORKS.md#is-this-allowed)
+* [How Walka works](docs/HOW-IT-WORKS.md) - what it reads, why it only listens, [is this allowed?](docs/HOW-IT-WORKS.md#is-this-allowed)
 * [Your Walka account](docs/WALKA-ACCOUNT.md) on walka.dev - optional
 * [Troubleshooting](docs/TROUBLESHOOTING.md) and [the in-game checklist](docs/IN-GAME-CHECKLIST.md)
 * [Developing Walka](docs/DEVELOPMENT.md), [translating the dashboard](docs/TRANSLATING.md), [ANT+ design note](docs/ANT-PLUS-DESIGN.md)
