@@ -230,18 +230,81 @@ FLOATING_BACKGROUND = "#14171c"
 MOVED_SETTLE_S = 1.0
 
 
-def default_floating_place(screens: list[Any], size: tuple[int, int] = FLOATING_SIZE) -> tuple[int, int] | None:
-    """Where the floating window first opens: the top-right corner of the
-    first screen, or ``None`` (the system's choice) if no screen is known."""
-    if not screens:
-        return None
-    screen = screens[0]
+def pywebview_scale(platform: str = sys.platform) -> float:
+    """How many screen pixels one unit of a window's place is to pywebview.
+
+    Walka is aware of display scaling (``capture.enable_dpi_awareness``), so
+    the screens pywebview lists are in pixels. But on Windows pywebview
+    takes a window's x and y in scaled units and multiplies them by the
+    display's scale (150 % -> 1.5) itself: a corner worked out in pixels
+    lands off the screen. The scale of the main display is what it uses
+    for a new window. Elsewhere (a Mac counts in points throughout) it is 1.
+    """
+    if platform != "win32":
+        return 1.0
+    import ctypes
+
     try:
-        left, top = int(screen.x), int(screen.y)
-        width = int(screen.width)
+        dpi = int(ctypes.WinDLL("user32").GetDpiForSystem())
+    except (AttributeError, OSError, ValueError):
+        return 1.0
+    return dpi / 96 if dpi > 0 else 1.0
+
+
+def _screen_box(screen: Any, scale: float) -> tuple[float, float, float, float] | None:
+    """A screen's left, top, width and height, in pywebview's units."""
+    try:
+        return (
+            float(screen.x) / scale,
+            float(screen.y) / scale,
+            float(screen.width) / scale,
+            float(screen.height) / scale,
+        )
     except (AttributeError, TypeError, ValueError):
         return None
-    return left + max(0, width - size[0] - FLOATING_MARGIN[0]), top + FLOATING_MARGIN[1]
+
+
+def _main_screen(screens: list[Any]) -> Any:
+    """The main screen: the one whose corner is the origin, else the first."""
+    for screen in screens:
+        if getattr(screen, "x", None) == 0 and getattr(screen, "y", None) == 0:
+            return screen
+    return screens[0]
+
+
+def default_floating_place(
+    screens: list[Any], size: tuple[int, int] = FLOATING_SIZE, scale: float = 1.0
+) -> tuple[int, int] | None:
+    """Where the floating window first opens: the top-right corner of the
+    main screen, in pywebview's units (``scale``: see ``pywebview_scale``),
+    or ``None`` (the system's choice) if no screen is known."""
+    if not screens:
+        return None
+    box = _screen_box(_main_screen(screens), scale)
+    if box is None:
+        return None
+    left, top, width, _height = box
+    return int(left + max(0.0, width - size[0] - FLOATING_MARGIN[0])), int(top + FLOATING_MARGIN[1])
+
+
+def on_a_screen(
+    place: tuple[int, int], screens: list[Any], size: tuple[int, int] = FLOATING_SIZE, scale: float = 1.0
+) -> bool:
+    """Would a window at ``place`` show enough of itself on some screen to
+    be seen and dragged? (A place remembered on a screen that has since gone,
+    or one worked out wrong, would put it where nobody can reach it.)"""
+    if not screens:
+        return True  # nothing to judge by: the place is taken as it is
+    x, y = place
+    for screen in screens:
+        box = _screen_box(screen, scale)
+        if box is None:
+            continue
+        left, top, width, height = box
+        # Its top strip (what it is dragged by) at least half on this screen.
+        if left - size[0] / 2 <= x <= left + width - size[0] / 2 and top <= y <= top + height - 24:
+            return True
+    return False
 
 
 class FloatingWindow:
@@ -337,7 +400,13 @@ class FloatingWindow:
 
         place = None
         try:
-            place = self._place() or default_floating_place(list(webview.screens or []))
+            screens = list(webview.screens or [])
+            scale = pywebview_scale()
+            place = self._place()
+            if place is not None and not on_a_screen(place, screens, scale=scale):
+                log.info("the floating window's last place is on no screen now: it opens in the corner")
+                place = None
+            place = place or default_floating_place(screens, scale=scale)
         except Exception as exc:
             log.debug("no place for the floating window: %s", exc)
         x, y = place if place else (None, None)
