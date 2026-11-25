@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from . import ftms
+from .recording import Recording
 from .treadmill.ftms_ble import DEFAULT_NAME_PREFIXES, is_treadmill_candidate, name_matches
 
 Emit = Callable[[str], None]
@@ -134,10 +135,14 @@ async def probe(
     scan_s: float = 8.0,
     all_characteristics: bool = False,
     emit: Emit = print,
+    recording: Recording | None = None,
 ) -> list[str]:
     """Run the probe; returns the report lines (also passed to ``emit``).
 
     ``all_characteristics`` also listens to the vendor's own channels.
+    ``recording``, if given, is filled in with every notification heard
+    (with its time), the layout of the services and the values read - by
+    the same rules as the saved report: see ``walka.recording``.
     """
     from bleak import BleakClient, BleakScanner
 
@@ -211,6 +216,10 @@ async def probe(
         f"Connecting to {short_address(target.address)} ({target.name or 'unnamed'}) ...",
         shown=f"Connecting to {target.address} ({target.name or 'unnamed'}) ...",
     )
+    if recording is not None:
+        recording.name = target.name or ""
+        recording.address = short_address(target.address)
+        recording.recorded = time.strftime("%Y-%m-%d")
     async with BleakClient(target, timeout=20.0) as client:
         out("Connected. GATT table:")
         notifiable = []
@@ -221,9 +230,13 @@ async def probe(
                 props = ",".join(char.properties)
                 label = _KNOWN.get(char.uuid.lower()) or _KNOWN_IDENTIFYING.get(char.uuid.lower(), "")
                 out(f"    char {char.uuid}  [{props}]  {label}")
+                if recording is not None:
+                    recording.add_characteristic(service.uuid, char.uuid, char.properties)
                 if "read" in char.properties:
                     try:
                         value = bytes(await client.read_gatt_char(char))
+                        if recording is not None:
+                            recording.add_read(char.uuid, value)
                         line = f"      read: {value.hex(' ')}  {describe_value(char.uuid, value)}"
                         if char.uuid.lower() in IDENTIFYING:
                             out(
@@ -259,6 +272,8 @@ async def probe(
         def handler_for(uuid: str) -> Callable[[Any, bytearray], None]:
             def handle(_char: Any, data: bytearray) -> None:
                 value = bytes(data)
+                if recording is not None:
+                    recording.add_notification(time.monotonic() - started, uuid, value)
                 counts[uuid] = counts.get(uuid, 0) + 1
                 # Log every packet for rare characteristics, but only changes
                 # for the chatty data stream.

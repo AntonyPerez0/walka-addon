@@ -197,7 +197,8 @@ function updateTreadmill(s, link) {
   // Walka is tied to the first treadmill it connected to (so that a second
   // pad in range is never listened to by mistake). Offer the way out.
   setShown($("tm-forget"), !!t.pinned);
-  setShown($("tm-sim"), t.kind === "simulated");
+  // (A recording being played back has no remote: what it does is recorded.)
+  setShown($("tm-sim"), t.kind === "simulated" && !t.replay);
 }
 
 function signalWord(rssi) {

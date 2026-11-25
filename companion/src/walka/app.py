@@ -535,6 +535,7 @@ class App:
         treadmill = status.to_dict()
         treadmill.update(
             kind=self.treadmill.kind,
+            replay=bool(getattr(self.treadmill, "replay", False)),
             want_connected=self.want_connected,
             error=self.connect_error,
             # Walka is tied to one treadmill (see _pin_treadmill).

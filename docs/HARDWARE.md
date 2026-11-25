@@ -205,8 +205,13 @@ their own there.
 
 To add a treadmill to the names Walka knows:
 
-1. Run `walka probe` on it and keep the report: it shows the advertised
-   name, the services, the speed range and the feature bits.
+1. Run `walka probe --record` on it and keep the report and the recording
+   next to it (`walka-probe-....txt` and `.json`): the report shows the
+   advertised name, the services, the speed range and the feature bits;
+   the recording holds every notification heard, with its time, so the
+   walk can be played back - in Walka's tests, or on the dashboard with
+   `walka run --replay walka-probe-....json`. Both are made to be posted:
+   fitness machines only, addresses cut short, no serial number.
 2. Walk on it with the companion running, and check the dashboard against
    the treadmill's own display: speed, distance, steps.
 3. Add a line to `KNOWN_TREADMILLS` in `treadmill/known.py` - the start of

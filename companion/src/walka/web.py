@@ -205,7 +205,11 @@ def create_app(app: App) -> web.Application:
         data = await _body(request)
         button = data.get("button")
         treadmill = app.treadmill
-        if treadmill.kind != "simulated" or button not in SIMULATOR_BUTTONS:
+        if (
+            treadmill.kind != "simulated"
+            or button not in SIMULATOR_BUTTONS
+            or not hasattr(treadmill, f"press_{button}")
+        ):
             raise web.HTTPBadRequest(text="not available on this treadmill")
         getattr(treadmill, f"press_{button}")()
         return ok()
