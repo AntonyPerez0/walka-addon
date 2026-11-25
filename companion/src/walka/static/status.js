@@ -153,7 +153,19 @@ export function heartHealth(s) {
       detail: "Heart-rate sensors are not used with the simulated treadmill.",
     };
   }
+  if (hr.source === "network" && hr.bpm != null) {
+    return { tone: "ok", pill: "live", state: `${hr.bpm} bpm`, available: true, detail: "From your watch, over the local network." };
+  }
   if (!hr.enabled) {
+    if (hr.network && hr.network.listening) {
+      return {
+        tone: "warn",
+        pill: "waiting",
+        state: "waiting",
+        available: true,
+        detail: "Listening for heart rate over the local network: nothing has arrived yet.",
+      };
+    }
     return {
       tone: "idle",
       pill: "off",

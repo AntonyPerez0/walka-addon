@@ -578,6 +578,20 @@
         </div>
         <div id="hr-scan-out" class="scan-out" aria-live="polite"></div>
         <div id="hr-help"></div>
+        <details class="advanced" id="hr-net">
+          <summary>Heart rate over the local network</summary>
+          <div class="advanced-body">
+            <p class="muted small">For a watch that cannot send its heart rate over Bluetooth, through a watch app that can send it to a web address. Off unless you switch it on: then Walka listens on its own port, on your home network, for that and nothing else, and only with the code below.</p>
+            <form class="form" data-form="hrnet" novalidate></form>
+            <div id="hr-net-out" class="hr-net-out" hidden>
+              <p class="small">The address to give the watch app:</p>
+              <ul class="hr-net-urls" id="hr-net-urls"></ul>
+              <p class="muted small" id="hr-net-state" role="status"></p>
+              <div class="btn-row"><button class="btn small" id="hr-net-code" type="button">Make a new code</button></div>
+              <p class="muted small">Your computer's firewall may ask whether Walka may be reached on the network: allow it on private (home) networks only.</p>
+            </div>
+          </div>
+        </details>
       </section>
     </div>
 

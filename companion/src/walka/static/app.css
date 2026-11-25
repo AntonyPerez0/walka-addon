@@ -3202,3 +3202,18 @@ body[data-welcome="1"] main {
 .hr-brand p {
   margin: 0;
 }
+.hr-net-out {
+  display: grid;
+  gap: 8px;
+}
+.hr-net-out[hidden] {
+  display: none;
+}
+.hr-net-urls {
+  margin: 0;
+  padding-left: 18px;
+}
+.hr-net-urls code {
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}

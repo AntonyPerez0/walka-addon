@@ -7,7 +7,7 @@
 // clamps everything to its own bounds; the ranges here mirror config._BOUNDS
 // so mistakes are caught before they are sent.
 
-import { $, CM_PER_INCH, U, api, fmt, h, post, run, setShown, setText, setTone, toast } from "./util.js";
+import { $, CM_PER_INCH, U, api, fmt, h, post, run, sentence, setShown, setText, setTone, toast } from "./util.js";
 import { installAddon, scanInto, syncAddon } from "./live.js";
 import { initWalkaAccount, updateWalkaAccount } from "./walkaaccount.js";
 import { t, tr } from "./i18n.js";
@@ -617,6 +617,27 @@ FORMS.updates = {
   ],
 };
 
+FORMS.hrnet = {
+  fields: [
+    {
+      type: "check",
+      path: "heart_rate.network",
+      label: "Receive heart rate over the local network",
+      help: "Off unless you switch it on. Only for a watch app on your home network that knows the code.",
+    },
+    {
+      type: "number",
+      kind: "steps",
+      path: "heart_rate.network_port",
+      min: 1024,
+      max: 65535,
+      advanced: true,
+      label: "Port",
+      help: "8788 unless another program uses it.",
+    },
+  ],
+};
+
 // The first-run guide asks for weight and height only.
 FORMS.welcome = { confirm: "profile", fields: FORMS.profile.fields.slice(0, 2) };
 
@@ -658,6 +679,31 @@ function updateStatusCards(s, links) {
 
   setShown($("overlay-note"), !(s.overlay && s.overlay.available));
 
+  // Heart rate over the local network: where the watch app sends it, and whether it does.
+  const net = s.heart_rate && s.heart_rate.network;
+  setShown($("hr-net-out"), !!net);
+  if (net && !net.listening) {
+    $("hr-net-urls").replaceChildren();
+    delete $("hr-net-urls").dataset.key;
+    setText($("hr-net-state"), sentence(net.error || "not listening"));
+  } else if (net && net.listening) {
+    const code = s.config.heart_rate.network_code;
+    const urls = (net.addresses.length ? net.addresses : ["this computer's address"]).map(
+      (address) => `http://${address}:${net.port}/${code}/hr`,
+    );
+    const key = urls.join(" ");
+    const list = $("hr-net-urls");
+    if (list.dataset.key !== key) {
+      list.dataset.key = key;
+      list.replaceChildren(...urls.map((url) => h("li", {}, h("code", { text: url }))));
+    }
+    setText(
+      $("hr-net-state"),
+      net.last_s != null
+        ? t("Received {1} readings; the last {2} s ago.", net.received, Math.round(net.last_s))
+        : tr("Nothing received yet."),
+    );
+  }
   const update = s.update || { enabled: false };
   let status = "";
   if (update.enabled) {
@@ -794,6 +840,11 @@ export function initSettings({ onUnits }) {
 
   $("hr-scan").addEventListener("click", () => scanHeartRate($("hr-scan-out"), $("hr-scan")));
   renderHeartRateHelp($("hr-help"));
+  $("hr-net-code").addEventListener("click", (event) =>
+    run(event.currentTarget, () => post("/api/heart-rate/network/code", {}), {
+      success: "New code made. Give the watch app the new address.",
+    }),
+  );
   $("hr-off").addEventListener("click", (event) =>
     run(event.currentTarget, () => post("/api/heart-rate/connect", { enabled: false }), {
       success: "Heart-rate sensor turned off. Walka remembers it.",

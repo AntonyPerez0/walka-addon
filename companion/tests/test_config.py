@@ -34,7 +34,8 @@ def test_there_is_nothing_to_set_about_the_belt():
     }  # fmt: skip
     assert set(Config().to_dict()["overlay"]) == {"enabled", "step_goal", "x", "y"}  # a window, and where it is
     assert set(Config().to_dict()["treadmill"]) == {"kind", "address", "name_prefixes", "units", "auto_connect"}
-    assert {section for section, _name in _BOUNDS} == {"profile", "wow", "web", "overlay"}
+    # (heart_rate: the port of heart rate over the local network.)
+    assert {section for section, _name in _BOUNDS} == {"profile", "wow", "web", "overlay", "heart_rate"}
 
 
 def test_defaults_are_inside_their_own_bounds():

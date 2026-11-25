@@ -389,6 +389,13 @@ def create_app(app: App) -> web.Application:
             raise web.HTTPConflict(text=str(exc) or type(exc).__name__) from None
         return ok(bpm=bpm)
 
+    @routes.post("/api/heart-rate/network/code")
+    async def hr_network_code(_request: web.Request) -> web.Response:
+        """A new pairing code for heart rate over the local network (the old one stops working)."""
+        if app.heart_rate is None:
+            raise web.HTTPBadRequest(text="heart-rate support is not available")
+        return ok(code=app.new_hr_network_code())
+
     @routes.post("/api/heart-rate/connect")
     async def hr_connect(request: web.Request) -> web.Response:
         data = await _body(request)

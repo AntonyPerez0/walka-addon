@@ -59,6 +59,11 @@ class HeartRateConfig:
     enabled: bool = False
     address: str = ""  # Bluetooth address; empty = first heart-rate sensor found
     name: str = ""
+    # Heart rate over the local network, from a watch app (hr_network.py). Off unless switched on;
+    # its own port, and a pairing code that is made when it is first switched on.
+    network: bool = False
+    network_port: int = 8788
+    network_code: str = ""
 
 
 @dataclass
@@ -136,6 +141,7 @@ _BOUNDS: dict[tuple[str, str], tuple[float, float]] = {
     ("wow", "capture_fps"): (2.0, 60.0),
     ("web", "port"): (1.0, 65535.0),
     ("overlay", "step_goal"): (0.0, 100000.0),
+    ("heart_rate", "network_port"): (1024.0, 65535.0),
 }
 
 

@@ -56,16 +56,22 @@ class HeartRateMonitor:
         self.connected = False
         self.detail = "off"
         self._updated_at = 0.0
+        self._network_at: float | None = None
         self._client: Any = None
         self._changed = asyncio.Event()
         self._closing = False
 
     # ---- state -----------------------------------------------------------------
     @property
+    def network_live(self) -> bool:
+        """Readings are arriving over the local network (hr_network.py)."""
+        return self._network_at is not None and self.clock() - self._network_at <= FRESH_S
+
+    @property
     def fresh(self) -> bool:
         """A recent, plausible reading is available."""
         return (
-            self.connected
+            (self.connected or self.network_live)
             and self.bpm is not None
             and 25 <= self.bpm <= 240
             and self.clock() - self._updated_at <= FRESH_S
@@ -81,6 +87,7 @@ class HeartRateMonitor:
             "detail": self.detail,
             "contact": self.contact,
             "battery": self.battery,
+            "source": "bluetooth" if self.connected else "network" if self.network_live else None,
         }
 
     def configure(self, *, enabled: bool, address: str) -> None:
@@ -106,6 +113,15 @@ class HeartRateMonitor:
         if measurement.bpm > 0:
             self.bpm = measurement.bpm
             self._updated_at = self.clock()
+
+    def feed_network(self, bpm: int) -> None:
+        """A heart rate from a watch app, over the local network. A Bluetooth
+        sensor that is connected and reading comes first."""
+        if self.connected and self.bpm is not None and self.clock() - self._updated_at <= FRESH_S:
+            return
+        self.bpm = bpm
+        now = self.clock()
+        self._updated_at = self._network_at = now
 
     def feed_battery(self, data: bytes) -> None:
         if data:

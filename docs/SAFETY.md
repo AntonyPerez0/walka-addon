@@ -55,6 +55,15 @@ The treadmill's *Fitness Machine Control Point* - the one channel through
 which an app can start, stop or steer a belt - is never written to and
 never listened to. Walka does not ask the treadmill for control.
 
+## Nothing leaves your computer unless you switch it on
+
+Two things reach outside this computer, and both are off until you switch
+them on in Settings: the update notice (it asks GitHub which version is the
+newest) and heart rate over the local network (Walka then listens, on a
+port of its own and with a pairing code, for a heart rate from a watch app
+on your home network - see [HEART-RATE.md](HEART-RATE.md#heart-rate-over-the-local-network)).
+The dashboard itself answers this computer only.
+
 ## How that is made sure of
 
 Not by a setting, and not by a rule that could be got round. The parts

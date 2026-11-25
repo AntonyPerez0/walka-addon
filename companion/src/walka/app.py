@@ -131,6 +131,9 @@ class App:
         self.update = UpdateState()
         self._update_task: asyncio.Task | None = None
         self.update_fetch: Any = None  # tests hand in a stand-in for updates.fetch_latest
+        # Heart rate over the local network (hr_network.py): nothing listens unless switched on.
+        self.hr_network: Any = None
+        self._side_tasks: set[asyncio.Task] = set()
 
         self._connect_now = asyncio.Event()
         self.watching = False  # listening for the lost treadmill's advertisements
@@ -566,6 +569,40 @@ class App:
             if was_wanted:
                 self.connect()
 
+    # ---- heart rate over the local network -----------------------------------------------
+    async def apply_hr_network(self) -> None:
+        """Listen for heart rate over the local network - or stop - as the setting says."""
+        from . import hr_network
+
+        wanted = self.config.heart_rate.network and self.heart_rate is not None and not self._stopping.is_set()
+        current = self.hr_network
+        if current is not None and (not wanted or current.port != self.config.heart_rate.network_port):
+            self.hr_network = None
+            await current.stop()
+            current = None
+        if not wanted:
+            return
+        if not self.config.heart_rate.network_code:
+            self.config.heart_rate.network_code = hr_network.new_code()
+            self.save_config()
+        if current is None:
+            self.hr_network = hr_network.NetworkHeartRate(
+                self.heart_rate.feed_network,
+                code=self.config.heart_rate.network_code,
+                port=self.config.heart_rate.network_port,
+            )
+            await self.hr_network.start()
+        self.hr_network.code = self.config.heart_rate.network_code
+
+    def new_hr_network_code(self) -> str:
+        from . import hr_network
+
+        self.config.heart_rate.network_code = hr_network.new_code()
+        self.save_config()
+        if self.hr_network is not None:
+            self.hr_network.code = self.config.heart_rate.network_code
+        return self.config.heart_rate.network_code
+
     # ---- the update notice ------------------------------------------------------------
     def _maybe_check_for_update(self) -> None:
         """From the tick: start a check when it is switched on and one is due."""
@@ -583,6 +620,15 @@ class App:
         self._update_task = asyncio.create_task(
             check_for_update(self.update, fetch=fetch, wall=self.wall(), mono=mono), name="walka-update-check"
         )
+
+    def _spawn_soon(self, coro: Any) -> None:
+        try:
+            task = asyncio.get_running_loop().create_task(coro)
+        except RuntimeError:  # no loop (a test calling update_config outside one): not now
+            coro.close()
+            return
+        self._side_tasks.add(task)
+        task.add_done_callback(self._side_tasks.discard)
 
     def save_config(self) -> None:
         try:
@@ -609,6 +655,9 @@ class App:
         self.save_config()
         if isinstance(patch.get("overlay"), dict):
             self._apply_overlay()
+        hr_patch = patch.get("heart_rate")
+        if isinstance(hr_patch, dict) and ({"network", "network_port"} & set(hr_patch)):
+            self._spawn_soon(self.apply_hr_network())
         if isinstance(patch.get("updates"), dict):
             # Switched on: ask now. Switched off: forget the answer (and ask nothing).
             self.update = UpdateState()
@@ -712,7 +761,10 @@ class App:
             "session": self.recorder.live() if self.recorder is not None else None,
             "last_session": self.last_record.summary() if self.last_record is not None else None,
             "totals": self.totals(wall),
-            "heart_rate": hr.to_dict() if hr is not None else None,
+            "heart_rate": None if hr is None else {
+                **hr.to_dict(),
+                "network": self.hr_network.to_dict() if self.hr_network is not None else None,
+            },
             "addon": {
                 "dir": str(self.addon_dir) if self.addon_dir else None,
                 "last_sync": self.last_sync,
@@ -858,6 +910,8 @@ class App:
                 # no place for that.)
                 log.warning("the Walka account's part did not start: an error of the kind %s", type(exc).__name__)
         self.sync_addon()
+        if self.config.heart_rate.network:
+            await self.apply_hr_network()
 
     async def stop(self) -> None:
         """Close down: save the walk, sync, let go of the treadmill. The
@@ -886,6 +940,12 @@ class App:
             self._save_unsaved()
         except Exception:
             log.exception("could not save the walk on exit")
+        if self.hr_network is not None:
+            try:
+                await self.hr_network.stop()
+            except Exception:
+                pass
+            self.hr_network = None
         if self.heart_rate is not None:
             try:
                 await self.heart_rate.close()
