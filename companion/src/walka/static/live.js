@@ -242,8 +242,9 @@ export async function scanInto(out, button, { path, empty, onPick, pickLabel }) 
   }
 }
 
-function scanTreadmills() {
-  scanInto($("tm-scan-out"), $("tm-scan"), {
+/** Shared by the treadmill card and the first-run guide. */
+export function scanTreadmills(out = $("tm-scan-out"), button = $("tm-scan")) {
+  scanInto(out, button, {
     path: "/api/treadmill/scan",
     pickLabel: "Connect",
     empty: () =>
@@ -315,7 +316,8 @@ function updateLinks(s, links, online) {
   setShown($("addon-install"), !addon.installed);
 }
 
-export function installAddon(button, addonsDir) {
+/** stay: do not go to the addon settings when it fails (the first-run guide). */
+export function installAddon(button, addonsDir, { stay = false } = {}) {
   return run(button, async () => {
     try {
       const data = await post("/api/addon/install", addonsDir ? { addons_dir: addonsDir } : {});
@@ -325,7 +327,7 @@ export function installAddon(button, addonsDir) {
       );
       return data;
     } catch (error) {
-      if (!addonsDir && !location.hash.startsWith("#settings")) location.hash = "#settings/set-addon";
+      if (!addonsDir && !stay && !location.hash.startsWith("#settings")) location.hash = "#settings/set-addon";
       throw error;
     }
   });
@@ -392,7 +394,7 @@ export function initLive() {
     run(event.currentTarget, () => post("/api/treadmill/connect", {})),
   );
 
-  $("tm-scan").addEventListener("click", scanTreadmills);
+  $("tm-scan").addEventListener("click", () => scanTreadmills());
   $("tm-connect").addEventListener("click", (event) =>
     run(event.currentTarget, () => post("/api/treadmill/connect", {})),
   );

@@ -12,6 +12,7 @@ import { historyUnitsChanged, initHistory, updateHistory } from "./history.js";
 import { initSettings, settingsUnitsChanged, updateSettings } from "./settings.js";
 import { initShare, shareUnitsChanged, updateShare } from "./share.js";
 import { updateFeet } from "./walkaaccount.js";
+import { initWelcome, updateWelcome } from "./welcome.js";
 
 const VIEWS = ["live", "history", "share", "settings"];
 const STALE_AFTER_MS = 3000; // snapshots arrive every 500 ms
@@ -100,6 +101,7 @@ function render() {
   // A snapshot from before the companion went silent says nothing about now.
   const links = s ? (online ? health(s) : staleHealth(s)) : null;
   updateChrome(s, summary, links, online);
+  updateWelcome(s, links, online);
   if (view === "live") updateLive(s, summary, links, online);
   else if (s && view === "history") updateHistory(s);
   else if (s && view === "settings") updateSettings(s, links);
@@ -199,12 +201,12 @@ function route() {
 initLive();
 initHistory();
 initShare();
-initSettings({
-  onUnits: (units) => {
-    unitsLockedUntil = performance.now() + 1500;
-    unitsChanged(units);
-  },
-});
+const onUnits = (units) => {
+  unitsLockedUntil = performance.now() + 1500;
+  unitsChanged(units);
+};
+initSettings({ onUnits });
+initWelcome({ onUnits });
 
 window.addEventListener("hashchange", route);
 // Following a link to the place you already are does not fire hashchange.

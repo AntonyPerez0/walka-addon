@@ -29,7 +29,9 @@ def test_defaults():
 def test_there_is_nothing_to_set_about_the_belt():
     """No speed limit, no STOP hotkey, no manual speed, no disclaimer to
     accept before a belt is moved: the companion moves no belt."""
-    assert set(Config().to_dict()) == {"units", "profile", "treadmill", "heart_rate", "wow", "web", "overlay"}
+    assert set(Config().to_dict()) == {
+        "units", "profile", "treadmill", "heart_rate", "wow", "web", "overlay", "welcome_done"
+    }  # fmt: skip
     assert set(Config().to_dict()["overlay"]) == {"enabled", "step_goal", "x", "y"}  # a window, and where it is
     assert set(Config().to_dict()["treadmill"]) == {"kind", "address", "name_prefixes", "units", "auto_connect"}
     assert {section for section, _name in _BOUNDS} == {"profile", "wow", "web", "overlay"}
@@ -391,3 +393,61 @@ def test_eighteen_is_the_youngest_age_the_profile_takes():
     """Walka is for adults: the disclaimer says so, and the profile agrees."""
     assert apply_update(Config(), {"profile": {"age": 18}}).profile.age == 18
     assert apply_update(Config(), {"profile": {"age": 17}}).profile.age is None
+
+
+# ---- the first-run guide ------------------------------------------------------------------
+
+
+def test_a_new_install_gets_the_first_run_guide_and_an_old_one_does_not(tmp_path):
+    assert config_module.load(tmp_path).welcome_done is False  # no settings file: a new install
+    (tmp_path / "config.json").write_text(json.dumps({"units": "kmh"}))
+    assert config_module.load(tmp_path).welcome_done is True  # set up before there was a guide
+    (tmp_path / "config.json").write_text(json.dumps({"welcome_done": False}))
+    assert config_module.load(tmp_path).welcome_done is False  # the guide was not finished
+    config = config_module.load(tmp_path)
+    config_module.apply_update(config, {"welcome_done": True})
+    config_module.save(config, tmp_path)
+    assert config_module.load(tmp_path).welcome_done is True
+
+
+@pytest.mark.parametrize(
+    "name,region,units",
+    [
+        ("en-US", "US", "mph"),
+        ("en_GB.UTF-8", "GB", "mph"),
+        ("de_DE.UTF-8", "DE", "kmh"),
+        ("fr-CA", "CA", "kmh"),
+        ("zh-Hant-TW", "TW", "kmh"),
+        ("C.UTF-8", None, None),
+        ("English_United States.1252", None, None),
+        ("", None, None),
+        (None, None, None),
+    ],
+)
+def test_the_units_of_a_region(name, region, units):
+    from walka import locale_units
+
+    assert locale_units.region_of(name) == region
+    assert locale_units.units_for_region(region) == units
+
+
+def test_system_units_on_linux_reads_the_environment(monkeypatch):
+    from walka import locale_units
+
+    for variable in ("LC_ALL", "LC_MEASUREMENT", "LANG"):
+        monkeypatch.delenv(variable, raising=False)
+    assert locale_units.system_units("linux") is None
+    monkeypatch.setenv("LANG", "en_US.UTF-8")
+    assert locale_units.system_units("linux") == "mph"
+    monkeypatch.setenv("LC_MEASUREMENT", "de_DE.UTF-8")
+    assert locale_units.system_units("linux") == "kmh"
+
+
+def test_system_units_on_a_mac_prefers_the_chosen_measurement_system(monkeypatch):
+    from walka import locale_units
+
+    answers = {"AppleMetricUnits": "1", "AppleLocale": "en_US"}
+    monkeypatch.setattr(locale_units, "_mac_default", lambda key: answers.get(key))
+    assert locale_units.system_units("darwin") == "kmh"
+    answers.pop("AppleMetricUnits")
+    assert locale_units.system_units("darwin") == "mph"

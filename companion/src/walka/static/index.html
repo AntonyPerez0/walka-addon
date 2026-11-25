@@ -69,6 +69,89 @@
   Start the companion on your PC; the page reconnects by itself. <span id="offline-since"></span></p>
 </div>
 
+<!-- ================================================================= FIRST RUN -->
+<!-- The first time Walka runs, this is all there is: one step at a time (welcome.js). -->
+<section id="welcome" class="welcome" aria-labelledby="wz-title" hidden>
+  <div class="wz-card">
+    <header class="wz-head">
+      <svg class="brand-mark" aria-hidden="true" width="32" height="32"><use href="#i-mark"/></svg>
+      <span class="wz-count muted num" id="wz-count"></span>
+      <ol class="wz-dots" id="wz-dots" aria-hidden="true"></ol>
+    </header>
+
+    <div class="wz-step" data-step="hello">
+      <h2 id="wz-title" tabindex="-1">Welcome to Walka</h2>
+      <p>Walka writes down your walks on a walking pad - steps, distance, calories - while you play World of Warcraft. A few short steps and you are ready. Everything stays on this computer.</p>
+      <div class="wz-note">
+        <svg aria-hidden="true" width="20" height="20"><use href="#i-info"/></svg>
+        <p><strong>Walka only listens to your treadmill.</strong> It cannot start, stop or change the speed of the belt: you do that at the treadmill, with its own remote and buttons. Walking while you look at a game is at your own risk, and Walka is not a medical device. <a href="https://github.com/AntonyPerez0/walka-addon/blob/HEAD/DISCLAIMER.md" target="_blank" rel="noopener noreferrer">Read the disclaimer</a></p>
+      </div>
+    </div>
+
+    <div class="wz-step" data-step="units" hidden>
+      <h2 tabindex="-1">Miles or kilometres?</h2>
+      <p class="muted" id="wz-units-hint">How Walka shows speed, distance, weight and height. You can change it later in Settings.</p>
+      <div class="segmented wz-units" role="radiogroup" aria-label="Units">
+        <label><input type="radio" name="wz-units" value="mph"><span>mph, miles, lb, ft/in</span></label>
+        <label><input type="radio" name="wz-units" value="kmh"><span>km/h, km, kg, cm</span></label>
+      </div>
+    </div>
+
+    <div class="wz-step" data-step="treadmill" hidden>
+      <h2 tabindex="-1">Connect your treadmill</h2>
+      <ol class="wz-list">
+        <li><strong>Switch the treadmill on.</strong></li>
+        <li><strong>Close its own phone app</strong> (UREVO, WELLFIT Fitness, ...). Most treadmills take one Bluetooth connection at a time.</li>
+        <li><strong>Do not pair it</strong> in the computer's Bluetooth settings. Walka finds it by itself.</li>
+      </ol>
+      <p class="wz-status" id="wz-tm-status" data-tone="idle" role="status"></p>
+      <div class="btn-row">
+        <button class="btn" id="wz-tm-look" type="button">Look for it</button>
+        <button class="btn quiet" id="wz-tm-scan" type="button">Show treadmills nearby</button>
+      </div>
+      <div id="wz-tm-out" class="scan-out" aria-live="polite"></div>
+    </div>
+
+    <div class="wz-step" data-step="profile" hidden>
+      <h2 tabindex="-1">About you</h2>
+      <p class="muted">Your weight is used for calories, and your height for steps when the treadmill does not count them. They stay on this computer.</p>
+      <form class="form" data-form="welcome" novalidate></form>
+    </div>
+
+    <div class="wz-step" data-step="game" hidden>
+      <h2 tabindex="-1">Connect the game</h2>
+      <p>Walka's addon tells it which character you are playing, so that your walks count for that character. No game? Skip this step: walks are recorded all the same.</p>
+      <p class="wz-status" id="wz-addon-status" data-tone="idle" role="status"></p>
+      <div class="btn-row"><button class="btn" id="wz-addon-install" type="button">Install the addon</button></div>
+      <ol class="wz-list">
+        <li>Restart the game and tick <strong>Walka</strong> in the AddOns list.</li>
+        <li>Play in <strong>Windowed</strong> or <strong>Windowed (Fullscreen)</strong> mode, with the top-left corner of the game in view.</li>
+      </ol>
+    </div>
+
+    <div class="wz-step" data-step="hr" hidden>
+      <h2 tabindex="-1">Heart rate <span class="opt">(optional)</span></h2>
+      <p>A chest strap, an arm band, or a watch that broadcasts heart rate over Bluetooth. With one, Walka shows your heart rate and works out calories from it. Most people skip this.</p>
+      <p class="wz-status" id="wz-hr-status" data-tone="idle" role="status"></p>
+      <div class="btn-row"><button class="btn" id="wz-hr-scan" type="button">Scan for sensors</button></div>
+      <div id="wz-hr-out" class="scan-out" aria-live="polite"></div>
+    </div>
+
+    <div class="wz-step" data-step="done" hidden>
+      <h2 tabindex="-1">You are ready</h2>
+      <p><strong>Start the belt with the treadmill's own remote</strong> and set the speed there. Walka records the walk by itself, with the game or without it.</p>
+      <p class="muted" id="wz-left"></p>
+    </div>
+
+    <footer class="wz-foot">
+      <button class="btn quiet" id="wz-back" type="button">Back</button>
+      <span class="wz-gap"></span>
+      <button class="btn quiet" id="wz-skip" type="button">Skip setup</button>
+      <button class="btn primary" id="wz-next" type="button">Get started</button>
+    </footer>
+  </div>
+</section>
+
 <main id="main">
 
 <!-- ====================================================================== LIVE -->
@@ -503,6 +586,7 @@
     </section>
 
   </div>
+  <p class="foot muted small"><a href="#welcome">Open the setup guide again</a></p>
   <p class="foot muted small">Walka companion <span id="version"></span>. <span id="foot-stays">Everything on this page stays on this computer.</span> Provided as is, with no warranty: <a href="https://github.com/AntonyPerez0/walka-addon/blob/HEAD/DISCLAIMER.md" target="_blank" rel="noopener noreferrer">disclaimer</a>.</p>
 </section>
 

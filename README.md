@@ -97,8 +97,10 @@ are under [On a Mac](#on-a-mac) - and the rest is the same.*
    **More info**, then **Run anyway**. (Walka is not signed by a company,
    so Windows does not recognise it yet. It does not mean that anything
    was found: see [Is the download safe?](#is-the-download-safe))
-3. **Follow "Getting started" on the dashboard.** It ticks each step off as
-   you do it:
+3. **Follow the setup guide.** The first time Walka opens, it takes you
+   through setting up one step at a time (units, the treadmill, your weight
+   and height, the game addon, and - optional - a heart-rate sensor).
+   Afterwards "Getting started" on the dashboard ticks off what is left:
    * **Connect the treadmill:** switch it on and close its own phone app
      (UREVO, WELLFIT Fitness, ...). Don't pair it in Windows Bluetooth
      settings - Walka finds it by itself.

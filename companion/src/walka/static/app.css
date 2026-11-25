@@ -2865,3 +2865,165 @@ input[type="checkbox"] {
     break-inside: avoid;
   }
 }
+
+/* ---- the first-run guide ---------------------------------------------------------------
+ * On a new install it is the whole screen: the rest of the page is not drawn
+ * until it is finished or skipped. One card, one step at a time. */
+body[data-welcome="1"] .chrome,
+body[data-welcome="1"] .dock,
+body[data-welcome="1"] main {
+  display: none;
+}
+.welcome {
+  display: grid;
+  place-items: start center;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: clamp(16px, 6vh, 72px) 16px 32px;
+  background: var(--canvas);
+}
+.welcome[hidden] {
+  display: none;
+}
+.wz-card {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  width: min(100%, 600px);
+  padding: 28px 32px 24px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-l);
+  background: var(--surface);
+  box-shadow: var(--shadow-2);
+}
+.wz-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.wz-count {
+  font-size: 13px;
+}
+.wz-dots {
+  display: flex;
+  gap: 6px;
+  margin: 0 0 0 auto;
+  padding: 0;
+  list-style: none;
+}
+.wz-dots li {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--line-2);
+}
+.wz-dots li[data-state="done"] {
+  background: var(--accent);
+}
+.wz-dots li[data-state="now"] {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--tint-2);
+}
+.wz-step {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  line-height: 1.5;
+}
+.wz-step[hidden] {
+  display: none;
+}
+.wz-step h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 24px;
+  font-weight: 600;
+}
+.wz-step h2:focus {
+  outline: none;
+}
+.wz-step p {
+  margin: 0;
+}
+.wz-note {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px 16px;
+  border-radius: var(--r);
+  background: var(--surface-2);
+  box-shadow: inset 3px 0 0 var(--accent);
+  color: var(--ink-2);
+}
+.wz-note svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--accent-ink);
+}
+.wz-note strong {
+  color: var(--ink);
+}
+.wz-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 22px;
+  list-style: decimal;
+}
+.wz-list li::marker {
+  color: var(--ink-3);
+  font-weight: 600;
+}
+.wz-units {
+  justify-self: start;
+  max-width: 100%;
+}
+.wz-status {
+  padding: 10px 14px;
+  border-radius: var(--r);
+  background: var(--surface-2);
+  color: var(--ink-2);
+  font-size: 14px;
+}
+.wz-status:empty,
+.wz-status[hidden] {
+  display: none;
+}
+.wz-status[data-tone="ok"] {
+  background: var(--ok-tint);
+  color: var(--ok-ink);
+}
+.wz-status[data-tone="warn"] {
+  background: var(--warn-tint);
+  color: var(--warn-ink);
+}
+.wz-status[data-tone="bad"] {
+  background: var(--bad-tint);
+  color: var(--bad-ink);
+}
+.welcome .form-foot {
+  display: none; /* "Next" saves */
+}
+.wz-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.wz-gap {
+  flex: 1;
+}
+@media (max-width: 560px) {
+  .wz-card {
+    padding: 22px 18px 18px;
+  }
+  .wz-step h2 {
+    font-size: 21px;
+  }
+  .wz-units {
+    grid-auto-flow: row;
+    width: 100%;
+  }
+}

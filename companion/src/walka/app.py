@@ -510,6 +510,18 @@ class App:
             self.config.overlay.enabled = False
             self.save_config()
 
+    def system_units(self) -> str | None:
+        """The units of the computer's region (the first-run guide's
+        suggestion), looked up once."""
+        if not hasattr(self, "_system_units"):
+            from .locale_units import system_units
+
+            try:
+                self._system_units: str | None = system_units()
+            except Exception:  # a suggestion: never worth a failure
+                self._system_units = None
+        return self._system_units
+
     def profile_is_set(self) -> bool:
         """Has the walker's body profile been entered? Defaults do not count
         until they are saved from the dashboard."""
@@ -572,7 +584,7 @@ class App:
                 "last_sync": self.last_sync,
                 "error": self.addon_error,
             },
-            "setup": {"profile_set": self.profile_is_set()},
+            "setup": {"profile_set": self.profile_is_set(), "system_units": self.system_units()},
             "config": self.config.to_dict(),
             "events": list(self.events)[:30],
             "journey": self.journeys.summary(),

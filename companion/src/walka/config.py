@@ -110,6 +110,9 @@ class Config:
     wow: WowConfig = field(default_factory=WowConfig)
     web: WebConfig = field(default_factory=WebConfig)
     overlay: OverlayConfig = field(default_factory=OverlayConfig)
+    # The first-run guide has been finished (or skipped). A settings file
+    # from before there was a guide counts as finished: see load().
+    welcome_done: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -285,6 +288,8 @@ def load(data_dir: Path | None = None) -> Config:
         return config
     if isinstance(raw, dict):
         apply_update(config, raw)
+        if "welcome_done" not in raw:
+            config.welcome_done = True  # set up before there was a first-run guide
     if tuple(config.treadmill.name_prefixes) == LEGACY_NAME_PREFIXES:
         # Written when UREVO was the only make known by name (the file holds
         # every setting, changed or not): move on to today's list.

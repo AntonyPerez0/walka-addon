@@ -385,6 +385,10 @@ class Form {
     return this.filled && this.fields.some((field) => field.changed());
   }
 
+  get invalid() {
+    return this.fields.some((field) => field.changed() && field.error());
+  }
+
   fill(source) {
     for (const field of this.fields) field.fill(source);
     this.filled = true;
@@ -543,6 +547,9 @@ const FORMS = {
   },
 };
 
+// The first-run guide asks for weight and height only.
+FORMS.welcome = { confirm: "profile", fields: FORMS.profile.fields.slice(0, 2) };
+
 // ---- config in, config out ------------------------------------------------------------------
 
 function adopt(next, force) {
@@ -623,6 +630,35 @@ async function findGameFolders(button) {
   });
 }
 
+/** Shared by the heart-rate card and the first-run guide. */
+export function scanHeartRate(out, button) {
+  return scanInto(out, button, {
+    path: "/api/heart-rate/scan",
+    pickLabel: "Use this sensor",
+    empty: () =>
+      "No heart-rate sensor found. Wear it so it wakes up; on a watch, switch on heart-rate broadcasting. A sensor already connected to another app may not show up.",
+    onPick: (device, pick) =>
+      run(
+        pick,
+        () => post("/api/heart-rate/connect", { address: device.address, name: device.name || "", enabled: true }),
+        {
+          success: `Connecting to ${device.name || device.address}.`,
+        },
+      ),
+  });
+}
+
+/** The form built on ``root`` (a form[data-form]). */
+export function formFor(root) {
+  return forms.find((form) => form.root === root);
+}
+
+/** A snapshot's settings, for forms outside the Settings view (the first-run guide). */
+export function adoptConfig(s) {
+  if (s.setup) profileSet = !!s.setup.profile_set;
+  adopt(s.config, false);
+}
+
 // ---- wiring ---------------------------------------------------------------------------------------
 
 export function initSettings({ onUnits }) {
@@ -645,22 +681,7 @@ export function initSettings({ onUnits }) {
     });
   }
 
-  $("hr-scan").addEventListener("click", () =>
-    scanInto($("hr-scan-out"), $("hr-scan"), {
-      path: "/api/heart-rate/scan",
-      pickLabel: "Use this sensor",
-      empty: () =>
-        "No heart-rate sensor found. Wear it so it wakes up; on a watch, switch on heart-rate broadcasting. A sensor already connected to another app may not show up.",
-      onPick: (device, button) =>
-        run(
-          button,
-          () => post("/api/heart-rate/connect", { address: device.address, name: device.name || "", enabled: true }),
-          {
-            success: `Connecting to ${device.name || device.address}.`,
-          },
-        ),
-    }),
-  );
+  $("hr-scan").addEventListener("click", () => scanHeartRate($("hr-scan-out"), $("hr-scan")));
   $("hr-off").addEventListener("click", (event) =>
     run(event.currentTarget, () => post("/api/heart-rate/connect", { address: "", name: "", enabled: false }), {
       success: "Heart-rate sensor turned off.",
