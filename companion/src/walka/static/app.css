@@ -3027,3 +3027,47 @@ body[data-welcome="1"] main {
     width: 100%;
   }
 }
+
+/* "Check my treadmill", at the foot of the treadmill card. */
+.tm-check {
+  display: grid;
+  gap: 12px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.tm-check[hidden] {
+  display: none;
+}
+.tm-check-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+}
+.tm-check-head > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 240px;
+}
+.tm-check-out {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: var(--r);
+  background: var(--surface-2);
+  font-size: 14px;
+  line-height: 1.45;
+}
+.tm-check-out[hidden] {
+  display: none;
+}
+.tm-check-out p {
+  margin: 0;
+}
+.tm-check-out .mono {
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 12px;
+}

@@ -258,6 +258,74 @@ export function scanTreadmills(out = $("tm-scan-out"), button = $("tm-scan")) {
   });
 }
 
+// ---- "Check my treadmill" ---------------------------------------------------------------------------
+
+const ISSUE_FORM = "https://github.com/AntonyPerez0/walka-addon/issues/new?template=my-treadmill.yml";
+let checkKey = null;
+
+function downloadLink(name, label) {
+  return h("a", {
+    class: "btn small",
+    href: `/api/treadmill/check/${encodeURIComponent(name)}`,
+    download: name,
+    text: label,
+  });
+}
+
+function updateCheck(s) {
+  const check = s.check;
+  const simulated = s.treadmill.kind === "simulated";
+  setShown($("tm-check-box"), !simulated);
+  if (!check || simulated) return;
+  $("tm-check").disabled = check.running;
+  setText($("tm-check"), check.running ? "Checking..." : "Check my treadmill");
+  const key = JSON.stringify([check.running, check.seconds, check.line, check.report, check.error]);
+  if (key === checkKey) return;
+  checkKey = key;
+  const out = $("tm-check-out");
+  if (check.running) {
+    out.replaceChildren(
+      h("p", {}, h("strong", { text: `Checking - ${check.seconds || 0} s of about ${check.expected_s} s.` })),
+      h("p", {
+        text: "While it listens: start the belt with the treadmill's own remote, change the speed, pause, and stop. Walka is not connected to the treadmill until the check is done.",
+      }),
+      check.line ? h("p", { class: "muted small mono", text: check.line }) : null,
+    );
+    setShown(out, true);
+    return;
+  }
+  if (!check.report && !check.error) {
+    setShown(out, false);
+    return;
+  }
+  const rows = [];
+  if (check.error) rows.push(h("p", { class: "error", text: check.error }));
+  if (check.report) {
+    rows.push(
+      h("p", {
+        text: check.error
+          ? "What was heard is in the report."
+          : `Done. The report${check.recording ? ` and a recording of ${check.notifications} messages from the treadmill are` : " is"} saved. Both are made to be posted: no other devices, Bluetooth addresses cut short, no serial number.`,
+      }),
+      h(
+        "div",
+        { class: "btn-row" },
+        downloadLink(check.report, "Save the report"),
+        check.recording ? downloadLink(check.recording, "Save the recording") : null,
+        h("a", {
+          class: "btn small quiet",
+          href: ISSUE_FORM,
+          target: "_blank",
+          rel: "noopener noreferrer",
+          text: "Post it on GitHub",
+        }),
+      ),
+    );
+  }
+  out.replaceChildren(...rows);
+  setShown(out, true);
+}
+
 // ---- other links ------------------------------------------------------------------------------------
 
 const FLAG_HELP = {
@@ -395,6 +463,9 @@ export function initLive() {
   );
 
   $("tm-scan").addEventListener("click", () => scanTreadmills());
+  $("tm-check").addEventListener("click", (event) =>
+    run(event.currentTarget, () => post("/api/treadmill/check", {}, { timeoutMs: 15000 })),
+  );
   $("tm-connect").addEventListener("click", (event) =>
     run(event.currentTarget, () => post("/api/treadmill/connect", {})),
   );
@@ -427,6 +498,7 @@ export function updateLive(s, view, links, online) {
   if (!s) return;
   updateSession(s, online);
   updateTreadmill(s, links.treadmill);
+  updateCheck(s);
   updateLinks(s, links, online);
   updateLog(s);
   updateSetup(s);

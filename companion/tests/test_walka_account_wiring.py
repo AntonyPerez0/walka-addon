@@ -152,6 +152,7 @@ SNAPSHOT_KEYS = {
     "totals",
     "heart_rate",
     "addon",
+    "check",
     "setup",
     "config",
     "events",

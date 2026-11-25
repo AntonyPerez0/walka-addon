@@ -34,6 +34,7 @@ from .road import RoadBook
 from .session import SessionRecord, SessionRecorder, SessionStore
 from .sources import BeaconSource, Reading
 from .treadmill import Treadmill, TreadmillError, TreadmillEvent
+from .treadmill_check import REPORTS_DIR, CheckState, run_check
 
 log = logging.getLogger(__name__)
 
@@ -96,6 +97,12 @@ class App:
         # to (a connection attempt wakes a pad that was switched off).
         self._eager_connect = True
         self._switch_treadmill = False
+        # "Check my treadmill" (treadmill_check): while it runs, the probe
+        # holds the treadmill's one connection and the loop leaves it be.
+        self.check = CheckState()
+        self._checking = False
+        self._check_task: asyncio.Task | None = None
+        self.probe_fn: Any = None  # tests hand in a stand-in for probe.probe
 
         self._connect_now = asyncio.Event()
         self._stopping = asyncio.Event()
@@ -446,7 +453,7 @@ class App:
 
     def connection_wanted(self) -> bool:
         """Should the connection loop be trying to reach the treadmill now?"""
-        if not self.want_connected:
+        if not self.want_connected or self._checking:
             return False
         if self._eager_connect:
             return True
@@ -455,6 +462,51 @@ class App:
         # in the game.
         reading = self._last_reading
         return self.recorder is not None or (reading.active and reading.age_s <= SIGNAL_TIMEOUT_S)
+
+    # ---- "Check my treadmill" -------------------------------------------------------
+    @property
+    def reports_dir(self) -> Path:
+        return self.data_dir / REPORTS_DIR
+
+    def start_check(self) -> None:
+        """Run the probe from the dashboard (see treadmill_check). Raises
+        ValueError, in words for the dashboard, when it cannot run."""
+        if self.treadmill.kind == "simulated":
+            raise ValueError("The check is for a real treadmill. This is the simulated one.")
+        if self._checking:
+            raise ValueError("A check is already running.")
+        self._checking = True
+        self.check = CheckState(running=True, started=self.wall(), line="Letting go of the treadmill ...")
+        self._check_task = asyncio.create_task(self._run_check(), name="walka-check")
+
+    async def _run_check(self) -> None:
+        was_wanted = self.want_connected
+        try:
+            self.log_event(
+                "Checking the treadmill: Walka lets go of it for about 45 seconds, so that the check can connect. "
+                "Like Walka, the check only listens."
+            )
+            try:
+                await self.treadmill.disconnect()
+            except Exception as exc:
+                log.debug("letting go of the treadmill for the check failed: %s", exc)
+            await run_check(
+                self.check,
+                self.reports_dir,
+                address=self.config.treadmill.address or None,
+                name_prefixes=self.config.treadmill.name_prefixes,
+                probe_fn=self.probe_fn,
+                wall=self.wall,
+            )
+            if self.check.error:
+                self.log_event(f"Treadmill check: {self.check.error}", "warning")
+            else:
+                self.log_event(f"Treadmill check done: the report is saved as {self.check.report}.")
+        finally:
+            self._checking = False
+            self.connect_error = ""
+            if was_wanted:
+                self.connect()
 
     def save_config(self) -> None:
         try:
@@ -584,6 +636,7 @@ class App:
                 "last_sync": self.last_sync,
                 "error": self.addon_error,
             },
+            "check": self.check.to_dict(self.wall()),
             "setup": {"profile_set": self.profile_is_set(), "system_units": self.system_units()},
             "config": self.config.to_dict(),
             "events": list(self.events)[:30],
@@ -616,7 +669,9 @@ class App:
                 self._switch_treadmill = False
                 if self.treadmill.status.connected:
                     await self.treadmill.disconnect()
-            if not self.treadmill.status.connected and self.want_connected and not self.connection_wanted():
+            if self._checking:
+                self.connect_error = "let go of for \"Check my treadmill\" - Walka connects again when the check is done"
+            elif not self.treadmill.status.connected and self.want_connected and not self.connection_wanted():
                 self.connect_error = "not connected - it reconnects when a session starts in the game, or press Connect"
             if self.connection_wanted() and not self.treadmill.status.connected:
                 try:
@@ -667,6 +722,8 @@ class App:
         belt is left as it is - it was never the companion's to stop."""
         self._stopping.set()
         self._connect_now.set()
+        if self._check_task is not None:
+            self._check_task.cancel()
         for task in self._tasks:
             task.cancel()
         if self.walka_account is not None:

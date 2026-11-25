@@ -136,6 +136,7 @@ async def probe(
     all_characteristics: bool = False,
     emit: Emit = print,
     recording: Recording | None = None,
+    report: list[str] | None = None,
 ) -> list[str]:
     """Run the probe; returns the report lines (also passed to ``emit``).
 
@@ -143,13 +144,15 @@ async def probe(
     ``recording``, if given, is filled in with every notification heard
     (with its time), the layout of the services and the values read - by
     the same rules as the saved report: see ``walka.recording``.
+    ``report``, if given, is the list the report's lines go into as they come.
     """
     from bleak import BleakClient, BleakScanner
 
     from .treadmill.bleak_backend import prepare_windows_threading
 
     prepare_windows_threading()
-    report: list[str] = []
+    if report is None:
+        report = []
 
     def out(line: str = "", *, shown: str | None = None) -> None:
         """One line of the report. ``shown``: what the screen says instead,

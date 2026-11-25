@@ -282,6 +282,16 @@
           <button class="btn" id="tm-forget" type="button" hidden title="Walka only reconnects to the treadmill it used first. Forget it to use another one.">Forget this treadmill</button>
         </div>
         <div id="tm-scan-out" class="scan-out" aria-live="polite"></div>
+        <div class="tm-check" id="tm-check-box">
+          <div class="tm-check-head">
+            <div>
+              <strong>Numbers look wrong?</strong>
+              <span class="muted small">Check my treadmill makes a report of what it sends, to post in a bug report. It only listens, like Walka.</span>
+            </div>
+            <button class="btn" id="tm-check" type="button">Check my treadmill</button>
+          </div>
+          <div class="tm-check-out" id="tm-check-out" aria-live="polite" hidden></div>
+        </div>
         <fieldset class="sim" id="tm-sim" hidden>
           <legend>The simulated pad's remote</legend>
           <p class="muted small">This is the simulated treadmill, and these buttons are its remote. They are only here for it: a real treadmill is worked with its own remote, and Walka has no buttons for it.</p>

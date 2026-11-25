@@ -306,9 +306,10 @@ Things to know:
 a private language (many NordicTrack / iFIT machines, the older KingSmith
 WalkingPads), and bikes or rowers - Walka only reads treadmills.
 
-**Is yours not listed, or not behaving?** Run `Walka.exe probe --record`
-(on a Mac: [`Walka probe --record`](#on-a-mac)) with the treadmill on, and
-work it with its remote while it listens. Like Walka itself it only
+**Is yours not listed, or not behaving?** Press **Check my treadmill** on
+the dashboard (*Live → Treadmill*) with the treadmill on, and work it with
+its remote while it listens. (From a command prompt it is
+`Walka.exe probe --record`; on a Mac [`Walka probe --record`](#on-a-mac).) Like Walka itself it only
 listens - it sends the treadmill no commands - and saves a small text
 report and a recording of what the treadmill sent.
 [Fill in "My treadmill"](https://github.com/AntonyPerez0/walka-addon/issues/new?template=my-treadmill.yml)

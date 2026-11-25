@@ -347,8 +347,13 @@ def test_no_route_of_the_api_reaches_a_real_treadmill(rig: Rig):
                 raise AssertionError(f"the companion reached for treadmill.{name}")
             raise AttributeError(name)
 
+    async def no_treadmill_in_range(**kwargs):  # "Check my treadmill": its probe would scan for real
+        kwargs["report"].append("No treadmill found.")
+        return kwargs["report"]
+
     async def scenario(client: TestClient):
         rig.app.treadmill = Tripwired()
+        rig.app.probe_fn = no_treadmill_in_range
         routes = sorted(
             (route.method, route.resource.canonical)
             for route in client.app.router.routes()

@@ -500,6 +500,7 @@ def test_snapshot_is_json_serialisable_and_says_nothing_about_control(rig: Rig):
         "totals",
         "heart_rate",
         "addon",
+        "check",
         "setup",
         "config",
         "events",

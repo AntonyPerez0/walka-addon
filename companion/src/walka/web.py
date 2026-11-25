@@ -197,6 +197,31 @@ def create_app(app: App) -> web.Application:
         app.forget_treadmill()
         return ok()
 
+    @routes.post("/api/treadmill/check")
+    async def check(_request: web.Request) -> web.Response:
+        """"Check my treadmill": the read-only probe, run from the dashboard."""
+        try:
+            app.start_check()
+        except ValueError as exc:
+            raise web.HTTPConflict(text=str(exc)) from None
+        return ok()
+
+    @routes.get("/api/treadmill/check/{name}")
+    async def check_file(request: web.Request) -> web.StreamResponse:
+        """A saved report or recording, to download (and nothing else of the folder)."""
+        from .treadmill_check import report_file
+
+        path = report_file(app.reports_dir, request.match_info["name"])
+        if path is None:
+            raise web.HTTPNotFound(text="no such report")
+        kind = "application/json" if path.suffix == ".json" else "text/plain"
+        return web.Response(
+            body=path.read_bytes(),
+            content_type=kind,
+            charset="utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{path.name}"'},
+        )
+
     @routes.post("/api/treadmill/press")
     async def press(request: web.Request) -> web.Response:
         """The simulated treadmill's remote (--simulate, --demo), and only
