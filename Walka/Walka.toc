@@ -2,7 +2,7 @@
 ## Title: Walka
 ## Notes: Connects the game to the Walka app: it tells the app which character your walking-pad walks are for. Everything is shown in the app.
 ## Author: Walka
-## Version: 0.10.0
+## Version: 0.11.0
 ## X-License: MIT
 ## SavedVariables: WalkaDB
 ## SavedVariablesPerCharacter: WalkaCharDB
