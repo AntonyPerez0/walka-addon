@@ -685,7 +685,7 @@ def test_made_up_walks_by_every_way_to_the_simulated_treadmill_lie_among_real_on
             house = HouseRig(tmp_path)
             await house.connect()
             await house.walk()
-            await house.run(CHECKPOINT_EVERY_S + 10, signal=False)
+            await house.run(CHECKPOINT_EVERY_S + 10)
             left_behind = json.loads((data / "active-session.json").read_text("utf-8"))
             assert left_behind["treadmill"] == MADE_UP and left_behind["seconds"] >= 20
 

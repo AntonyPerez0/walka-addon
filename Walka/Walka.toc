@@ -11,13 +11,11 @@
 ## Category: Miscellaneous
 
 CompanionData.lua
-Core\Protocol.lua
 Core\Metrics.lua
 Core\SessionLog.lua
 Core\Journey.lua
 Core\Road.lua
 Game.lua
-Beacon.lua
 Tracker.lua
 RoadRecorder.lua
 Walka.lua

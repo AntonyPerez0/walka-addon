@@ -2,9 +2,10 @@
 
 An addon cannot write files, but the game writes one for it: what the addon
 keeps in its saved variables is stored as a small Lua program -
-``WalkaCharDB = { ... }`` - when the player logs out or reloads the
-interface. That file is how the companion gets at things too big for the
-strip on the screen (the road a character has travelled).
+``WalkaDB = { ... }``, ``WalkaCharDB = { ... }`` - when the player logs out
+or reloads the interface. Those files are how the companion hears from the
+game at all: the sessions and journeys (game_file.py) and the road a
+character has travelled (road.py).
 
 This is a reader for exactly that kind of file and nothing more. It does not
 run Lua: it accepts assignments of *data* - tables, strings, numbers,

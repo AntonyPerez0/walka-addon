@@ -1,8 +1,10 @@
 # Walka companion
 
-The app - for Windows and macOS - that goes with the Walka addon: it reads
-the addon's signal off the screen, listens to your treadmill over Bluetooth,
-records your walks and shows a dashboard in a window of its own.
+The app - for Windows and macOS - that goes with the Walka addon: it
+listens to your treadmill over Bluetooth, records your walks, reads the
+file the game saves for the addon (at logout and `/reload`) to file each
+walk under its character, and shows a dashboard in a window of its own. It
+does not look at the screen.
 
 It only listens to the treadmill. It cannot start or stop the belt or
 change its speed: you do that at the treadmill itself.
@@ -14,12 +16,12 @@ py -m walka --browser  # ... or the dashboard in your web browser (http://127.0.
 py -m walka --demo     # no hardware: simulated treadmill, walker and game character
 py -m walka probe      # report of what your treadmill exposes (sends it no commands)
 py -m walka probe --all    # the same, also listening to the vendor's own channels
-py -m walka beacon     # check the addon's signal can be read from your screen
+py -m walka game       # what the game has saved for Walka: files, sessions, characters
 py -m walka scan       # list nearby Bluetooth treadmills
 ```
 
 On a Mac it is `python3` in place of `py`, and macOS will ask whether
-Terminal may use Bluetooth and record the screen: see
+Terminal may use Bluetooth: see
 [On a Mac](../docs/INSTALL.md#on-a-mac).
 
 The window is made with [pywebview](https://pywebview.flowrl.com), on what

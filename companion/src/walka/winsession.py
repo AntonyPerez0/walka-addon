@@ -3,7 +3,7 @@
 When the user logs off or Windows shuts down, the companion wants a moment
 to save the walk that is being recorded. A console program is normally told
 through its console control handler - but not once it has loaded user32 or
-gdi32, as this one has for the screen capture: Windows then tells its
+gdi32, as this one has (its window, display scaling): Windows then tells its
 windows instead. So the companion keeps one window that is never shown, on
 a thread with a message loop of its own, just to be told
 (``SessionEndWatcher``).

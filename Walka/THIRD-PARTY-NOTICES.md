@@ -73,7 +73,6 @@ libraries it runs on, in one file:
   requests Walka makes to a Walka account
 * **bleak** (MIT) - Bluetooth; on Windows with the **PyWinRT** packages
   (`winrt-*`, MIT), on a Mac with **PyObjC** (MIT)
-* **python-mss** (MIT) - the screenshot of the game window's corner
 * the bootloader of **PyInstaller** (GPL 2.0 or later, with an exception
   that allows distributing programs built with it under any licence) - the
   small program that unpacks and starts the rest

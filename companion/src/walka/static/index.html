@@ -120,12 +120,12 @@
 
     <div class="wz-step" data-step="game" hidden>
       <h2 tabindex="-1">Connect the game</h2>
-      <p>Walka's addon tells it which character you are playing, so that your walks count for that character. No game? Skip this step: walks are recorded all the same.</p>
+      <p>Walka's addon keeps the game's sessions and characters in a file the game saves, so that your walks count for the character you played. No game? Skip this step: walks are recorded all the same.</p>
       <p class="wz-status" id="wz-addon-status" data-tone="idle" role="status"></p>
       <div class="btn-row"><button class="btn" id="wz-addon-install" type="button">Install the addon</button></div>
       <ol class="wz-list">
         <li>Restart the game and tick <strong>Walka</strong> in the AddOns list.</li>
-        <li>Play in <strong>Windowed</strong> or <strong>Windowed (Fullscreen)</strong> mode, with the top-left corner of the game in view.</li>
+        <li>Play as you always do. When you log out or type <strong>/reload</strong>, the game saves Walka's file, and Walka files your walks under the game's sessions.</li>
       </ol>
     </div>
 
@@ -174,7 +174,6 @@
       <div class="annun">
         <span class="lamp"><svg aria-hidden="true"><use id="hero-icon" href="#i-idle"/></svg></span>
         <p class="annun-title" id="hero-title" role="status">Connecting to the companion</p>
-        <span class="annun-meta" id="hero-meta"></span>
       </div>
       <div class="hero-body">
         <div class="speed" aria-live="off">
@@ -184,7 +183,7 @@
         <dl class="readout">
           <div><dt>Set to</dt><dd class="num" id="ro-set">-</dd></div>
           <div><dt>Belt</dt><dd id="ro-belt">-</dd></div>
-          <div><dt>Playing</dt><dd id="ro-char">-</dd></div>
+          <div><dt>Character</dt><dd id="ro-char" title="The character the game saved last">-</dd></div>
         </dl>
         <div class="meter" id="meter" role="img" aria-label="Belt speed against the pad's top speed">
           <div class="meter-track"><div class="meter-fill" id="meter-fill"></div></div>
@@ -221,7 +220,7 @@
         <h4>How to start a walk</h4>
         <ul>
           <li><strong>Start the belt with the treadmill's own remote</strong> and set the speed there. Walka records the walk by itself, with any game or none.</li>
-          <li><strong>In World of Warcraft:</strong> nothing to do. Log in with the Walka addon and the walk counts for the character you play. (To pause, click Walka in the game's AddOns menu, by the minimap.)</li>
+          <li><strong>In World of Warcraft:</strong> nothing to do. Play with the Walka addon on. When you log out or type /reload, the game saves its sessions, and Walka files your walks under them, for the character you played.</li>
         </ul>
         <p class="muted small" id="last-walk" hidden></p>
       </div>
@@ -246,15 +245,15 @@
           <span class="tick"><svg aria-hidden="true"><use href="#i-check"/></svg></span>
           <div class="step-text"><strong>Install the game addon</strong>
             <b class="step-done">Done</b>
-            <span>Copies Walka into World of Warcraft's AddOns folder. Then restart the game and tick Walka in the AddOns list. The addon connects the game to Walka: it says which character you are playing, so that your walks are counted for it.</span></div>
+            <span>Copies Walka into World of Warcraft's AddOns folder. Then restart the game and tick Walka in the AddOns list. The addon keeps the game's sessions in a file the game saves when you log out or type /reload, so that your walks are counted for the character you played.</span></div>
           <button class="btn small" id="setup-install" type="button">Install</button>
         </li>
         <li id="step-game" data-done="false">
           <span class="tick"><svg aria-hidden="true"><use href="#i-check"/></svg></span>
-          <div class="step-text"><strong>Let Walka see the game</strong>
+          <div class="step-text"><strong>Let the game save once</strong>
             <b class="step-done">Done</b>
-            <span>Run the game windowed or borderless with the top-left corner of its window visible. This ticks itself when the first signal arrives.</span></div>
-          <a class="btn small" href="#live/link-game">Signal</a>
+            <span>Play with the addon on, then log out or type /reload: the game saves Walka's file, and Walka files your walks under the game's sessions. This ticks itself once the file is found. No game? Walks are recorded all the same.</span></div>
+          <a class="btn small" href="#live/link-game">Game</a>
         </li>
         <li id="step-profile" data-done="false">
           <span class="tick"><svg aria-hidden="true"><use href="#i-check"/></svg></span>
@@ -324,7 +323,7 @@
         <div class="link" id="link-game" data-tone="idle" tabindex="-1">
           <div class="link-head">
             <span class="lamp"><svg aria-hidden="true"><use href="#i-off"/></svg></span>
-            <h4>Game signal</h4>
+            <h4>Game</h4>
             <span class="head-state num" id="game-state"></span>
           </div>
           <p class="link-detail" id="game-detail"></p>
@@ -332,9 +331,11 @@
             <summary>Advanced</summary>
             <div class="advanced-body">
               <dl class="facts">
-                <div><dt>Game session</dt><dd id="ro-game">-</dd></div>
+                <div><dt>Saved by the game</dt><dd class="num" id="game-saved">-</dd></div>
+                <div><dt>Last looked at</dt><dd class="num" id="game-read">-</dd></div>
+                <div><dt>Game sessions</dt><dd class="num" id="game-sessions">-</dd></div>
+                <div><dt>Characters</dt><dd class="num" id="game-characters">-</dd></div>
               </dl>
-              <div class="chips" id="game-flags" aria-label="What the addon says the character is doing"></div>
             </div>
           </details>
         </div>
@@ -449,8 +450,8 @@
       <p class="empty" id="share-error" role="alert" hidden></p>
       <div class="share-empty" id="share-empty" hidden>
         <h4>No character yet</h4>
-        <p>Log in to World of Warcraft with the Walka addon enabled while this companion is running. Your character's numbers arrive here within about ten seconds.</p>
-        <p>They are remembered, so you can come back and make a picture later with the game closed.</p>
+        <p>Play World of Warcraft with the Walka addon on, then log out or type /reload: the game saves your character's numbers, and they show here shortly after.</p>
+        <p>They are remembered, so you can make a picture later with the game closed.</p>
         <p class="muted" id="share-empty-walks" hidden>Until then, the picture below is made from the walks this companion has recorded.</p>
       </div>
       <div class="share-frame" id="share-frame" hidden>
@@ -545,7 +546,7 @@
 
     <section class="card wide" id="set-overlay" aria-labelledby="set-overlay-h" tabindex="-1">
       <header class="card-head"><h3 id="set-overlay-h">Floating window</h3></header>
-      <p class="muted">A small Walka panel that stays on top of the game: the belt's speed and this walk's steps, calories, distance and time, as the treadmill measures them. Drag it wherever you like - it opens there next time. It shows on top of the game when the game runs in <em>Windowed</em> or <em>Windowed (Fullscreen)</em> mode, as it has to for Walka to see it anyway.</p>
+      <p class="muted">A small Walka panel that stays on top of the game: the belt's speed and this walk's steps, calories, distance and time, as the treadmill measures them. Drag it wherever you like - it opens there next time. It shows on top of the game when the game runs in <em>Windowed</em> or <em>Windowed (Fullscreen)</em> mode.</p>
       <div id="overlay-note" hidden>
         <p class="link-detail">The floating window comes with Walka's own window. With the dashboard in a web browser, there is none.</p>
         <details class="advanced">

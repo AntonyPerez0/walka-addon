@@ -27,11 +27,11 @@ async def lose_the_pad(rig: PadRig) -> None:
     """Connected (and so tied to the pad), then the link goes with no walk around."""
     rig.app.connect()
     await rig.treadmill.connect()
-    await rig.run(1, active=False, signal=False)
+    await rig.run(1)
     assert rig.app.config.treadmill.address == rig.pad.address
     rig.app._eager_connect = False  # what a connection does (see App._on_treadmill_event)
     rig.pad.drop_link()
-    await rig.run(1, active=False, signal=False)
+    await rig.run(1)
     assert not rig.treadmill.status.connected and not rig.app.connection_wanted()
 
 

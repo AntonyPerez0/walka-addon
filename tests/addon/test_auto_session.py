@@ -9,15 +9,14 @@ walk, once the app's file brings it.
 
 from __future__ import annotations
 
-from walka.protocol import Flags
 
-from .harness import lua_list, lua_plain
+from .harness import State, lua_list, lua_plain
 from .test_journey import ME, NOW, companion, measured, real, saved
 
 
-def frame(rt):
+def state(rt):
     rt.tick()
-    return rt.live_frame()
+    return rt.state()
 
 
 def test_it_starts_by_itself_at_login(make_rt):
@@ -25,8 +24,8 @@ def test_it_starts_by_itself_at_login(make_rt):
     rt.tick()
     session = lua_plain(rt.walka.session)
     assert session["auto"] is True and session["character"] == ME
-    assert Flags.ACTIVE in frame(rt).flags and frame(rt).session == session["id"]
-    assert any("connected to the Walka app" in line for line in rt.printed)
+    assert State.ACTIVE in state(rt) and rt.session_id() == session["id"]
+    assert any("Walka is on" in line for line in rt.printed)
     assert rt.walka.GetLiveSpeed(rt.walka) == 0, "it counts nothing by itself"
 
 
@@ -55,6 +54,26 @@ def test_the_measured_walk_in_it_counts_for_the_character(make_rt):
     totals = real(rt)
     assert totals["walks"] == 1 and totals["steps"] == 2600 and totals["seconds"] == 1200
     assert totals["estimated"] is False
+
+
+def test_every_measured_walk_in_it_counts_for_the_character(make_rt):
+    """The app records a walk from the belt alone, so an hour in the game
+    with two stretches on the belt is two walks - both of them this
+    character's, and the session itself counted no more than once."""
+    start = NOW - 7200
+    record = (
+        f"{{id=3,start={start},['end']={start + 3600},seconds=3600,distanceM=0,steps=0,kcal=0,yards=500,"
+        f"maxKmh=0,character={ME!r},auto=true}}"
+    )
+    walks = companion(measured(start + 300, 900), measured(start + 2100, 1200))
+    rt = make_rt(auto_session=True, saved_variables=saved(record), files=walks)
+    totals = real(rt)
+    assert totals["walks"] == 2 and totals["steps"] == 2 * 2600 and totals["seconds"] == 2100
+    assert totals["estimated"] is False
+    history = lua_list(rt.walka.GetHistory(rt.walka))
+    assert len(history) == 2 and {entry.character for entry in history} == {ME}
+    fresh = rt.reload()
+    assert real(fresh) == totals, "banked once: a reload does not count them again"
 
 
 def test_it_is_started_once_a_login_and_a_stop_is_respected(make_rt):
@@ -106,7 +125,7 @@ def test_the_addons_menu_pauses_and_stops_it(make_rt):
     click = rt.global_(rt.toc.metadata["AddonCompartmentFunc"])
     rt.M.call(click, "Walka", "LeftButton")
     assert rt.walka.session.paused
-    assert Flags.PAUSED in frame(rt).flags
+    assert State.PAUSED in state(rt)
     rt.M.call(click, "Walka", "LeftButton")
     assert not rt.walka.session.paused
     rt.M.call(click, "Walka", "RightButton")

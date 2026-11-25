@@ -69,10 +69,8 @@ class HeartRateConfig:
 @dataclass
 class WowConfig:
     addon_dir: str = ""  # Walka addon folder; empty = find automatically
-    capture_fps: float = 15.0
-    # Optional manual capture origin [x, y] in screen pixels (top-left of the
-    # game's client area) for setups the window finder cannot handle.
-    origin: list[int] | None = None
+    # (Up to 0.10 also capture_fps and origin, for reading the addon's strip
+    # off the screen. A config that still has them loads: they are ignored.)
 
 
 @dataclass
@@ -96,8 +94,7 @@ class OverlayConfig:
     # Today's steps against this, as a bar along the bottom. 0: no bar.
     step_goal: int = 6000
     # Where it was last dragged to, in screen coordinates. None: the
-    # top-right corner of the main screen (well clear of the top-left
-    # corner of the game, where the addon's strip is).
+    # top-right corner of the main screen.
     x: int | None = None
     y: int | None = None
 
@@ -138,7 +135,6 @@ _BOUNDS: dict[tuple[str, str], tuple[float, float]] = {
     ("profile", "weight_kg"): (30.0, 250.0),
     ("profile", "height_cm"): (120.0, 230.0),
     ("profile", "step_calibration"): STEP_CALIBRATION_RANGE,
-    ("wow", "capture_fps"): (2.0, 60.0),
     ("web", "port"): (1.0, 65535.0),
     ("overlay", "step_goal"): (0.0, 100000.0),
     ("heart_rate", "network_port"): (1024.0, 65535.0),
@@ -189,12 +185,6 @@ def _valid_sex(value: Any) -> str:
     return sex
 
 
-def _valid_origin(value: Any) -> list[int]:
-    if not isinstance(value, (list, tuple)) or len(value) != 2 or any(isinstance(v, bool) for v in value):
-        raise ValueError(f"origin must be [x, y], not {value!r}")
-    return [int(value[0]), int(value[1])]
-
-
 # A window's place on the screen: far out of any screen means a damaged file.
 _COORD_LIMIT = 100_000
 
@@ -218,7 +208,6 @@ def _valid_name_prefixes(value: Any) -> list[str]:
 _VALIDATORS = {
     ("profile", "age"): _valid_age,
     ("profile", "sex"): _valid_sex,
-    ("wow", "origin"): _valid_origin,
     ("treadmill", "name_prefixes"): _valid_name_prefixes,
     ("overlay", "x"): _valid_coord,
     ("overlay", "y"): _valid_coord,

@@ -5,7 +5,7 @@
 Walka.exe is a windowed program, and Windows gives a windowed program no
 console - not even the one of the command prompt it was typed into. Walka
 takes that console itself (walka/cli.py), because its commands - "Walka.exe
-probe", "Walka.exe beacon" - are all printing. This checks that it does, the
+probe", "Walka.exe game" - are all printing. This checks that it does, the
 only way that can be checked: by looking at what is on the console.
 
 It opens a command prompt of its own (one with a real console; the build

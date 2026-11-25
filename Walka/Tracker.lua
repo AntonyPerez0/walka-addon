@@ -7,34 +7,31 @@
 --     there;
 --   * the real-world walking done while playing it, from the session
 --     history and the session in progress;
--- and hands the numbers out: to the Journey window (GetSummary) and, as
--- stat frames on the beacon, to the companion app (SendStat).
+-- and hands the numbers out: to GetSummary and, through the saved
+-- variables, to the companion app - at logout and on /reload the totals are
+-- written into the journey record (`shared`), and the game saves the file
+-- that the app reads (docs/PROTOCOL.md).
 --
--- The core (Walka.lua) drives it: Load and Settle at start-up, Travel and
--- SendStat on every tick, Forget and HistoryChanged when the session
--- history changes. It runs whether or not a walking session does.
+-- The core (Walka.lua) drives it: Load and Settle at start-up, Travel on
+-- every tick, Forget and HistoryChanged when the session history changes.
+-- It runs whether or not a walking session does.
 
 local ADDON_NAME, ns = ...
 
-local Protocol = ns.Protocol
 local SessionLog = ns.SessionLog
 local Journey = ns.Journey
 local Game = ns.Game
-local Beacon = ns.Beacon
 
 local Tracker = {}
 ns.Tracker = Tracker
 
 local floor = math.floor
-local STAT = Protocol.STAT
 
 local core          -- the addon's core (Walka); nil until Load
 local journeys      -- WalkaDB.journeys
 local key           -- "Name-Realm" of this character; nil until the game says who it is
 local record        -- its journey record (nil with `key`)
 local name          -- its name alone
-local charKey = 0   -- what CHAR_KEY sends: a hash of `key`
-local nameParts = { 0, 0, 0, 0 }    -- what NAME_0..NAME_3 send
 
 ----------------------------------------------------------------------------
 -- Real-world totals
@@ -57,7 +54,7 @@ local pendingStale = true   -- `pending` is out of date
 local pending = {}          -- the character's estimates still waiting in the history
 local totals = {}           -- scratch for Journey.totals
 
--- A count as it is shown and sent: whole, and never rounded up - a step
+-- A count as it is shown and saved for the app: whole, and never rounded up - a step
 -- counts when it is finished. (The sliver keeps a sum that should be
 -- whole, like 2709.9999999 or forty times 0.7, from losing one.)
 local function whole(value)
@@ -231,10 +228,6 @@ local function identify()
     record = Journey.open(journeys, key, Game.Now())
     -- "Name-Realm": a name has no dash in it, a realm may.
     name = string.match(key, "^([^%-]+)") or key
-    Protocol.nameValues(name, nameParts)
-    -- The companion only needs to tell characters apart, so it gets a hash
-    -- of the name and realm: the realm itself is never drawn on screen.
-    charKey = Protocol.djb2(key)
     playedBase, playedAt = record.played, GetTime()
     readCharacter()
     pendingStale = true
@@ -242,6 +235,9 @@ local function identify()
 end
 
 -- Logging out or reloading: the saved variables are written after this.
+-- What the companion app reads of the journey is put into the record now:
+-- the real-world totals as they stand (the same whole numbers GetSummary
+-- gives), and when. Saved as numbers only, so the file stays plain data.
 local function save()
     if not record then
         return
@@ -251,6 +247,19 @@ local function save()
         record.played = floor(played)
     end
     record.playedHeard = heard or nil
+    local ok, shared = pcall(realTotals, {})
+    if ok then
+        record.shared = {
+            savedAt = Game.Now(),
+            played = record.played,
+            walks = shared.walks,
+            seconds = shared.seconds,
+            distanceM = shared.distanceM,
+            steps = shared.steps,
+            kcal = shared.kcal,
+            estimated = shared.estimated and true or false,
+        }
+    end
 end
 
 --- Start tracking. `walka` is the addon's core, with its database loaded.
@@ -306,75 +315,13 @@ function Tracker.Travel(state, dt)
 end
 
 ----------------------------------------------------------------------------
--- Stat frames
-----------------------------------------------------------------------------
--- Every fifth redraw of the beacon carries one number of the journey in
--- place of the live frame (docs/PROTOCOL.md, section 4): never two in a
--- row, so the companion still hears of the session four times out of five.
--- The numbers go round in the order of Protocol.STAT_CYCLE, about 8 seconds a
--- round.
-
-local EVERY = Protocol.STAT_EVERY
-local CYCLE = Protocol.STAT_CYCLE
-
-local redraws = 0       -- since the last stat frame
-local position = 0      -- in CYCLE, of the stat sent last
-local sent = {}         -- the real-world totals of the round being sent
-
--- The value of each stat, as a function of the moment it is sent. The
--- real-world totals are taken once per round, so that the steps, metres
--- and calories of one round belong together.
-local VALUE = {
-    [STAT.CHAR_KEY] = function() return charKey end,
-    [STAT.NAME_0] = function() return nameParts[1] end,
-    [STAT.NAME_1] = function() return nameParts[2] end,
-    [STAT.NAME_2] = function() return nameParts[3] end,
-    [STAT.NAME_3] = function() return nameParts[4] end,
-    [STAT.CHAR_INFO] = function()
-        return Protocol.charInfo(record.level, record.maxLevel, record.classId, record.faction)
-    end,
-    [STAT.PLAYED_S] = function() return floor(Tracker.Played() or 0) end,
-    [STAT.FOOT_YD] = function() return whole(record.footYd) end,
-    [STAT.TRAVEL_YD] = function() return whole(record.travelYd) end,
-    [STAT.REAL_STEPS] = function() return sent.steps end,
-    [STAT.REAL_M] = function() return sent.distanceM end,
-    [STAT.REAL_KCAL] = function() return sent.kcal end,
-    [STAT.REAL_S] = function() return sent.seconds end,
-    [STAT.WALKS] = function() return sent.walks end,
-    [STAT.SINCE] = function() return record.since end,
-    [STAT.INFO_FLAGS] = function() return sent.estimated and Protocol.INFO_FLAG.ESTIMATED or 0 end,
-}
-
---- Called for every redraw of the beacon with its sequence number. If this
--- redraw is a stat frame's turn, paints it and returns true: the caller
--- then leaves the live frame out. Returns false otherwise.
-function Tracker.SendStat(seq)
-    redraws = redraws + 1
-    if redraws < EVERY then
-        return false
-    end
-    redraws = 0
-    -- No character, no journey to tell: the redraw stays a live frame.
-    if not identify() then
-        return false
-    end
-    position = position % #CYCLE + 1
-    if position == 1 then
-        realTotals(sent)
-    end
-    local statId = CYCLE[position]
-    Beacon.SendStat(seq, statId, VALUE[statId]())
-    return true
-end
-
-----------------------------------------------------------------------------
--- For the Journey window
+-- The summary
 ----------------------------------------------------------------------------
 
 local summary = {}
 
---- The character's journey as the window shows it - the same whole numbers
--- the stat frames carry. Returns nil until the game has said which
+--- The character's journey as the app is told it - the same whole numbers
+-- that are saved for it at logout. Returns nil until the game has said which
 -- character this is. The table is reused between calls.
 --
 --   name, level, maxLevel, classId, faction, since

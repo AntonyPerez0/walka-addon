@@ -51,14 +51,12 @@ are under [On a Mac](#on-a-mac) - and the rest is the same.*
      restart the game and tick *Walka* in the AddOns list. (By hand
      instead: unzip the [addon download](https://github.com/AntonyPerez0/walka-addon/releases/latest/download/Walka-addon.zip)
      into `World of Warcraft\_forever_\Interface\AddOns`.)
-   * **Let Walka see the game:** start World of Warcraft in *Windowed* or
-     *Windowed (Fullscreen)* mode and keep the top-left corner of the game
-     uncovered.
    * **Enter your weight and height:** for the calorie count.
-4. **Walk.** Log in to the game: the addon says "this walk is for this
-   character" by itself - there is nothing to type or press. Step onto the
-   pad and start the belt **with the treadmill's own remote**, at the
-   speed you like.
+4. **Walk.** Log in to the game: the addon starts a walking session for
+   your character by itself - there is nothing to type or press. Step onto
+   the pad and start the belt **with the treadmill's own remote**, at the
+   speed you like. When you log out (or type `/reload`), the game saves
+   the session, and Walka files the walk under your character.
 
 **The belt is yours.** Start it, stop it and change its speed at the
 treadmill - its remote, its buttons, its safety key. Walka has no button
@@ -72,8 +70,10 @@ for any of that.
 * The walking pad or treadmill, switched on, **not** paired in the
   computer's Bluetooth settings, and with its own phone app **closed**
   (most accept one connection at a time).
-* WoW: Forever in *Windowed* or *Windowed (Fullscreen)* mode, with the
-  top-left corner of the game visible.
+* WoW: Forever, with the Walka addon. Any display mode will do,
+  fullscreen included. (Walka's floating window can only be shown on top
+  of the game in *Windowed* or *Windowed (Fullscreen)* mode, but you do not
+  need it.)
 
 ## Install, step by step
 
@@ -142,27 +142,22 @@ for any of that.
    closes Walka: the walk is saved and the recording ends (the belt is not
    touched). From there it is step 3 of [Get started](#get-started).
 
-macOS asks before a program may use Bluetooth or look at the screen, and it
-asks about **Walka** by name:
+macOS asks before a program may use Bluetooth, and it asks about **Walka**
+by name:
 
 * **Bluetooth** - to listen to the walking pad. Click **Allow**.
-* **Screen Recording** - to see the strip the addon draws. The dashboard
-  says when this is what is missing. Open **System Settings → Privacy &
-  Security → Screen & System Audio Recording**, switch on **Walka**, then
-  close Walka and open it again. Recent versions of macOS ask again every
-  few weeks whether Walka may still do this: choose **Allow**.
 
-After you replace Walka with a newer version, macOS may ask both again:
-Walka is not signed with an Apple developer account, and to macOS a
-program like that which has changed is a new program. (If the switch for
-Walka is on but the dashboard still says the screen may not be recorded,
-switch it off and on again.)
+After you replace Walka with a newer version, macOS may ask again: Walka is
+not signed with an Apple developer account, and to macOS a program like
+that which has changed is a new program. It can be changed later under
+**System Settings → Privacy & Security → Bluetooth**.
 
-Both can be changed later in the same place in System Settings. Walka reads
-the top-left corner of the game window - and, until it has found the game
-for the first time, searches the screen for it: see
-[What Walka looks at](HOW-IT-WORKS.md#what-walka-looks-at). No picture of your screen
-leaves your computer.
+Walka does not need **Screen Recording**: it does not look at the screen,
+only at the file the game saves for its addon (see
+[What Walka looks at](HOW-IT-WORKS.md#what-walka-looks-at)). Versions up
+to 0.10 did ask for it. If you allowed it then, you can switch Walka off
+under **System Settings → Privacy & Security → Screen & System Audio
+Recording**.
 
 What is different from Windows:
 
@@ -173,12 +168,12 @@ What is different from Windows:
   `~/Library/Application Support/Walka`. A sign-in to
   [your Walka account](WALKA-ACCOUNT.md#your-walka-account-on-walkadev) is not in that
   folder: it is kept in your Mac's keychain.
-* **Commands** like `probe` and `beacon` are typed in Terminal: drag the
+* **Commands** like `probe` and `game` are typed in Terminal: drag the
   `Walka` application into a Terminal window (that types where it is),
   then - with no space in between - type `/Contents/MacOS/Walka probe` and
   press Return. Started this way Walka belongs to Terminal as far as macOS
   is concerned: it is **Terminal** that is asked about, and allowed,
-  Bluetooth and the screen.
+  Bluetooth.
 * **From source:** `cd companion`, `python3 -m pip install -e .`,
   `python3 -m walka` (Python 3.10 or newer).
 
@@ -284,7 +279,7 @@ touched.
   Walka's: it is kept in Windows' Credential Manager or in your Mac's
   keychain. Neither the sign-in nor that e-mail address is ever written
   to `walka.log`.
-* **Typing a command** (`Walka.exe probe`, `Walka.exe beacon`) on Windows:
+* **Typing a command** (`Walka.exe probe`, `Walka.exe game`) on Windows:
   open the folder `Walka.exe` is in, click the address bar at the top of
   that window, type `cmd` and press Enter. A command prompt opens in that
   folder: type the command there. The prompt comes back at once, before
@@ -308,8 +303,9 @@ is whether your walk is *counted right*:
    and the steps. If they disagree, please
    [open an issue](https://github.com/AntonyPerez0/walka-addon/issues)
    with the probe report.
-3. **`Walka.exe beacon`** with the game running: checks that the strip can
-   be read from your screen.
+3. **`Walka.exe game`** after you have played with the addon and logged
+   out (or typed `/reload`) once: checks that Walka finds what the game
+   saved for it - the walking sessions and your characters.
 4. **In game**, the checks in
    [docs/IN-GAME-CHECKLIST.md](IN-GAME-CHECKLIST.md).
 

@@ -1,8 +1,9 @@
 -- Walka journey: what one character has done since Walka began watching it.
 --
--- Pure Lua 5.1 (no WoW API). The game side is in Tracker.lua, and the
--- numbers reach the companion app as stat frames (docs/PROTOCOL.md,
--- section 4), which shows them on its Share page.
+-- Pure Lua 5.1 (no WoW API). The game side is in Tracker.lua. The numbers
+-- reach the companion app through the saved variables, which the game
+-- writes at logout and on /reload (docs/PROTOCOL.md); the app shows them on
+-- its Share page.
 --
 -- One record per character, kept in WalkaDB.journeys under "Name-Realm":
 --
@@ -18,6 +19,10 @@
 --                record was saved in
 --   real         the real-world walking that is settled (see below):
 --                { walks, seconds, distanceM, steps, kcal, estimated }
+--   shared       what the companion app reads, written at logout and on
+--                /reload (Tracker.lua): { savedAt, played, walks, seconds,
+--                distanceM, steps, kcal, estimated } - the real-world
+--                totals as they stood then, all of them whole numbers
 --
 -- Two conventions, shown to the player as "about":
 --   * a character takes 2,000 steps to the in-game mile of 1,760 yards -
@@ -38,6 +43,13 @@ Journey.YARDS_PER_MILE = 1760
 Journey.METERS_PER_YARD = 0.9144
 -- The level cap of WoW: Forever, used until the client names another.
 Journey.DEFAULT_MAX_LEVEL = 60
+
+-- The character's faction as a record keeps it.
+Journey.FACTION = {
+    UNKNOWN  = 0,
+    ALLIANCE = 1,
+    HORDE    = 2,
+}
 
 -- Yards per second. Nothing in the game moves a character this fast, so a
 -- larger "speed" is not movement - and one stray infinite value would
@@ -62,7 +74,7 @@ local function count(value)
     return 0
 end
 
--- A whole number from 0 to 255: one byte of the CHAR_INFO stat.
+-- A whole number from 0 to 255 (a level, a class id, a faction).
 local function byte(value)
     value = floor(count(value))
     if value > 255 then
@@ -177,7 +189,7 @@ end
 
 --- Character steps for a whole number of yards on foot: 2,000 to the
 -- in-game mile, to the nearest step. Done in whole numbers so that the
--- companion app - which is sent the yards and does the same sum - arrives
+-- companion app - which reads the yards and does the same sum - arrives
 -- at exactly the same figure.
 function Journey.steps(yards)
     local scaled = floor(count(yards)) * Journey.STEPS_PER_MILE + Journey.YARDS_PER_MILE / 2
@@ -227,28 +239,35 @@ end
 --- Settle the walks the companion has measured.
 --
 -- `absorbed` is filled by SessionLog.merge(ownSessions, companionData,
--- absorbed): for each of the addon's records that is part of a measured
--- walk, that walk. Several records can be part of one measured walk (a
--- session that was restarted, or two characters played during it); they
--- share its numbers in proportion to their own time on the belt, so that
--- between them they get the walk once. `now` is when tracking begins for a
--- character that has no journey record yet.
+-- absorbed): for each of the addon's records that is part of measured
+-- walks, the list of those walks. A record can hold several walks (the
+-- belt stopped and started again during the session), and a walk can be
+-- part of several records (a session that was restarted, or two characters
+-- played during it); the records of one walk share its numbers in
+-- proportion to their own time, so that between them they get the walk
+-- once. `now` is when tracking begins for a character that has no journey
+-- record yet.
 function Journey.bank(journeys, ownSessions, absorbed, now)
     local covered, parts = {}, {}
-    for index, walk in pairs(absorbed) do
-        covered[walk] = (covered[walk] or 0) + count(ownSessions[index].seconds)
-        parts[walk] = (parts[walk] or 0) + 1
+    for index, walks in pairs(absorbed) do
+        for _, walk in ipairs(walks) do
+            covered[walk] = (covered[walk] or 0) + count(ownSessions[index].seconds)
+            parts[walk] = (parts[walk] or 0) + 1
+        end
     end
-    for index, walk in pairs(absorbed) do
+    for index, walks in pairs(absorbed) do
         local own = ownSessions[index]
         if not own.banked and Journey.isCharacter(own.character) then
-            local share
-            if covered[walk] > 0 then
-                share = count(own.seconds) / covered[walk]
-            else
-                share = 1 / parts[walk]
+            local record = Journey.open(journeys, own.character, now)
+            for _, walk in ipairs(walks) do
+                local share
+                if covered[walk] > 0 then
+                    share = count(own.seconds) / covered[walk]
+                else
+                    share = 1 / parts[walk]
+                end
+                settle(record, walk, share, false)
             end
-            settle(Journey.open(journeys, own.character, now), walk, share, false)
             own.banked = true
         end
     end

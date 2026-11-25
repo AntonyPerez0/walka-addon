@@ -77,8 +77,12 @@ class SessionRecord:
     max_kmh: float = 0.0
     avg_hr: float | None = None
     max_hr: int | None = None
-    source: str = "manual"  # "wow" | "manual" | ...
-    beacon_session: int | None = None
+    # "free": walked with no session of the game's known (yet) - "wow": in a
+    # session marked in the game, as its saved file showed afterwards
+    # (game_file) - "manual" and others: from elsewhere.
+    source: str = "manual"
+    game_session: int | None = None  # the number the addon gave that session
+    character: str = ""  # whose session it was: the character's name (never the realm)
     steps_source: str = "estimate"  # "treadmill" | "estimate"
     distance_source: str = "speed"  # "treadmill" | "speed"
     calories_source: str = "speed"  # "speed" | "heart_rate"
@@ -101,7 +105,11 @@ class SessionRecord:
     @classmethod
     def from_json(cls, data: dict[str, Any]) -> SessionRecord:
         known = {f for f in cls.__dataclass_fields__}  # type: ignore[attr-defined]
-        return cls(**{k: v for k, v in data.items() if k in known})
+        values = {k: v for k, v in data.items() if k in known}
+        if "game_session" not in values and "beacon_session" in data:
+            # (Up to 0.10 the session's number was read off the screen.)
+            values["game_session"] = data["beacon_session"]
+        return cls(**values)
 
 
 def _plausible(counter_total: float, integrated: float) -> bool:
@@ -114,9 +122,10 @@ def _plausible(counter_total: float, integrated: float) -> bool:
 class SessionRecorder:
     """Accumulates one walk from once-per-tick treadmill readings."""
 
-    def __init__(self, *, source: str, beacon_session: int | None, treadmill: str, started_at: float) -> None:
+    def __init__(self, *, treadmill: str, started_at: float, source: str = "free") -> None:
+        # (Which game session the walk was in is known only once the game
+        # has saved its file: game_file, App.file_walks.)
         self.source = source
-        self.beacon_session = beacon_session
         self.treadmill = treadmill
         self.started_at = started_at
         self.last_at = started_at
@@ -189,7 +198,6 @@ class SessionRecorder:
         return {
             "started_at": self.started_at,
             "source": self.source,
-            "beacon_session": self.beacon_session,
             "seconds": round(self.seconds, 1),
             "distance_m": round(self.distance_m, 1),
             "steps": int(self.steps),
@@ -313,7 +321,6 @@ class SessionRecorder:
             avg_hr=round(avg_hr, 1) if avg_hr else None,
             max_hr=self.max_hr or None,
             source=self.source,
-            beacon_session=self.beacon_session,
             steps_source=self.steps_source,
             distance_source=self.distance_source,
             calories_source=self.calories_source,
@@ -537,6 +544,13 @@ class SessionStore:
         self.records.append(record)
         self.records.sort(key=lambda r: r.start)
         return record
+
+    def update(self, record: SessionRecord) -> None:
+        """Write a walk that is on file already again, changed (the game
+        session it was in has become known). Raises OSError."""
+        if record not in self.records:
+            raise KeyError(record.id)
+        self._write(self.dir / f"{record.id}.json", record.to_json())
 
     def delete(self, session_id: str) -> bool:
         for record in self.records:

@@ -51,7 +51,6 @@ from walka import cli, web
 from walka.app import FREE_WALK_GRACE_S, TICK_S, App
 from walka.config import Config
 from walka.session import SessionStore
-from walka.sources import BeaconSource
 from walka.treadmill import TreadmillStatus
 from walka.treadmill.simulated import SimulatedTreadmill
 from walka.walka_account import keystore, ledger, project
@@ -146,7 +145,7 @@ SNAPSHOT_KEYS = {
     "time",
     "units",
     "treadmill",
-    "source",
+    "game",
     "session",
     "last_session",
     "totals",
@@ -237,7 +236,6 @@ def hand_in(rig: Rig, tmp_path: Path, *, treadmill: Any = None, part: bool = Tru
         a_config(tmp_path),
         rig.dir,
         treadmill=treadmill if treadmill is not None else Pad(),
-        beacon=BeaconSource(None, clock=rig.clock.mono),
         walka_account=account,
         wall_clock=rig.clock.wall,
         mono_clock=rig.clock.mono,
@@ -1001,7 +999,6 @@ def test_the_house_rigs_simulated_treadmill_keeps_the_part_out_of_everything(tmp
                 house.config,
                 rig.dir,
                 treadmill=house.treadmill,
-                beacon=house.beacon,
                 walka_account=part,
                 wall_clock=lambda: house.clock.wall,
                 mono_clock=lambda: house.clock.mono,
@@ -1011,9 +1008,9 @@ def test_the_house_rigs_simulated_treadmill_keeps_the_part_out_of_everything(tmp
             part.start()
             await house.connect()
             await house.walk()
-            await house.run(60, signal=False)
+            await house.run(60)
             house.treadmill.press_stop()
-            await house.run(FREE_WALK_GRACE_S + 5, signal=False)
+            await house.run(FREE_WALK_GRACE_S + 5)
             (record,) = app.store.records
             assert record.treadmill == "Simulated pad"
             await part.idle()
@@ -1076,7 +1073,6 @@ def on_the_emulated_pad(rig: Rig, tmp_path: Path, monkeypatch) -> tuple[PadRig, 
         house.config,
         rig.dir,
         treadmill=house.treadmill,
-        beacon=house.beacon,
         walka_account=part,
         wall_clock=HouseClock.wall,
         mono_clock=HouseClock.mono,
@@ -1102,14 +1098,14 @@ def test_a_walk_on_the_emulated_pad_reaches_the_walka_account_and_nothing_reache
             await house.walking(seconds=300)
             house.pad.press_stop()
             await house.run(5)
-            await house.run(3, active=False)
+            await house.end_walk()
             (record,) = app.store.records
-            assert record.treadmill == "URTM030" and record.source == "wow"
+            assert record.treadmill == "URTM030" and record.source == "free"
             assert rig.fake.walks(user) == []  # (the walk is saved; the sender has not had its turn yet)
             await rig.idle()
 
             (row,) = rig.fake.walks(user)
-            assert (row["client_id"], row["origin"], row["session"]) == (record.id, "walka", "wow")
+            assert (row["client_id"], row["origin"], row["session"]) == (record.id, "walka", "free")
             assert row["steps"] == record.steps and row["seconds"] == pytest.approx(record.seconds, abs=0.5)
             assert app.snapshot()["walka_account"]["counts"] == {**ZERO, "sent": 1}
             assert part.in_account(record.id, record.start) is True
@@ -1147,7 +1143,7 @@ def test_soak_on_the_emulated_pad_with_the_part_handed_in(tmp_path, monkeypatch,
             await house.walking(seconds=120)
             house.pad.press_stop()
             await house.run(5)
-            await house.run(3, active=False)
+            await house.end_walk()
             await rig.idle()
             assert len(rig.fake.walks(user)) == 1 and house.heard_nothing_from_walka()
 
@@ -1178,18 +1174,10 @@ def test_soak_on_the_emulated_pad_with_the_part_handed_in(tmp_path, monkeypatch,
                     elif event is not None:
                         await said(client, f"/api/walka-account/{event}")
                     await rig.idle()
-                    game = rng.choice(["session", "paused", "none", "lost"])
-                    await house.run(
-                        rng.uniform(0.2, 30),
-                        active=game != "none",
-                        paused=game == "paused",
-                        moving=rng.random() < 0.7,
-                        signal=game != "lost",
-                        session=rng.randint(1, 3),
-                    )
+                    await house.run(rng.uniform(0.2, 30))
                     await rig.idle()
                     assert house.heard_nothing_from_walka()
-                await house.run(FREE_WALK_GRACE_S + 5, active=False)
+                await house.run(FREE_WALK_GRACE_S + 5)
                 await rig.idle()
                 await app.stop()
             assert house.heard_nothing_from_walka()
@@ -1393,7 +1381,6 @@ def test_stop_tells_the_part_before_the_walk_is_saved_and_waits_for_it_only_when
                 a_config(tmp_path),
                 rig.dir,
                 treadmill=Pad(),
-                beacon=BeaconSource(None, clock=rig.clock.mono),
                 walka_account=spy,
                 wall_clock=rig.clock.wall,
                 mono_clock=rig.clock.mono,
@@ -1402,7 +1389,7 @@ def test_stop_tells_the_part_before_the_walk_is_saved_and_waits_for_it_only_when
             assert spy.told == [("attach",)] and spy.app is app
             await app.start()
             assert [told[0] for told in spy.told] == ["attach", "start"]
-            assert spy.told[1][3] == 3  # (the loops of Walka's own are made by then)
+            assert spy.told[1][3] == 4  # (the loops of Walka's own are made by then)
             await walk_on(rig, app, 60)
             assert len(spy.told) == 2  # (a walk that is still going is nobody's news)
 
@@ -1410,7 +1397,7 @@ def test_stop_tells_the_part_before_the_walk_is_saved_and_waits_for_it_only_when
             assert [told[0] for told in spy.told] == ["attach", "start", "cancel", "walk_saved", "close"]
             cancel, saved, close = spy.told[2:]
             # cancel(): with the tasks, BEFORE the walk is saved - it is still being recorded, nothing on disk.
-            assert cancel[1:] == (0, True, 3, 0, False)
+            assert cancel[1:] == (0, True, 4, 0, False)
             # The walk saved at exit is told like any other (the real part does nothing with it by then).
             assert saved[1:3] == (1, False)
             # close(): awaited when all of Walka's own is done - the walk and the settings on disk, the
@@ -1432,14 +1419,13 @@ def test_a_part_that_breaks_costs_nobody_their_walk_and_its_words_are_not_in_the
                 a_config(tmp_path),
                 rig.dir,
                 treadmill=Pad(),
-                beacon=BeaconSource(None, clock=rig.clock.mono),
                 walka_account=spy,
                 wall_clock=rig.clock.wall,
                 mono_clock=rig.clock.mono,
             )
             rig.app = app  # type: ignore[assignment]
             await app.start()
-            assert len(app._tasks) == 3
+            assert len(app._tasks) == 4
             await walk_on(rig, app, 60)
             # An earlier walk could not be written yet (a full disk, say) and waits in the list: closing
             # Walka saves two walks, one after the other - and the part is told of each.

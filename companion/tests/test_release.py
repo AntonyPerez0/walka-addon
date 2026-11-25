@@ -32,7 +32,7 @@ def test_every_library_the_program_runs_on_is_listed_with_its_licence(repo_root:
     distributions = third_party.runtime_distributions()
     names = {canonical(d.metadata["Name"]) for d in distributions}
     # What Walka asks for by name, and what those bring along.
-    assert {"aiohttp", "bleak", "mss", "yarl", "multidict", "frozenlist", "aiosignal", "attrs", "idna"} <= names
+    assert {"aiohttp", "bleak", "yarl", "multidict", "frozenlist", "aiosignal", "attrs", "idna"} <= names
     # Not the tools that only build or test: they are not in the program.
     assert not names & {"pytest", "ruff", "lupa", "pyinstaller", "pip", "setuptools", "packaging"}
     # Walka's window, where the program is packaged with one.
@@ -50,7 +50,7 @@ def test_the_licences_file_holds_the_texts_not_only_the_names(repo_root: Path, t
     text = third_party.write(tmp_path / "out" / "licences.txt").read_text("utf-8")
     assert text.startswith("THIRD-PARTY SOFTWARE IN WALKA")
     assert "Apache License" in text and "Version 2.0, January 2004" in text  # aiohttp and its family
-    assert "Permission is hereby granted, free of charge" in text  # MIT: bleak, mss, attrs
+    assert "Permission is hereby granted, free of charge" in text  # MIT: bleak, attrs
     assert "PYTHON SOFTWARE FOUNDATION LICENSE" in text.upper() or "docs.python.org/3/license" in text
     assert "PyInstaller's bootloader" in text and "special exception" in text
     for distribution in third_party.runtime_distributions():
@@ -97,7 +97,7 @@ def test_the_two_lock_files_agree_on_what_the_program_runs_on(repo_root: Path):
         text = (repo_root / "companion" / f"requirements-{extra}.lock").read_text("utf-8")
         lines[extra] = {canonical(m.group(1)): m.group(2) for m in re.finditer(r"(?m)^([A-Za-z0-9_.-]+)==(\S+)", text)}
     shared = set(lines["build"]) & set(lines["dev"])
-    assert {"aiohttp", "bleak", "mss"} <= shared
+    assert {"aiohttp", "bleak"} <= shared
     assert {name: lines["build"][name] for name in shared} == {name: lines["dev"][name] for name in shared}
 
 

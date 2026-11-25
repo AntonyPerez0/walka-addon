@@ -510,10 +510,6 @@ macholib==1.16.4 ; sys_platform == 'darwin' \
     --hash=sha256:da1a3fa8266e30f0ce7e97c6a54eefaae8edd1e5f86f3eb8b95457cae90265ea \
     --hash=sha256:f408c93ab2e995cd2c46e34fe328b130404be143469e41bc366c807448979362
     # via pyinstaller
-mss==10.2.0 \
-    --hash=sha256:ab271860775545e62f29d7b11f82f279ac1048f5bbdd26cfad84830208dbd393 \
-    --hash=sha256:e79f428899280e7e64e38365b5bfed683851ebea807eeaeadaf06eb8e0d67197
-    # via walka (pyproject.toml)
 multidict==7.2.1 \
     --hash=sha256:02009b402129a73e1f3da68f48eb999afbacd29f25aef0d5052b84ff5c2786a2 \
     --hash=sha256:02d9c04d395a36eeebe89e45f2269614a4675b8e83fddcba15bba2be903971e5 \

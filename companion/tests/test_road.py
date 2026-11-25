@@ -11,8 +11,7 @@ from typing import Any
 import pytest
 
 from walka import road, savedvars, sketch
-from walka.journey import DEMO_KEY, DemoJourney
-from walka.protocol import Stat, djb2
+from walka.journey import DEMO_KEY, demo_journey, djb2
 from walka.road import RoadBook, Stretch, character_id, decode, demo_road, simplify
 
 KEY = "Tester-Azeroth"
@@ -66,7 +65,7 @@ def test_a_road_is_known_by_the_id_the_journey_has():
     assert character_id(KEY) == f"{djb2(KEY):08x}"
     assert character_id("A") == "0002b5e6"  # 5381 * 33 + 65, leading zeros and all
     # The demo's road belongs to the demo's character.
-    assert demo_road(DEMO_KEY).id == f"{DemoJourney(wall=lambda: NOW).value(Stat.CHAR_KEY, 0):08x}"
+    assert demo_road(DEMO_KEY).id == demo_journey(wall=lambda: NOW).id
 
 
 # ---- decoding -----------------------------------------------------------------------------------

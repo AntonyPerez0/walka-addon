@@ -805,14 +805,14 @@ def test_recording_can_be_switched_off(rt):
     assert char_db(rt)["segments"] == []
 
 
-def test_an_error_in_the_recorder_does_not_stop_the_beacon(rt):
+def test_an_error_in_the_recorder_does_not_stop_the_count(rt):
     rt.run("local road = ... road.Recorder.sample = function() error('boom') end", rt.ns.Road)
     rt.set(speed=7.0)
     rt.slash("/walka start")
     rt.advance(1)
-    before = rt.live_frame().seq
+    before = rt.walka.session.seconds
     rt.advance(5)
-    assert rt.live_frame().seq != before, "the beacon ticks on"
+    assert rt.walka.session.seconds > before, "the session counts on"
     assert "boom" in rt.ns.RoadRecorder.problem
 
 
@@ -833,8 +833,9 @@ def test_the_companion_reads_the_road_out_of_the_saved_file(rt):
     file = b"\r\nWalkaCharDB = " + rt.M.serialize("WalkaCharDB").encode("utf-8") + b"\r\n"
     road = companion_road.decode(savedvars.parse(file)["WalkaCharDB"])
     assert road is not None and not road.truncated
-    # The companion knows the character by the hash the beacon sends as CHAR_KEY.
-    assert road.id == f"{int(rt.ns.Protocol.djb2('Tester-Azeroth')):08x}"
+    # The companion knows the character by a hash of its "Name-Realm", as it
+    # knows its journey (read from the account's saved file).
+    assert road.id == companion_road.character_id("Tester-Azeroth")
     assert [stretch.mode for stretch in road.stretches] == [segment["m"] for segment in db["segments"]]
     assert [len(stretch.points) for stretch in road.stretches] == [segment["n"] + 1 for segment in db["segments"]]
     api = road.to_api(1_800_000_000.0)

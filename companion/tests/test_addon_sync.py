@@ -75,7 +75,7 @@ def record(start: float, **overrides) -> SessionRecord:
         avg_hr=101.4,
         max_hr=118,
         source="wow",
-        beacon_session=7,
+        game_session=7,
         steps_source="treadmill",
         treadmill="URTM030",
         samples=[[0.2, 3.2, 100]],
@@ -288,20 +288,20 @@ def test_payload_fields():
             "avgHr": 101,
             "maxHr": 118,
             "source": "wow",
-            "beaconSession": 7,
+            "gameSession": 7,
             "stepsSource": "treadmill",
         }
     ]
 
 
 def test_payload_optional_fields_are_left_out(lua):
-    rec = record(T0, avg_hr=None, max_hr=None, beacon_session=None, source="free", steps_source="estimate")
+    rec = record(T0, avg_hr=None, max_hr=None, game_session=None, source="free", steps_source="estimate")
     payload = build_payload([rec], profile={}, treadmill_name="", now=T0)
     assert payload["treadmill"] is None
     data = through_lua(lua, payload)
     assert "limits" not in data and "treadmill" not in data
     entry = data["sessions"][0]
-    assert "avgHr" not in entry and "maxHr" not in entry and "beaconSession" not in entry
+    assert "avgHr" not in entry and "maxHr" not in entry and "gameSession" not in entry
     assert entry["source"] == "free" and entry["stepsSource"] == "estimate"
 
 
@@ -468,7 +468,7 @@ def lua_session_list(lua, entries: list[dict]):
 def test_addon_merges_the_written_file_with_its_own_sessions(tmp_path: Path, lua, session_log):
     addon = make_addon_dir(tmp_path)
     in_game = record(T0, steps=1000, distance_m=800.0, kcal=60.0, seconds=900.0, end=T0 + 930)
-    outside = record(T0 + 20_000, steps=400, source="manual", beacon_session=None, avg_hr=None, max_hr=None)
+    outside = record(T0 + 20_000, steps=400, source="manual", game_session=None, avg_hr=None, max_hr=None)
     payload = build_payload([in_game, outside], profile={"weightKg": 75.0}, now=T0 + 30_000)
     lua.execute(write_data_file(addon, payload).read_text("ascii"))
     companion = lua.globals()[DATA_GLOBAL]
@@ -670,7 +670,7 @@ def test_install_copies_the_addon(tmp_path: Path, addon_source):
     addons.mkdir(parents=True)
     installed = addon_sync.install_addon(addons, addon_source)
     assert installed == addons / "Walka"
-    for relative in ("Walka.toc", "Walka.lua", "Beacon.lua", "Core/Protocol.lua", "Core/Metrics.lua", DATA_FILE):
+    for relative in ("Walka.toc", "Walka.lua", "Tracker.lua", "Core/Metrics.lua", DATA_FILE):
         assert (installed / relative).read_bytes() == (addon_source / relative).read_bytes(), relative
     # Every file the .toc lists is there (or the game refuses to load the addon cleanly).
     for line in (installed / "Walka.toc").read_text("utf-8").splitlines():

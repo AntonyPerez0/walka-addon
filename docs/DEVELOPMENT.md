@@ -21,14 +21,16 @@ companion/requirements-dev.lock`, and no install of Walka itself.)
   tested; `Game.lua` is the only file that touches values the game may hide.
 * `companion/src/walka/` - `treadmill/` (the Bluetooth FTMS reader, which
   has no way to write to a treadmill, and a simulator), `ftms.py` (decoding
-  what a treadmill says), `capture.py` + `beacon.py`
-  (reading the strip), `session.py` (recording walks), `addon_sync.py`, `web.py` + `static/`
+  what a treadmill says), `game_file.py` (the addon's saved file
+  `WalkaDB`: the game's walking sessions, and filing walks under them),
+  `session.py` (recording walks), `addon_sync.py` (`CompanionData.lua`,
+  and finding and installing the addon), `web.py` + `static/`
   (dashboard), `walka_account/` (signing in to a Walka account and sending
-  walks to it - the only part that asks anything over the internet), `window.py` (Walka's own window, which shows the dashboard), `app.py` (wiring), `cli.py`, `macos.py` (what the companion
-  asks macOS: where the game window is, whether it may see the screen),
+  walks to it - the only part that asks anything over the internet), `window.py` (Walka's own window, which shows the dashboard), `app.py` (wiring), `cli.py`,
   `winsession.py` (hearing that Windows is shutting down, to save the walk); `journey.py` (each character's
-  journey, put together from the strip), `savedvars.py` + `road.py` (the
-  road, read from the game's saved file), `sketch.py` (the ground of a land
+  journey, put together from the game's saved file), `savedvars.py` (the
+  reader of the game's saved files, which runs no Lua) + `road.py` (the
+  road, read from the per-character saved file), `sketch.py` (the ground of a land
   there is no map of, drawn from the road) and `static/share.js`, `card.js`,
   `cardmodel.js` (the Share page and the picture it draws), `lands.js` (the
   low-poly continents behind the road; made by `tools/gen_lands.py`).
@@ -49,7 +51,9 @@ companion/requirements-dev.lock`, and no install of Walka itself.)
   size of a GIF):
   `ffmpeg -i docs/demo/walka-demo.mp4 -vf "fps=12,scale=800:-1:flags=lanczos" -c:v libwebp -quality 55 -compression_level 6 -loop 0 docs/images/demo.webp`.
 * `py -m walka --demo` runs everything against a simulated treadmill, a
-  made-up walker who works its remote, and a scripted character.
+  made-up walker who works its remote, and a made-up game that "saves its
+  file" every few seconds, with one walking session and a character.
+  `py -m walka game` prints what the real game has saved for Walka.
 * **The one rule for changes:** the companion listens to the treadmill and
   never writes to it. `companion/tests/test_ftms_ble.py` and `test_app.py`
   fail if a way to do so comes back.

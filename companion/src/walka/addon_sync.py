@@ -139,7 +139,7 @@ def _session_entry(record: SessionRecord) -> dict[str, Any]:
         "avgHr": round(record.avg_hr) if record.avg_hr else None,
         "maxHr": record.max_hr,
         "source": record.source,
-        "beaconSession": record.beacon_session,
+        "gameSession": record.game_session,
         "stepsSource": record.steps_source,
     }
 
@@ -350,6 +350,20 @@ BUNDLED_ADDON_PATH = ("_addon", ADDON_NAME)
 ADDON_FILE_SUFFIXES = frozenset(
     {".toc", ".lua", ".xml", ".tga", ".blp", ".png", ".jpg", ".ttf", ".otf", ".ogg", ".mp3", ".wav", ".txt", ".md"}
 )
+
+
+def game_dirs(configured: str | None = None) -> list[Path]:
+    """Folders of installed games (the ones that hold ``WTF``): where the
+    addon is installed first, then every other install found."""
+    folders: list[Path] = []
+    installed = find_addon_dir(configured)
+    candidates = [installed.parent] if installed is not None else []
+    candidates += find_addons_dirs()
+    for addons in candidates:
+        # <game>/Interface/AddOns
+        if addons.parent.name.lower() == "interface" and addons.parent.parent not in folders:
+            folders.append(addons.parent.parent)
+    return folders
 
 
 def bundled_addon_dir() -> Path | None:

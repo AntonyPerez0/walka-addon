@@ -29,7 +29,7 @@ def busy_rt(make_rt):
     rt = make_rt(files={"CompanionData.lua": companion})
     rt.set(speed=7.0)
     for command in ("start", "status", "pause", "resume", "history", "journey", "options", "weight 80kg",
-                    "height 180cm", "units kmh", "units mph", "beacon size 4", "beacon off", "beacon on", "help",
+                    "height 180cm", "units kmh", "units mph", "beacon off", "help",
                     "hide", "show", "map", "mapcheck", "map off", "map on", "map window", "road off", "road on"):
         rt.slash("/walka " + command)
         rt.tick(3)
@@ -136,12 +136,12 @@ def test_toc_metadata(rt, snapshot):
 
 
 def test_core_files_do_not_need_the_wow_api(addon_dir):
-    # Protocol, Metrics, SessionLog and Journey promise to be
+    # Metrics, SessionLog and Journey promise to be
     # pure Lua 5.1 so that other tools can run them: load each in a bare Lua
     # state.
     from lupa.lua51 import LuaRuntime
 
-    for name in ("Protocol", "Metrics", "SessionLog", "Journey"):
+    for name in ("Metrics", "SessionLog", "Journey"):
         lua = LuaRuntime(unpack_returned_tuples=True)
         lua.execute(
             "for _, name in ipairs({'CreateFrame', 'GetTime', 'date', 'time', 'print', 'wipe', 'tinsert', 'format'}) do _G[name] = nil end"

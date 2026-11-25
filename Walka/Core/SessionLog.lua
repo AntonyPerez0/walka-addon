@@ -113,9 +113,16 @@ end
 -- (end >= start); records that cannot be made to fit are left out.
 --
 -- `absorbed` (optional) is a table to fill in: for each of the addon's
--- records that went into a measured walk, absorbed[its index] is that
--- walk's entry. The journey uses it to take over the measured numbers
--- (Core/Journey.lua).
+-- records that went into measured walks, absorbed[its index] is the list of
+-- those walks' entries. The journey uses it to take over the measured
+-- numbers (Core/Journey.lua).
+--
+-- One of the addon's sessions can hold several measured walks: the app
+-- records a walk from the belt alone, and a walk ends when the belt has
+-- stood still for a minute, while the session runs on (the one the addon
+-- starts by itself lasts the whole login). Each such walk is the
+-- character's, and the character's yards during the session are shared out
+-- among them by the time each one overlaps it.
 --- Has the companion looked since this walk of the addon's ended, and seen
 -- nothing of it? `written` is when the companion wrote its file (nil: it
 -- never has). A session that ended well before that and that the companion
@@ -145,7 +152,9 @@ function SessionLog.merge(ownSessions, companionData, absorbed)
     -- them twice.
     local older = companionData and companionData.older
     local olderUntil = type(older) == "table" and number(older["until"], -1) or -1
-    local used = {}
+    local used = {}         -- went into a measured walk (or is to be left out)
+    local skip = {}         -- left out: not to be matched with anything
+    local matches = {}      -- own index -> { entry, overlap, entry, overlap, ... }
 
     -- The addon's records as plain numbers, read once. Every companion
     -- record is compared with every addon record - over 100,000 pairs for
@@ -159,11 +168,11 @@ function SessionLog.merge(ownSessions, companionData, absorbed)
             if start and usableTime(start) then
                 ownStart[index], ownEnd[index] = start, number(own["end"])
                 if start < olderUntil then
-                    used[index] = true
+                    used[index], skip[index] = true, true
                 end
             else
                 -- (a damaged saved-variables file can hold anything)
-                used[index] = true
+                used[index], skip[index] = true, true
             end
         end
     end
@@ -177,19 +186,49 @@ function SessionLog.merge(ownSessions, companionData, absorbed)
                 for index = 1, ownCount do
                     -- Walks that do not overlap at all cannot be the same
                     -- walk: skip them without the full comparison.
-                    if not used[index] and ownEnd[index] > recordStart and ownStart[index] < recordEnd
+                    if not skip[index] and ownEnd[index] > recordStart and ownStart[index] < recordEnd
                         and SessionLog.sameWalk(ownSessions[index], record) then
                         local own = ownSessions[index]
                         used[index] = true
-                        if absorbed then
-                            absorbed[index] = entry
+                        local list = matches[index]
+                        if not list then
+                            list = {}
+                            matches[index] = list
                         end
-                        entry.yards = (entry.yards or 0) + number(own.yards)
+                        list[#list + 1] = entry
+                        list[#list + 1] = overlapSeconds(ownStart[index], ownEnd[index], recordStart, recordEnd)
+                        if absorbed then
+                            local walks = absorbed[index]
+                            if not walks then
+                                walks = {}
+                                absorbed[index] = walks
+                            end
+                            walks[#walks + 1] = entry
+                        end
                         entry.character = entry.character or own.character
                     end
                 end
                 merged[#merged + 1] = entry
             end
+        end
+    end
+
+    -- The character's yards: all of them to the one walk of a session, or
+    -- shared out by overlap among several.
+    for index, list in pairs(matches) do
+        local yards = number(ownSessions[index].yards)
+        local count = #list / 2
+        local whole = 0
+        for at = 2, #list, 2 do
+            whole = whole + list[at]
+        end
+        for at = 1, #list, 2 do
+            local entry = list[at]
+            local share = 1
+            if count > 1 then
+                share = whole > 0 and list[at + 1] / whole or 1 / count
+            end
+            entry.yards = (entry.yards or 0) + yards * share
         end
     end
 

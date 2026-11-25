@@ -55,7 +55,6 @@ from test_walka_account_wiring import Pad, a_config, hand_in, left_running, run,
 from walka import session as session_module
 from walka.app import CHECKPOINT_EVERY_S, App
 from walka.session import LOCK_NAME, SessionRecord, SessionStore
-from walka.sources import BeaconSource
 from walka_account_rig import NOW, PAD, Rig, walk_id
 
 
@@ -466,7 +465,6 @@ def test_a_second_walka_sends_nothing_of_the_walk_that_is_still_going_and_the_wh
                         a_config(tmp_path),
                         rig.dir,
                         treadmill=Pad(),
-                        beacon=BeaconSource(None, clock=rig.clock.mono),
                         walka_account=rig.build(attach=False),
                         wall_clock=rig.clock.wall,
                         mono_clock=rig.clock.mono,

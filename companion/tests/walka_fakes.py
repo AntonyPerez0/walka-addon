@@ -1,6 +1,5 @@
 """Test doubles shared by the companion tests.
 
-* ``FakeScreen`` - a virtual desktop a ``capture.Grabber`` can photograph.
 * ``FakePad`` / ``FakeBackend`` / ``FakeClient`` - a UREVO walking pad
   emulated at the GATT level, for the Bluetooth reader.
 * Lua helpers - run the addon's pure-Lua modules under an embedded Lua 5.1.
@@ -25,9 +24,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
-from walka import beacon, ftms
-from walka.capture import Shot
-from walka.protocol import Frame
+from walka import ftms
 from walka.treadmill.ftms_ble import FoundDevice, name_matches
 
 # ---- Lua ---------------------------------------------------------------------
@@ -64,116 +61,6 @@ def lua_to_py(value: Any) -> Any:
     if keys and all(isinstance(k, int) for k in keys) and sorted(keys) == list(range(1, len(keys) + 1)):
         return [lua_to_py(value[i]) for i in range(1, len(keys) + 1)]
     return {k: lua_to_py(v) for k, v in value.items()}
-
-
-# ---- screen ------------------------------------------------------------------
-
-
-class FakeScreen:
-    """A virtual desktop made of grey pixels, with one or more monitors.
-
-    It doubles as the ``Grabber``: ``grab`` returns BGRA like python-mss.
-    Everything outside the monitors is black, as on a real desktop.
-    """
-
-    def __init__(self, monitors: Sequence[tuple[int, int, int, int]] = ((0, 0, 1000, 120),), background: int = 40):
-        self._monitors = [tuple(m) for m in monitors]
-        self.left = min(m[0] for m in self._monitors)
-        self.top = min(m[1] for m in self._monitors)
-        right = max(m[0] + m[2] for m in self._monitors)
-        bottom = max(m[1] + m[3] for m in self._monitors)
-        self.width, self.height = right - self.left, bottom - self.top
-        self.background = background
-        self.rows = [bytearray([0]) * self.width for _ in range(self.height)]
-        self.clear()
-        self.grabs: list[tuple[int, int, int, int]] = []
-        self.fail_next = 0  # raise on this many grabs
-        self.none_next = 0  # return None on this many grabs
-        self.fail_monitors = False
-        self.closed = False
-
-    # -- painting ---------------------------------------------------------------
-    def clear(self) -> None:
-        for row in self.rows:
-            row[:] = bytes(len(row))
-        for left, top, width, height in self._monitors:
-            for y in range(top - self.top, top - self.top + height):
-                x = left - self.left
-                self.rows[y][x : x + width] = bytes([self.background]) * width
-
-    def fill(self, x: int, y: int, width: int, height: int, value: int) -> None:
-        for yy in range(y - self.top, y - self.top + height):
-            if 0 <= yy < self.height:
-                x0 = max(0, x - self.left)
-                x1 = min(self.width, x - self.left + width)
-                if x1 > x0:
-                    self.rows[yy][x0:x1] = bytes([value]) * (x1 - x0)
-
-    def paint_row(self, x: int, y: int, values: bytes) -> None:
-        yy = y - self.top
-        if not 0 <= yy < self.height:
-            return
-        x0 = x - self.left
-        for i, value in enumerate(values):
-            if 0 <= x0 + i < self.width:
-                self.rows[yy][x0 + i] = value
-
-    def paint_strip(
-        self,
-        frame: Frame,
-        x: int,
-        y: int,
-        cell_px: float = 3,
-        *,
-        white: int = 255,
-        black: int = 0,
-    ) -> None:
-        """Paint the beacon the way the addon does: the cells, plus one cell
-        of black quiet zone to the right and below."""
-        height = max(1, int(round(cell_px)))
-        strip = beacon.render_row(frame, cell_px, white=white, black=black)
-        quiet = bytes([black]) * height
-        for row in range(height):
-            self.paint_row(x, y + row, strip + quiet)
-        for row in range(height, 2 * height):
-            self.paint_row(x, y + row, bytes([black]) * (len(strip) + height))
-
-    # -- Grabber ----------------------------------------------------------------
-    def grab(self, left: int, top: int, width: int, height: int) -> Shot | None:
-        self.grabs.append((left, top, width, height))
-        if self.fail_next > 0:
-            self.fail_next -= 1
-            raise OSError("screen capture failed (simulated)")
-        if self.none_next > 0:
-            self.none_next -= 1
-            return None
-        out = bytearray(width * height * 4)
-        for row in range(height):
-            y = top + row - self.top
-            grey = bytearray(width)
-            if 0 <= y < self.height:
-                x0 = left - self.left
-                src0, src1 = max(0, x0), min(self.width, x0 + width)
-                if src1 > src0:
-                    grey[src0 - x0 : src1 - x0] = self.rows[y][src0:src1]
-            base = row * width * 4
-            for channel in range(3):
-                out[base + channel : base + width * 4 : 4] = grey
-            out[base + 3 : base + width * 4 : 4] = b"\xff" * width
-        return Shot(width, height, bytes(out))
-
-    def monitors(self) -> list[tuple[int, int, int, int]]:
-        if self.fail_monitors:
-            raise OSError("monitor enumeration failed (simulated)")
-        return list(self._monitors)
-
-    def close(self) -> None:
-        self.closed = True
-
-    def full_grabs(self) -> int:
-        """How many whole-monitor captures were taken (the slow scan)."""
-        sizes = {(m[2], m[3]) for m in self._monitors}
-        return sum(1 for g in self.grabs if (g[2], g[3]) in sizes)
 
 
 # ---- the walking pad ---------------------------------------------------------

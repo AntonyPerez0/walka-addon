@@ -1,9 +1,9 @@
 """The road a character has travelled, for the picture on the Share page.
 
-The addon records where the character goes (``Walka/Core/Road.lua``). That is
-far too much for the strip on the screen, so it reaches the companion the
-slow way: the game writes the addon's saved variables to a file when the
-player logs out or reloads the interface, and this module reads that file -
+The addon records where the character goes (``Walka/Core/Road.lua``). It
+reaches the companion the way everything from the game does: the game
+writes the addon's saved variables to a file when the player logs out or
+reloads the interface, and this module reads that file -
 ``WTF/Account/<account>/<realm>/<character>/SavedVariables/Walka.lua`` under
 the game's folder, which holds one table, ``WalkaCharDB``.
 
@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import Any
 
 from . import savedvars, sketch
-from .protocol import djb2
+from .journey import djb2
 
 log = logging.getLogger(__name__)
 
@@ -67,8 +67,8 @@ _STEP = re.compile(r"-?\d+,(-?\d+),(-?\d+)")
 
 
 def character_id(key: str) -> str:
-    """The id the dashboard knows a character by: the hash the addon sends
-    as CHAR_KEY (``journey.Journey.id``), made from its "Name-Realm"."""
+    """The id the dashboard knows a character by (``journey.Journey.id``),
+    made from its "Name-Realm"."""
     return f"{djb2(key):08x}"
 
 

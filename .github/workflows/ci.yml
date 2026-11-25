@@ -87,9 +87,9 @@ jobs:
           $version = Walka "--version"
           if ($code -ne 0 -or $version -notmatch "walka \d+\.\d+") { throw "version check failed" }
           # Everything the frozen app imports only at run time (the Windows
-          # Runtime modules behind Bluetooth, the screen capture backend,
-          # what draws its window), the dashboard page and the bundled
-          # addon. The runner has no Bluetooth adapter, so the scan below
+          # Runtime modules behind Bluetooth, what draws its window), the
+          # dashboard page and the bundled addon. The runner has no
+          # Bluetooth adapter, so the scan below
           # stops before it would touch most of these: this is what
           # notices a module missing from the bundle.
           $check = Walka "selfcheck"
@@ -247,9 +247,8 @@ jobs:
           [ "$(plutil -extract CFBundleShortVersionString raw "$app/Contents/Info.plist")" = "$version" ] || fail "the application does not carry Walka's version ($version)"
           "$exe" --version || fail "version check failed"
           # Everything the frozen app imports only at run time (the
-          # CoreBluetooth modules behind Bluetooth, the screen capture
-          # backend, what it asks macOS, what draws its window), the
-          # dashboard page and the bundled addon.
+          # CoreBluetooth modules behind Bluetooth, what draws its
+          # window), the dashboard page and the bundled addon.
           "$exe" selfcheck || fail "selfcheck failed: something the app needs at run time is missing from Walka"
           # The licences of the libraries packed into the program go with it.
           "$exe" licenses > "$RUNNER_TEMP/licences.txt" || fail "Walka does not print the licences of what is packed into it"

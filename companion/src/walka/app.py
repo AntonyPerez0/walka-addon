@@ -1,15 +1,15 @@
-"""The companion's engine: wires the game's signal, the treadmill reader,
-the recorder and the addon sync together.
+"""The companion's engine: wires the treadmill reader, the recorder, the
+game's saved file and the addon sync together.
 
-Everything here runs on one asyncio loop (the beacon reader has its own
-thread and is only polled). The web dashboard and the CLI talk to the
-``App`` object; nothing else holds state.
+Everything here runs on one asyncio loop (the game's files are read on a
+worker thread). The web dashboard and the CLI talk to the ``App`` object;
+nothing else holds state.
 
 The companion listens to the treadmill and never tells it anything: there
 is no command in this file, in the reader interface (``treadmill.base``) or
-anywhere else in the program that starts, stops or steers a belt. What the
-game says decides one thing only - which game session a walk is filed
-under.
+anywhere else in the program that starts, stops or steers a belt. A walk is
+whatever the belt does. What the game saved decides one thing only, after
+the fact - which game session a walk is filed under (``file_walks``).
 """
 
 from __future__ import annotations
@@ -17,22 +17,19 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import math
 import time
 from collections import deque
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from . import __version__, addon_sync
+from . import __version__, addon_sync, game_file
 from . import config as config_module
 from .config import Config
 from .journey import attach as attach_journeys
 from .metrics import Profile
-from .protocol import LEGACY_FLAGS, Flags
 from .road import RoadBook
 from .session import SessionRecord, SessionRecorder, SessionStore
-from .sources import BeaconSource, Reading
 from .treadmill import Treadmill, TreadmillError, TreadmillEvent
 from .treadmill_check import REPORTS_DIR, CheckState, run_check
 from .updates import UpdateState
@@ -42,11 +39,8 @@ log = logging.getLogger(__name__)
 
 TICK_S = 0.2
 CHECKPOINT_EVERY_S = 30.0
-FREE_WALK_GRACE_S = 60.0  # a walk outside a game session ends after this long stopped
-# A game session that is out of view, with the belt standing still, is
-# closed - and let go of - after this long.
-ABANDONED_AFTER_S = 900.0
-SIGNAL_TIMEOUT_S = 3.0  # a look at the game older than this counts as lost
+FREE_WALK_GRACE_S = 60.0  # a walk ends after the belt has stood this long
+GAME_FILE_EVERY_S = 5.0  # how often the game's saved files are looked at
 STALE_DATA_S = 5.0  # treadmill data older than this is not trusted
 MOVING_KMH = 0.05  # a belt reporting more than this is moving
 STATE_FILE = "state.json"
@@ -81,7 +75,6 @@ class App:
         data_dir: Path,
         *,
         treadmill: Treadmill,
-        beacon: BeaconSource | None = None,
         heart_rate: Any = None,
         walka_account: Any = None,
         wall_clock: Callable[[], float] = time.time,
@@ -94,14 +87,15 @@ class App:
         self.mono = mono_clock
 
         self.store = SessionStore(self.data_dir)
-        self.beacon = beacon
         self.treadmill = treadmill
         self.treadmill.on_event = self._on_treadmill_event
         self.heart_rate = heart_rate
-        # The numbers behind the Share page's picture. They arrive in stat
-        # frames, which are kept apart from the live reading (stat_route.py,
-        # journey.py).
-        self.journeys = attach_journeys(self.data_dir, beacon, wall=wall_clock, mono=mono_clock)
+        # What the game saved: its walking sessions and every character's
+        # journey, read from the addon's saved file (game_file.py).
+        self.game = game_file.GameFiles(self.game_dirs, wall=wall_clock, mono=mono_clock)
+        self._game_rev = -1  # what of it the walks were last filed by
+        # The numbers behind the Share page's picture (journey.py).
+        self.journeys = attach_journeys(self.data_dir, wall=wall_clock, mono=mono_clock)
         # The roads characters have travelled, read from the game's saved
         # files when the Share page asks (on a worker thread: see web.py).
         self.roads = RoadBook(self.game_dirs, wall=wall_clock, mono=mono_clock)
@@ -143,7 +137,6 @@ class App:
         self._last_checkpoint = 0.0
         self._unsaved: list[SessionRecord] = []  # finished walks that could not be written yet
         self._idle_since: float | None = None
-        self._last_reading = Reading()
         self._was_moving = False
         self._totals_cache: tuple[float, dict[str, Any]] | None = None
         self._state = self._load_state()
@@ -219,15 +212,6 @@ class App:
             self.treadmill.address = self.config.treadmill.address
 
     # ---- the tick ----------------------------------------------------------------
-    def current_reading(self, mono: float) -> Reading:
-        return self.beacon.reading(mono) if self.beacon is not None else Reading()
-
-    def source_kind(self) -> str:
-        """What the walk being recorded would be filed under right now."""
-        if self._last_reading.active and self._last_reading.age_s <= SIGNAL_TIMEOUT_S:
-            return "wow"
-        return "none"
-
     def belt_speed(self, mono: float) -> float:
         """The speed the belt reports, in km/h: 0 with no treadmill, or
         with one that has not been heard from for a while (no recent data:
@@ -240,38 +224,20 @@ class App:
     async def tick(self) -> None:
         """One step: look at the game and at the belt, and record."""
         mono, wall = self.mono(), self.wall()
-        reading = self.current_reading(mono)
-        self._last_reading = reading
         speed = self.belt_speed(mono)
         moving = speed > MOVING_KMH
         if moving != self._was_moving:
             self._was_moving = moving
             if self.treadmill.status.connected:  # (a belt out of reach has not been heard to stop)
                 self.log_event("The belt is moving." if moving else "The belt has stopped.")
-        self._record(wall, reading, speed)
+        self._record(wall, speed)
         self._maybe_check_for_update()
 
     # ---- recording ---------------------------------------------------------------
-    def _wanted_recording(self, reading: Reading, moving: bool) -> tuple[str, int | None] | None:
-        """Which walk should be being recorded right now, if any.
-
-        A walk is whatever the belt does. The game only says what it is
-        filed under: while a session is marked there, the walk carries that
-        session's number, and the addon finds its measured numbers by it."""
-        fresh = reading.age_s <= SIGNAL_TIMEOUT_S
-        if fresh and reading.active:
-            return ("wow", reading.session)
-        recorder = self.recorder
-        if not fresh and recorder is not None and recorder.source == "wow":
-            # The game is out of view mid-session (a loading screen, another
-            # window on top): the walk goes on. (A game that was closed
-            # reads as fresh, with no session.)
-            return ("wow", recorder.beacon_session)
-        if moving:
-            return ("free", None)  # walking with no session marked in a game
-        return None
-
-    def _record(self, wall: float, reading: Reading, speed_kmh: float) -> None:
+    def _record(self, wall: float, speed_kmh: float) -> None:
+        """A walk is whatever the belt does: it begins when the belt moves
+        and ends when it has stood still for a while. (Which game session it
+        was in is learnt later, from the game's saved file: file_walks.)"""
         moving = speed_kmh > MOVING_KMH
         if moving:
             self._idle_since = None
@@ -279,29 +245,15 @@ class App:
             self._idle_since = wall
         idle_for = 0.0 if self._idle_since is None else wall - self._idle_since
 
-        want = self._wanted_recording(reading, moving)
         recorder = self.recorder
-        if recorder is not None:
-            current = (recorder.source, recorder.beacon_session)
-            if want != current:
-                if recorder.source == "free" and want is None and idle_for < FREE_WALK_GRACE_S:
-                    want = current  # a short stop does not end a free walk
-                else:
-                    self._finish_recording(wall)
-                    recorder = None
-            elif idle_for > ABANDONED_AFTER_S and reading.age_s > SIGNAL_TIMEOUT_S:
-                self._finish_recording(wall)
-                recorder = None
-                want = None
+        want = moving or (recorder is not None and idle_for < FREE_WALK_GRACE_S)
+        if recorder is not None and not want:
+            self._finish_recording(wall)
+            recorder = None
 
-        if recorder is None and want is not None:
+        if recorder is None and want:
             status = self.treadmill.status
-            recorder = SessionRecorder(
-                source=want[0],
-                beacon_session=want[1],
-                treadmill=status.name,
-                started_at=wall,
-            )
+            recorder = SessionRecorder(treadmill=status.name, started_at=wall)
             self.recorder = recorder
             self._last_checkpoint = wall
 
@@ -344,6 +296,7 @@ class App:
             if not self._unsaved:
                 self.store.clear_checkpoint()
             return None
+        self._file(record)  # (in a session the game has saved already, after a /reload say)
         self._unsaved.append(record)
         self._save_unsaved(announce=True)
         return record if record not in self._unsaved else None
@@ -389,24 +342,13 @@ class App:
 
     # ---- addon sync --------------------------------------------------------------
     def find_addon_dir(self) -> Path | None:
-        exe = None
-        if self.beacon is not None and self.beacon.window is not None:
-            exe = self.beacon.window.exe_path
-        self.addon_dir = addon_sync.find_addon_dir(self.config.wow.addon_dir or None, exe)
+        self.addon_dir = addon_sync.find_addon_dir(self.config.wow.addon_dir or None)
         return self.addon_dir
 
     def game_dirs(self) -> list[Path]:
         """Folders of installed games (the ones that hold ``WTF``): where the
         addon is installed first, then every other install found."""
-        folders: list[Path] = []
-        installed = self.find_addon_dir()
-        candidates = [installed.parent] if installed is not None else []
-        candidates += addon_sync.find_addons_dirs()
-        for addons in candidates:
-            # <game>/Interface/AddOns
-            if addons.parent.name.lower() == "interface" and addons.parent.parent not in folders:
-                folders.append(addons.parent.parent)
-        return folders
+        return addon_sync.game_dirs(self.config.wow.addon_dir or None)
 
     def sync_addon(self) -> bool:
         """Write history and profile into the addon folder."""
@@ -439,12 +381,7 @@ class App:
         if addons_dir:
             target = Path(addons_dir)
         else:
-            exe = self.beacon.window.exe_path if self.beacon is not None and self.beacon.window else None
-            candidates = []
-            from_exe = addon_sync.addons_dir_from_exe(exe)
-            if from_exe is not None:
-                candidates.append(from_exe)
-            candidates.extend(addon_sync.find_addons_dirs())
+            candidates = addon_sync.find_addons_dirs()
             if not candidates:
                 raise FileNotFoundError("could not find a World of Warcraft AddOns folder - choose it manually")
             target = candidates[0]
@@ -519,10 +456,9 @@ class App:
         if self._eager_connect:
             return True
         # Otherwise only while there is a walk to listen to: one that is
-        # being recorded (the link dropped under it), or a session marked
-        # in the game.
-        reading = self._last_reading
-        return self.recorder is not None or (reading.active and reading.age_s <= SIGNAL_TIMEOUT_S)
+        # being recorded (the link dropped under it). A pad that was
+        # switched off is listened for (should_watch).
+        return self.recorder is not None
 
     # ---- "Check my treadmill" -------------------------------------------------------
     @property
@@ -725,7 +661,6 @@ class App:
     def snapshot(self) -> dict[str, Any]:
         wall = self.wall()
         status = self.treadmill.status
-        frame = self.beacon.frame if self.beacon is not None else None
         hr = self.heart_rate
         treadmill = status.to_dict()
         treadmill.update(
@@ -737,27 +672,14 @@ class App:
             pinned=bool(self.config.treadmill.address) and hasattr(self.treadmill, "address"),
             moving=self._was_moving,
         )
-        reading = self._last_reading
         snapshot: dict[str, Any] = {
             "version": __version__,
             "time": wall,
             "units": self.config.units,
             "treadmill": treadmill,
-            "source": {
-                "kind": self.source_kind(),
-                "signal_age_s": None if math.isinf(reading.age_s) else round(reading.age_s, 2),
-                "beacon": self.beacon.status.to_dict() if self.beacon is not None else None,
-                "frame": None
-                if frame is None
-                else {
-                    "seq": frame.seq,
-                    "session": frame.session,
-                    "active": frame.active,
-                    "paused": frame.paused,
-                    "char_speed_yps": round(frame.char_speed_yps, 2),
-                    "flags": [flag.name for flag in Flags if flag in frame.flags and flag not in LEGACY_FLAGS],
-                },
-            },
+            # What the game has saved (game_file): read after the fact, at
+            # the game's logout or /reload - never live.
+            "game": self.game.status(),
             "session": self.recorder.live() if self.recorder is not None else None,
             "last_session": self.last_record.summary() if self.last_record is not None else None,
             "totals": self.totals(wall),
@@ -776,7 +698,7 @@ class App:
             "config": self.config.to_dict(),
             "events": list(self.events)[:30],
             "journey": self.journeys.summary(),
-            "character": self.journeys.playing(),
+            "character": self.journeys.latest(),
             # Can the floating window be shown? Only beside Walka's own window.
             "overlay": {"available": self.overlay is not None},
         }
@@ -785,6 +707,67 @@ class App:
             # Walka-account card, and nothing here names one.
             snapshot["walka_account"] = self.walka_account.snapshot()
         return snapshot
+
+    # ---- the game's saved file ----------------------------------------------------
+    async def _game_loop(self) -> None:
+        """Look at the game's saved files now and then (on a worker thread:
+        a slow disk must not hold up the walk), and take in what is new."""
+        while not self._stopping.is_set():
+            try:
+                await asyncio.to_thread(self.game.scan)
+                self.take_game_file()
+            except Exception:
+                log.exception("reading the game's saved file failed")
+            await asyncio.sleep(GAME_FILE_EVERY_S)
+
+    def take_game_file(self) -> bool:
+        """What the game saved has changed: the journeys it holds, and the
+        walks to file under its sessions. True if anything was new."""
+        rev = self.game.rev
+        if rev == self._game_rev:
+            return False
+        self._game_rev = rev
+        journeys = self.journeys.update(self.game.journeys())
+        return self.file_walks() > 0 or journeys
+
+    def _file(self, record: SessionRecord, sessions: list[game_file.GameSession] | None = None) -> bool:
+        """File ``record`` under the game session it was in, if the game's
+        file shows one. A walk once filed stays filed: an addon that no
+        longer lists the session (it keeps 400) does not undo it."""
+        if record.source not in ("free", "wow"):
+            return False
+        found = game_file.file_walk(record.start, record.end, self.game.sessions() if sessions is None else sessions)
+        if found is None:
+            return False
+        wanted = ("wow", found.number or None, found.character)
+        if (record.source, record.game_session, record.character) == wanted:
+            return False
+        record.source, record.game_session, record.character = wanted
+        return True
+
+    def file_walks(self) -> int:
+        """File the walks on record under the game sessions the game's file
+        shows. Returns how many changed."""
+        sessions = self.game.sessions()
+        if not sessions:
+            return 0
+        changed = 0
+        for record in list(self.store.records):
+            if self._file(record, sessions):
+                try:
+                    self.store.update(record)
+                except (OSError, KeyError) as exc:
+                    log.warning("a walk could not be filed under its game session: %s", exc)
+                    continue
+                changed += 1
+        if changed:
+            self._totals_cache = None
+            self.log_event(
+                f"The game's saved file shows the game sessions of {changed} "
+                f"walk{'s' if changed != 1 else ''}: filed under them."
+            )
+            self.sync_addon()
+        return changed
 
     # ---- lifecycle ---------------------------------------------------------------
     async def _tick_loop(self) -> None:
@@ -808,8 +791,8 @@ class App:
                 self.connect_error = "let go of for \"Check my treadmill\" - Walka connects again when the check is done"
             elif not self.treadmill.status.connected and self.want_connected and not self.connection_wanted():
                 self.connect_error = (
-                    "not connected - Walka connects again when the treadmill is switched on, when a session "
-                    "starts in the game, or when you press Connect"
+                    "not connected - Walka connects again when the treadmill is switched on, "
+                    "or when you press Connect"
                 )
             if self.connection_wanted() and not self.treadmill.status.connected:
                 try:
@@ -893,13 +876,12 @@ class App:
 
     async def start(self) -> None:
         """Start the background loops."""
-        if self.beacon is not None:
-            self.beacon.start()
         if self.heart_rate is not None:
             self._tasks.append(asyncio.create_task(self.heart_rate.run(), name="walka-heart-rate"))
         self._tasks.append(asyncio.create_task(self._tick_loop(), name="walka-tick"))
         self._tasks.append(asyncio.create_task(self._connect_loop(), name="walka-connect"))
         self._tasks.append(asyncio.create_task(self.journeys.run(), name="walka-journey"))
+        self._tasks.append(asyncio.create_task(self._game_loop(), name="walka-game-file"))
         if self.walka_account is not None:
             try:
                 # (Its task is its own, not one of self._tasks: see stop().)
@@ -955,8 +937,6 @@ class App:
             await self.treadmill.disconnect()
         except Exception as exc:
             log.debug("disconnect on exit failed: %s", exc)
-        if self.beacon is not None:
-            self.beacon.stop()
         self.journeys.save()
         self.save_config()
         if self.walka_account is not None:

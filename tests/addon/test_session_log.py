@@ -143,11 +143,23 @@ def test_a_reload_split_into_two_addon_records_folds_into_one_measured_walk(rt):
     assert entries[0]["character"] == "Alpha-Azeroth"
 
 
-def test_an_addon_record_is_claimed_by_one_measured_walk_only(rt):
+def test_one_session_can_hold_several_measured_walks(rt):
+    """The app records a walk from the belt alone: it ends when the belt has
+    stood for a minute, while the session in the game runs on. Each walk is
+    the character's, and the character's yards are shared out among them by
+    their time in the session - never counted twice."""
     start = NOW - 7200
-    entries = merge(rt, [own(start, 3600, yards=4000)], [measured(start, 1800), measured(start + 1800, 1800)])
-    assert len(entries) == 2
-    assert sorted(entry.get("yards") or 0 for entry in entries) == [0, 4000]
+    session = own(start, 3600, yards=4000)
+    entries = merge(rt, [session], [measured(start, 900), measured(start + 1800, 1800)])
+    assert len(entries) == 2, "both walks are listed, and the session is not listed again"
+    assert sorted(entry["yards"] for entry in entries) == [pytest.approx(4000 / 3), pytest.approx(8000 / 3)]
+    assert {entry["character"] for entry in entries} == {session["character"]}
+
+
+def test_a_session_with_one_walk_gives_it_all_its_yards(rt):
+    start = NOW - 7200
+    entries = merge(rt, [own(start, 3600, yards=4000)], [measured(start + 600, 1200)])
+    assert [entry["yards"] for entry in entries] == [4000]
 
 
 def test_broken_companion_records_are_ignored(rt):
@@ -323,21 +335,39 @@ def reference_merge(own_sessions, companion_sessions):
         shared = max(0, min(a["end"], b["end"]) - max(a["start"], b["start"]))
         return shared >= min(a["end"] - a["start"], b["end"] - b["start"]) * 0.5
 
-    used, merged = set(), []
-    for record in companion_sessions:
-        if record["end"] <= record["start"]:
-            continue
-        yards, character = None, None
-        for index, session in enumerate(own_sessions):
-            if index not in used and same_walk(session, record):
-                used.add(index)
-                yards = (yards or 0) + session["yards"]
-                character = character or session["character"]
-        merged.append((record["start"], True, record["steps"], yards, character))
+    def overlap(a, b):
+        return max(0, min(a["end"], b["end"]) - max(a["start"], b["start"]))
+
+    valid = [record for record in companion_sessions if record["end"] > record["start"]]
+    # Every session of the addon's goes with every measured walk it is the
+    # same walk as - one walk, or several.
+    walks_of = {
+        index: [number for number, record in enumerate(valid) if same_walk(session, record)]
+        for index, session in enumerate(own_sessions)
+    }
+    yards = {}
+    for index, numbers in walks_of.items():
+        whole = sum(overlap(own_sessions[index], valid[number]) for number in numbers)
+        for number in numbers:
+            if len(numbers) == 1:
+                share = 1
+            else:
+                share = overlap(own_sessions[index], valid[number]) / whole if whole > 0 else 1 / len(numbers)
+            yards[number] = yards.get(number, 0) + own_sessions[index]["yards"] * share
+    merged = []
+    for number, record in enumerate(valid):
+        character = next(
+            (own_sessions[index]["character"] for index, numbers in walks_of.items() if number in numbers), None
+        )
+        merged.append((record["start"], True, record["steps"], rounded(yards.get(number)), character))
     for index, session in enumerate(own_sessions):
-        if index not in used:
-            merged.append((session["start"], False, session["steps"], session["yards"], session["character"]))
+        if not walks_of[index]:
+            merged.append((session["start"], False, session["steps"], rounded(session["yards"]), session["character"]))
     return sorted(merged, key=repr)
+
+
+def rounded(value):
+    return None if value is None else round(value, 6)
 
 
 @pytest.mark.parametrize("seed", range(8))
@@ -369,7 +399,7 @@ def test_merge_matches_the_reference_on_random_histories(rt, seed):
 
     got = sorted(
         (
-            (entry["start"], entry["measured"], entry["steps"], entry.get("yards"), entry.get("character"))
+            (entry["start"], entry["measured"], entry["steps"], rounded(entry.get("yards")), entry.get("character"))
             for entry in merge(rt, own_sessions, companion_sessions)
         ),
         key=repr,

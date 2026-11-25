@@ -33,8 +33,9 @@ else has a hand in that.
   moved; distance, steps and calories (estimates), and how many of the
   calories were on top of sitting; how each number was come by (for the
   calories: from speed or from heart rate - the word, not the heart
-  rate); whether a walking session was running in the game; and the
-  walk's name on your computer, which is its start time. Each walk goes
+  rate); whether the walk was filed under a session in the game when it
+  went (the game says so only when it saves, at a logout or /reload); and
+  the walk's name on your computer, which is its start time. Each walk goes
   under a random number made for it, and says that it came from Walka.
   Every request names Walka and its version and says nothing else about
   your computer - but, like anything asked over the internet, it arrives

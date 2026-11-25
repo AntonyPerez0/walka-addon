@@ -26,7 +26,7 @@ version is out, and named in its notes if you want to be.
 ## What counts
 
 * **Walka writing to a treadmill.** Any way - through the dashboard, the
-  game's signal, a setting, a file, a crafted Bluetooth device - to make
+  game's saved file, a setting, a file, a crafted Bluetooth device - to make
   the companion send a treadmill a command, or write to any of its
   characteristics beyond switching on the notifications it listens to.
   ([docs/SAFETY.md](docs/SAFETY.md) says what the companion does on a
@@ -51,9 +51,11 @@ version is out, and named in its notes if you want to be.
   in anything its API answers, on a command line or in an environment
   variable. They belong in Walka's memory, and the one that lasts in
   Windows' Credential Manager or the Mac's keychain.
-* A picture or video on the screen that is taken for the game's signal.
-  (It can no longer move anything, but it could file a walk under the
-  wrong character.)
+* A saved file of the game's - `WTF\Account\...\SavedVariables\Walka.lua`,
+  crafted or damaged - that makes the companion do more than read data
+  from it (run code, read or write another file), or stops it recording
+  the walk. (Such a file can move nothing, but it could file a walk under
+  the wrong character.)
 * Writing files outside Walka's own folders and the game's addon folder.
 * Putting something into a release that is not built from this
   repository's code (the build, its pinned dependencies, the release

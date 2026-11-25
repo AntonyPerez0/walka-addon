@@ -1,14 +1,16 @@
-"""End-to-end: beacon frames and a simulated treadmill -> recorded walk ->
-data file for the addon. Time is fully simulated.
+"""End-to-end: a simulated treadmill and the game's saved file -> recorded
+walk, filed under its game session -> data file for the addon. Time is
+fully simulated.
 
 The belt is worked by the walker - ``rig.treadmill.press_*`` is the pad's
-remote - and by nobody else. Whatever the game shows, the companion's part
+remote - and by nobody else. Whatever the game saved, the companion's part
 is to listen and to write down."""
 
 from __future__ import annotations
 
 import asyncio
 import json
+import os
 import random
 from pathlib import Path
 
@@ -16,11 +18,9 @@ import pytest
 
 from walka import addon_sync
 from walka import app as app_module
-from walka.app import ABANDONED_AFTER_S, FREE_WALK_GRACE_S, TICK_S, App
+from walka.app import FREE_WALK_GRACE_S, TICK_S, App
 from walka.config import Config
-from walka.protocol import Flags, Frame, kmh_to_raw
 from walka.session import SessionStore
-from walka.sources import BeaconSource
 from walka.treadmill import BeltState, TreadmillEvent
 from walka.treadmill.simulated import SimulatedTreadmill
 
@@ -37,76 +37,87 @@ class Clock:
         self.wall += dt
 
 
+ME = "Tester-Azeroth"
+
+
+def game_db(sessions=(), *, active=None, journeys=None) -> dict:
+    """``WalkaDB`` as the addon saves it. ``sessions``: (start, end, number,
+    character) of finished sessions; ``active``: (start, saved at, number,
+    character) of the one still running when the game saved."""
+    db: dict = {
+        "version": 1,
+        "sessions": [
+            {"id": number, "start": start, "end": end, "seconds": end - start, "distanceM": 0, "steps": 0,
+             "kcal": 0, "yards": 100, "maxKmh": 0, "character": character, "auto": True}
+            for start, end, number, character in sessions
+        ],
+    }  # fmt: skip
+    if active is not None:
+        start, saved_at, number, character = active
+        db["active"] = {
+            "savedAt": saved_at,
+            "session": {"id": number, "start": start, "seconds": saved_at - start, "distanceM": 0, "steps": 0,
+                        "kcal": 0, "yards": 0, "character": character, "auto": True},
+        }  # fmt: skip
+    if journeys is not None:
+        db["journeys"] = journeys
+    return db
+
+
 class Rig:
     def __init__(self, tmp_path: Path, *, us_firmware: bool = True) -> None:
         self.clock = Clock()
         self.config = Config()
         self.treadmill = SimulatedTreadmill(us_firmware=us_firmware, clock=lambda: self.clock.mono, auto_run=False)
-        self.beacon = BeaconSource(None, clock=lambda: self.clock.mono)  # frames are injected
-        self.addon = tmp_path / "AddOns" / "Walka"
+        # A game folder: <game>/Interface/AddOns/Walka and <game>/WTF
+        self.game_dir = tmp_path / "World of Warcraft" / "_forever_"
+        self.addon = self.game_dir / "Interface" / "AddOns" / "Walka"
         self.addon.mkdir(parents=True)
         (self.addon / "Walka.toc").write_text("## Interface: 16001\n")
+        self.saved_file = self.game_dir / "WTF" / "Account" / "ACCOUNT" / "SavedVariables" / "Walka.lua"
         self.config.wow.addon_dir = str(self.addon)
         self.app = App(
             self.config,
             tmp_path / "data",
             treadmill=self.treadmill,
-            beacon=self.beacon,
             wall_clock=lambda: self.clock.wall,
             mono_clock=lambda: self.clock.mono,
         )
-        self.seq = 0
 
     async def connect(self) -> None:
         await self.treadmill.connect()
 
-    async def run(
-        self,
-        seconds: float,
-        *,
-        active: bool = True,
-        paused: bool = False,
-        moving: bool = True,
-        afk: bool = False,
-        session: int = 1,
-        signal: bool = True,
-        legacy_target: float = 0.0,
-    ) -> None:
-        """Advance simulated time; each tick optionally injects a fresh
-        frame. (``legacy_target``: the belt speed an addon older than 0.7
-        asks for in its frames - the companion must take no notice.)"""
+    async def run(self, seconds: float) -> None:
+        """Advance simulated time."""
         for _ in range(int(round(seconds / TICK_S))):
             self.clock.advance(TICK_S)
-            if signal:
-                self.seq = (self.seq + 1) % 256
-                flags = Flags(0)
-                if active:
-                    flags |= Flags.ACTIVE
-                if paused:
-                    flags |= Flags.PAUSED
-                if moving:
-                    flags |= Flags.MOVING
-                if afk:
-                    flags |= Flags.AFK
-                self.beacon.inject(
-                    Frame(
-                        seq=self.seq,
-                        session=session if active else 0,
-                        flags=flags,
-                        target_raw=kmh_to_raw(legacy_target),
-                        char_speed_raw=350 if moving else 0,
-                    )
-                )
             await self.app.tick()
             self.treadmill.advance(TICK_S)
 
     async def walk(self, kmh: float = 3.2) -> None:
         """The walker presses start on the remote, waits out the countdown
-        and sets a speed. (Six seconds pass, with no game in view.)"""
+        and sets a speed. (Six seconds pass.)"""
         self.treadmill.press_start()
-        await self.run(4, signal=False)
+        await self.run(4)
         self.treadmill.press_speed(kmh)
-        await self.run(2, signal=False)
+        await self.run(2)
+
+    async def step_off(self) -> None:
+        """The walker stops the belt and the walk ends a minute later."""
+        self.treadmill.press_stop()
+        await self.run(FREE_WALK_GRACE_S + 5)
+
+    def game_saves(self, db: dict) -> bool:
+        """The game writes the addon's saved file (a logout or /reload) and
+        Walka next looks at it. True if anything was new."""
+        self.saved_file.parent.mkdir(parents=True, exist_ok=True)
+        self.saved_file.write_text(
+            "\r\nWalkaDB = " + addon_sync.to_lua(db) + "\r\n", "utf-8", newline=""
+        )
+        written = self.clock.wall - 30  # (settled: written a while ago)
+        os.utime(self.saved_file, (written, written))
+        self.app.game.scan(force=True)
+        return self.app.take_game_file()
 
 
 @pytest.fixture
@@ -156,31 +167,35 @@ def belt(treadmill: SimulatedTreadmill) -> tuple:
 def test_full_walk_is_recorded_and_synced(rig: Rig):
     async def scenario():
         await rig.connect()
-        await rig.run(2, active=False)
+        await rig.run(2)
         assert rig.app.recorder is None
-        await rig.run(2)  # "/walka start" in the game ...
-        rig.treadmill.press_start()  # ... and start on the pad's remote
+        started = rig.clock.wall
+        rig.treadmill.press_start()  # start on the pad's remote
         await rig.run(4)
         rig.treadmill.press_speed(2.0 * MPH)
         await rig.run(600)  # ten minutes at 2 mph
         assert rig.treadmill.status.speed_kmh == pytest.approx(2.0 * MPH, abs=0.01)
         live = rig.app.snapshot()["session"]
-        assert live["source"] == "wow" and live["seconds"] > 500
-        rig.treadmill.press_stop()
-        await rig.run(5)
-        await rig.run(3, active=False)  # "/walka stop"
+        # Which game session it is in is not known while it runs.
+        assert live["source"] == "free" and live["seconds"] > 500
+        await rig.step_off()
+        return started
 
-    run(scenario())
+    started = run(scenario())
     records = rig.app.store.records
     assert len(records) == 1
     record = records[0]
-    assert record.source == "wow" and record.beacon_session == 1
+    assert record.source == "free" and record.game_session is None
     assert 560 <= record.seconds <= 610
     # ~3.2 km/h for ~10 minutes
     assert 480 <= record.distance_m <= 560
     assert 800 <= record.steps <= 1000
     assert 25 <= record.kcal <= 60
     assert record.steps_source == "treadmill"
+    # The player logs out: the game saves the session the walk was in.
+    assert rig.game_saves(game_db([(started - 300, rig.clock.wall, 1, ME)]))
+    assert (record.source, record.game_session, record.character) == ("wow", 1, "Tester")
+    assert SessionStore(rig.app.data_dir).records[0].source == "wow", "filed on disk too"
     # The addon data file was written and is valid Lua.
     data_file = rig.addon / "CompanionData.lua"
     text = data_file.read_text("utf-8")
@@ -188,168 +203,179 @@ def test_full_walk_is_recorded_and_synced(rig: Rig):
     data = load_companion_data(rig)
     assert data.version == addon_sync.DATA_VERSION
     assert data.sessions[1].steps == record.steps
+    assert data.sessions[1].source == "wow" and data.sessions[1].gameSession == 1
 
 
 def test_a_walk_with_no_game_is_recorded_all_the_same(rig: Rig):
     async def scenario():
         await rig.connect()
         await rig.walk()
-        await rig.run(120, signal=False)
+        await rig.run(120)
         assert rig.app.recorder is not None and rig.app.recorder.source == "free"
         rig.treadmill.press_stop()
-        await rig.run(FREE_WALK_GRACE_S + 30, signal=False)
+        await rig.run(FREE_WALK_GRACE_S + 30)
 
     run(scenario())
     assert [r.source for r in rig.app.store.records] == ["free"]
-    assert rig.app.store.records[0].beacon_session is None
+    assert rig.app.store.records[0].game_session is None
+    assert rig.app.snapshot()["game"]["files"] == 0
 
 
 def test_a_short_stop_does_not_split_a_walk_and_a_long_one_does(rig: Rig):
     async def scenario():
         await rig.connect()
         await rig.walk()
-        await rig.run(60, signal=False)
+        await rig.run(60)
         rig.treadmill.press_pause()  # the doorbell
-        await rig.run(FREE_WALK_GRACE_S - 20, signal=False)
+        await rig.run(FREE_WALK_GRACE_S - 20)
         rig.treadmill.press_start()
-        await rig.run(60, signal=False)
+        await rig.run(60)
         assert rig.app.store.records == []  # still the same walk
         rig.treadmill.press_stop()
-        await rig.run(FREE_WALK_GRACE_S + 10, signal=False)
+        await rig.run(FREE_WALK_GRACE_S + 10)
         assert len(rig.app.store.records) == 1
         await rig.walk()
-        await rig.run(60, signal=False)
+        await rig.run(60)
         rig.treadmill.press_stop()
-        await rig.run(FREE_WALK_GRACE_S + 10, signal=False)
+        await rig.run(FREE_WALK_GRACE_S + 10)
 
     run(scenario())
     first, second = rig.app.store.records
     assert first.seconds > 110 and 55 < second.seconds < 75
 
 
-def test_new_game_session_splits_recordings(rig: Rig):
+def test_walks_are_filed_under_the_game_sessions_they_were_in(rig: Rig):
+    """Three walks: one while Alva played, one while Brin did, and one with
+    the game closed. Only the saved file says which is which."""
+    times = []
+
     async def scenario():
         await rig.connect()
-        await rig.walk(3.0)
-        await rig.run(60, session=4)
-        await rig.run(2, active=False)
-        await rig.run(60, session=5)
-        await rig.run(2, active=False)
+        for _ in range(3):
+            start = rig.clock.wall
+            await rig.walk()
+            await rig.run(300)
+            await rig.step_off()
+            times.append((start, rig.clock.wall))
+            await rig.run(600)
 
     run(scenario())
-    records = rig.app.store.records
-    # (The first seconds, before the game showed a session, were too short to keep.)
-    assert [(r.source, r.beacon_session) for r in records[:2]] == [("wow", 4), ("wow", 5)]
+    assert [r.source for r in rig.app.store.records] == ["free"] * 3
+    (a_start, a_end), (b_start, b_end), _ = times
+    sessions = [(a_start - 60, a_end + 100, 7, "Alva-Somewhere"), (b_start - 5, b_end + 300, 8, "Brin-Elsewhere")]
+    assert rig.game_saves(game_db(sessions))
+    assert [(r.source, r.game_session, r.character) for r in rig.app.store.records] == [
+        ("wow", 7, "Alva"),
+        ("wow", 8, "Brin"),
+        ("free", None, ""),
+    ]
+    assert any("filed under them" in event["text"] for event in rig.app.events)
+    # The same file again changes nothing.
+    assert not rig.app.take_game_file() and rig.app.file_walks() == 0
 
 
-def test_a_game_session_with_nobody_on_the_belt_is_not_a_walk(rig: Rig):
-    async def scenario():
-        await rig.connect()
-        await rig.run(600)  # a session marked in the game, and the pad standing still
-        assert rig.app.snapshot()["session"]["seconds"] == 0
-        await rig.run(3, active=False)
-
-    run(scenario())
-    assert rig.app.store.records == []
-
-
-def test_a_pause_in_the_game_does_not_stop_the_count(rig: Rig):
-    """The walk is whatever the belt does. "Paused" in the game - by hand,
-    or by itself when the player goes AFK - only marks the addon's own
-    estimate; a belt that turns on is walked on."""
+def test_one_game_session_can_hold_several_walks(rig: Rig):
+    """The session the addon starts by itself lasts the whole login: every
+    walk in it is that character's."""
 
     async def scenario():
         await rig.connect()
+        login = rig.clock.wall
+        for _ in range(2):
+            await rig.walk()
+            await rig.run(200)
+            await rig.step_off()
+            await rig.run(300)
+        return login
+
+    login = run(scenario())
+    rig.game_saves(game_db([(login - 10, rig.clock.wall, 3, ME)]))
+    assert [(r.source, r.game_session) for r in rig.app.store.records] == [("wow", 3), ("wow", 3)]
+
+
+def test_the_session_still_running_when_the_game_saved_counts_until_then(rig: Rig):
+    """A /reload in the middle of a session: the file says it was running,
+    and until when. The walk that ends after it is filed under it."""
+
+    async def scenario():
+        await rig.connect()
+        login = rig.clock.wall
         await rig.walk()
-        await rig.run(60)
-        before = rig.app.recorder.seconds
-        await rig.run(60, paused=True, afk=True, moving=False)
-        assert rig.app.recorder.seconds == pytest.approx(before + 60, abs=1)
-        assert rig.treadmill.status.speed_kmh == pytest.approx(2.0 * MPH, abs=0.01)
-        await rig.run(3, active=False)
+        await rig.run(300)
+        rig.game_saves(game_db(active=(login, rig.clock.wall, 5, ME)))  # /reload
+        await rig.run(30)
+        await rig.step_off()
 
     run(scenario())
-    assert [r.beacon_session for r in rig.app.store.records if r.source == "wow"] == [1]
+    (record,) = rig.app.store.records
+    assert (record.source, record.game_session) == ("wow", 5), "filed as soon as it ended"
 
 
-def test_the_game_out_of_view_does_not_end_the_walk(rig: Rig):
+def test_a_walk_mostly_outside_the_session_is_not_filed_under_it(rig: Rig):
     async def scenario():
         await rig.connect()
+        start = rig.clock.wall
         await rig.walk()
-        await rig.run(60, session=7)
-        await rig.run(300, signal=False)  # a loading screen, the game minimised, a window on top
-        assert rig.app.recorder is not None and rig.app.recorder.beacon_session == 7
-        assert rig.treadmill.status.speed_kmh == pytest.approx(2.0 * MPH, abs=0.01)  # nothing slowed it down
-        await rig.run(60, session=7)
-        await rig.run(3, active=False)
+        await rig.run(600)
+        await rig.step_off()
+        return start
 
-    run(scenario())
-    game_walks = [r for r in rig.app.store.records if r.source == "wow"]
-    assert len(game_walks) == 1 and game_walks[0].seconds > 400
+    start = run(scenario())
+    # The character logged in for the last two minutes of a ten-minute walk.
+    rig.game_saves(game_db([(start + 480, start + 1200, 2, ME)]))
+    assert rig.app.store.records[0].source == "free"
 
 
-def test_abandoned_session_is_closed_and_saved(rig: Rig):
-    """Game gone, belt stopped, nobody comes back: after a quarter of an
-    hour the walk is filed instead of staying open for ever."""
+def test_a_walk_once_filed_stays_filed(rig: Rig):
+    async def scenario():
+        await rig.connect()
+        start = rig.clock.wall
+        await rig.walk()
+        await rig.run(120)
+        await rig.step_off()
+        return start
 
+    start = run(scenario())
+    rig.game_saves(game_db([(start, rig.clock.wall, 9, ME)]))
+    rig.clock.advance(3600)
+    # The addon keeps its newest 400 sessions: one day this one is gone from the file.
+    rig.game_saves(game_db([(rig.clock.wall - 600, rig.clock.wall - 60, 10, ME)]))
+    assert rig.app.store.records[0].game_session == 9
+
+
+def test_a_damaged_saved_file_files_nothing_and_breaks_nothing(rig: Rig):
     async def scenario():
         await rig.connect()
         await rig.walk()
         await rig.run(120)
-        rig.treadmill.press_stop()
-        await rig.run(ABANDONED_AFTER_S - 60, signal=False)
-        assert rig.app.recorder is not None
-        await rig.run(120, signal=False)
-        assert rig.app.recorder is None
+        await rig.step_off()
 
     run(scenario())
-    assert [r.source for r in rig.app.store.records][-1] == "wow"
-    assert rig.app.store.records[-1].seconds > 100
+    rig.saved_file.parent.mkdir(parents=True)
+    rig.saved_file.write_text("WalkaDB = { sessions = { os.execute('x') } }", "utf-8")
+    written = rig.clock.wall - 30
+    os.utime(rig.saved_file, (written, written))
+    rig.app.game.scan(force=True)
+    assert not rig.app.take_game_file()
+    assert rig.app.store.records[0].source == "free"
 
 
-def test_closing_the_game_ends_the_session_and_leaves_the_belt_alone(rig: Rig):
-    from walka.beacon import Decoded
-    from walka.capture import GameWindow, ReadResult
-
-    class Reader:
-        window = GameWindow("World of Warcraft", 0, 0, 1920, 1080, r"C:\WoW\_forever_\WowForever.exe")
-
-    reader = Reader()
-
-    async def tick(frame: Frame | None) -> None:
-        rig.clock.advance(TICK_S)
-        result = ReadResult(Decoded(frame, 0, 3.0, 255, 0), (0, 0), "window") if frame else ReadResult(None, None, "")
-        rig.beacon._ingest(rig.clock.mono, reader, result)
-        await rig.app.tick()
-        rig.treadmill.advance(TICK_S)
-
-    async def scenario():
-        await rig.connect()
-        rig.treadmill.press_start()
-        for seq in range(5):
-            await tick(Frame(seq=seq, session=0))
-        for seq in range(5, 205):
-            await tick(Frame(seq=seq % 256, session=3, flags=Flags.ACTIVE | Flags.MOVING))
-        rig.treadmill.press_speed(3.2)
-        for seq in range(205, 305):
-            await tick(Frame(seq=seq % 256, session=3, flags=Flags.ACTIVE | Flags.MOVING))
-        speed = rig.treadmill.status.speed_kmh
-        assert speed > 2.5
-        reader.window = None  # Alt+F4
-        for _ in range(40):  # 8 s: so far the game is only out of view
-            await tick(None)
-        assert rig.app.recorder is not None and rig.app.recorder.source == "wow"
-        for _ in range(30):
-            await tick(None)
-        # The game session is over and filed. The belt is the walker's: it
-        # turns as before, and what is walked from here is a walk of its own.
-        assert rig.app.snapshot()["source"]["beacon"]["state"] in ("game_closed", "no_signal")
-        assert rig.treadmill.status.speed_kmh == pytest.approx(speed)
-        assert rig.treadmill.status.state is BeltState.RUNNING
-        assert rig.app.recorder is not None and rig.app.recorder.source == "free"
-
-    run(scenario())
-    assert [r.source for r in rig.app.store.records] == ["wow"]
+def test_the_journeys_come_from_the_saved_file(rig: Rig):
+    journeys = {
+        ME: {
+            "since": 1_790_000_000, "footYd": 17600, "travelYd": 40000, "level": 12, "maxLevel": 60,
+            "classId": 4, "faction": 2, "played": 3600,
+            "shared": {"savedAt": rig.clock.wall - 40, "steps": 5000, "distanceM": 3500, "kcal": 210,
+                       "seconds": 2400, "walks": 2, "estimated": False},
+        }
+    }  # fmt: skip
+    assert rig.game_saves(game_db(journeys=journeys))
+    (character,) = rig.app.journeys.to_api()["characters"]
+    assert character["name"] == "Tester" and character["level"] == 12 and character["faction"] == "horde"
+    assert character["character_steps"] == 20000 and character["steps"] == 5000 and character["walks"] == 2
+    assert rig.app.snapshot()["character"]["name"] == "Tester"
+    game = rig.app.snapshot()["game"]
+    assert game["files"] == 1 and game["characters"] == 1 and game["game_found"] is True
 
 
 # ---- it only listens --------------------------------------------------------------------------
@@ -360,26 +386,27 @@ def test_a_session_in_the_game_does_not_start_the_belt(rig: Rig):
 
     async def scenario():
         await rig.connect()
-        await rig.run(2, active=False)
-        await rig.run(300, legacy_target=3.2)  # Start pressed in the game - by an addon that still asks for a speed
-        await rig.run(60, paused=True)
-        await rig.run(300, moving=False)
-        await rig.run(30, session=2)
-        await rig.run(3, active=False)
+        await rig.run(2)
+        now = rig.clock.wall
+        rig.game_saves(game_db([(now - 600, now - 60, 1, ME)], active=(now - 30, now, 2, ME)))
+        await rig.run(300)
+        rig.game_saves(game_db(active=(now, rig.clock.wall, 3, ME)))
+        await rig.run(30)
 
     run(scenario())
     status = rig.treadmill.status
     assert status.state is BeltState.STOPPED and status.speed_kmh == 0 and status.target_kmh is None
     assert status.distance_m == 0 and status.elapsed_s == 0
+    assert rig.app.store.records == []
 
 
 @pytest.mark.parametrize("seed", range(6))
-def test_nothing_the_game_shows_changes_what_the_belt_does(tmp_path: Path, seed: int):
+def test_nothing_the_game_saves_changes_what_the_belt_does(tmp_path: Path, seed: int):
     """Two identical pads get the same presses on their remotes. One of
-    them is listened to by a companion that is shown a game doing anything
-    at all - sessions starting and ending, pauses, AFK, a frozen picture,
-    frames that ask for a speed, the link dropping, settings changing, the
-    dashboard's buttons. Tick for tick, the two belts do the same."""
+    them is listened to by a companion that is shown a game saving anything
+    at all - sessions starting and ending, sessions still running, damaged
+    files, the link dropping, settings changing, the dashboard's buttons.
+    Tick for tick, the two belts do the same."""
     rng = random.Random(seed)
     rig = Rig(tmp_path, us_firmware=bool(seed % 2))
     twin = SimulatedTreadmill(us_firmware=bool(seed % 2), clock=lambda: rig.clock.mono, auto_run=False)
@@ -394,7 +421,17 @@ def test_nothing_the_game_shows_changes_what_the_belt_does(tmp_path: Path, seed:
                     pad.press_speed(1.0 + (seed * 7 + _ * 13) % 50 / 10)
                 elif press is not None:
                     getattr(pad, f"press_{press}")()
-            game = rng.choice(["session", "session", "paused", "afk", "none", "lost", "new", "asks"])
+            game = rng.choice(["saves", "running", "nothing", "nothing", "damaged"])
+            now = rig.clock.wall
+            if game == "saves":
+                rig.game_saves(game_db([(now - rng.randint(60, 900), now - rng.randint(0, 50), rng.randint(1, 255), ME)]))
+            elif game == "running":
+                rig.game_saves(game_db(active=(now - rng.randint(60, 900), now, rng.randint(1, 255), ME)))
+            elif game == "damaged":
+                rig.saved_file.parent.mkdir(parents=True, exist_ok=True)
+                rig.saved_file.write_text("WalkaDB = { sessions = 5, active = { savedAt = 'x' } " * rng.randint(0, 2))
+                rig.app.game.scan(force=True)
+                rig.app.take_game_file()
             if rng.random() < 0.15:
                 rig.app.connect()
             if rng.random() < 0.1:
@@ -402,16 +439,7 @@ def test_nothing_the_game_shows_changes_what_the_belt_does(tmp_path: Path, seed:
             if rng.random() < 0.05:
                 rig.app.forget_treadmill()
             for _tick in range(rng.randint(1, 60)):
-                await rig.run(
-                    TICK_S,
-                    active=game != "none",
-                    paused=game in ("paused", "afk"),
-                    afk=game == "afk",
-                    moving=rng.random() < 0.7,
-                    session=1 + (game == "new") * rng.randint(1, 200),
-                    signal=game != "lost",
-                    legacy_target=rng.uniform(0.0, 40.0) if game == "asks" else 0.0,
-                )
+                await rig.run(TICK_S)
                 twin.advance(TICK_S)
                 assert belt(rig.treadmill) == belt(twin)
         await rig.app.stop()
@@ -470,7 +498,7 @@ def test_disconnect_leaves_the_belt_running_too(rig: Rig):
     async def scenario():
         await rig.connect()
         await rig.walk()
-        await rig.run(30, signal=False)
+        await rig.run(30)
         await rig.app.disconnect()
         assert not rig.app.want_connected and not rig.treadmill.status.connected
         assert rig.treadmill.status.state is BeltState.RUNNING and rig.treadmill.status.target_kmh is not None
@@ -494,7 +522,7 @@ def test_snapshot_is_json_serialisable_and_says_nothing_about_control(rig: Rig):
         "time",
         "units",
         "treadmill",
-        "source",
+        "game",
         "session",
         "last_session",
         "totals",
@@ -511,8 +539,10 @@ def test_snapshot_is_json_serialisable_and_says_nothing_about_control(rig: Rig):
     }
     assert snapshot["treadmill"]["moving"] is True and snapshot["treadmill"]["kind"] == "simulated"
     assert "cap_kmh" not in snapshot["treadmill"] and "in_use" not in snapshot["treadmill"]
-    assert snapshot["source"]["kind"] == "wow" and "manual" not in snapshot["source"]
-    assert "target_kmh" not in snapshot["source"]["frame"]
+    assert snapshot["game"] == {
+        "game_found": False, "files": 0, "saved_at": None, "read_at": None, "sessions": 0, "characters": 0,
+        "demo": False,
+    }  # fmt: skip
     assert set(snapshot["config"]) == {
         "units", "profile", "treadmill", "heart_rate", "wow", "web", "overlay", "updates", "welcome_done"
     }  # fmt: skip
@@ -523,9 +553,9 @@ def test_the_activity_log_says_when_the_belt_moves_and_stops(rig: Rig):
     async def scenario():
         await rig.connect()
         await rig.walk()
-        await rig.run(30, signal=False)
+        await rig.run(30)
         rig.treadmill.press_stop()
-        await rig.run(10, signal=False)
+        await rig.run(10)
 
     run(scenario())
     texts = [event["text"] for event in reversed(rig.app.events)]
@@ -544,18 +574,18 @@ def test_disconnected_time_is_not_recorded(rig: Rig):
         await rig.run(60)
         before = rig.app.recorder.seconds
         speed = drop_link(rig)
-        await rig.run(120)
+        await rig.run(40)  # (a dropout shorter than the minute that ends a walk)
         assert rig.app.recorder is not None and rig.app.recorder.seconds == pytest.approx(before, abs=0.3)
         restore_link(rig, speed)
         await rig.run(60)
         assert rig.app.recorder.seconds == pytest.approx(before + 60, abs=1.5)
-        await rig.run(3, active=False)
+        texts = [event["text"] for event in rig.app.events]
+        assert any("disconnected" in text.lower() for text in texts)
+        assert "The belt has stopped." not in texts  # a belt out of reach was not heard to stop
+        await rig.step_off()
 
     run(scenario())
-    assert len([r for r in rig.app.store.records if r.source == "wow"]) == 1  # one walk, not two
-    texts = [event["text"] for event in rig.app.events]
-    assert any("disconnected" in text.lower() for text in texts)
-    assert "The belt has stopped." not in texts  # a belt out of reach was not heard to stop
+    assert len(rig.app.store.records) == 1  # one walk, not two
 
 
 def test_treadmill_data_going_stale_is_not_counted_as_walking(rig: Rig):
@@ -596,17 +626,17 @@ def test_connection_is_wanted_eagerly_at_start_then_only_while_there_is_a_walk(r
         app = rig.app
         assert app.connection_wanted()  # start-up: keep trying
         await rig.connect()
-        await rig.run(2, active=False)
+        await rig.run(2)
         assert not app._eager_connect
         await rig.treadmill.disconnect()  # the user switched the pad off
-        await rig.run(2, active=False)
+        await rig.run(2)
         assert not app.connection_wanted()
-        # A session marked in the game is a reason to reconnect ...
+        # Whatever the game saves is no reason to reconnect ...
+        now = rig.clock.wall
+        rig.game_saves(game_db(active=(now - 60, now, 1, ME)))
         await rig.run(1)
-        assert app.connection_wanted()
-        await rig.run(2, active=False)
         assert not app.connection_wanted()
-        # ... and so is pressing Connect.
+        # ... pressing Connect is.
         app.connect()
         assert app.connection_wanted()
         # "Disconnect" on the dashboard wins over everything.
@@ -621,12 +651,12 @@ def test_link_lost_mid_walk_keeps_trying(rig: Rig):
     async def scenario():
         await rig.connect()
         await rig.walk()
-        await rig.run(30, signal=False)
+        await rig.run(30)
         assert not rig.app._eager_connect
         drop_link(rig)
-        await rig.run(5, signal=False)
+        await rig.run(5)
         assert rig.app.connection_wanted()  # there is a walk to hear the rest of
-        await rig.run(FREE_WALK_GRACE_S + 5, signal=False)
+        await rig.run(FREE_WALK_GRACE_S + 5)
         assert rig.app.recorder is None and not rig.app.connection_wanted()
 
     run(scenario())
@@ -642,7 +672,7 @@ def test_start_and_stop_with_the_real_loops(tmp_path: Path):
     (addon / "Walka.toc").write_text("## Interface: 16001\n")
     config.wow.addon_dir = str(addon)
     treadmill = SimulatedTreadmill(countdown_s=0.1, tick_s=0.02, ramp_kmh_per_s=30.0)
-    app = App(config, tmp_path / "data", treadmill=treadmill, beacon=BeaconSource(None))
+    app = App(config, tmp_path / "data", treadmill=treadmill)
 
     async def scenario():
         await app.start()
@@ -682,7 +712,7 @@ def test_checkpoint_and_recovery_after_a_crash(rig: Rig, tmp_path: Path):
     checkpoint = rig.app.data_dir / "active-session.json"
     assert checkpoint.exists()
     saved = json.loads(checkpoint.read_text("utf-8"))
-    assert saved["source"] == "wow" and 60 <= saved["seconds"] <= 100
+    assert saved["source"] == "free" and 60 <= saved["seconds"] <= 100
     assert rig.app.store.records == []  # the walk is still in progress
 
     # The process dies here. A new companion starts on the same data folder:
@@ -690,13 +720,12 @@ def test_checkpoint_and_recovery_after_a_crash(rig: Rig, tmp_path: Path):
         Config(),
         rig.app.data_dir,
         treadmill=SimulatedTreadmill(auto_run=False),
-        beacon=BeaconSource(None),
         wall_clock=lambda: rig.clock.wall + 3600,
         mono_clock=lambda: 5.0,
     )
     records = restarted_app.store.records
     assert len(records) == 1
-    assert records[0].source == "wow" and records[0].seconds == saved["seconds"]
+    assert records[0].source == "free" and records[0].seconds == saved["seconds"]
     assert records[0].steps == saved["steps"] and records[0].distance_m == saved["distance_m"]
     assert not checkpoint.exists()
     assert restarted_app.totals(rig.clock.wall + 3600)["all"]["sessions"] == 1
@@ -711,8 +740,8 @@ def test_checkpoint_is_cleared_when_the_walk_is_saved_normally(rig: Rig):
         await rig.run(100)
         assert (rig.app.data_dir / "active-session.json").exists()
         rig.treadmill.press_stop()
-        await rig.run(3, active=False)
-        await rig.run(FREE_WALK_GRACE_S + 5, active=False)
+        await rig.run(3)
+        await rig.run(FREE_WALK_GRACE_S + 5)
 
     run(scenario())
     assert not (rig.app.data_dir / "active-session.json").exists()
@@ -747,7 +776,7 @@ def test_settings_of_an_older_version_are_ignored_not_obeyed(tmp_path: Path):
     assert config.units == "kmh" and config.treadmill.address == "F4:12:FA:00:30:AB"
     for gone in ("limits", "manual", "terms", "stop_hotkey"):
         assert not hasattr(config, gone)
-    app = App(config, data, treadmill=SimulatedTreadmill(auto_run=False), beacon=BeaconSource(None))
+    app = App(config, data, treadmill=SimulatedTreadmill(auto_run=False))
     app.update_config({"limits": {"max_speed_kmh": 6.0}, "stop_hotkey": "f13", "terms": {"accepted_version": 9}})
     saved = json.loads((data / "config.json").read_text("utf-8"))
     assert set(saved) == {"units", "profile", "treadmill", "heart_rate", "wow", "web", "overlay", "updates", "welcome_done"}
@@ -760,23 +789,24 @@ def test_settings_of_an_older_version_are_ignored_not_obeyed(tmp_path: Path):
 def test_addon_data_after_several_walks(rig: Rig):
     async def scenario():
         await rig.connect()
-        await rig.run(1, active=False)
+        await rig.run(1)
+        login = rig.clock.wall
         rig.treadmill.press_start()
-        await rig.run(4, session=11)
+        await rig.run(4)
         rig.treadmill.press_speed(3.2)
-        await rig.run(120, session=11)  # a game walk
-        await rig.run(5, active=False)
+        await rig.run(120)  # a game walk
+        await rig.run(5)
         rig.treadmill.press_stop()
-        await rig.run(FREE_WALK_GRACE_S + 10, active=False)
+        await rig.run(FREE_WALK_GRACE_S + 10)
+        rig.game_saves(game_db([(login - 5, rig.clock.wall, 11, ME)]))  # logout
         await rig.walk(2.4)  # a walk with no game at all
-        await rig.run(90, signal=False)
+        await rig.run(90)
         rig.treadmill.press_stop()
-        await rig.run(FREE_WALK_GRACE_S + 10, signal=False)
+        await rig.run(FREE_WALK_GRACE_S + 10)
         rig.treadmill.press_start()
-        await rig.run(12, session=12)  # too short to keep
+        await rig.run(12)  # too short to keep
         rig.treadmill.press_stop()
-        await rig.run(5, session=12)
-        await rig.run(5, active=False)
+        await rig.run(FREE_WALK_GRACE_S + 10)
 
     run(scenario())
     records = rig.app.store.records
@@ -791,7 +821,7 @@ def test_addon_data_after_several_walks(rig: Rig):
         assert entry.distanceM == round(record.distance_m)
         assert entry.kcal == pytest.approx(record.kcal, abs=0.051)
         assert entry["end"] > entry.start
-    assert sessions[1].beaconSession == 11 and sessions[0].beaconSession is None
+    assert sessions[1].gameSession == 11 and sessions[0].gameSession is None
     assert data.treadmill == "Simulated pad"
     assert data.profile.weightKg == 75 and data.profile.heightCm == 172
     assert data.limits is None  # nothing in the game needs to know what the belt can do any more
@@ -812,7 +842,7 @@ def test_missing_addon_folder_is_reported_not_fatal(tmp_path: Path):
         await rig.connect()
         await rig.walk()
         await rig.run(60)
-        await rig.run(3, active=False)
+        await rig.step_off()
 
     run(scenario())
     assert len(rig.app.store.records) == 1  # the walk is saved regardless
@@ -879,7 +909,7 @@ def test_heart_rate_reaches_the_recording(tmp_path: Path):
         monitor.fresh = False  # the strap falls off
         await rig.run(10)
         assert rig.app.snapshot()["session"]["hr"] is None
-        await rig.run(3, active=False)
+        await rig.step_off()
 
     run(scenario())
     record = rig.app.store.records[0]

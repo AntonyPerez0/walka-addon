@@ -231,7 +231,7 @@ def test_it_opens_on_top_of_everything_and_out_of_the_way(webview: FakeWebview):
     assert options["focus"] is False, "a click on it must leave the keyboard with the game"
     assert options["easy_drag"] is False, "dragged by its drag region, so that its close button can be pressed"
     assert (options["width"], options["height"]) == window.FLOATING_SIZE
-    # The top-right corner of the screen: nowhere near the top-left, where the game draws its strip.
+    # The top-right corner of the screen, out of the way.
     assert options["x"] == 1920 - window.FLOATING_SIZE[0] - window.FLOATING_MARGIN[0]
     assert options["y"] == window.FLOATING_MARGIN[1]
     assert options["x"] > 1000
@@ -434,3 +434,13 @@ def test_the_floating_page_has_nothing_inline_the_page_policy_would_block():
     script = (STATIC / "floating.js").read_text("utf-8")
     # Its close button switches the setting off: the one thing it changes.
     assert '"/api/config", { overlay: { enabled: false } }' in script
+
+
+def test_the_floating_page_says_what_the_treadmill_is_doing_not_the_game():
+    """Nothing about the game is live: the panel's words come from the belt alone."""
+    script = (STATIC / "floating.js").read_text("utf-8")
+    assert "s.source" not in script and "beacon" not in script
+    for stale in ("Paused in game", "no game session", "Ready - start the belt"):
+        assert stale not in script, stale
+    for words in ('"Walking"', '"Belt stopped"', '"Paused at the treadmill"'):
+        assert words in script, words

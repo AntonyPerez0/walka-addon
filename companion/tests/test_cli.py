@@ -20,7 +20,6 @@ import pytest
 from conftest import SRC
 from walka import __version__, cli
 from walka import config as config_module
-from walka.sources import BeaconSource
 from walka.treadmill import BeltState
 from walka.treadmill.ftms_ble import FtmsTreadmill
 from walka.treadmill.simulated import SimulatedTreadmill
@@ -54,7 +53,7 @@ def test_subcommands():
     probe = parser.parse_args(["probe", "--address", "AA:BB", "--seconds", "5", "--out", "reports"])
     assert (probe.command, probe.address, probe.seconds, probe.out) == ("probe", "AA:BB", 5.0, "reports")
     assert parser.parse_args(["probe"]).address is None and parser.parse_args(["probe"]).seconds == 30.0
-    assert parser.parse_args(["beacon"]).seconds == 30.0
+    assert parser.parse_args(["game"]).command == "game"
     install = parser.parse_args(["install-addon", "--dir", "C:\\WoW\\Interface\\AddOns"])
     assert install.command == "install-addon" and install.dir == "C:\\WoW\\Interface\\AddOns"
     assert parser.parse_args(["install-addon"]).dir is None
@@ -107,31 +106,37 @@ def test_treadmill_selection():
     assert cli._build_treadmill(cfg, simulate=False).address is None
 
 
-def test_beacon_selection():
-    cfg = config_module.Config()
-    injected = cli._build_beacon(cfg, read_screen=False)
-    assert isinstance(injected, BeaconSource) and injected._reader_factory is None
-    cfg.wow.capture_fps = 20.0
-    capturing = cli._build_beacon(cfg)
-    assert capturing._reader_factory is not None and capturing.fps == 20.0  # (nothing is captured until started)
+def test_the_game_command_says_what_the_game_has_saved(tmp_path: Path, capsys):
+    from walka import addon_sync
+
+    game = tmp_path / "World of Warcraft" / "_forever_"
+    addon = game / "Interface" / "AddOns" / "Walka"
+    addon.mkdir(parents=True)
+    (addon / "Walka.toc").write_text("## Interface: 16001\n")
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "config.json").write_text(json.dumps({"wow": {"addon_dir": str(addon)}}), "utf-8")
+    assert cli.main(["--data-dir", str(data), "game"]) == 1
+    assert "has not saved anything for Walka yet" in capsys.readouterr().out
+
+    saved = game / "WTF" / "Account" / "ACCOUNT" / "SavedVariables" / "Walka.lua"
+    saved.parent.mkdir(parents=True)
+    db = {
+        "sessions": [{"id": 4, "start": 1_795_000_000, "end": 1_795_003_600, "character": "Tester-Azeroth"}],
+        "journeys": {"Tester-Azeroth": {"level": 9}},
+    }
+    saved.write_text("WalkaDB = " + addon_sync.to_lua(db) + "\n", "utf-8")
+    os.utime(saved, (time.time() - 60, time.time() - 60))
+    assert cli.main(["--data-dir", str(data), "game"]) == 0
+    out = capsys.readouterr().out
+    assert "1 walking session(s)" in out and "for Tester." in out and "Characters: Tester." in out
+    assert "Azeroth" not in out, "the realm is never shown"
 
 
-def test_beacon_diagnosis_names_both_kinds_of_frame():
-    """``walka beacon`` prints what is on the strip. Every few frames that is
-    a number of the character's journey, not the live state."""
-    from walka.beacon import Decoded
-    from walka.protocol import Flags, Frame, Stat, StatFrame
-
-    live = Decoded(
-        Frame(seq=7, session=2, flags=Flags.ACTIVE | Flags.MOVING, target_raw=322, char_speed_raw=350), 0, 4.0, 255, 0
-    )
-    # (What an addon older than 0.7 asks of the belt - 3.22 km/h here - is not even printed.)
-    assert cli._frame_text(live) == "seq=7 session=2 char=7.00 yd/s [ACTIVE,MOVING]"
-    assert cli._frame_text(Decoded(Frame(seq=8), 0, 4.0, 255, 0)).endswith("[-]")
-    stat = Decoded(None, 0, 4.0, 255, 0, stat=StatFrame(seq=9, stat_id=Stat.FOOT_YD, value=123456))
-    assert cli._frame_text(stat) == "seq=9 journey FOOT_YD=123456"
-    unknown = Decoded(None, 0, 4.0, 255, 0, stat=StatFrame(seq=10, stat_id=40, value=5))
-    assert cli._frame_text(unknown) == "seq=10 journey number 40=5"
+def test_the_beacon_command_of_earlier_versions_says_there_is_no_strip(tmp_path: Path, capsys):
+    assert cli.main(["--data-dir", str(tmp_path), "beacon"]) == 0
+    out = capsys.readouterr().out
+    assert "no longer reads anything off the screen" in out and "walka game" in out
 
 
 def test_install_addon_command(tmp_path: Path, capsys, monkeypatch):
@@ -316,8 +321,8 @@ def test_demo_subprocess_serves_a_moving_belt_and_exits_cleanly_when_told_to(tmp
         assert state is not None, "the dashboard never answered"
         assert state["treadmill"]["kind"] == "simulated" and state["treadmill"]["connected"]
         assert state["treadmill"]["speed_kmh"] > 0.5, f"the demo's walker never started the belt: {state['events']}"
-        assert state["treadmill"]["moving"] is True and state["source"]["kind"] == "wow"
-        assert state["session"]["source"] == "wow"
+        assert state["treadmill"]["moving"] is True and state["game"]["demo"] is True
+        assert state["session"]["source"] == "free"  # (which game session it is in: once the game has saved)
         assert "governor" not in state and "terms" not in state and "hotkey" not in state
 
         process.send_signal(getattr(signal, how))
@@ -357,8 +362,7 @@ def load_build_script(repo_root: Path):
 
 
 def test_selfcheck_finds_everything_in_a_source_checkout(capsys):
-    """On Windows this imports the Windows Runtime modules and the capture
-    backend by the same names the packaged app is checked with."""
+    """On Windows this imports the Windows Runtime modules by the same names the packaged app is checked with."""
     assert cli.main(["selfcheck"]) == 0
     out = capsys.readouterr().out.strip().splitlines()
     assert len(out) == 1 and out[0].startswith("selfcheck OK")
@@ -491,49 +495,11 @@ def test_selfcheck_imports_what_this_kind_of_computer_needs():
     assert set(cli.runtime_modules("linux")) == everywhere
     assert set(cli.runtime_modules("win32")) == everywhere | set(cli.WINDOWS_RUNTIME_MODULES)
     assert set(cli.runtime_modules("darwin")) == everywhere | set(cli.MACOS_RUNTIME_MODULES)
-    assert "walka.macos" in cli.runtime_modules("darwin") and "mss.darwin" in cli.runtime_modules("darwin")
+    assert not any("mss" in name or "macos" in name for name in cli.runtime_modules("darwin")), "nothing reads the screen"
     assert not any("winrt" in name or "windows" in name for name in cli.runtime_modules("darwin"))
     assert cli.runtime_modules() == cli.runtime_modules(sys.platform)
 
 
-def test_beacon_command_says_what_to_do_when_macos_hides_the_screen(tmp_path: Path, capsys, monkeypatch):
-    """Without the Screen Recording permission there is nothing to diagnose:
-    say which switch to flip, and do not start looking."""
-    from walka import capture
-
-    def refuse() -> None:
-        raise capture.ScreenAccessError("macOS has not allowed this program to record the screen")
-
-    def no_grabber():
-        raise AssertionError("the screen must not be looked at")
-
-    monkeypatch.setattr(capture, "require_screen_access", refuse)
-    monkeypatch.setattr(capture, "MssGrabber", no_grabber)
-    assert cli.main(["--data-dir", str(tmp_path), "beacon", "--seconds", "1"]) == 2
-    out = capsys.readouterr().out
-    assert "record the screen." in out and "Traceback" not in out
-
-
-def test_the_screen_reader_asks_for_access_before_it_looks(monkeypatch):
-    from walka import capture
-
-    order: list[str] = []
-    monkeypatch.setattr(capture, "require_screen_access", lambda: order.append("asked"))
-    monkeypatch.setattr(capture, "MssGrabber", lambda: order.append("grabber") or object())
-    source = cli._build_beacon(config_module.Config())
-    reader = source._reader_factory()
-    assert order == ["asked", "grabber"] and isinstance(reader, capture.BeaconReader)
-
-    def refuse() -> None:
-        raise capture.ScreenAccessError("not allowed")
-
-    monkeypatch.setattr(capture, "require_screen_access", refuse)
-    with pytest.raises(capture.ScreenAccessError):
-        source._reader_factory()
-    assert order == ["asked", "grabber"]  # (no second grabber)
-
-
-@pytest.mark.skipif(sys.platform == "win32", reason="POSIX signals")
 def test_a_signal_from_outside_asks_for_the_orderly_stop():
     async def scenario() -> bool:
         loop = asyncio.get_running_loop()

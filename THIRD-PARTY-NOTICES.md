@@ -73,7 +73,6 @@ libraries it runs on - on Windows in one file, on a Mac in one application:
   requests Walka makes to a Walka account
 * **bleak** (MIT) - Bluetooth; on Windows with the **PyWinRT** packages
   (`winrt-*`, MIT), on a Mac with **PyObjC** (MIT)
-* **python-mss** (MIT) - the screenshot of the game window's corner
 * **pywebview** (BSD) and what it needs - bottle (MIT), proxy_tools (BSD),
   typing_extensions (PSF) - Walka's own window. On Windows with
   **Python.NET** (pythonnet and clr_loader, MIT; cffi and pycparser, MIT
