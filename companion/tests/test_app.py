@@ -528,7 +528,8 @@ def test_the_activity_log_says_when_the_belt_moves_and_stops(rig: Rig):
 
     run(scenario())
     texts = [event["text"] for event in reversed(rig.app.events)]
-    assert texts[0].startswith("Treadmill connected: Simulated pad") and "only listens" in texts[0]
+    # ("Walka only listens" is said once on the Live screen, under the belt's state - not in every log line.)
+    assert texts[0] == "Treadmill connected: Simulated pad."
     assert texts[1:3] == ["The belt is moving.", "The belt has stopped."]
 
 

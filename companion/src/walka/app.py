@@ -181,7 +181,8 @@ class App:
             status = self.treadmill.status
             self.connect_error = ""
             self._eager_connect = False
-            self.log_event(f"Treadmill connected: {status.name or status.address}. Walka only listens to it.")
+            # ("Walka only listens" is said once, under the belt's state on the Live screen.)
+            self.log_event(f"Treadmill connected: {status.name or status.address}.")
             self._pin_treadmill()
             self._state["treadmill"] = {"name": status.name}
             self._save_state()
