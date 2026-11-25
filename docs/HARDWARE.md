@@ -7,19 +7,33 @@ is known about other makes - the WELLFIT TM029 Pro first of all - is under
 [Other treadmills](#other-treadmills).
 
 What is known about reading the Strol 2E over Bluetooth, where it comes
-from, and what still needs confirming on a real unit. None of this was
-measured by Walka's author; it is collected from the manual and from
-open-source projects that work with UREVO pads. Run `walka probe` on your
-pad to check it. Like the companion itself, the probe never sends a
+from, and what still needs confirming on a real unit. Most of it is
+collected from the manual and from open-source projects that work with
+UREVO pads; what a Walka user saw on a real Strol 2E is under
+[Verified on hardware](#verified-on-hardware). Run `walka probe` on your
+pad to check the rest. Like the companion itself, the probe never sends a
 command; the only thing it writes is the switch that turns notifications
 on.
+
+## Verified on hardware
+
+| Model | Computer | When | What was checked |
+|---|---|---|---|
+| UREVO Strol 2E (`URTM030`) | Windows 11 | November 2026 | Found and read by Walka. Speed, distance and steps on the dashboard match the pad's own display. The *Live* screen captions under Steps and Distance say *treadmill counter*: the pad sends both itself. With the game running, walks were filed under the character. |
+
+That is one pad, one owner and one computer. Not checked yet on it: the
+items under [Still unknown](#still-unknown-for-the-urtm030-specifically),
+and a heart-rate source (a Garmin watch was tried; how that went is not
+written down yet). No other treadmill, and no Mac, has been tried with
+Walka.
 
 ## Summary
 
 | | |
 |---|---|
 | Bluetooth name | `URTM030` (UREVO pads advertise their model code) |
-| Protocol | Standard Bluetooth FTMS (Fitness Machine Service `0x1826`). No vendor handshake needed. |
+| Protocol | Standard Bluetooth FTMS (Fitness Machine Service `0x1826`). No vendor handshake needed - confirmed on a real Strol 2E (above). |
+| Steps | Sent by the pad itself, in Treadmill Data - confirmed on a real Strol 2E. |
 | Pairing | None. **Do not pair it in Windows (or macOS) Bluetooth settings.** |
 | Connections | One at a time. The UREVO phone app must be closed or the pad is invisible - and while Walka is connected, the phone app cannot be. |
 | Which device Walka picks | The address you chose in the dashboard, if any. Otherwise a device whose Bluetooth name is a known one (`URTM...`, `WELLFIT TM Linker`); some other Fitness Machine is only used if no such name is heard during the whole 15-second scan, and then the one with the strongest signal. A machine that says in its advertisement that it is not a treadmill (a bike trainer, a rower) is never used. |
@@ -40,9 +54,9 @@ on.
 * [qdomyos-zwift](https://github.com/cagnulein/qdomyos-zwift) routes every
   device named `URTM...` to its generic FTMS treadmill driver.
 
-How strong is that? Moderate. The ftms-js project is one person's report
-from a repository that was a few days old when this was written, and VRTI's
-list is community-reported. Everything else comes from sibling models
+How strong was that, before a Walka user tried it? Moderate. The ftms-js
+project is one person's report from a repository that was a few days old
+when this was written, and VRTI's list is community-reported. Everything else comes from sibling models
 (URTM054, URTM059, URTM041), which share a firmware family but are not the
 same pad. That is why the probe is there.
 
@@ -94,16 +108,18 @@ Walka needs.
 
 ## Still unknown for the URTM030 specifically
 
-Found by reading the probe report:
+Settled by a Walka user on a real pad (see
+[Verified on hardware](#verified-on-hardware)): the URTM030 reports its
+steps and its distance in Treadmill Data, and Walka reads both - steps
+being the 24-bit counter flagged by bit `0x2000`, the only place Walka
+reads steps from.
+
+Still to be found by reading a probe report (none has been posted yet):
 
 * the exact speed range and step it advertises, folded and unfolded;
-* where (or whether) it reports steps - its manual and at least one review
-  describe a display with speed, distance, time and calories only, while
-  UREVO's product page mentions steps. By default the probe listens to the
-  standard services only; `walka probe --all` also switches on the
-  notifications of the vendor's own channels (`0xFFF1` and the like), which
-  is where a step counter would show. What switching those on does on this
-  firmware is not known - nothing, on the sibling models;
+* what its vendor channels (`0xFFF1` and the like) carry; `walka probe
+  --all` switches those on. Walka does not need them for steps on this
+  pad;
 * how it reports what is done at the pad: whether a start, a pause and a
   stop with the remote each come as a status event, and whether a change of
   speed does;
@@ -208,8 +224,9 @@ To add a treadmill to the names Walka knows:
 * The companion has a window of its own, drawn by Microsoft Edge WebView2
   (part of Windows 11; on Windows 10 it comes with Edge's updates and with
   Office). GitHub's Windows machines open that window in every build,
-  load the dashboard in it and close it again; it has not been looked at
-  on a real PC yet. A PC without WebView2 gets the dashboard in the
+  load the dashboard in it and close it again. Walka has been used on one
+  real Windows 11 PC (November 2026); on Windows 10 it has not been tried.
+  A PC without WebView2 gets the dashboard in the
   browser, and a message box to close the companion with.
 * The window makes its thread a single-threaded COM apartment, which the
   Windows Runtime's Bluetooth cannot be used from. So with a window, the

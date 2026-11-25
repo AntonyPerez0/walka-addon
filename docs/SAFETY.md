@@ -129,8 +129,11 @@ simulated treadmill and against an emulated one at the Bluetooth level,
 both modelled on the documented behaviour of UREVO firmware. The reader
 listens to the same standard characteristics as open-source projects that
 work with UREVO pads, including one that lists the Strol 2E (URTM030) as
-verified on hardware. But this software has **not yet been run against a
-physical treadmill** by its author.
+verified on hardware. It has been run against **one physical treadmill**:
+a UREVO Strol 2E (URTM030), from Windows 11, in November 2026 - the speed,
+distance and steps on the dashboard matched the pad's own display, and
+walks were filed under the character in the game. No other treadmill, and
+no Mac, has been tried with it yet.
 
 What that leaves open is whether your walks are *counted right* - whether
 a particular treadmill is found, and whether its numbers are read as it

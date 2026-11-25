@@ -21,7 +21,7 @@
 
 <p align="center">
   <sub><b>Walka only listens to your treadmill.</b> It cannot start, stop or change the speed of the belt: you do that at the treadmill itself.<br>
-  <b>Experimental:</b> not yet tried on a real walking pad. Walking while you play is at your own risk - read the <a href="DISCLAIMER.md">disclaimer</a> before you download.<br>
+  <b>Early version:</b> checked on one walking pad so far - a UREVO Strol 2E (URTM030) with Windows 11, in November 2026. Every other treadmill, and the Mac version, are still untried. Walking while you play is at your own risk - read the <a href="DISCLAIMER.md">disclaimer</a> before you download.<br>
   <b>Free.</b> Nothing to install: on Windows it is one file, <code>Walka.exe</code>, and you just open it - it has a window of its own, like any program.<br>
   <b>Mac:</b> the button is for an Apple chip (M1 or later) - for an older Mac with an Intel processor, <a href="https://github.com/AntonyPerez0/walka-addon/releases/latest/download/Walka-mac-intel.zip">download this one</a>.
   The Mac version is new and has not been tried with the game on a real Mac yet: see <a href="#on-a-mac">On a Mac</a>.<br>
@@ -70,8 +70,9 @@ World of Warcraft: Forever.
 > (Versions up to 0.6 did drive the belt. They have been withdrawn.)
 
 > [!WARNING]
-> **Early version - not yet tried on a real walking pad.** Read
-> [Before your first walk](#before-your-first-walk).
+> **Early version - checked on one walking pad so far:** a UREVO Strol 2E
+> (URTM030) with Windows 11, in November 2026. Every other treadmill has
+> not been tried yet. Read [Before your first walk](#before-your-first-walk).
 
 > [!CAUTION]
 > **Walking while you play is at your own risk.** Your eyes are on a game,
@@ -279,13 +280,14 @@ nothing.
 
 | Treadmill | How Walka finds it | What is known |
 |---|---|---|
-| **UREVO Strol 2E** and other UREVO pads | By name (`URTM...`), at once | Other open-source projects read it the same way. |
+| **UREVO Strol 2E (URTM030)** | By name (`URTM...`), at once | **Verified by a Walka user** (Windows 11, November 2026): speed, distance and steps match the pad's own display, and walks are filed under the character in the game. |
+| Other UREVO pads | By name (`URTM...`), at once | Other open-source projects read them the same way. Not tried with Walka yet. |
 | **WELLFIT TM029 Pro** and other WELLFIT treadmills | By name (`WELLFIT TM Linker`), at once | Another open-source project works with a WELLFIT over FTMS. |
 | **Any other FTMS treadmill** | By what it advertises, after a 15-second scan - or pick it yourself: dashboard → *Treadmill → Scan* | Depends on the treadmill. Check its numbers as in [Before your first walk](#before-your-first-walk). |
 
-None of these has been tried by Walka's author on the real machine yet -
-the warning at the top of this page is for all of them. Details and
-sources: [docs/HARDWARE.md](docs/HARDWARE.md).
+Only the UREVO Strol 2E (URTM030) has been tried with Walka on the real
+machine; the warning at the top of this page is for every other one.
+Details and sources: [docs/HARDWARE.md](docs/HARDWARE.md).
 
 Things to know:
 
@@ -982,9 +984,10 @@ permission.
 
 ## Before your first walk
 
-The pad and the game have not been tested against this code. Nothing here
-can move the belt, so what there is to check is whether your walk is
-*counted right*:
+So far Walka has been checked with the game on one pad: a UREVO Strol 2E
+(URTM030), with Windows 11, in November 2026. On any other pad, or on a
+Mac, it has not. Nothing here can move the belt, so what there is to check
+is whether your walk is *counted right*:
 
 1. **`Walka.exe probe`** (or `py -m walka probe`; for how to type a
    command see [Walka's window](#walkas-window), and on a Mac
