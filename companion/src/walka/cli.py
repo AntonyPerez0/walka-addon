@@ -687,7 +687,9 @@ async def _run(
         beacon = None
     else:
         beacon = _build_beacon(cfg)
-    heart_rate = None if simulate else HeartRateMonitor(enabled=cfg.heart_rate.enabled, address=cfg.heart_rate.address)
+    heart_rate = None if simulate else HeartRateMonitor(
+        enabled=cfg.heart_rate.enabled, address=cfg.heart_rate.address, name=cfg.heart_rate.name
+    )
     app = App(
         cfg,
         data_dir,

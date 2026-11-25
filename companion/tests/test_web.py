@@ -758,8 +758,9 @@ def test_heart_rate_endpoints_with_a_monitor(rig: Rig):
         assert monitor.configured == (True, "11:22:33:44:55:66")
         assert rig.config.heart_rate.enabled is True and rig.config.heart_rate.name == "HRM-Dual"
         response = await post(client, "/api/heart-rate/connect", {"enabled": False})
-        assert response.status == 200 and monitor.configured == (False, "")
-        assert rig.config.heart_rate.enabled is False
+        # Turned off, the sensor is remembered, to be turned on again with one press.
+        assert response.status == 200 and monitor.configured == (False, "11:22:33:44:55:66")
+        assert rig.config.heart_rate.enabled is False and rig.config.heart_rate.name == "HRM-Dual"
 
     serve(rig, scenario)
 

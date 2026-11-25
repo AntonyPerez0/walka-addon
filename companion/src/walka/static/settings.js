@@ -10,7 +10,7 @@
 import { $, CM_PER_INCH, U, api, fmt, h, post, run, setShown, setText, setTone, toast } from "./util.js";
 import { installAddon, scanInto, syncAddon } from "./live.js";
 import { initWalkaAccount, updateWalkaAccount } from "./walkaaccount.js";
-import { tr } from "./i18n.js";
+import { t, tr } from "./i18n.js";
 
 let config = null; // the last config seen
 let configKey = "";
@@ -646,6 +646,8 @@ function updateStatusCards(s, links) {
   setText($("set-hr-detail"), hr.detail);
   $("hr-scan").disabled = !hr.available;
   setShown($("hr-off"), !!(s.heart_rate && s.heart_rate.enabled));
+  // Off, with a sensor remembered: one press turns it on again.
+  setShown($("hr-on"), !!(s.heart_rate && !s.heart_rate.enabled && s.config.heart_rate.address));
 
   const addon = links.addon;
   setTone($("set-addon"), addon.tone);
@@ -709,10 +711,38 @@ async function findGameFolders(button) {
   });
 }
 
+/** Each sensor's heart rate right now, under its name: one after the other (each connects briefly). */
+async function peekEach(out, devices) {
+  const rows = [...out.querySelectorAll(".device")];
+  for (const [i, device] of devices.entries()) {
+    if (i >= 4 || !(device.hr || device.candidate)) continue; // the likely ones, nearest first
+    const row = rows[i];
+    if (!row || !row.isConnected) return; // scanned again meanwhile
+    const reading = h("span", { class: "bpm", text: tr("reading...") });
+    row.querySelector(".device-text").append(reading);
+    try {
+      const data = await post("/api/heart-rate/peek", { address: device.address }, { timeoutMs: 30000 });
+      reading.textContent = data.bpm ? t("{1} bpm now", data.bpm) : tr("no heart rate heard");
+    } catch {
+      reading.textContent = tr("could not connect");
+    }
+  }
+}
+
 /** Shared by the heart-rate card and the first-run guide. */
-export function scanHeartRate(out, button) {
-  return scanInto(out, button, {
+export async function scanHeartRate(out, button, { all = false } = {}) {
+  const devices = await scanInto(out, button, {
     path: "/api/heart-rate/scan",
+    body: all ? { all: true } : {},
+    after: () => {
+      const toggle = h("button", {
+        class: "btn quiet small",
+        type: "button",
+        text: all ? "Show sensors only" : "Show all Bluetooth devices",
+      });
+      toggle.addEventListener("click", () => scanHeartRate(out, button, { all: !all }));
+      return h("div", { class: "btn-row" }, toggle);
+    },
     pickLabel: "Use this sensor",
     empty: () =>
       "No heart-rate sensor found. Wear it so it wakes up; on a watch, switch on heart-rate broadcasting. A sensor already connected to another app may not show up.",
@@ -725,6 +755,7 @@ export function scanHeartRate(out, button) {
         },
       ),
   });
+  if (devices && devices.length) await peekEach(out, devices);
 }
 
 /** The form built on ``root`` (a form[data-form]). */
@@ -762,8 +793,13 @@ export function initSettings({ onUnits }) {
 
   $("hr-scan").addEventListener("click", () => scanHeartRate($("hr-scan-out"), $("hr-scan")));
   $("hr-off").addEventListener("click", (event) =>
-    run(event.currentTarget, () => post("/api/heart-rate/connect", { address: "", name: "", enabled: false }), {
-      success: "Heart-rate sensor turned off.",
+    run(event.currentTarget, () => post("/api/heart-rate/connect", { enabled: false }), {
+      success: "Heart-rate sensor turned off. Walka remembers it.",
+    }),
+  );
+  $("hr-on").addEventListener("click", (event) =>
+    run(event.currentTarget, () => post("/api/heart-rate/connect", { enabled: true }), {
+      success: "Heart-rate sensor turned on.",
     }),
   );
 

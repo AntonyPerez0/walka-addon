@@ -159,11 +159,23 @@ export function heartHealth(s) {
       pill: "off",
       state: "off",
       available: true,
-      detail: "Optional. A Bluetooth heart-rate sensor adds heart rate to your walks and sharper calorie numbers.",
+      detail: hr.name
+        ? `Off. Walka remembers your sensor (${hr.name}): "Turn on" uses it again.`
+        : "Optional. A Bluetooth heart-rate sensor adds heart rate to your walks and sharper calorie numbers.",
     };
   }
+  const battery = hr.battery != null ? ` Battery ${hr.battery}%.` : "";
   if (hr.connected && hr.bpm != null) {
-    return { tone: "ok", pill: "live", state: `${hr.bpm} bpm`, available: true, detail: hr.name || "" };
+    return { tone: "ok", pill: "live", state: `${hr.bpm} bpm`, available: true, detail: `${hr.name || ""}.${battery}`.replace(/^\./, "").trim() };
+  }
+  if (hr.connected && hr.contact === false) {
+    return {
+      tone: "warn",
+      pill: "no contact",
+      state: "no skin contact",
+      available: true,
+      detail: `${hr.name || "The sensor"} is not touching your skin, so its readings are not used. Wear it snugly (a strap's pads work better a little damp).${battery}`,
+    };
   }
   if (hr.connected) {
     return {

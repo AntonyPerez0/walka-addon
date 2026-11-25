@@ -43,13 +43,16 @@ class HeartRateMonitor:
         *,
         enabled: bool = False,
         address: str = "",
+        name: str = "",
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self.enabled = enabled
-        self.address = address
+        self.address = address  # the chosen sensor, remembered (also while turned off)
         self.clock = clock
         self.bpm: int | None = None
-        self.name = ""
+        self.name = name
+        self.contact: bool | None = None  # touching the skin, if the sensor says
+        self.battery: int | None = None  # percent, if the sensor says
         self.connected = False
         self.detail = "off"
         self._updated_at = 0.0
@@ -76,6 +79,8 @@ class HeartRateMonitor:
             "address": self.address,
             "bpm": self.bpm if self.fresh else None,
             "detail": self.detail,
+            "contact": self.contact,
+            "battery": self.battery,
         }
 
     def configure(self, *, enabled: bool, address: str) -> None:
@@ -85,17 +90,33 @@ class HeartRateMonitor:
         self._changed.set()
 
     def feed(self, data: bytes) -> None:
-        """Handle a Heart Rate Measurement notification."""
-        bpm = ftms.parse_heart_rate(bytes(data))
-        if bpm is not None and bpm > 0:
-            self.bpm = bpm
+        """Handle a Heart Rate Measurement notification. A reading the sensor
+        marks as taken without skin contact is not one: it is dropped."""
+        measurement = ftms.parse_heart_rate_measurement(bytes(data))
+        if measurement is None:
+            return
+        self.contact = measurement.contact
+        if measurement.contact is False:
+            self.bpm = None
+            if self.connected:
+                self.detail = "connected, but the sensor is not touching the skin"
+            return
+        if self.connected and self.detail != "connected":
+            self.detail = "connected"
+        if measurement.bpm > 0:
+            self.bpm = measurement.bpm
             self._updated_at = self.clock()
 
+    def feed_battery(self, data: bytes) -> None:
+        if data:
+            self.battery = max(0, min(100, data[0]))
+
     # ---- Bluetooth -------------------------------------------------------------
-    async def discover(self, timeout: float = 6.0) -> list[dict[str, Any]]:
+    async def discover(self, timeout: float = 6.0, *, all_devices: bool = False) -> list[dict[str, Any]]:
         """Nearby heart-rate sensors: devices that advertise the Heart Rate
         service, plus ones whose name says they are a watch or strap (some
-        only reveal the service once connected)."""
+        only reveal the service once connected). ``all_devices``: every
+        Bluetooth device heard. The remembered sensor is marked, and first."""
         from bleak import BleakScanner
 
         from .treadmill.bleak_backend import prepare_windows_threading
@@ -109,10 +130,49 @@ class HeartRateMonitor:
         for device, adv in found.values():
             name = adv.local_name or device.name or ""
             advertises = ftms.HEART_RATE_SERVICE in [u.lower() for u in adv.service_uuids]
-            if advertises or looks_like_heart_rate_sensor(name):
-                devices.append({"name": name, "address": device.address, "rssi": adv.rssi, "hr": advertises})
-        devices.sort(key=lambda d: (not d["hr"], -(d["rssi"] or -999)))
+            likely = advertises or looks_like_heart_rate_sensor(name)
+            if likely or all_devices:
+                devices.append(
+                    {
+                        "name": name,
+                        "address": device.address,
+                        "rssi": adv.rssi,
+                        "hr": advertises,
+                        "candidate": likely,
+                        "remembered": bool(self.address) and device.address.upper() == self.address.upper(),
+                    }
+                )
+        devices.sort(key=lambda d: (not d["remembered"], not d["hr"], not d["candidate"], -(d["rssi"] or -999)))
         return devices
+
+    async def peek(self, address: str, seconds: float = 5.0) -> int | None:
+        """One sensor's heart rate right now, for the scan list: connect,
+        listen for a few seconds, let go. (The sensor in use: its reading.)"""
+        if self.connected and address.upper() == (self.address or "").upper():
+            return self.bpm if self.fresh else None
+        from bleak import BleakClient
+
+        from .treadmill.bleak_backend import prepare_windows_threading
+
+        prepare_windows_threading()
+        heard: list[int] = []
+        got = asyncio.Event()
+
+        def take(_char: Any, data: bytearray) -> None:
+            measurement = ftms.parse_heart_rate_measurement(bytes(data))
+            if measurement is not None and measurement.contact is not False and measurement.bpm > 0:
+                heard.append(measurement.bpm)
+                got.set()
+
+        async with BleakClient(address, timeout=15.0) as client:
+            if client.services.get_characteristic(ftms.HEART_RATE_MEASUREMENT) is None:
+                return None
+            await client.start_notify(ftms.HEART_RATE_MEASUREMENT, take)
+            try:
+                await asyncio.wait_for(got.wait(), seconds)
+            except asyncio.TimeoutError:
+                pass
+        return heard[-1] if heard else None
 
     async def _connect_once(self) -> None:
         from bleak import BleakClient, BleakScanner
@@ -139,6 +199,7 @@ class HeartRateMonitor:
         self._client = client
         try:
             await client.start_notify(ftms.HEART_RATE_MEASUREMENT, lambda _char, data: self.feed(bytes(data)))
+            await self._battery(client)
             self.connected = True
             self.name = device.name or device.address
             self.detail = "connected"
@@ -152,12 +213,26 @@ class HeartRateMonitor:
         finally:
             self.connected = False
             self.bpm = None
+            self.contact = None
             self._client = None
             try:
                 await client.disconnect()
             except Exception:
                 pass
             self.detail = "disconnected"
+
+    async def _battery(self, client: Any) -> None:
+        """The sensor's battery level, if it has one: read once, then followed."""
+        battery = client.services.get_characteristic(ftms.BATTERY_LEVEL)
+        if battery is None:
+            return
+        try:
+            if "read" in battery.properties:
+                self.feed_battery(bytes(await client.read_gatt_char(battery)))
+            if "notify" in battery.properties:
+                await client.start_notify(battery, lambda _char, data: self.feed_battery(bytes(data)))
+        except Exception as exc:  # a battery level is a nicety
+            log.debug("reading the heart-rate sensor's battery failed: %s", exc)
 
     async def run(self) -> None:
         """Keep the sensor connected while enabled. Runs until cancelled."""

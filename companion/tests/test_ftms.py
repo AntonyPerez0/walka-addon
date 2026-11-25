@@ -431,6 +431,8 @@ def test_heart_rate_monitor_configure_and_dict():
         "address": "",
         "bpm": None,
         "detail": "off",
+        "contact": None,
+        "battery": None,
     }
     monitor.configure(enabled=True, address="AA:BB")
     assert monitor.enabled and monitor.address == "AA:BB"

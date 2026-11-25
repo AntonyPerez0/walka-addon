@@ -3169,3 +3169,8 @@ body[data-welcome="1"] main {
   background: var(--ok-tint);
   color: var(--ok-ink);
 }
+.device-text .bpm {
+  color: var(--accent-ink);
+  font-weight: 600;
+  font-size: 13px;
+}

@@ -218,6 +218,7 @@ function signalWord(rssi) {
 
 function deviceRow(device, onPick, pickLabel) {
   const details = [device.address, signalWord(device.rssi)];
+  if (device.remembered) details.push("your sensor");
   if (device.ftms === true) details.push("treadmill service");
   else if (device.candidate === false) details.push("not a treadmill by its name or service");
   else if (device.ftms === false) details.push("matched by name");
@@ -250,6 +251,7 @@ export async function scanInto(out, button, { path, empty, onPick, pickLabel, bo
     if (!devices.length) rows.push(h("p", { class: "muted", text: empty() }));
     if (after) rows.push(after());
     out.replaceChildren(...rows);
+    return devices;
   } catch (error) {
     out.replaceChildren(h("p", { class: "error", role: "alert", text: error.message }));
   } finally {

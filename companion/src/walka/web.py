@@ -365,15 +365,29 @@ def create_app(app: App) -> web.Application:
 
     # ---- heart rate ------------------------------------------------------------
     @routes.post("/api/heart-rate/scan")
-    async def hr_scan(_request: web.Request) -> web.Response:
+    async def hr_scan(request: web.Request) -> web.Response:
         monitor = app.heart_rate
         if monitor is None:
             return ok(devices=[])
+        every = (await _body(request)).get("all") is True
         try:
-            found = await monitor.discover(6.0)
+            found = await (monitor.discover(6.0, all_devices=True) if every else monitor.discover(6.0))
         except Exception as exc:
             return web.json_response({"ok": False, "error": f"Bluetooth scan failed: {exc}"}, status=500)
         return ok(devices=found)
+
+    @routes.post("/api/heart-rate/peek")
+    async def hr_peek(request: web.Request) -> web.Response:
+        """One sensor's heart rate right now, for the scan list (it listens only)."""
+        monitor = app.heart_rate
+        address = (await _body(request)).get("address")
+        if monitor is None or not isinstance(address, str) or not address:
+            raise web.HTTPBadRequest(text="heart-rate support is not available")
+        try:
+            bpm = await monitor.peek(address)
+        except Exception as exc:
+            raise web.HTTPConflict(text=str(exc) or type(exc).__name__) from None
+        return ok(bpm=bpm)
 
     @routes.post("/api/heart-rate/connect")
     async def hr_connect(request: web.Request) -> web.Response:
@@ -381,10 +395,16 @@ def create_app(app: App) -> web.Application:
         monitor = app.heart_rate
         if monitor is None:
             raise web.HTTPBadRequest(text="heart-rate support is not available")
-        address = str(data.get("address") or "")
         enabled = bool(data.get("enabled", True))
-        app.update_config({"heart_rate": {"enabled": enabled, "address": address, "name": str(data.get("name") or "")}})
+        # Turned off, the sensor is remembered (unless "forget" is asked for), to be turned on again.
+        remembered = app.config.heart_rate
+        if "address" in data or data.get("forget"):
+            address, name = str(data.get("address") or ""), str(data.get("name") or "")
+        else:
+            address, name = remembered.address, remembered.name
+        app.update_config({"heart_rate": {"enabled": enabled, "address": address, "name": name}})
         monitor.configure(enabled=enabled, address=address)
+        monitor.name = name
         return ok()
 
     # ---- Walka account ---------------------------------------------------------
