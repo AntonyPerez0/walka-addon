@@ -484,3 +484,22 @@ def test_the_pins_are_watched_for_advisories(repo_root: Path):
 def locked_version(repo_root: Path, name: str) -> str:
     text = (repo_root / "companion" / "requirements-build.lock").read_text("utf-8")
     return re.search(rf"(?m)^{name}==(\S+)", text).group(1)
+
+
+def test_text_is_checked_out_with_lf_everywhere(repo_root: Path):
+    """The addon's zip is packed from a Windows checkout: without this its
+    files had Windows line endings, and the Mac bundle's did not."""
+    if shutil.which("git") is None or not (repo_root / ".git").exists():
+        pytest.skip("needs git and the repository")
+    files = ["Walka/Walka.lua", "Walka/Walka.toc", "companion/src/walka/static/app.js", "docs/demo/index.html",
+             "companion/icons/walka.ico", "docs/images/demo.webp"]  # fmt: skip
+    said = subprocess.run(["git", "check-attr", "eol", "binary", "--", *files], cwd=repo_root, capture_output=True,
+                          text=True, check=True).stdout  # fmt: skip
+    attrs = {}
+    for line in said.splitlines():
+        path, name, value = line.split(": ")
+        attrs.setdefault(path, {})[name] = value
+    for text in files[:4]:
+        assert attrs[text]["eol"] == "lf", text
+    for binary in files[4:]:
+        assert attrs[binary]["binary"] == "set", binary

@@ -1,0 +1,14 @@
+# Every text file is checked out with LF line endings, on Windows too: the
+# addon's zip is packed from files a Windows build machine checked out,
+# and the Mac bundle from a Mac's. One way for all of them.
+* text=auto eol=lf
+
+# Not text.
+*.png binary
+*.jpg binary
+*.webp binary
+*.mp4 binary
+*.ico binary
+*.icns binary
+*.gz binary
+*.zip binary
