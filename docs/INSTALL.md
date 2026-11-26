@@ -258,7 +258,10 @@ touched.
   `walka.log`: what Walka used to write in its console window - what it
   connected to, what went wrong. It can hold your treadmill's name and
   Bluetooth address, and it stays on your computer unless you send it to
-  somebody. `active-session.json` is the walk in progress, written every
+  somebody. Your settings are in `config.json`: if you edit it by hand
+  and Walka cannot read it, Walka starts with its defaults and keeps your
+  file as `config.json.unreadable`. `active-session.json` is the walk in
+  progress, written every
   half minute. If a walk cannot be saved (a full disk), it stays in that
   file until it can, even across a restart. There is also
   `active-session.lock`, an empty file: through it one Walka tells
