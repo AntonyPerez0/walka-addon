@@ -32,6 +32,9 @@ permissions:
 jobs:
   test:
     name: Tests (${{ matrix.os }})
+    # A pull request from a branch of this repository was tested on its push
+    # already (the same commit): only one from a fork runs here again.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -64,6 +67,9 @@ jobs:
 
   windows-exe:
     name: Windows executable
+    # A pull request from a branch of this repository was tested on its push
+    # already (the same commit): only one from a fork runs here again.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -228,6 +234,9 @@ jobs:
   # and Intel.
   mac-app:
     name: Mac program (${{ matrix.chip }})
+    # A pull request from a branch of this repository was tested on its push
+    # already (the same commit): only one from a fork runs here again.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false

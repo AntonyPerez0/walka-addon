@@ -503,3 +503,16 @@ def test_text_is_checked_out_with_lf_everywhere(repo_root: Path):
         assert attrs[text]["eol"] == "lf", text
     for binary in files[4:]:
         assert attrs[binary]["binary"] == "set", binary
+
+
+def test_a_pull_request_commit_is_built_once(repo_root: Path):
+    """push runs on every branch, pull_request on every pull request: a
+    commit of a pull request from this repository ran twice."""
+    text = workflow(repo_root)
+    once = "github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository"
+    for name in ("test", "windows-exe", "mac-app"):
+        job = text[text.index(f"\n  {name}:\n") :]
+        head = job[: job.index("    steps:")]
+        assert f"\n    if: {once}\n" in head, name
+    scan = text[text.index("\n  virus-scan:\n") :]
+    assert "needs: [windows-exe, mac-app]" in scan[: scan.index("    steps:")]  # (so it is skipped with them)
