@@ -174,9 +174,10 @@ def test_the_request_names_nobody():
     import inspect
 
     assert updates._headers() == {"User-Agent": f"Walka/{__version__}"}
-    for function in (updates.fetch_latest, updates.download):
-        source = inspect.getsource(function)
-        assert "_headers()" in source and "DummyCookieJar" in source, function
+    module = inspect.getsource(updates)  # (fetch_latest itself is a stand-in in the tests: see conftest.py)
+    for name in ("fetch_latest", "download"):
+        source = module[module.index(f"async def {name}(") :].split("\n\n\n", 1)[0]
+        assert "_headers()" in source and "DummyCookieJar" in source, name
     assert updates.LATEST_URL == "https://api.github.com/repos/AntonyPerez0/walka-addon/releases/latest"
 
 
