@@ -677,3 +677,16 @@ def test_a_heart_rate_does_not_outlive_the_connection(clock):
     assert driver.status.heart_rate_bpm is None
     run(driver.connect())
     assert driver.status.heart_rate_bpm is None and driver.status.fresh_heart_rate(clock.now) is None
+
+
+def test_packets_without_a_speed_do_not_keep_an_old_speed_fresh(clock):
+    """The speed counts as current only as long as packets that carry one
+    keep coming; packets of distance or time alone say nothing of the belt."""
+    driver, pad, _backend, _events = rig()
+    run(driver.connect())
+    driver._on_data(ftms.build_treadmill_data(3.2))
+    assert driver.status.age_s(clock.now) == 0
+    for _ in range(30):
+        clock.now += 1
+        driver._on_data(ftms.build_treadmill_data(None, total_distance_m=100))
+    assert driver.status.age_s(clock.now) == 30 and driver.status.distance_m == 100

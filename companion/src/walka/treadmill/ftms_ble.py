@@ -469,8 +469,10 @@ class FtmsTreadmill(Treadmill):
         self._data = self._data.merge(packet)
         status = self.status
         now = time.monotonic()
-        status.updated_at = now
         if packet.speed_kmh is not None:
+            # (Only a packet with the speed in it: one of distance or time
+            # alone must not keep an old speed counting as the belt's now.)
+            status.updated_at = now
             status.speed_kmh = packet.speed_kmh
             if packet.speed_kmh > 0.05:
                 # A belt coasting down after a stop still reports speed for a
