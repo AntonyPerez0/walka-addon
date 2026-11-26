@@ -321,7 +321,7 @@ class GameFiles:
             if len(data) > MAX_FILE_BYTES:
                 raise savedvars.SavedVariablesError("the file is too big")
             saved = decode(savedvars.parse(data).get(DB_VARIABLE), status.st_mtime)
-        except (OSError, savedvars.SavedVariablesError) as exc:
+        except (OSError, ValueError, savedvars.SavedVariablesError) as exc:  # (whatever a damaged file holds)
             problem = f"{type(exc).__name__}: {exc}"
         entry.stamp = stamp  # (a file that cannot be read is not tried again until it changes)
         if problem:

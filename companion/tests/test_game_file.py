@@ -197,6 +197,7 @@ def test_the_disk_is_looked_at_now_and_then_not_on_every_call(tmp_path: Path):
         "\x00\xff garbage",
         "WalkaDB = 5",
         "",
+        "WalkaDB = { sessions = { { start = " + "9" * 5000 + " } } }",  # more digits than Python makes an int of
     ],
 )
 def test_a_file_that_cannot_be_read_files_nothing_and_breaks_nothing(tmp_path: Path, raw: str):
@@ -240,3 +241,12 @@ def test_the_demo_reads_no_disk(tmp_path: Path):
     files.use_demo(game_file.SavedGame((GameSession(T, T + 60, 1, 0, "Demo"),), ()))
     assert not files.scan(force=True)
     assert [s.character for s in files.sessions()] == ["Demo"] and files.status()["demo"] is True
+
+
+def test_one_damaged_account_does_not_stop_the_others_being_read(tmp_path: Path):
+    game = Game(tmp_path)
+    game.save("ONE", {}, raw="WalkaDB = { sessions = { { start = " + "9" * 5000 + " } } }")
+    game.save("TWO", {"sessions": [session(T, T + 60)]})
+    files = GameFiles(lambda: [game.dir])
+    files.scan(force=True)
+    assert len(files.sessions()) == 1

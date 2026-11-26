@@ -212,3 +212,17 @@ def test_damaged_files_never_raise_anything_else():
         except SavedVariablesError:
             continue
         assert isinstance(values, dict)
+
+
+def test_a_number_of_thousands_of_digits_is_a_damaged_file_not_a_crash():
+    """Python refuses to make an int of more than 4,300 digits (ValueError):
+    that must come out as what is wrong with the file, like any other damage."""
+    import pytest
+
+    from walka import savedvars
+
+    with pytest.raises(savedvars.SavedVariablesError):
+        savedvars.parse(b"WalkaDB = { steps = " + b"9" * 5000 + b" }")
+    with pytest.raises(savedvars.SavedVariablesError):
+        savedvars.parse(b"WalkaDB = { steps = -" + b"9" * 5000 + b" }")
+    assert savedvars.parse(b"WalkaDB = { steps = " + b"9" * 300 + b" }")["WalkaDB"]["steps"] == int("9" * 300)

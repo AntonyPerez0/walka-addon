@@ -64,7 +64,9 @@ CONTINENT_NAMES = {0: "Eastern Kingdoms", 1: "Kalimdor"}
 MAX_NAME_CHARS = 40  # of a land's name, as the game gave it
 MAX_LANDS = 64  # lands whose names are taken from one file
 
-_STEP = re.compile(r"(-?\d+),(-?\d+),(-?\d+)")
+# (Each part at most nine digits: a step of more is no step, and Python
+# makes no int of more than 4,300 digits.)
+_STEP = re.compile(r"(?<![\d-])(-?\d{1,9}),(-?\d{1,9}),(-?\d{1,9})(?![\d])")
 TIME_LIMIT_S = 10**11  # no saved time is this far from 1970
 
 # The walks the app measured, as spans of time the belt was moving: a
@@ -686,7 +688,7 @@ class RoadBook:
             if len(data) > MAX_FILE_BYTES:
                 raise savedvars.SavedVariablesError("the file is too big")
             road = decode(savedvars.parse(data).get(ROAD_VARIABLE))
-        except (OSError, savedvars.SavedVariablesError) as exc:
+        except (OSError, ValueError, savedvars.SavedVariablesError) as exc:  # (whatever a damaged file holds)
             problem = f"{type(exc).__name__}: {exc}"
         entry.stamp = stamp  # (a file that cannot be read is not tried again until it changes)
         if problem:

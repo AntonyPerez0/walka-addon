@@ -60,6 +60,10 @@ class SavedVariablesError(ValueError):
     """The bytes are not a complete saved-variables file."""
 
 
+# The most characters a number may have (a whole number of 300 digits is
+# already far beyond anything a saved file holds).
+MAX_NUMBER_CHARS = 400
+
 def _fail(data: bytes, pos: int, what: str) -> Any:
     line = data.count(b"\n", 0, pos) + 1
     raise SavedVariablesError(f"line {line}: {what}")
@@ -121,6 +125,10 @@ def _value(data: bytes, pos: int, depth: int) -> tuple[Any, int]:
     number = _NUMBER.match(data, pos)
     if number:
         text = number.group()
+        if len(text) > MAX_NUMBER_CHARS:
+            # (Python makes no int of more than 4,300 digits: it raises a
+            # plain ValueError. No number a game saves is near this long.)
+            _fail(data, pos, "a number too long to be one")
         value: int | float = float(text) if number.group(1) or number.group(2) else int(text)
         if value in (float("inf"), float("-inf")):
             _fail(data, pos, "a number too large to be one")

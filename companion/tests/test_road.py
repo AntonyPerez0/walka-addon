@@ -814,3 +814,8 @@ def test_the_road_book_marks_the_walks_it_is_given(tmp_path):
     assert book.for_character(character_id(KEY))["road"]["belt_yards"] == 0
     assert book.for_character(character_id(KEY), walked=[(1000.0, 1060.0)])["road"]["belt_yards"] == 200
     assert book.for_character(character_id(KEY))["road"]["belt_yards"] == 0
+
+
+def test_a_step_of_thousands_of_digits_costs_that_step_not_the_road():
+    got = read(database({**segment(0, 0), "d": "3,10,0;3," + "9" * 5000 + ",0;3,0,10"}, segment(50, 50, [(5, 5)])))
+    assert got is not None and [len(stretch.points) for stretch in got.stretches] == [3, 2]
