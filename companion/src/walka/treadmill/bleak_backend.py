@@ -66,7 +66,9 @@ def _found(device: BLEDevice, adv: AdvertisementData | None) -> FoundDevice:
 class BleakClientAdapter:
     """One connection, as the reader may use it (``ftms_ble.BleClient``):
     read a value, switch notifications on, and nothing else. bleak's own
-    client, which could also write, does not leave this class."""
+    client, which could also write, does not leave this class - except
+    into ``query_link.QueryClientAdapter``, which writes one fixed status
+    query and nothing else (for two vendor protocols: proprietary.py)."""
 
     def __init__(self, device: BLEDevice | str, on_disconnect: Callable[[], None], timeout: float = 20.0) -> None:
         self._client = BleakClient(

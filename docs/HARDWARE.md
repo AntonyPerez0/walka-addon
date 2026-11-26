@@ -1,7 +1,9 @@
 # Hardware notes: UREVO Strol 2E (URTM030), and other treadmills
 
 Walka listens to a treadmill over standard Bluetooth FTMS. It only listens:
-it never sends a treadmill a command (see [SAFETY.md](SAFETY.md)). It was
+it never sends a treadmill a command (see [SAFETY.md](SAFETY.md)). Older
+WalkingPads and FitShow pads, which report only when asked, get one fixed
+status question once a second, and nothing else. It was
 written around the UREVO Strol 2E, which most of this page is about; what
 is known about other makes - the WELLFIT TM029 Pro first of all - is under
 [Other treadmills](#other-treadmills).

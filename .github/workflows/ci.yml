@@ -525,7 +525,7 @@ jobs:
 
           **Early version:** checked on one walking pad so far - a UREVO Strol 2E (URTM030) with Windows 11. Every other treadmill is untried. Read [Before your first walk](https://github.com/$GH_REPO/blob/$TAG/docs/INSTALL.md#before-your-first-walk).
 
-          **Walka only listens to your treadmill:** it cannot start, stop or change the speed of the belt - you set the speed on the treadmill itself. Walking while you play is at your own risk; Walka comes with no warranty and is not a medical device. Read the [disclaimer](https://github.com/$GH_REPO/blob/$TAG/DISCLAIMER.md) before your first walk.
+          **Walka only listens to your treadmill:** it cannot start, stop or change the speed of the belt - you set the speed on the treadmill itself. (Older WalkingPads and FitShow pads report only when asked: Walka sends them one fixed *report your numbers* question once a second, and nothing else.) Walking while you play is at your own risk; Walka comes with no warranty and is not a medical device. Read the [disclaimer](https://github.com/$GH_REPO/blob/$TAG/DISCLAIMER.md) before your first walk.
 
           **Your Walka account (on walka.dev):** optional. Walka works in full without it, and if you never sign in it sends nothing and asks nobody. If you sign in and switch sending on yourself, each walk goes to your Walka account. What is sent, when, and how to stop: [Your Walka account](https://github.com/$GH_REPO/blob/$TAG/docs/WALKA-ACCOUNT.md#your-walka-account-on-walkadev).
 

@@ -20,7 +20,7 @@
 </p>
 
 <p align="center">
-  <sub><b>Walka only listens to your treadmill.</b> It cannot start, stop or change the speed of the belt: you do that at the treadmill itself.<br>
+  <sub><b>Walka only listens to your treadmill.</b> It cannot start, stop or change the speed of the belt: you do that at the treadmill itself. (Two kinds of older pads report only when asked: Walka asks them, with one fixed question - <a href="docs/SAFETY.md#one-exception-for-pads-that-only-report-when-asked">see Safety</a>.)<br>
   <b>Early version:</b> checked on one walking pad so far - a UREVO Strol 2E (URTM030) with Windows 11, in November 2026. Every other treadmill, and the Mac version, are still untried. Walking while you play is at your own risk - read the <a href="DISCLAIMER.md">disclaimer</a> before you download.<br>
   <b>Free.</b> Nothing to install: on Windows it is one file, <code>Walka.exe</code>, and you just open it - it has a window of its own, like any program.<br>
   <b>Mac:</b> the button is for an Apple chip (M1 or later) - for an older Mac with an Intel processor, <a href="https://github.com/AntonyPerez0/walka-addon/releases/latest/download/Walka-mac-intel.zip">download this one</a>.
@@ -78,7 +78,10 @@ Bluetooth ([which treadmills work](docs/TREADMILLS.md)).
 > [!NOTE]
 > **Walka only listens to your treadmill.** It cannot start, stop or change
 > the speed of the belt - nothing in it can. You set the speed at the
-> treadmill, with its own remote and buttons.
+> treadmill, with its own remote and buttons. One exception: older
+> WalkingPads and FitShow pads report their numbers only when asked, so
+> Walka sends them one fixed "report your numbers" question once a second,
+> and nothing else ([docs/SAFETY.md](docs/SAFETY.md#one-exception-for-pads-that-only-report-when-asked)).
 
 > [!CAUTION]
 > **Walking while you play is at your own risk.** Your eyes are on a game,
@@ -91,7 +94,8 @@ Bluetooth ([which treadmills work](docs/TREADMILLS.md)).
 
 * **Walka cannot move the belt.** There is no command in it to send, and
   nothing the game or the dashboard does reaches the treadmill. The tests
-  check that an emulated treadmill has been sent nothing.
+  check that an emulated treadmill has been sent nothing - nothing but the
+  one fixed status question, to the two kinds of pads that need it.
 * **Stopping the belt is yours.** Walka is not a safety device: the
   treadmill's own stop button, remote and safety key are what stops it.
   Keep the remote within reach, start slow, stop the belt when you step

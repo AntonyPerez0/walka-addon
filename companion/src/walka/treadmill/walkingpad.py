@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from .. import ftms
 from .base import BeltState
+from .ftms_ble import FoundDevice, name_matches
 from .known import prefixes_for
 from .proprietary import PadReading, ProprietaryTreadmill
 
@@ -41,9 +42,12 @@ STATES = {
     9: BeltState.STARTING,
 }
 
-# Names these pads advertise (the start of them), from treadmill/known.py. Only a first guess:
-# the protocol is decided by the vendor service being there.
+# Names these pads advertise (the start of them), from treadmill/known.py: what a scan by name
+# looks for.
 NAME_PREFIXES = prefixes_for("walkingpad")
+# The query is written only to a device whose name says it is a KingSmith pad: 0xFE01 / 0xFE02
+# could be on another device. (Wider than the known names: KingSmith names its pads "KS-...".)
+ACCEPTED_NAMES = ("WalkingPad", "KS-")
 
 
 def checksum(packet: bytes) -> int:
@@ -73,3 +77,7 @@ class WalkingPadTreadmill(ProprietaryTreadmill):
     NAME_PREFIXES = NAME_PREFIXES
 
     decode = staticmethod(decode)
+
+    def _accepts(self, device: FoundDevice) -> bool:
+        # The query goes only to a machine that calls itself a WalkingPad.
+        return name_matches(device.name, ACCEPTED_NAMES)

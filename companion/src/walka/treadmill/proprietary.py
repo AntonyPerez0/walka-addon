@@ -121,6 +121,7 @@ class ProprietaryTreadmill(FtmsTreadmill):
 
     # ---- connecting ------------------------------------------------------------------
     async def connect(self) -> None:
+        attempt = self._let_go
         if not self.address:
             # By name only: never the nearest standard fitness machine, as an FTMS scan would settle for.
             if not self.name_prefixes:
@@ -135,6 +136,7 @@ class ProprietaryTreadmill(FtmsTreadmill):
             if not named:
                 self.status.detail = "treadmill not found - is it switched on, in range, and is its own phone app closed?"
                 raise TreadmillError(self.status.detail)
+            self._gave_up(attempt)
             self.address = max(named, key=lambda d: d.rssi if d.rssi is not None else -999).address
         await super().connect()
 

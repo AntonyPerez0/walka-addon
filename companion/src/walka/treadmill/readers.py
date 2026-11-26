@@ -30,7 +30,8 @@ READERS: tuple[Reader, ...] = (
     Reader("rsc", ftms.RSC_MEASUREMENT, "running speed and cadence (a foot pod or a treadmill's sensor)"),
     # Makers' own protocols (treadmill/proprietary.py): after the standards, so that a pad that
     # speaks both is read the standard way.
-    Reader("walkingpad", ftms.uuid16(0xFE01), "the WalkingPad protocol (older KingSmith pads)"),
+    Reader("walkingpad", ftms.uuid16(0xFE01), "the WalkingPad protocol (older KingSmith pads)",
+           names=("WalkingPad", "KS-")),  # (as walkingpad.ACCEPTED_NAMES)
     Reader("pitpat", ftms.uuid16(0xFBA2), "the PitPat protocol (PitPat, SupeRun and similar pads)"),
     Reader("fitshow", ftms.uuid16(0xFFF1), "the FitShow protocol", names=("FS-",)),
 )

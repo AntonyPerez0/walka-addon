@@ -22,7 +22,9 @@ Walka itself.)
 * `Walka/` - the addon. `Core/` is pure Lua (no game API) and is unit
   tested; `Game.lua` is the only file that touches values the game may hide.
 * `companion/src/walka/` - `treadmill/` (the Bluetooth FTMS reader, which
-  has no way to write to a treadmill, and a simulator), `ftms.py` (decoding
+  has no way to write to a treadmill; the readers of makers' own
+  protocols, two of which send one fixed status query through
+  `query_link.py`; and a simulator), `ftms.py` (decoding
   what a treadmill says), `game_file.py` (the addon's saved file
   `WalkaDB`: the game's walking sessions, and filing walks under them),
   `session.py` (recording walks), `addon_sync.py` (`CompanionData.lua`,
@@ -57,8 +59,11 @@ Walka itself.)
   file" every few seconds, with one walking session and a character.
   `py -m walka game` prints what the real game has saved for Walka.
 * **The one rule for changes:** the companion listens to the treadmill and
-  never writes to it. `companion/tests/test_ftms_ble.py` and `test_app.py`
-  fail if a way to do so comes back.
+  sends it nothing that could start, stop or steer a belt. The only bytes
+  it ever writes are the two fixed status queries in
+  `treadmill/proprietary.py` (`QUERIES`), for pads that report only when
+  asked. `companion/tests/test_reader_writes.py`, `test_vendor_queries.py`,
+  `test_ftms_ble.py` and `test_app.py` fail if anything else is written.
 * **Publishing a version:** put the same number in
   `companion/pyproject.toml`, `companion/src/walka/__init__.py` and
   `Walka/Walka.toc`, commit and push. Then, on GitHub, open **Actions** →

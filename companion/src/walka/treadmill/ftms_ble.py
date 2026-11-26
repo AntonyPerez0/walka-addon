@@ -7,9 +7,11 @@ and its training status. It was written around UREVO walking pads (Strol 2E
 service it advertises (see ``known.py`` for the names that are recognised
 at once, and docs/HARDWARE.md).
 
-**It only listens.** The reader never writes to a characteristic: it does
+**It only listens.** This reader never writes to a characteristic: it does
 not ask the treadmill for control, and it has no start, stop, pause or
-speed command to send. The Fitness Machine Control Point is not even
+speed command to send. (Two readers built on it, for vendor protocols
+whose pads report only when asked, send one fixed status query each, and
+nothing else: proprietary.py, query_link.py.) The Fitness Machine Control Point is not even
 subscribed to. What the reader does on a connection is read one value
 (the speed range) and switch notifications on for the three things it
 listens to - and ``BleClient`` below, the only door to the Bluetooth
@@ -51,6 +53,10 @@ SUBSCRIBE_GAP_S = 0.15
 # The reads and subscriptions made while connecting are given up on after
 # this long (a dying link).
 SETUP_TIMEOUT_S = 20.0
+
+# What a connect says when it was given up on: Disconnect was pressed, or
+# another reader was chosen, while the connection was being made.
+LET_GO = "let go of while the connection was being made"
 
 PAD_TIMEOUT_HINT = "is the treadmill switched on and in range, and is its own phone app closed?"
 
@@ -182,6 +188,12 @@ class FtmsTreadmill(Treadmill):
         self.scan_timeout_s = scan_timeout_s
         self._backend = backend
         self._client: BleClient | None = None
+        # A connection being made (until it is set up), and how many times
+        # the reader was told to let go: a connect under way gives up when
+        # that changes, so that Disconnect (or another reader) is not
+        # undone by a connection that finishes afterwards.
+        self._connecting: BleClient | None = None
+        self._let_go = 0
         self._coast_until = 0.0  # after a stop/pause: speed reports are the belt running down
         self._data = ftms.TreadmillData()
         self.raw_speed_range: ftms.SpeedRange | None = None
@@ -248,9 +260,15 @@ class FtmsTreadmill(Treadmill):
         await self._get_backend().watch(self.address, on_seen)
 
     # ---- connection ------------------------------------------------------------
+    def _gave_up(self, attempt: int) -> None:
+        """Raise if the reader was told to let go since ``attempt`` began."""
+        if self._let_go != attempt:
+            raise TreadmillError(LET_GO)
+
     async def connect(self) -> None:
         if self._client is not None and self._client.is_connected:
             return
+        attempt = self._let_go
         status = self.status
         status.detail = "scanning"
         backend = self._get_backend()
@@ -259,6 +277,7 @@ class FtmsTreadmill(Treadmill):
         except Exception as exc:  # bleak raises assorted OS errors
             status.detail = f"Bluetooth scan failed: {describe_bluetooth_error(exc)}"
             raise TreadmillError(status.detail) from exc
+        self._gave_up(attempt)
         if device is None:
             status.detail = (
                 "treadmill not found - is it switched on, in range, and is its own "
@@ -278,30 +297,45 @@ class FtmsTreadmill(Treadmill):
             self._on_disconnect(client)
 
         client = self._make_client(backend, device, link_lost)
+        self._connecting = client
         try:
             await client.connect()
+            self._gave_up(attempt)
             if not any(client.has_characteristic(uuid) for uuid in self.data_characteristics()):
                 raise TreadmillError(f"{device.name or device.address} {self.NOT_READABLE}")
             self._client = client
             await asyncio.wait_for(self._setup(client), SETUP_TIMEOUT_S)
+            self._gave_up(attempt)
             # The link can drop during set-up without any step failing (the
             # optional subscriptions are allowed to). Saying "connected" then
             # would leave a reader that hears nothing and that nobody
             # reconnects.
             if self._client is not client or not client.is_connected:
                 raise TreadmillError("the connection was lost while it was being set up")
-        except Exception as exc:
-            self._client = None
+        except BaseException as exc:
+            given_up = self._let_go != attempt
+            if self._client is client:
+                self._client = None
             try:
                 await client.disconnect()
             except Exception:
                 pass
             status.connected = False
+            if given_up:
+                status.detail = "disconnected"
+                if isinstance(exc, Exception):
+                    raise TreadmillError(LET_GO) from exc
+                raise
+            if not isinstance(exc, Exception):
+                raise  # (cancelled: the link is let go of all the same)
             if isinstance(exc, TreadmillError):
                 status.detail = f"connection failed: {exc}"
                 raise
             status.detail = f"connection failed: {describe_bluetooth_error(exc)}"
             raise TreadmillError(status.detail) from exc
+        finally:
+            if self._connecting is client:
+                self._connecting = None
 
         status.name = device.name or "treadmill"
         status.address = device.address
@@ -391,10 +425,16 @@ class FtmsTreadmill(Treadmill):
             status.min_kmh, status.max_kmh, status.step_kmh = lo, hi, step
 
     async def disconnect(self) -> None:
+        """Let go: of the connection, and of one still being made (which then
+        gives up, as soon as what it waits for returns)."""
+        self._let_go += 1
         client, self._client = self._client, None
-        if client is not None:
+        connecting, self._connecting = self._connecting, None
+        for each in (client, connecting if connecting is not client else None):
+            if each is None:
+                continue
             try:
-                await client.disconnect()
+                await each.disconnect()
             except Exception as exc:
                 log.debug("disconnect failed: %s", exc)
         self._mark_disconnected("disconnected")

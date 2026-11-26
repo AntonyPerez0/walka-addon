@@ -13,7 +13,9 @@ not, what is yours to check, and what its authors do not promise.
   reports over Bluetooth - speed, distance, on some pads steps - and writes
   your walks down. It has no way to start or stop a belt or to change its
   speed, and it sends the treadmill no commands
-  ([docs/SAFETY.md](docs/SAFETY.md) says how that is made sure of).
+  ([docs/SAFETY.md](docs/SAFETY.md) says how that is made sure of). The
+  one thing it sends some pads is a fixed "report your numbers" question:
+  older WalkingPads and FitShow pads say nothing until asked.
   Versions up to 0.6 did drive the belt. They have been withdrawn: do not
   use one.
 * **A free hobby project, and an early one.** It has been checked on one

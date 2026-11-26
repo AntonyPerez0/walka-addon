@@ -77,7 +77,8 @@ MACOS_WINDOW_IMPORTS = ("webview.platforms.cocoa",)
 MAC_BUNDLE_ID = "io.github.antonyperez0.walka"
 MAC_APP = HERE / "dist" / "Walka.app"
 BLUETOOTH_REASON = (
-    "Walka listens to your walking pad over Bluetooth: its speed, distance and steps. It sends the pad nothing."
+    "Walka listens to your walking pad over Bluetooth: its speed, distance and steps. It never sends a command; "
+    "a few older pads that report only when asked get one fixed request for their numbers."
 )
 
 
