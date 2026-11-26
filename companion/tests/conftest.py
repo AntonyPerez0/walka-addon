@@ -317,6 +317,20 @@ def _nothing_leaves_this_computer():
 
 
 @pytest.fixture(autouse=True)
+def _github_is_not_asked_for_the_newest_version(monkeypatch):
+    """The packaged program asks GitHub, once a day, which version is the
+    newest (walka/updates.py) - and a test that runs Walka as the packaged
+    program would too. Here the answer is the version it is: nothing newer.
+    (test_updates.py hands in answers of its own.)"""
+    from walka import __version__, updates
+
+    async def newest_is_this_one():
+        return {"tag": f"v{__version__}", "url": updates.RELEASES_PAGE, "assets": {}}
+
+    monkeypatch.setattr(updates, "fetch_latest", newest_is_this_one)
+
+
+@pytest.fixture(autouse=True)
 def _no_real_keystore_and_no_real_browser(request, monkeypatch):
     """A test hands in a store for secrets in memory and an opener of its
     own. One that forgot would, on a developer's computer, write over their

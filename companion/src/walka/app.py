@@ -17,13 +17,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import threading
 import time
 from collections import deque
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from . import __version__, addon_sync, game_file
+from . import __version__, addon_sync, game_file, updates
 from . import config as config_module
 from .config import Config
 from .journey import attach as attach_journeys
@@ -121,10 +122,17 @@ class App:
         self._checking = False
         self._check_task: asyncio.Task | None = None
         self.probe_fn: Any = None  # tests hand in a stand-in for probe.probe
-        # The update notice (updates.py): nothing is asked unless it is switched on.
+        # Updates (updates.py): nothing is asked unless it is switched on,
+        # nothing is downloaded unless "Update now" is pressed.
         self.update = UpdateState()
         self._update_task: asyncio.Task | None = None
+        self._install_task: asyncio.Task | None = None
         self.update_fetch: Any = None  # tests hand in a stand-in for updates.fetch_latest
+        self.update_download: Any = None  # ... and for updates.download
+        # This copy of Walka and whether it can replace itself (updates.this_install): found once.
+        self.installed: tuple[updates.Installed | None, str] | None = None
+        # Ends Walka the orderly way (the walk is saved), for an update's restart: the CLI hands it in.
+        self.quit: Callable[[], None] | None = None
         # Heart rate over the local network (hr_network.py): nothing listens unless switched on.
         self.hr_network: Any = None
         self._side_tasks: set[asyncio.Task] = set()
@@ -539,7 +547,87 @@ class App:
             self.hr_network.code = self.config.heart_rate.network_code
         return self.config.heart_rate.network_code
 
-    # ---- the update notice ------------------------------------------------------------
+    # ---- updates ------------------------------------------------------------------------
+    def _this_install(self) -> tuple[updates.Installed | None, str]:
+        if self.installed is None:
+            self.installed = updates.this_install()
+        return self.installed
+
+    def cannot_install_update(self) -> str:
+        """Why "Update now" cannot be pressed now, in words; "" if it can."""
+        installed, why_not = self._this_install()
+        if installed is None:
+            return why_not
+        if self._was_moving:
+            return "Walka updates once the belt has stopped: the walk is saved first, then Walka restarts."
+        return ""
+
+    def install_update(self) -> str:
+        """"Update now": download the new version, check it, put it in place
+        and restart Walka. On the loop; the work goes on in a task. Returns
+        "" if it has begun (or is under way), or why it cannot."""
+        if not self.config.updates.check or not updates.is_newer(self.update.latest):
+            return "There is no newer version of Walka to install."
+        if self._install_task is not None and not self._install_task.done():
+            return ""
+        if self.update.stage == "restarting":
+            return ""
+        why_not = self.cannot_install_update()
+        if why_not:
+            return why_not
+        installed, _ = self._this_install()
+        assert installed is not None
+        self.update.stage, self.update.install_error = "downloading", ""
+        self._install_task = asyncio.get_running_loop().create_task(
+            self._install_update(installed), name="walka-update-install"
+        )
+        return ""
+
+    async def _install_update(self, installed: updates.Installed) -> None:
+        fetch_file = self.update_download or updates.download
+        try:
+            restart = await updates.install(self.update, installed, self.data_dir, fetch_file=fetch_file)
+        except asyncio.CancelledError:
+            self.update.stage = ""
+            raise
+        except RuntimeError as exc:
+            self.update.stage, self.update.install_error = "failed", str(exc)
+            self.log_event(f"The update was not installed: {exc}", "warning")
+            return
+        except Exception as exc:  # the network, a full disk ...
+            log.warning("the update could not be installed: %s", exc, exc_info=not isinstance(exc, OSError))
+            self.update.stage = "failed"
+            self.update.install_error = (
+                "The update could not be downloaded or put in place. Nothing was changed: "
+                "try again, or download the new version from its page."
+            )
+            self.log_event(self.update.install_error, "warning")
+            return
+        self.update.stage = "restarting"
+        updates.restart_when_stopped(restart)
+        self.log_event(f"Walka {restart.to_version} is ready: Walka saves the walk and restarts.")
+        if self.quit is not None:
+            self.quit()
+
+    def _after_an_update(self) -> None:
+        """At start, after Walka has updated itself: say so, and bring the
+        game addon up to date too, if it is installed (your walks' file in
+        it is kept)."""
+        done = updates.take_done(self.data_dir)
+        threading.Thread(target=updates.clean_up, name="walka-update-clean-up", daemon=True).start()
+        if done is None:
+            return
+        self.log_event(f"Walka was updated to {__version__} (from {done['from']}).")
+        directory = self.find_addon_dir()
+        if directory is None or directory.name != addon_sync.ADDON_NAME or addon_sync.bundled_addon_dir() is None:
+            return
+        try:
+            addon_sync.install_addon(directory.parent)
+        except Exception as exc:
+            log.warning("could not update the game addon: %s", exc)
+            return
+        self.log_event("The game addon was updated too: type /reload in the game (or restart it) to load it.")
+
     def _maybe_check_for_update(self) -> None:
         """From the tick: start a check when it is switched on and one is due."""
         if not self.config.updates.check or self._stopping.is_set():
@@ -575,6 +663,8 @@ class App:
     def update_config(self, patch: dict[str, Any]) -> None:
         """Apply a partial config (from the dashboard), save and re-sync."""
         config_module.apply_update(self.config, patch)
+        if isinstance(patch.get("updates"), dict) and "check" in patch["updates"]:
+            self.config.updates.chosen = True  # switched on or off by the person: kept as they left it
         if isinstance(patch.get("profile"), dict) and not self._state.get("profile_set"):
             # Saving the body profile - even unchanged - confirms it, which
             # ticks the dashboard's first-run checklist.
@@ -594,12 +684,13 @@ class App:
         hr_patch = patch.get("heart_rate")
         if isinstance(hr_patch, dict) and ({"network", "network_port"} & set(hr_patch)):
             self._spawn_soon(self.apply_hr_network())
-        if isinstance(patch.get("updates"), dict):
+        if isinstance(patch.get("updates"), dict) and self.update.stage != "restarting":
             # Switched on: ask now. Switched off: forget the answer (and ask nothing).
             self.update = UpdateState()
-            if self._update_task is not None:
-                self._update_task.cancel()
-                self._update_task = None
+            for task in (self._update_task, self._install_task):
+                if task is not None:
+                    task.cancel()
+            self._update_task = self._install_task = None
         self.sync_addon()
 
     # ---- the floating window ---------------------------------------------------------
@@ -693,7 +784,11 @@ class App:
                 "error": self.addon_error,
             },
             "check": self.check.to_dict(self.wall()),
-            "update": self.update.to_dict(self.config.updates.check),
+            "update": self.update.to_dict(
+                self.config.updates.check,
+                cannot_install=self.cannot_install_update(),
+                self_update=self._this_install()[0] is not None,
+            ),
             "setup": {"profile_set": self.profile_is_set(), "system_units": self.system_units()},
             "config": self.config.to_dict(),
             "events": list(self.events)[:30],
@@ -891,6 +986,7 @@ class App:
                 # its words could name the Walka account, and the log is
                 # no place for that.)
                 log.warning("the Walka account's part did not start: an error of the kind %s", type(exc).__name__)
+        self._after_an_update()
         self.sync_addon()
         if self.config.heart_rate.network:
             await self.apply_hr_network()
@@ -902,8 +998,9 @@ class App:
         self._connect_now.set()
         if self._check_task is not None:
             self._check_task.cancel()
-        if self._update_task is not None:
-            self._update_task.cancel()
+        for task in (self._update_task, self._install_task):
+            if task is not None:
+                task.cancel()
         for task in self._tasks:
             task.cancel()
         if self.walka_account is not None:

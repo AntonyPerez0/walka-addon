@@ -357,11 +357,30 @@ your totals.
 
 ## Updates
 
-Walka does not look for new versions unless you ask it to. *Settings →
-Updates → Tell me when a new version of Walka is out* switches that on:
-Walka then asks GitHub, once a day while it runs, which release is the
-newest (the request names the program and its version, and nothing about
-you), and shows a note with a link when there is a newer one. Walka never
-downloads or installs anything by itself - the new version is downloaded
-the same way as the first one, warnings and all (see
+When a new version of Walka is out, a note at the top of the dashboard
+says so, with an **Update now** button. One click and Walka:
+
+1. downloads the new version from the release on GitHub - `Walka.exe` on
+   Windows, the zip for your Mac's processor on a Mac - and the release's
+   `SHA256SUMS.txt`;
+2. checks the download against its checksum (one that does not match is
+   thrown away, and nothing is changed);
+3. puts it in place of the old one (on Windows the old file is kept as
+   `Walka.exe.old` until the new one has started, then removed);
+4. saves the walk being recorded and closes, the way closing the window
+   does, and opens again as the new version. If the game addon is
+   installed, it is brought up to date too (your walks' file in it is
+   kept): type `/reload` in the game to load it.
+
+Walka only offers this while the belt is standing still. To find out about
+new versions, Walka asks GitHub, once a day while it runs, which release is
+the newest (the request names the program and its version, and nothing
+about you). Nothing is downloaded until you press **Update now**. *Settings
+→ Updates → Tell me when a new version of Walka is out* switches the
+question off; then Walka asks nothing.
+
+Where Walka cannot replace itself - run from its source code, or on a Mac
+run from a hidden copy that macOS made (open Walka from the Applications
+folder instead) - the note says why and links to the release's page, where
+the new version is downloaded the same way as the first one (see
 [Is the download safe?](INSTALL.md#is-the-download-safe)).

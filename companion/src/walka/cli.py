@@ -665,6 +665,7 @@ async def _run(
 
     stop = asyncio.Event()
     stopped = threading.Event()  # set once app.stop() has run: the walk is saved
+    app.quit = stop.set  # (an update's restart: the same orderly stop as closing the window)
     loop = asyncio.get_running_loop()
     _install_console_close_handler(loop, stop, stopped)
     _stop_on_signals(loop, stop)
@@ -1361,7 +1362,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         logging.getLogger("aiohttp").setLevel(logging.WARNING)
     try:
         if command == "run":
-            return _run_command(args)
+            code = _run_command(args)
+            # Last, with everything stopped (the walk saved, the window closed,
+            # the treadmill let go): an update installed from the dashboard starts here.
+            from . import updates
+
+            updates.restart_if_updated()
+            return code
         if command == "scan":
             return asyncio.run(_scan(args))
         if command == "probe":

@@ -155,10 +155,14 @@
 
 <main id="main">
 
-<!-- The update notice (Settings -> Updates; off unless switched on). A link, never a download. -->
+<!-- A newer Walka (Settings -> Updates). Nothing is downloaded until "Update now" is pressed. -->
 <div id="update-note" class="update-note" role="status" hidden>
   <p><strong id="update-title">A new version of Walka is out.</strong> <span id="update-detail"></span></p>
-  <a class="btn small" id="update-link" target="_blank" rel="noopener noreferrer">What's new, and the download</a>
+  <div class="update-actions">
+    <a class="btn small quiet" id="update-link" target="_blank" rel="noopener noreferrer">What's new</a>
+    <button class="btn small primary" id="update-install" type="button">Update now</button>
+  </div>
+  <div class="update-bar" id="update-bar" hidden><span id="update-bar-fill"></span></div>
 </div>
 
 <!-- ====================================================================== LIVE -->

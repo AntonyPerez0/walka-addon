@@ -55,13 +55,15 @@ The treadmill's *Fitness Machine Control Point* - the one channel through
 which an app can start, stop or steer a belt - is never written to and
 never listened to. Walka does not ask the treadmill for control.
 
-## Nothing leaves your computer unless you switch it on
+## What reaches outside your computer
 
-Two things reach outside this computer, and both are off until you switch
-them on in Settings: the update notice (it asks GitHub which version is the
-newest) and heart rate over the local network (Walka then listens, on a
-port of its own and with a pairing code, for a heart rate from a watch app
-on your home network - see [HEART-RATE.md](HEART-RATE.md#heart-rate-over-the-local-network)).
+Walka asks GitHub, once a day, which version of Walka is the newest -
+nothing about you is sent, and *Settings → Updates* switches it off. A new
+version is downloaded from GitHub only when you press **Update now** (see
+[USING.md](USING.md#updates)). Heart rate over the local network is off
+until you switch it on in Settings: Walka then listens, on a port of its
+own and with a pairing code, for a heart rate from a watch app on your home
+network - see [HEART-RATE.md](HEART-RATE.md#heart-rate-over-the-local-network).
 The dashboard itself answers this computer only.
 
 ## How that is made sure of
