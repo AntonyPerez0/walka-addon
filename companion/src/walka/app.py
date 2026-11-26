@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import threading
 import time
 from collections import deque
@@ -186,10 +187,19 @@ class App:
             return {}
 
     def _save_state(self) -> None:
+        # Written beside it and then put in its place: a write cut short (a
+        # full disk, a crash) leaves the old file whole.
+        path = self.data_dir / STATE_FILE
+        tmp = path.with_name(path.name + ".tmp")
         try:
-            (self.data_dir / STATE_FILE).write_text(json.dumps(self._state), "utf-8")
+            tmp.write_text(json.dumps(self._state), "utf-8")
+            os.replace(tmp, path)
         except OSError as exc:
             log.debug("could not save state: %s", exc)
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
 
     def log_event(self, text: str, level: str = "info") -> None:
         self.events.appendleft({"time": self.wall(), "level": level, "text": text})

@@ -1196,3 +1196,21 @@ def test_a_clock_set_back_in_the_middle_of_a_walk_changes_nothing_of_it(rig: Rig
     (record,) = rig.app.store.records
     assert record.seconds > 400
     assert record.end - record.start == pytest.approx(record.seconds + FREE_WALK_GRACE_S + 6, abs=15)
+
+
+def test_state_json_is_never_left_half_written(rig: Rig, monkeypatch):
+    rig.app._state["treadmill"] = {"name": "URTM030"}
+    rig.app._save_state()
+    path = rig.app.data_dir / app_module.STATE_FILE
+    assert json.loads(path.read_text("utf-8"))["treadmill"]["name"] == "URTM030"
+    real_write = Path.write_text
+
+    def cut_short(self, text, *args, **kwargs):
+        real_write(self, text[: len(text) // 2], *args, **kwargs)
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(Path, "write_text", cut_short)
+    rig.app._state["treadmill"] = {"name": "another pad with a longer name"}
+    rig.app._save_state()
+    monkeypatch.undo()
+    assert json.loads(path.read_text("utf-8"))["treadmill"]["name"] == "URTM030"
