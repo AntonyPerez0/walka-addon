@@ -937,3 +937,71 @@ def test_a_broken_locale_lookup_suggests_nothing(rig: Rig, monkeypatch):
 
     monkeypatch.setattr(locale_units, "system_units", broken)
     assert rig.app.snapshot()["setup"]["system_units"] is None
+
+
+# ---- a walk that cannot be written -----------------------------------------------------------------
+
+
+def full_disk(monkeypatch) -> dict:
+    """Every write of a walk fails, as on a full disk, until switched off."""
+    real_write = SessionStore._write
+    state = {"full": True}
+
+    def write(path, data):
+        if state["full"]:
+            raise OSError(28, "No space left on device")
+        real_write(path, data)
+
+    monkeypatch.setattr(SessionStore, "_write", staticmethod(write))
+    return state
+
+
+def walk_files(rig: Rig) -> list[Path]:
+    return sorted((rig.app.data_dir / "sessions").glob("*.json"))
+
+
+def test_a_walk_that_cannot_be_written_is_kept_and_written_once_there_is_room(rig: Rig, monkeypatch):
+    async def scenario():
+        await rig.connect()
+        await rig.walk()
+        await rig.run(300)  # (checkpoints written: the disk still had room)
+        full = full_disk(monkeypatch)
+        await rig.step_off()
+        assert walk_files(rig) == [] and rig.app.store.records == []
+        assert (rig.app.data_dir / "active-session.json").exists(), "the checkpoint keeps it meanwhile"
+        assert any("could not be saved" in event["text"] for event in rig.app.events)
+        full["full"] = False
+        await rig.run(app_module.CHECKPOINT_EVERY_S + 2)  # with no walk going: tried again all the same
+        assert len(walk_files(rig)) == 1 and rig.app.store.records[0].seconds > 290
+        assert not (rig.app.data_dir / "active-session.json").exists()
+        assert any(event["text"].startswith("Walk saved") for event in rig.app.events)
+
+    run(scenario())
+
+
+def test_a_walk_still_unwritten_survives_a_crash_and_a_start_on_a_full_disk(rig: Rig, tmp_path: Path, monkeypatch):
+    async def scenario():
+        await rig.connect()
+        await rig.walk()
+        await rig.run(300)
+        full_disk(monkeypatch)
+        await rig.step_off()
+        # Walka is killed here, and started again with the disk still full.
+
+    run(scenario())
+    checkpoint = rig.app.data_dir / "active-session.json"
+    seconds = json.loads(checkpoint.read_text("utf-8"))["seconds"]
+    rig.app.store._remove_checkpoint = lambda: None  # (the killed one clears nothing)
+    del rig.app
+    import gc
+
+    gc.collect()
+    again = App(Config(), tmp_path / "data", treadmill=SimulatedTreadmill(auto_run=False))
+    assert again.store.records == [] and checkpoint.exists(), "the only copy of the walk"
+    assert any(event["level"] == "error" and "could not be saved" in event["text"] for event in again.events)
+    del again
+    gc.collect()
+    monkeypatch.undo()
+    later = App(Config(), tmp_path / "data", treadmill=SimulatedTreadmill(auto_run=False))
+    assert [record.seconds for record in later.store.records] == [seconds]
+    assert not checkpoint.exists()

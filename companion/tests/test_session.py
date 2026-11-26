@@ -744,3 +744,56 @@ def test_totals_across_the_autumn_daylight_saving_change(tmp_path: Path, pacific
     ]
     assert totals["week"]["steps"] == 305
     assert totals["streak"] == 3  # not 4: no walk on 31 October
+
+
+# ---- a walk that cannot be written yet ---------------------------------------------------------
+
+
+def disk_full(monkeypatch, store_cls=SessionStore):
+    """Every write of a walk fails, as on a full disk. Returns a switch."""
+    real_write = store_cls._write
+    state = {"full": True}
+
+    def write(path, data):
+        if state["full"]:
+            raise OSError(28, "No space left on device")
+        real_write(path, data)
+
+    monkeypatch.setattr(store_cls, "_write", staticmethod(write))
+    return state
+
+
+def test_a_checkpoint_that_cannot_be_written_as_a_walk_is_kept(tmp_path: Path, monkeypatch):
+    """The disk was full when the walk ended, and is still full at the next
+    start: the checkpoint is the only copy of the walk, and stays."""
+    store = SessionStore(tmp_path)
+    in_progress = make_record(T0, seconds=1234.0, steps=2222)
+    store.checkpoint(in_progress)
+    del store
+    full = disk_full(monkeypatch)
+    again = SessionStore(tmp_path)
+    assert again.records == []
+    assert (tmp_path / "active-session.json").exists(), "the only copy of the walk"
+    assert again.recovery_failed
+    # A new walk's checkpoint must not take its place while it is not on file.
+    again.checkpoint(make_record(T0 + 9000, seconds=60.0))
+    assert json.loads((tmp_path / "active-session.json").read_text("utf-8"))["steps"] == 2222
+    again.clear_checkpoint()
+    assert (tmp_path / "active-session.json").exists()
+    # Room again: the next checkpoint files it first.
+    full["full"] = False
+    again.checkpoint(make_record(T0 + 9000, seconds=90.0))
+    assert [r.steps for r in again.records] == [2222] and not again.recovery_failed
+    assert json.loads((tmp_path / "active-session.json").read_text("utf-8"))["seconds"] == 90.0
+    again.clear_checkpoint()
+    assert [r.steps for r in SessionStore(tmp_path).records] == [2222]
+
+
+def test_a_checkpoint_kept_for_lack_of_room_is_filed_at_a_later_start(tmp_path: Path, monkeypatch):
+    SessionStore(tmp_path).checkpoint(make_record(T0, seconds=1234.0, steps=2222))
+    full = disk_full(monkeypatch)
+    SessionStore(tmp_path)
+    full["full"] = False
+    later = SessionStore(tmp_path)
+    assert [r.steps for r in later.records] == [2222]
+    assert not (tmp_path / "active-session.json").exists()

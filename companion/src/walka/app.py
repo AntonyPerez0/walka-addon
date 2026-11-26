@@ -148,6 +148,12 @@ class App:
         self._was_moving = False
         self._totals_cache: tuple[float, dict[str, Any]] | None = None
         self._state = self._load_state()
+        if self.store.recovery_failed:
+            self.log_event(
+                "A walk from before Walka was last closed could not be saved yet. Walka keeps it and tries "
+                "again; check that the disk is not full and the data folder can be written.",
+                "error",
+            )
 
         # Sending walks to a Walka account (walka_account/). Here it is
         # not there unless it is handed in: cli does that, at every start
@@ -239,6 +245,7 @@ class App:
             if self.treadmill.status.connected:  # (a belt out of reach has not been heard to stop)
                 self.log_event("The belt is moving." if moving else "The belt has stopped.")
         self._record(wall, speed)
+        self._retry_saving(wall)
         self._maybe_check_for_update()
 
     # ---- recording ---------------------------------------------------------------
@@ -294,6 +301,22 @@ class App:
                     # (While a finished walk is still waiting to be written,
                     # the checkpoint file is what keeps it safe: leave it.)
                     self.store.checkpoint(recorder.snapshot(wall))
+
+    def _retry_saving(self, wall: float) -> None:
+        """With no walk going, a walk that could not be written (a full
+        disk) is tried again now and then. (While one is going, its
+        checkpoints do that: _record.)"""
+        if self.recorder is not None or wall - self._last_checkpoint < CHECKPOINT_EVERY_S:
+            return
+        if not self._unsaved and not self.store.recovery_failed:
+            return
+        self._last_checkpoint = wall
+        if self.store.recovery_failed and self.store.retry_recovery():
+            self._totals_cache = None
+            self.log_event("The walk from before Walka was last closed is saved now.")
+            self.sync_addon()
+        if self._unsaved:
+            self._save_unsaved()
 
     def _finish_recording(self, wall: float) -> SessionRecord | None:
         """Close the walk being recorded and file it. Never raises: a disk

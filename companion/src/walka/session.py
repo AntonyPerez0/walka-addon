@@ -488,6 +488,9 @@ class SessionStore:
             self._lock_key = os.path.normcase(os.path.abspath(self.lock_path))
         self._taken: list[_Hold] | None = None  # the hold this store took, for the day the store is dropped
         self._own_checkpoint = False  # the checkpoint that lies there is this store's to clear
+        # A checkpoint lies there that could not be written as a walk (a full
+        # disk): the only copy of that walk. It is kept, and tried again.
+        self.recovery_failed = False
         self.records: list[SessionRecord] = []  # oldest first
         self.dir.mkdir(parents=True, exist_ok=True)
         self._load()
@@ -514,18 +517,47 @@ class SessionStore:
         if self._claim() == _THEIRS:
             log.info("a walk is still going in another Walka on this data folder: its checkpoint is left alone")
             return
-        self._walk_of_the_checkpoint()
-        self._remove_checkpoint()
+        if self._walk_of_the_checkpoint():
+            self._remove_checkpoint()
 
-    def _walk_of_the_checkpoint(self) -> None:
-        """Make a finished walk of the checkpoint that lies there. Never raises."""
+    def _walk_of_the_checkpoint(self) -> bool:
+        """Make a finished walk of the checkpoint that lies there. Never raises.
+
+        True once the checkpoint can go: its walk is on file now, or it
+        holds none (too short, or not a walk at all). False while the walk
+        could not be written (a full disk, a folder that cannot be written,
+        a checkpoint that cannot be read just now): then the checkpoint is
+        the only copy of the walk, and must stay where it is.
+        """
         try:
-            record = SessionRecord.from_json(json.loads(self.active_path.read_text("utf-8")))
-            if record.seconds >= MIN_SESSION_SECONDS:
-                self.add(record)
-                log.info("recovered an unfinished walk from %s", day_key(record.start))
+            text = self.active_path.read_text("utf-8")
+        except FileNotFoundError:
+            self.recovery_failed = False
+            return True
+        except (OSError, UnicodeDecodeError) as exc:
+            if isinstance(exc, UnicodeDecodeError):
+                log.warning("the unfinished walk's checkpoint is damaged: %s", exc)
+                self.recovery_failed = False
+                return True
+            log.warning("could not read the unfinished walk's checkpoint (it is kept): %s", exc)
+            self.recovery_failed = True
+            return False
+        try:
+            record = SessionRecord.from_json(json.loads(text))
         except Exception as exc:
-            log.warning("could not recover the unfinished walk: %s", exc)
+            log.warning("the unfinished walk's checkpoint is damaged: %s", exc)
+            self.recovery_failed = False
+            return True
+        if record.seconds >= MIN_SESSION_SECONDS:
+            try:
+                self.add(record)
+            except Exception as exc:
+                log.warning("could not save the unfinished walk (its checkpoint is kept): %s", exc)
+                self.recovery_failed = True
+                return False
+            log.info("recovered an unfinished walk from %s", day_key(record.start))
+        self.recovery_failed = False
+        return True
 
     @staticmethod
     def _write(path: Path, data: dict[str, Any]) -> None:
@@ -605,15 +637,35 @@ class SessionStore:
         # The lock first, then the file: a checkpoint of a Walka that runs
         # never lies there without it. (Refused or not, the walk is written.)
         whose = self._claim()
-        if whose == _OURS and not self._own_checkpoint:
-            self._recover_what_was_left_meanwhile()
+        if whose == _OURS and not self._own_checkpoint and not self._recover_what_was_left_meanwhile():
+            # The walk of the checkpoint that lies there is not on file yet,
+            # and it is the only copy of it: it is not written over. (Its
+            # writing failed for want of room, as this one's would.)
+            log.debug("checkpoint not written: an earlier walk's checkpoint still waits to be saved")
+            return
         self._own_checkpoint = True
         try:
             self._write(self.active_path, record.to_json())
         except OSError as exc:
             log.debug("checkpoint failed: %s", exc)
 
-    def _recover_what_was_left_meanwhile(self) -> None:
+    def retry_recovery(self) -> bool:
+        """Try again to write the walk of a checkpoint that could not be
+        written at the start (``recovery_failed``). True once it is on file.
+        Never raises."""
+        if not self.recovery_failed or self._own_checkpoint:
+            return False
+        try:
+            if self._claim() != _OURS:
+                return False
+            if self._walk_of_the_checkpoint():
+                self._remove_checkpoint()
+                return True
+        except Exception as exc:
+            log.debug("the unfinished walk was not tried again: %s", type(exc).__name__)
+        return False
+
+    def _recover_what_was_left_meanwhile(self) -> bool:
         """Before this store writes a walk's first checkpoint, with the lock in its hand.
 
         A checkpoint that lies there now is not this store's, and nobody
@@ -623,15 +675,19 @@ class SessionStore:
         Written over now, it would be gone: so it is recovered first, as a
         start does it. (Only with the lock in hand: without one, nothing
         says that the other Walka is gone.) Never raises.
+
+        False if a walk lies there that could not be written: the
+        checkpoint must not be written over then.
         """
         try:
             hold = _HELD.get(self._lock_key)
             if not self._taken or self._taken[0] is not hold:
-                return  # the lock is held through another store of this process: nothing is known of that one's walk
+                return True  # the lock is held through another store of this process: nothing is known of that one's walk
             if self.active_path.exists():
-                self._walk_of_the_checkpoint()
+                return self._walk_of_the_checkpoint()
         except Exception as exc:
             log.debug("what was left of another walk was not looked at: %s", type(exc).__name__)
+        return True
 
     def clear_checkpoint(self) -> None:
         """This Walka's walk is saved, or came to nothing: its checkpoint goes.
