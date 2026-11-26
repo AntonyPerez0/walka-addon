@@ -203,3 +203,16 @@ def test_a_language_written_from_the_right_turns_the_page(browser_ready, tmp_pat
     assert not (locales / "he.json").exists()
     with Served(tmp_path) as served:
         assert served.look(tmp_path, steps)["dir"] == ["he", "rtl"]
+
+
+def test_numbers_on_one_line_are_written_one_way(browser_ready, tmp_path):
+    steps = [
+        ("shown", "const { fmt } = await import('/static/util.js');"
+                  "return [fmt.speed(2.414 * 1.609344 / 1.609344, 1), fmt.int(1234), fmt.dist(920)];"),
+    ]  # fmt: skip
+    with Served(tmp_path) as served:
+        served.app.config.units = "kmh"
+        german = served.look(tmp_path, steps, locale="de-DE")["shown"]
+        english = served.look(tmp_path, steps, locale="en-US")["shown"]
+    assert german[1] == "1.234" and "," in german[0] and "." not in german[0]
+    assert english[1] == "1,234" and "." in english[0]

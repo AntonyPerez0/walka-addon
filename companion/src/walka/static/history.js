@@ -8,7 +8,8 @@ import { otherAccountWalkWords, sentWalkWords } from "./walkaaccount.js";
 import { tr } from "./i18n.js";
 
 const FIRST_PAGE = 200;
-const ALL = 2000;
+const ALL = 1000000; // "Show more": every walk there is
+let total = 0; // how many walks there are (the snapshot's count), loaded or not
 
 let weekChart = null;
 let tableKey = "";
@@ -238,8 +239,12 @@ function renderList() {
   openId = null;
 
   setShown($("sessions-empty"), !sessions.length && !loading);
-  setShown($("sessions-more"), sessions.length >= limit && limit < ALL);
-  setText($("sessions-count"), sessions.length ? plural(sessions.length, "walk") : "");
+  const all = Math.max(total, sessions.length);
+  setShown($("sessions-more"), sessions.length >= limit && limit < ALL && all > sessions.length);
+  setText(
+    $("sessions-count"),
+    !sessions.length ? "" : sessions.length < all ? `${fmt.int(sessions.length)} of ${plural(all, "walk")}` : plural(all, "walk"),
+  );
 
   list.replaceChildren(
     ...sessions.map((walk) => {
@@ -329,6 +334,7 @@ export function initHistory() {
 }
 
 export function updateHistory(s) {
+  total = s.totals && s.totals.all ? s.totals.all.sessions : 0;
   updateTotals(s);
   updateWeek(s);
   // A walk was saved, discarded, deleted or filed under a game session somewhere: refresh the list.

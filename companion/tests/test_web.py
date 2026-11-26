@@ -863,3 +863,17 @@ def test_no_page_of_the_dashboard_can_be_framed(rig: Rig):
             assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"], path
 
     serve(rig, scenario)
+
+
+def test_every_walk_can_be_listed_not_only_the_newest_two_thousand(rig: Rig):
+    for index in range(2100):
+        rig.app.store.records.append(
+            SessionRecord(id=f"w{index:05d}", start=1_700_000_000 + index * 3600, end=1_700_000_600 + index * 3600,
+                          seconds=600, distance_m=500, steps=700, kcal=30)  # fmt: skip
+        )
+
+    async def scenario(client: TestClient):
+        body = await (await client.get("/api/sessions?limit=1000000")).json()
+        assert len(body["sessions"]) == 2100
+
+    serve(rig, scenario)

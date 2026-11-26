@@ -280,7 +280,8 @@ def create_app(app: App) -> web.Application:
     @routes.get("/api/sessions")
     async def sessions(request: web.Request) -> web.Response:
         try:
-            limit = max(1, min(2000, int(request.query.get("limit", "200"))))
+            # (As many as are asked for: History's "Show more" asks for all of them.)
+            limit = max(1, min(1_000_000, int(request.query.get("limit", "200"))))
         except ValueError:
             limit = 200
         found = [(record, record.summary()) for record in app.store.recent(limit)]
