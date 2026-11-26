@@ -11,6 +11,7 @@ from __future__ import annotations
 import errno
 import json
 import logging
+import math
 import os
 import sys
 import time
@@ -108,12 +109,45 @@ class SessionRecord:
 
     @classmethod
     def from_json(cls, data: dict[str, Any]) -> SessionRecord:
+        """A walk as read from its file. Raises ValueError for one that is
+        not what Walka writes: the file is then left out, not trusted (a
+        start that is text would stop Walka starting, a distance that is
+        not a number would break every total)."""
+        if not isinstance(data, dict):
+            raise ValueError("not a walk")
         known = {f for f in cls.__dataclass_fields__}  # type: ignore[attr-defined]
         values = {k: v for k, v in data.items() if k in known}
         if "game_session" not in values and "beacon_session" in data:
             # (Up to 0.10 the session's number was read off the screen.)
             values["game_session"] = data["beacon_session"]
+        for name in ("start", "end", "seconds", "distance_m", "kcal"):
+            values[name] = _number(values.get(name), name)
+        for name in ("kcal_extra", "max_kmh"):
+            if name in values:
+                values[name] = _number(values[name], name)
+        values["steps"] = int(_number(values.get("steps"), "steps", most=1e12))
+        for name in ("avg_hr", "max_hr", "game_session"):
+            if values.get(name) is not None:
+                values[name] = _number(values[name], name, most=1e9)
+                if name != "avg_hr":
+                    values[name] = int(values[name])
+        if not isinstance(values.get("id"), str) or not values["id"]:
+            raise ValueError("id: not a name")
+        for name in ("source", "character", "steps_source", "distance_source", "calories_source", "treadmill"):
+            if name in values and not isinstance(values[name], str):
+                raise ValueError(f"{name}: not text")
+        if not isinstance(values.get("samples", []), list):
+            raise ValueError("samples: not a list")
+        if not isinstance(values.get("made_up", False), bool):
+            values["made_up"] = True  # (a mark that is anything but false: made up - nothing is sent on a doubt)
         return cls(**values)
+
+
+def _number(value: Any, name: str, *, most: float = 1e13) -> float:
+    """``value`` as a finite number no larger than ``most``, or ValueError."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or abs(value) > most:
+        raise ValueError(f"{name}: not a number a walk can have")
+    return float(value)
 
 
 # What the simulated treadmill calls itself (treadmill/simulated.py): the

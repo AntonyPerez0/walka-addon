@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import math
 import os
 import time
 from pathlib import Path
@@ -492,7 +493,7 @@ def test_record_from_json_ignores_unknown_keys_and_needs_the_required_ones():
     data = {"id": "x", "start": 1.0, "end": 2.0, "seconds": 1.0, "distance_m": 0.5, "steps": 1, "kcal": 0.1}
     record = SessionRecord.from_json({**data, "added_in_a_later_version": True})
     assert record.id == "x" and record.source == "manual" and record.samples == []
-    with pytest.raises(TypeError):
+    with pytest.raises(ValueError):
         SessionRecord.from_json({"id": "x"})
 
 
@@ -810,3 +811,34 @@ def test_a_checkpoint_kept_for_lack_of_room_is_filed_at_a_later_start(tmp_path: 
     later = SessionStore(tmp_path)
     assert [r.steps for r in later.records] == [2222]
     assert not (tmp_path / "active-session.json").exists()
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        {"start": "yesterday"},
+        {"start": True},
+        {"seconds": None},
+        {"seconds": "600"},
+        {"distance_m": float("nan")},
+        {"kcal": float("inf")},
+        {"steps": "many"},
+        {"steps": 1.5e300},
+        {"end": [1]},
+        {"id": 7},
+        {"samples": "none"},
+        {"treadmill": {"name": "x"}},
+        {"avg_hr": "high"},
+    ],
+)
+def test_a_walk_file_with_wrong_values_is_skipped_not_trusted(tmp_path: Path, damage: dict):
+    """One hand-edited or damaged file must neither stop Walka starting nor
+    break the totals: it is left out, and the others are read."""
+    store = SessionStore(tmp_path)
+    good = store.add(make_record(T0))
+    bad = {**make_record(T0 + 9000).to_json(), "id": "20990101-000000", **damage}
+    (tmp_path / "sessions" / "20990101-000000.json").write_text(json.dumps(bad), "utf-8")
+    again = SessionStore(tmp_path)
+    assert [r.id for r in again.records] == [good.id]
+    totals = again.totals(T0)
+    assert totals["all"]["sessions"] == 1 and math.isfinite(totals["all"]["distance_m"])
