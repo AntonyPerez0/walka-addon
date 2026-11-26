@@ -234,6 +234,45 @@ local function identify()
     return true
 end
 
+-- The other characters' `shared` too: a walk of theirs can be settled
+-- while this one is logged in (a walk that the app's file brings now, a
+-- walk shared with this login), and the app reads `shared` before `real`.
+-- Rewritten only where the numbers have changed, so that `savedAt` stays
+-- when they were last true. (Their time played is not known here: kept.)
+local otherPending, otherTotals = {}, {}
+local function shareTheOthers()
+    if not journeys then
+        return
+    end
+    local written = core:GetSyncTime()
+    for other, entry in pairs(journeys) do
+        if other ~= key and type(entry) == "table" and type(entry.real) == "table" then
+            Journey.unbanked(core.db.sessions, other, otherPending, written)
+            Journey.totals(entry, otherPending, nil, otherTotals)
+            local old = type(entry.shared) == "table" and entry.shared or {}
+            local now = {
+                walks = otherTotals.walks,
+                seconds = whole(otherTotals.seconds),
+                distanceM = whole(otherTotals.distanceM),
+                steps = whole(otherTotals.steps),
+                kcal = whole(otherTotals.kcal),
+                estimated = otherTotals.estimated and true or false,
+            }
+            local changed = false
+            for name, value in pairs(now) do
+                if old[name] ~= value then
+                    changed = true
+                end
+            end
+            if changed then
+                now.savedAt = Game.Now()
+                now.played = old.played or entry.played
+                entry.shared = now
+            end
+        end
+    end
+end
+
 -- Logging out or reloading: the saved variables are written after this.
 -- What the companion app reads of the journey is put into the record now:
 -- the real-world totals as they stand (the same whole numbers GetSummary
@@ -260,6 +299,7 @@ local function save()
             estimated = shared.estimated and true or false,
         }
     end
+    pcall(shareTheOthers)
 end
 
 --- Start tracking. `walka` is the addon's core, with its database loaded.

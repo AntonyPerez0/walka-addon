@@ -977,3 +977,20 @@ def test_a_record_banked_by_an_older_version_is_left_as_it_was(make_rt):
     rt = make_rt(saved_variables=saved(own(NOW - 90000, extra=",banked=true")), files=companion(walked))
     assert real(rt)["walks"] == 0 and real(rt)["steps"] == 0
     assert "counted" not in lua_plain(rt.db.sessions[1])
+
+
+def test_what_another_characters_journey_gains_in_this_login_reaches_the_app(make_rt):
+    """The app reads `shared` before `real`. A walk of Other's, settled while
+    Tester is logged in, must be in Other's `shared` once the game saves."""
+    other = "Other-Azeroth"
+    earlier = f"{{real={{walks=1,seconds=600,distanceM=500,steps=700,kcal=30,estimated=false}},since={NOW - 200000}," \
+              f"shared={{savedAt={NOW - 100000},walks=1,seconds=600,distanceM=500,steps=700,kcal=30,estimated=false}}}}"
+    rt = make_rt(
+        saved_variables=saved(own(NOW - 90000, 1800, character=other), more=f",journeys={{['{other}']={earlier}}}"),
+        files=companion(measured(NOW - 90000, 1800, steps=2600)),
+    )
+    assert record(rt, other)["real"]["steps"] == 700 + 2600
+    fresh = rt.reload()
+    shared = record(fresh, other)["shared"]
+    assert shared["steps"] == 700 + 2600 and shared["walks"] == 2
+    assert shared["savedAt"] >= NOW
