@@ -776,3 +776,26 @@ def test_a_second_walka_on_the_same_data_folder_is_refused(tmp_path: Path, capsy
     again, second = session.hold_data_folder(tmp_path)
     assert again == "ours"
     second.let_go()
+
+
+def test_a_port_given_on_the_command_line_is_for_that_run_only(tmp_path: Path):
+    from walka.config import Config
+
+    port = free_port()
+    args = cli.build_parser().parse_args(
+        ["--simulate", "--no-capture", "--no-browser", "--port", str(port), "--data-dir", str(tmp_path)]
+    )
+
+    async def scenario():
+        task = asyncio.create_task(cli._run(args))
+        for _ in range(300):
+            await asyncio.sleep(0.02)
+            if (tmp_path / "config.json").exists():
+                break
+        await asyncio.sleep(0.3)
+        task.cancel()
+        assert await asyncio.wait_for(task, 30) == 0
+
+    asyncio.run(scenario())
+    saved = json.loads((tmp_path / "config.json").read_text("utf-8"))
+    assert saved["web"]["port"] == Config().web.port != port

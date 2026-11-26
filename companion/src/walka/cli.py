@@ -668,8 +668,8 @@ async def _run_on_the_folder(
         goes = _dashboard_goes(args, cfg)
         if goes == "window":
             goes = "browser"  # nobody is here to open one
-    if args.port:
-        cfg.web.port = args.port
+    # --port is for this run: config.json keeps the port that is set there.
+    wanted_port = args.port or cfg.web.port
     replay = getattr(args, "replay", None)
     simulate = bool(args.simulate or args.demo or replay)
 
@@ -706,7 +706,7 @@ async def _run_on_the_folder(
             demo_tasks.append(asyncio.create_task(_demo_game(app, stop)))
             demo_tasks.append(asyncio.create_task(_demo_walker(treadmill, stop)))
         await app.start()
-        port = cfg.web.port
+        port = wanted_port
         for attempt in range(10):
             try:
                 runner = await web.serve(app, cfg.web.host, port + attempt)
@@ -715,7 +715,7 @@ async def _run_on_the_folder(
             except OSError:
                 continue
         if runner is None:
-            _could_not_start(f"Could not open a port near {cfg.web.port} for the dashboard.")
+            _could_not_start(f"Could not open a port near {wanted_port} for the dashboard.")
             return 2
         shown_host = "127.0.0.1" if cfg.web.host in ("0.0.0.0", "::", "") else cfg.web.host
         url = f"http://{shown_host}:{port}/"
