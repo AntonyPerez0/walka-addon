@@ -398,3 +398,12 @@ def test_nobody_is_told_that_walka_asks_nobody(repo_root: Path):
                 assert "every start" in around, f"{path.name}: {around!r}"
     development = " ".join(texts[repo_root / "docs" / "DEVELOPMENT.md"].split())
     assert "the only part that asks anything over the internet" not in development
+
+
+def test_the_walka_account_page_says_what_stopping_and_signing_out_do(repo_root: Path):
+    """Neither cuts short a request already started, and a sign-out tells
+    walka.dev only with a sign-in in hand: the page says both, plainly."""
+    text = " ".join((repo_root / "docs" / "WALKA-ACCOUNT.md").read_text("utf-8").split())
+    assert "takes effect at once" not in text
+    assert "A request that was already on its way is not called back" in text
+    assert "Signing out in Walka does not always end the sign-in at walka.dev" in text

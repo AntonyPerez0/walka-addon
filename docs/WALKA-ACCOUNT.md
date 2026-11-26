@@ -57,9 +57,10 @@ else has a hand in that.
   asking again. (A walk that is saved as Walka closes goes at the next
   start. When there is no answer, Walka tries again later.) If your page
   on walka.dev is public, a walk counts on it as soon as it is sent.
-* **To stop:** *Stop sending* in the same place, or *Sign out*. Either
-  takes effect at once, and neither deletes anything in your Walka
-  account.
+* **To stop:** *Stop sending* in the same place, or *Sign out*. From that
+  moment no walk is sent. A request that was already on its way is not
+  called back: it ends by itself, within 20 seconds at most. Neither
+  deletes anything in your Walka account.
 * **Deleting on one side deletes nothing on the other.** A walk you
   delete on the dashboard stays in your Walka account until you delete it
   there ([walka.dev/account/walks/](https://walka.dev/account/walks/)). A
@@ -91,6 +92,12 @@ there, make your page public and delete the Walka account.
 * **"Sign out" on walka.dev does not sign this computer out.** A computer
   stays signed in until somebody signs out on it, in Walka, or the Walka
   account is deleted.
+* **Signing out in Walka does not always end the sign-in at walka.dev.**
+  It takes the sign-in off this computer at once. Walka also tells
+  walka.dev, but only when it has a sign-in in hand that has not run out
+  (one from the last hour or so); it never signs in again just to sign
+  out. Otherwise the sign-in stays valid at walka.dev, unused, until it
+  runs out there. Nothing on this computer can use it any more.
 * **A proxy set for your system is not used.** Walka makes its requests
   directly, and asks nobody whose certificate it cannot check. Where the
   internet is reached only through a proxy, Walka cannot sign in or send.
