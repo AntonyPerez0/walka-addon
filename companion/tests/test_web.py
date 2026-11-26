@@ -561,9 +561,10 @@ def test_sessions_list_detail_tcx_delete(rig: Rig):
         assert [r.id for r in rig.app.store.records] == [new.id]
         assert not (rig.app.data_dir / "sessions" / f"{old.id}.json").exists()
         assert (rig.app.data_dir / "sessions" / f"{new.id}.json").exists()
-        # Totals and the addon's file follow straight away.
+        # Totals follow straight away, and the addon's file as soon as it is written (on a worker thread).
         totals = (await (await client.get("/api/state")).json())["totals"]
         assert totals["all"]["sessions"] == 1 and totals["all"]["steps"] == 222
+        await rig.app.synced()
         text = (rig.addon / "CompanionData.lua").read_text("utf-8")
         assert "steps = 222" in text and "steps = 111" not in text
 

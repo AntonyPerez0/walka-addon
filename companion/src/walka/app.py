@@ -147,6 +147,8 @@ class App:
         self._idle_since: float | None = None
         self._was_moving = False
         self._totals_cache: tuple[float, dict[str, Any]] | None = None
+        self._sync_task: asyncio.Task | None = None  # writing the addon's file, on a worker thread
+        self._sync_wanted = False
         self._state = self._load_state()
         if self.store.recovery_failed:
             self.log_event(
@@ -202,7 +204,7 @@ class App:
             self._pin_treadmill()
             self._state["treadmill"] = {"name": status.name}
             self._save_state()
-            self.sync_addon()
+            self.request_sync()
 
     def _pin_treadmill(self) -> None:
         """Tie Walka to the treadmill it has just connected to.
@@ -317,7 +319,7 @@ class App:
         if self.store.recovery_failed and self.store.retry_recovery():
             self._totals_cache = None
             self.log_event("The walk from before Walka was last closed is saved now.")
-            self.sync_addon()
+            self.request_sync()
         if self._unsaved:
             self._save_unsaved()
 
@@ -369,7 +371,7 @@ class App:
                 f"{record.steps} steps, {record.kcal:.0f} kcal."
             )
         self._totals_cache = None
-        self.sync_addon()
+        self.request_sync()
         if self.walka_account is not None:
             for _record in saved:
                 try:
@@ -392,12 +394,9 @@ class App:
         addon is installed first, then every other install found."""
         return addon_sync.game_dirs(self.config.wow.addon_dir or None)
 
-    def sync_addon(self) -> bool:
-        """Write history and profile into the addon folder."""
-        directory = self.find_addon_dir()
-        if directory is None:
-            self.addon_error = "Walka addon folder not found - install the addon or set its folder in Settings."
-            return False
+    def addon_payload(self) -> dict[str, Any]:
+        """What the addon's file is to hold now. Memory only: made on the
+        loop, so that the walks are read where they are written."""
         profile = {
             "weightKg": round(self.config.profile.weight_kg, 1),
             "heightCm": round(self.config.profile.height_cm, 1),
@@ -405,8 +404,49 @@ class App:
         }
         known = self._state.get("treadmill")
         name = known.get("name", "") if isinstance(known, dict) else ""
+        return addon_sync.build_payload(list(self.store.records), profile=profile, treadmill_name=name)
+
+    def request_sync(self) -> None:
+        """Have the addon's file written again, from the loop: on a worker
+        thread (finding the addon's folder looks at drives, and writing the
+        file may wait for the game to let go of it), one write at a time,
+        and the newest is always the last. Off the loop: at once."""
         try:
-            addon_sync.sync(directory, self.store, profile=profile, treadmill_name=name)
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self.sync_addon()
+            return
+        self._sync_wanted = True
+        if self._sync_task is None or self._sync_task.done():
+            self._sync_task = loop.create_task(self._sync_off_the_loop(), name="walka-addon-sync")
+
+    async def _sync_off_the_loop(self) -> None:
+        while self._sync_wanted:
+            self._sync_wanted = False
+            try:
+                payload = self.addon_payload()
+            except Exception as exc:
+                # (One damaged walk on file: reported, as sync_addon does.)
+                self.addon_error = f"could not write the addon data file: {exc}"
+                log.warning(self.addon_error, exc_info=True)
+                continue
+            await asyncio.to_thread(self.sync_addon, payload)
+
+    async def synced(self) -> None:
+        """Wait until the addon's file is as it was last asked to be."""
+        while self._sync_task is not None and not self._sync_task.done():
+            await asyncio.shield(self._sync_task)
+
+    def sync_addon(self, payload: dict[str, Any] | None = None) -> bool:
+        """Write history and profile into the addon folder (``payload``:
+        made beforehand with ``addon_payload``). Waits on the disk: from the
+        loop, ``request_sync``."""
+        directory = self.find_addon_dir()
+        if directory is None:
+            self.addon_error = "Walka addon folder not found - install the addon or set its folder in Settings."
+            return False
+        try:
+            addon_sync.write_data_file(directory, self.addon_payload() if payload is None else payload)
         except Exception as exc:
             # The sync is a convenience. Whatever goes wrong with it - a disk
             # that is full, one damaged walk on file - must not take the
@@ -904,7 +944,7 @@ class App:
                 f"The game's saved file shows the game sessions of {changed} "
                 f"walk{'s' if changed != 1 else ''}: filed under them."
             )
-            self.sync_addon()
+            self.request_sync()
         return changed
 
     # ---- lifecycle ---------------------------------------------------------------
@@ -1062,6 +1102,10 @@ class App:
             self._save_unsaved()
         except Exception:
             log.exception("could not save the walk on exit")
+        try:
+            await self.synced()
+        except Exception:
+            log.exception("the addon's file was not written on exit")
         if self.hr_network is not None:
             try:
                 await self.hr_network.stop()

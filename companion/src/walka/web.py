@@ -324,7 +324,7 @@ def create_app(app: App) -> web.Application:
         if not app.store.delete(request.match_info["session_id"]):
             raise web.HTTPNotFound()
         app._totals_cache = None
-        app.sync_addon()
+        app.request_sync()
         return ok()
 
     # ---- journey (the Share page) ------------------------------------------------
@@ -360,7 +360,8 @@ def create_app(app: App) -> web.Application:
 
     @routes.post("/api/addon/sync")
     async def addon_sync_now(_request: web.Request) -> web.Response:
-        success = app.sync_addon()
+        # (Finding the folder looks at drives: on a worker thread.)
+        success = await asyncio.to_thread(app.sync_addon, app.addon_payload())
         return web.json_response({"ok": success, "error": app.addon_error}, status=200 if success else 409)
 
     @routes.post("/api/addon/install")

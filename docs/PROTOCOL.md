@@ -251,7 +251,10 @@ Both files are read the same way (`savedvars.py`, `game_file.py`,
   next look; one that cannot be read is tried again only once it has
   changed, and what was read before it stands meanwhile.
 * **Off the recording loop.** The files are read on a worker thread, never
-  on the loop that records the walk, so a slow disk cannot hold up a walk.
+  on the loop that records the walk, and what the loop asks of them is
+  answered from the last look while the next one is under way. The addon's
+  `CompanionData.lua` is written on a worker thread too. So a slow disk
+  cannot hold up a walk.
 * **Checked.** Every time and number is checked against what can be true
   (a session cannot begin before 2020 or last longer than a week), and a
   file, a session or a journey that does not pass is left out.

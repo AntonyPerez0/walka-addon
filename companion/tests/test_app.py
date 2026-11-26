@@ -93,6 +93,7 @@ class Rig:
             self.clock.advance(TICK_S)
             await self.app.tick()
             self.treadmill.advance(TICK_S)
+        await self.app.synced()  # (the addon's file is written on a worker thread)
 
     async def walk(self, kmh: float = 3.2) -> None:
         """The walker presses start on the remote, waits out the countdown
@@ -867,8 +868,16 @@ def test_a_sync_that_blows_up_is_reported_not_raised(rig: Rig, monkeypatch):
     def explode(*_args, **_kwargs):
         raise ValueError("cannot convert float NaN to integer")
 
-    monkeypatch.setattr("walka.app.addon_sync.sync", explode)
+    monkeypatch.setattr("walka.app.addon_sync.build_payload", explode)
     assert rig.app.sync_addon() is False
+    assert "NaN" in rig.app.addon_error
+
+    async def from_the_loop():
+        rig.app.addon_error = ""
+        rig.app.request_sync()
+        await rig.app.synced()
+
+    run(from_the_loop())
     assert "NaN" in rig.app.addon_error
 
 
@@ -1047,3 +1056,73 @@ def test_the_checkpoint_goes_as_soon_as_the_walk_is_written(rig: Rig, monkeypatc
 
     run(scenario())
     assert len(rig.app.store.records) == 1 and seen and seen[-1] is False
+
+
+# ---- nothing on the loop waits on the disk --------------------------------------------------------
+
+
+def test_a_slow_look_at_the_games_folders_does_not_hold_up_the_loop(rig: Rig, monkeypatch):
+    """The scan runs on a worker thread. What the loop asks of it meanwhile
+    (rev, sessions, the status) is answered at once."""
+    import threading
+    import time as real_time
+
+    from walka import game_file
+
+    inside = threading.Event()
+    real_files = game_file.account_files
+
+    def slow(folder):
+        inside.set()
+        real_time.sleep(1.0)  # a network drive, a disk that is spinning up
+        return real_files(folder)
+
+    monkeypatch.setattr(game_file, "account_files", slow)
+    scanning = threading.Thread(target=rig.app.game.scan, kwargs={"force": True})
+    scanning.start()
+    assert inside.wait(5)
+    began = real_time.monotonic()
+    rig.app.game.rev, rig.app.game.sessions(), rig.app.game.status(), rig.app.game.journeys()
+    assert real_time.monotonic() - began < 0.2
+    scanning.join()
+
+
+def test_the_addons_file_is_written_off_the_loop(rig: Rig, monkeypatch):
+    """Finding the addon's folder looks at drives, and writing the file may
+    wait for the game to let go of it: a walk's end never waits for that."""
+    import threading
+    import time as real_time
+
+    from walka import addon_sync
+
+    loop_thread: list[int] = []
+    wrote_on: list[int] = []
+    real_write = addon_sync.write_data_file
+
+    def slow_write(directory, payload):
+        wrote_on.append(threading.get_ident())
+        real_time.sleep(0.5)
+        return real_write(directory, payload)
+
+    monkeypatch.setattr(addon_sync, "write_data_file", slow_write)
+
+    async def scenario():
+        loop_thread.append(threading.get_ident())
+        await rig.connect()
+        await rig.walk()
+        await rig.run(60)
+        rig.treadmill.press_stop()
+        slowest = 0.0
+        for _ in range(int((FREE_WALK_GRACE_S + 5) / TICK_S)):  # the walk ends, and the file is to be written
+            rig.clock.advance(TICK_S)
+            began = real_time.monotonic()
+            await rig.app.tick()
+            slowest = max(slowest, real_time.monotonic() - began)
+            rig.treadmill.advance(TICK_S)
+        assert rig.app.recorder is None and slowest < 0.3, "the loop waited for the file"
+        await rig.app.synced()
+        assert wrote_on and loop_thread[0] not in wrote_on
+        assert rig.app.last_sync is not None
+
+    run(scenario())
+    assert load_companion_data(rig).sessions[1] is not None
