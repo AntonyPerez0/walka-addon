@@ -603,7 +603,12 @@ async def a_made_up_walk_by_way_of(how: str, data: Path, monkeypatch) -> None:
     """Walka, run by its command line's own code on the simulated treadmill - reached ``how`` - with
     the accounts' address in the environment all the while. Somebody "walks" for a moment, Walka is
     closed, and the walk is saved."""
-    flags = {"--demo": ["--demo"], "--simulate": ["--simulate", "--no-capture"], "config.json": ["--no-capture"]}[how]
+    flags = {
+        "--demo": ["--demo"],
+        "--simulate": ["--simulate", "--no-capture"],
+        "config.json": ["--no-capture"],
+        "--replay": ["--replay", str(a_recording(data.parent / "recorded.json")), "--no-capture"],
+    }[how]
     settings = data / "config.json"
     if how == "config.json":
         # As config.json can say, with neither switch.
@@ -618,8 +623,9 @@ async def a_made_up_walk_by_way_of(how: str, data: Path, monkeypatch) -> None:
     async with aiohttp.ClientSession() as session:
         state = await until_served(session, port)
         assert state["treadmill"]["kind"] == "simulated" and "walka_account" not in state
-        if how != "--demo":
-            # (The demo has a made-up walker. Here the simulated pad's remote is pressed, on the dashboard.)
+        if how not in ("--demo", "--replay"):
+            # (The demo has a made-up walker, a recording its own walk. Here the simulated pad's
+            # remote is pressed, on the dashboard.)
             async with session.post(f"{there}/api/treadmill/press", json={"button": "start"}) as response:
                 assert response.status == 200
         for _ in range(1500):
@@ -632,6 +638,53 @@ async def a_made_up_walk_by_way_of(how: str, data: Path, monkeypatch) -> None:
     task.cancel()  # what Ctrl+C does
     assert await asyncio.wait_for(task, 30) == 0
     assert len(list((data / "sessions").glob("*.json"))) == before + 1
+
+
+def a_recording(path: Path) -> Path:
+    """What ``probe --record`` saves of a real pad (a UREVO, by its name) with its belt moving."""
+    from walka import ftms
+    from walka.recording import Recording
+
+    recorded = Recording(name="URTM030", address="F4:12:FA:..:..:..")
+    recorded.add_characteristic(ftms.FTMS_SERVICE, ftms.TREADMILL_DATA, ["notify"])
+    for tenth in range(40):
+        recorded.add_notification(tenth / 10, ftms.TREADMILL_DATA, ftms.build_treadmill_data(3.0))
+    return recorded.save(path)
+
+
+def test_a_walk_played_back_from_a_recording_is_never_sent(tmp_path, monkeypatch):
+    """--replay saves its walk under the recorded pad's name, not the
+    simulated pad's: it is made up all the same, and the next normal start
+    of Walka, signed in and sending everything, does not send it."""
+    monkeypatch.setattr(session_module, "MIN_SESSION_SECONDS", 0.5)
+
+    async def scenario():
+        async with Rig(tmp_path, start=False) as rig:
+            monkeypatch.setenv(URL_VARIABLE, rig.fake.origin)
+            monkeypatch.setenv(KEY_VARIABLE, rig.fake.key)
+            await a_made_up_walk_by_way_of("--replay", rig.dir, monkeypatch)
+            assert rig.fake.requests == [] and not (rig.dir / ledger.FILE_NAME).exists()
+            monkeypatch.delenv(URL_VARIABLE)
+            monkeypatch.delenv(KEY_VARIABLE)
+            app = hand_in(rig, tmp_path)
+            (replayed,) = app.store.records
+            assert replayed.treadmill == "URTM030" and replayed.made_up is True
+            await app.start()
+            real = rig.walk(86400)
+            user = rig.person()
+            await rig.sign_in()
+            assert rig.snapshot()["counts"] == {**ZERO, "waiting": 1}
+            question = await rig.question()
+            assert rig.account.switch_on(question["id"], "all") == OK
+            await rig.idle()
+            assert sent_to(rig, user) == [real.id]
+            assert "URTM030" not in json.dumps(rig.pushes()) or all(
+                sent["client_id"] == real.id for rows in rig.pushes() for sent in rows
+            )
+            await app.stop()
+            assert await left_running() == []
+
+    run(scenario, 60)
 
 
 def test_made_up_walks_by_every_way_to_the_simulated_treadmill_lie_among_real_ones_and_none_is_counted_or_sent(

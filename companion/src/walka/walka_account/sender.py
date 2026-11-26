@@ -80,8 +80,19 @@ BATCH = 200
 # The version of the database's rules this Walka knows.
 KNOWN_SCHEMA = 1
 # What the simulated treadmill calls itself (treadmill/simulated.py). A walk
-# that bears this name was made up, and never reaches a Walka account.
+# that bears this name was made up, and never reaches a Walka account; so
+# does one marked made up (session.SessionRecord.made_up: --replay too).
 MADE_UP = "Simulated pad"
+
+
+def made_up(record: Any) -> bool:
+    """A walk walked on no treadmill: marked so (anything but false is taken
+    for made up - nothing is sent on a doubt), or by the simulated pad's name."""
+    if isinstance(record, dict):
+        mark, name = record.get("made_up", False), record.get("treadmill", "")
+    else:
+        mark, name = getattr(record, "made_up", False), getattr(record, "treadmill", "")
+    return mark is not False or name == MADE_UP
 # A walk's file is small: a day of walking, a sample every five seconds, is
 # half a megabyte. What is larger than this was written by no Walka.
 MOST_FILE_BYTES = 16 * 1024 * 1024
@@ -179,7 +190,7 @@ def _read_walk(folder: Path, walk: Walk, now_ms: int) -> None:
         # was written by no Walka, and cannot be told from a made-up walk.
         walk.kind = "unnamed"
         return
-    if treadmill == MADE_UP:
+    if made_up(record):
         walk.kind = "made_up"
         return
     made = row.walk_row(record)

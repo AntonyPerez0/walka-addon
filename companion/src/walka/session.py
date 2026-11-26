@@ -88,6 +88,10 @@ class SessionRecord:
     calories_source: str = "speed"  # "speed" | "heart_rate"
     treadmill: str = ""
     samples: list[list[float | None]] = field(default_factory=list)  # [t, kmh, bpm]
+    # Walked on no treadmill: the simulated one (--simulate, --demo) or a
+    # recording played back (--replay). Marked when it is recorded, from the
+    # kind of treadmill, never from a name. Never sent to a Walka account.
+    made_up: bool = False
 
     @property
     def avg_kmh(self) -> float:
@@ -112,6 +116,17 @@ class SessionRecord:
         return cls(**values)
 
 
+# What the simulated treadmill calls itself (treadmill/simulated.py): the
+# walks of Walkas before 0.13 that were made up are known by this name.
+SIMULATED_NAME = "Simulated pad"
+
+
+def is_made_up(record: object) -> bool:
+    """Was this walk walked on no treadmill (``SessionRecord.made_up``, or
+    the simulated pad's name in a walk saved before there was the mark)?"""
+    return getattr(record, "made_up", False) is True or getattr(record, "treadmill", "") == SIMULATED_NAME
+
+
 def _plausible(counter_total: float, integrated: float) -> bool:
     """Is a counter-derived total believable next to our own integration?"""
     if integrated <= 0:
@@ -122,11 +137,12 @@ def _plausible(counter_total: float, integrated: float) -> bool:
 class SessionRecorder:
     """Accumulates one walk from once-per-tick treadmill readings."""
 
-    def __init__(self, *, treadmill: str, started_at: float, source: str = "free") -> None:
+    def __init__(self, *, treadmill: str, started_at: float, source: str = "free", made_up: bool = False) -> None:
         # (Which game session the walk was in is known only once the game
         # has saved its file: game_file, App.file_walks.)
         self.source = source
         self.treadmill = treadmill
+        self.made_up = made_up
         self.started_at = started_at
         self.last_at = started_at
         self.seconds = 0.0
@@ -326,6 +342,7 @@ class SessionRecorder:
             calories_source=self.calories_source,
             treadmill=self.treadmill,
             samples=list(self.samples),
+            made_up=self.made_up,
         )
 
 

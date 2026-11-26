@@ -30,7 +30,7 @@ from .config import Config
 from .journey import attach as attach_journeys
 from .metrics import Profile
 from .road import RoadBook, walked_spans
-from .session import SessionRecord, SessionRecorder, SessionStore
+from .session import SessionRecord, SessionRecorder, SessionStore, is_made_up
 from .treadmill import Treadmill, TreadmillError, TreadmillEvent
 from .treadmill_check import REPORTS_DIR, CheckState, run_check
 from .updates import UpdateState
@@ -268,7 +268,10 @@ class App:
 
         if recorder is None and want:
             status = self.treadmill.status
-            recorder = SessionRecorder(treadmill=status.name, started_at=wall)
+            # (Made up: the simulated pad, or a recording played back - known
+            # by the kind of treadmill, whatever name it shows.)
+            made_up = self.treadmill.kind == "simulated"
+            recorder = SessionRecorder(treadmill=status.name, started_at=wall, made_up=made_up)
             self.recorder = recorder
             self._last_checkpoint = wall
 
@@ -779,7 +782,7 @@ class App:
         walks: list[SessionRecord] = list(self.store.records)
         if self.recorder is not None and self.recorder.seconds > 0:
             walks.append(self.recorder.snapshot(self.wall()))
-        return walked_spans(walks)
+        return walked_spans(walk for walk in walks if not is_made_up(walk))
 
     def snapshot(self) -> dict[str, Any]:
         wall = self.wall()

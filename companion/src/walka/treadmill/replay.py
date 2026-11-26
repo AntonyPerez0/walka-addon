@@ -3,9 +3,11 @@
 The recording - made with ``walka probe --record`` - goes through the real
 Bluetooth reader (``FtmsTreadmill``), so the dashboard shows what Walka
 would have made of that pad on that day. To the rest of the companion it
-is a simulated treadmill: what it records are not real walks, so they are
-never sent anywhere (a Walka account takes no walk from a simulated
-treadmill), and no Bluetooth address is stored for it.
+is a simulated treadmill (its ``kind``): what it records are not real
+walks. They are saved under the recorded pad's name, but marked as made up
+when they are recorded (``SessionRecord.made_up``, from the kind), so they
+are never sent anywhere (a Walka account takes no made-up walk), and no
+Bluetooth address is stored for it.
 
 Like every reader here it only listens. When the recording ends the link
 is lost, as when a pad is switched off; the companion then reconnects and
