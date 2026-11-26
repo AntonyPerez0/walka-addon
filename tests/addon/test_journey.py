@@ -927,3 +927,53 @@ def test_the_totals_never_step_back_while_walking_stopping_and_pruning(make_rt):
     # shorter than the 20 seconds it takes to count as a walk.
     assert previous["walks"] == 7 and len(lua_list(rt.db.sessions)) == 4
     assert real(rt.reload()) == previous
+
+
+# ---- each measured walk once, for every record it is part of ------------------------------------
+
+
+def auto_login(start, seconds) -> str:
+    return own(start, seconds, steps=0, distance=0, kcal=0, extra=",auto=true")
+
+
+def test_a_second_walk_of_a_login_that_arrives_later_is_added(make_rt):
+    """One login (the automatic session) with two walks in it; the app's
+    file at the next login knows the first only, the file after that both."""
+    start = NOW - 20000
+    login = auto_login(start, 7200)
+    first, second = measured(start + 600, 1200, steps=2000), measured(start + 5400, 1200, steps=3000)
+    rt = make_rt(saved_variables=saved(login), files=companion(first))
+    assert real(rt)["walks"] == 1 and real(rt)["steps"] == 2000
+    rt.files["CompanionData.lua"] = companion(first, second)["CompanionData.lua"]
+    later = rt.reload(gap=3600)
+    assert real(later)["walks"] == 2 and real(later)["steps"] == 5000
+    # And not again at the next login.
+    assert real(later.reload(gap=3600))["steps"] == 5000
+
+
+def test_a_walk_shared_with_a_record_that_appears_later_is_not_counted_twice(make_rt):
+    """A walk counted whole for one record; then a second record of the same
+    time appears (another character's): between them they get it once."""
+    walked = measured(NOW - 90000, 3600, steps=6000, distance=3000, kcal=240.0)
+    rt = make_rt(saved_variables=saved(own(NOW - 90000, 2400, steps=3000)), files=companion(walked))
+    assert real(rt)["steps"] == 6000
+    rt.run(
+        "table.insert(WalkaDB.sessions, {id=2,start=%d,['end']=%d,seconds=1200,distanceM=0,steps=1500,kcal=0,"
+        "yards=0,maxKmh=0,character='Other-Azeroth'})" % (NOW - 87600, NOW - 86400)
+    )
+    later = rt.reload(gap=3600)
+    mine, other = record(later)["real"], record(later, "Other-Azeroth")["real"]
+    assert mine["steps"] == pytest.approx(4000) and other["steps"] == pytest.approx(2000)
+    assert mine["steps"] + other["steps"] == pytest.approx(6000)
+    assert mine["walks"] == 1 and other["walks"] == 1
+    again = later.reload(gap=3600)
+    assert record(again)["real"]["steps"] == pytest.approx(4000)
+
+
+def test_a_record_banked_by_an_older_version_is_left_as_it_was(make_rt):
+    """Before `counted`, what a banked record had taken is not known: it is
+    not counted again (that could count a walk twice)."""
+    walked = measured(NOW - 90000, 1800, steps=2600)
+    rt = make_rt(saved_variables=saved(own(NOW - 90000, extra=",banked=true")), files=companion(walked))
+    assert real(rt)["walks"] == 0 and real(rt)["steps"] == 0
+    assert "counted" not in lua_plain(rt.db.sessions[1])

@@ -236,17 +236,42 @@ local function settle(record, walk, share, estimated)
     end
 end
 
+-- Change the settled totals of `record` by `delta` of a walk's numbers
+-- (a walk counted before, whose share has changed since).
+local function adjust(record, walk, delta)
+    local real = record.real
+    real.seconds = math.max(0, real.seconds + count(walk.seconds) * delta)
+    real.distanceM = math.max(0, real.distanceM + count(walk.distanceM) * delta)
+    real.steps = math.max(0, real.steps + count(walk.steps) * delta)
+    real.kcal = math.max(0, real.kcal + count(walk.kcal) * delta)
+end
+
+-- What a measured walk is known by in `own.counted`: when it began, to the
+-- second (the app starts no two walks in the same second).
+local function walkKey(walk)
+    local start = usableTime(walk.start)
+    return start and string.format("%d", floor(start)) or nil
+end
+
 --- Settle the walks the companion has measured.
 --
 -- `absorbed` is filled by SessionLog.merge(ownSessions, companionData,
 -- absorbed): for each of the addon's records that is part of measured
 -- walks, the list of those walks. A record can hold several walks (the
--- belt stopped and started again during the session), and a walk can be
--- part of several records (a session that was restarted, or two characters
--- played during it); the records of one walk share its numbers in
--- proportion to their own time, so that between them they get the walk
--- once. `now` is when tracking begins for a character that has no journey
--- record yet.
+-- belt stopped and started again during the session, or the automatic
+-- session that lasts the whole login), and a walk can be part of several
+-- records (a session that was restarted, or two characters played during
+-- it); the records of one walk share its numbers in proportion to their
+-- own time, so that between them they get the walk once. `now` is when
+-- tracking begins for a character that has no journey record yet.
+--
+-- What each record has counted is kept in it, walk by walk: `counted`
+-- maps a walk (walkKey) to the share of it the record has taken. A walk
+-- that arrives later (the app's file at a later login knows more walks of
+-- the session) is added then; a share that changes (another record of the
+-- same time appears) is put right by the difference. `banked` says that
+-- the record has taken over measured numbers at all. (A record banked
+-- before `counted` existed is left as it was: what it took is not known.)
 function Journey.bank(journeys, ownSessions, absorbed, now)
     local covered, parts = {}, {}
     for index, walks in pairs(absorbed) do
@@ -257,7 +282,9 @@ function Journey.bank(journeys, ownSessions, absorbed, now)
     end
     for index, walks in pairs(absorbed) do
         local own = ownSessions[index]
-        if not own.banked and Journey.isCharacter(own.character) then
+        local counted = type(own.counted) == "table" and own.counted or nil
+        if Journey.isCharacter(own.character) and (counted or not own.banked) then
+            counted = counted or {}
             local record = Journey.open(journeys, own.character, now)
             for _, walk in ipairs(walks) do
                 local share
@@ -266,8 +293,18 @@ function Journey.bank(journeys, ownSessions, absorbed, now)
                 else
                     share = 1 / parts[walk]
                 end
-                settle(record, walk, share, false)
+                local key = walkKey(walk)
+                local before = key and tonumber(counted[key])
+                if not before then
+                    settle(record, walk, share, false)
+                elseif math.abs(share - before) > 1e-9 then
+                    adjust(record, walk, share - before)
+                end
+                if key then
+                    counted[key] = share
+                end
             end
+            own.counted = counted
             own.banked = true
         end
     end
