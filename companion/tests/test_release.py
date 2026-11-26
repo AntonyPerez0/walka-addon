@@ -5,6 +5,7 @@ and the workflow that builds and publishes it."""
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import re
 import shutil
@@ -444,3 +445,42 @@ def test_the_lock_files_are_written_again_and_compared_by_the_build(repo_root: P
         header = check.header_of((repo_root / "companion" / lock).read_text("utf-8"))
         command = check.command_for(header, lock)
         assert command[:3] == ["uv", "pip", "compile"] and "--generate-hashes" in command
+
+
+def test_the_pins_are_watched_for_advisories(repo_root: Path):
+    check = load_tool(repo_root, "check_advisories")
+    pinned = check.all_pins()
+    assert ("aiohttp", locked_version(repo_root, "aiohttp")) in pinned and ("uv", "0.13.10") in pinned
+
+    class Answer:
+        def __init__(self, body):
+            self.body = body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return self.body
+
+    asked = []
+
+    def opener(request, timeout):
+        asked.append(json.loads(request.data))
+        return Answer(json.dumps({"results": [{"vulns": [{"id": "GHSA-x"}]}, {}]}).encode())
+
+    assert check.ask([("aiohttp", "3.9.0"), ("idna", "3.10")], opener) == [["GHSA-x"], []]
+    (query,) = asked
+    assert query == {"queries": [{"package": {"name": "aiohttp", "ecosystem": "PyPI"}, "version": "3.9.0"},
+                                 {"package": {"name": "idna", "ecosystem": "PyPI"}, "version": "3.10"}]}  # fmt: skip
+    text = (repo_root / ".github" / "workflows" / "advisories.yml").read_text("utf-8")
+    assert "schedule:" in text and "python tools/check_advisories.py" in text
+    for action, rest in re.findall(r"(?m)^\s*-?\s*uses:\s*(\S+)(.*)$", text):
+        assert re.fullmatch(r"[\w.-]+/[\w./-]+@[0-9a-f]{40}", action) and re.search(r"#\s*v\d+\.\d+\.\d+", rest)
+
+
+def locked_version(repo_root: Path, name: str) -> str:
+    text = (repo_root / "companion" / "requirements-build.lock").read_text("utf-8")
+    return re.search(rf"(?m)^{name}==(\S+)", text).group(1)

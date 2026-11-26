@@ -1,0 +1,28 @@
+name: Advisories
+
+# Is any package pinned in the lock files named in a security advisory?
+# Every week, whenever a lock file changes, and by hand. A red run names
+# the advisory and the package: raise that pin (see the lock files'
+# headers) and the next build takes it. Dependabot does not read these
+# lock files, so this is what watches the pins.
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  push:
+    paths: ["companion/requirements-*.lock", "tools/check_advisories.py"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  advisories:
+    name: Advisories for the pinned packages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+      - name: Ask OSV.dev about every version pinned
+        run: python tools/check_advisories.py
