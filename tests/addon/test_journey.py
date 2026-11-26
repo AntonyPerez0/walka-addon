@@ -994,3 +994,21 @@ def test_what_another_characters_journey_gains_in_this_login_reaches_the_app(mak
     shared = record(fresh, other)["shared"]
     assert shared["steps"] == 700 + 2600 and shared["walks"] == 2
     assert shared["savedAt"] >= NOW
+
+
+def test_a_reload_takes_over_the_measured_walks_of_the_session_still_running(make_rt):
+    """docs/IN-GAME-CHECKLIST.md: after the walk, /reload - the numbers are
+    the treadmill's. The automatic session runs on through the /reload."""
+    rt = make_rt(auto_session=True)
+    rt.tick()
+    start = rt.walka.GetSession(rt.walka).start
+    rt.advance(1800)
+    rt.files["CompanionData.lua"] = companion(measured(start + 300, 1200, steps=2000))["CompanionData.lua"]
+    fresh = rt.reload()
+    fresh.tick()
+    assert fresh.walka.IsActive(fresh.walka)
+    assert real(fresh)["walks"] == 1 and real(fresh)["steps"] == 2000
+    # When the session ends, the walk is not counted again.
+    fresh.slash("/walka stop")
+    assert real(fresh)["steps"] == 2000
+    assert real(fresh.reload(gap=3600))["steps"] == 2000

@@ -477,6 +477,10 @@ local function finishRecord(session, endTime)
         maxKmh = math.floor((session.maxKmh or 0) * 100 + 0.5) / 100,
         character = session.character,
         auto = session.auto,
+        -- What of the app's measured walks it has taken over while it ran
+        -- (Tracker: a /reload brings them): not to be counted again.
+        counted = session.counted,
+        banked = session.banked,
     }
 end
 

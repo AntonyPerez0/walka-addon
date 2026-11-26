@@ -67,8 +67,30 @@ local function bank()
     bankStale = false
     pendingStale = true
     local sessions, absorbed = core.db.sessions, {}
+    -- The session still running takes part too (as a record that ends
+    -- now): a /reload brings the app's numbers for the walks in it, and
+    -- they count from then on, not only once the session has ended. What
+    -- it has counted goes with it (and into its record when it is filed).
+    local live = core.session
+    local stand
+    if type(live) == "table" and type(live.start) == "number" and Journey.isCharacter(live.character) then
+        stand = {
+            id = live.id, start = live.start, ["end"] = Game.Now(), seconds = live.seconds,
+            distanceM = live.distanceM, steps = live.steps, kcal = live.kcal, yards = live.yards,
+            character = live.character, auto = live.auto, counted = live.counted, banked = live.banked,
+        }
+        local all = {}
+        for index, own in ipairs(sessions) do
+            all[index] = own
+        end
+        all[#all + 1] = stand
+        sessions = all
+    end
     SessionLog.merge(sessions, core:GetCompanionData(), absorbed)
     Journey.bank(journeys, sessions, absorbed, Game.Now())
+    if stand then
+        live.counted, live.banked = stand.counted, stand.banked
+    end
 end
 
 -- Add up this character's walks that are still estimates.
@@ -87,7 +109,9 @@ local function liveSession()
     local session = core.session
     -- (One Walka started by itself estimates nothing: it is not counted
     -- until the treadmill's numbers for it arrive.)
-    if session and session.character == key and not session.auto and session.seconds >= core.MIN_SESSION_SECONDS then
+    -- (Nor one whose measured numbers have been taken over: they are its walk.)
+    if session and session.character == key and not session.auto and not session.banked
+        and session.seconds >= core.MIN_SESSION_SECONDS then
         return session
     end
     return nil
