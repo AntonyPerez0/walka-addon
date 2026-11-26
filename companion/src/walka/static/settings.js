@@ -38,15 +38,49 @@ function setPath(object, path, value) {
   target[keys[keys.length - 1]] = value;
 }
 
-function parseNumber(text) {
-  const clean = text.trim().replace(",", ".");
-  if (!/^\d+(\.\d*)?$|^\.\d+$/.test(clean)) return NaN;
+/** The browser's decimal separator: "," in German, "." in English. */
+const DECIMAL = (() => {
+  try {
+    return new Intl.NumberFormat(navigator.language || undefined).format(1.5).includes(",") ? "," : ".";
+  } catch {
+    return ".";
+  }
+})();
+
+/**
+ * A number as people type it: "10,000" and "10.000" are ten thousand in a
+ * field of whole numbers, "2,5" is two and a half; spaces between the
+ * thousands are allowed. With both separators, the last one is the decimal
+ * one. A single separator followed by exactly three digits is read the way
+ * the browser's language writes numbers (12.000 is twelve thousand in a
+ * German browser). NaN for anything else.
+ */
+export function parseNumber(text, { whole = false, decimal = DECIMAL } = {}) {
+  let clean = String(text).trim().replace(/[\s\u00a0\u202f']/g, "");
+  if (!/^[\d.,]+$/.test(clean) || !/\d/.test(clean)) return NaN;
+  const marks = clean.replace(/\d/g, "");
+  if (marks.includes(",") && marks.includes(".")) {
+    const point = clean.lastIndexOf(",") > clean.lastIndexOf(".") ? "," : ".";
+    const group = point === "," ? "." : ",";
+    if (clean.indexOf(point) !== clean.lastIndexOf(point)) return NaN;
+    clean = clean.split(group).join("").replace(point, ".");
+  } else if (marks.length > 1) {
+    // One kind, several times: they group the thousands (1,000,000).
+    const parts = clean.split(marks[0]);
+    if (parts.slice(1).some((part) => part.length !== 3) || !parts[0]) return NaN;
+    clean = parts.join("");
+  } else if (marks.length === 1) {
+    const [before, after] = clean.split(marks);
+    const grouping = after.length === 3 && before.length >= 1 && before.length <= 3 && (whole || marks !== decimal);
+    clean = grouping ? before + after : `${before || "0"}.${after}`;
+  }
+  if (!/^\d+(\.\d*)?$/.test(clean)) return NaN;
   return Number(clean);
 }
 
 const trim = (value, digits) => String(+value.toFixed(digits));
 /** Two texts that mean the same number ("3" and "3.0") are not a change. */
-const sameText = (a, b) => a === b || (a !== "" && b !== "" && parseNumber(a) === parseNumber(b));
+const sameText = (a, b, how) => a === b || (a !== "" && b !== "" && parseNumber(a, how) === parseNumber(b, how));
 const ceilTo = (value, digits) => Math.ceil(value * 10 ** digits - 1e-9) / 10 ** digits;
 const floorTo = (value, digits) => Math.floor(value * 10 ** digits + 1e-9) / 10 ** digits;
 
@@ -58,9 +92,10 @@ const KINDS = {
     shown: (kg) => U.weight(kg),
     metric: (v) => U.toKg(v),
   },
-  years: { unit: () => "years", digits: () => 0, shown: same, metric: same },
+  years: { unit: () => "years", digits: () => 0, shown: same, metric: same, whole: true },
   factor: { unit: () => "x", digits: () => 2, fixed: true, shown: same, metric: same },
-  steps: { unit: () => "steps", digits: () => 0, shown: same, metric: same },
+  steps: { unit: () => "steps", digits: () => 0, shown: same, metric: same, whole: true },
+  port: { unit: () => "", digits: () => 0, shown: same, metric: same, whole: true },
 };
 
 // ---- fields ----------------------------------------------------------------------------
@@ -142,14 +177,18 @@ class NumberField extends Field {
     this.setError("");
   }
 
+  get how() {
+    return { whole: !!this.kind.whole };
+  }
+
   changed() {
-    return !sameText(this.input.value.trim(), this.base);
+    return !sameText(this.input.value.trim(), this.base, this.how);
   }
 
   error() {
     const text = this.input.value.trim();
     if (!text) return this.spec.optional ? "" : "Enter a number.";
-    const value = parseNumber(text);
+    const value = parseNumber(text, this.how);
     const { lo, hi, digits } = this.bounds();
     if (Number.isNaN(value)) return "Enter a number, for example " + trim((lo + hi) / 2, digits) + ".";
     if (value < lo - 1e-9 || value > hi + 1e-9)
@@ -162,8 +201,8 @@ class NumberField extends Field {
     if (!text) {
       this.sent = null;
     } else {
-      const metric = this.kind.metric(parseNumber(text));
-      this.sent = this.spec.kind === "years" || this.spec.kind === "steps" ? Math.round(metric) : +metric.toFixed(6);
+      const metric = this.kind.metric(parseNumber(text, this.how));
+      this.sent = this.kind.whole ? Math.round(metric) : +metric.toFixed(6);
     }
     setPath(patch, this.spec.path, this.sent);
   }
@@ -627,7 +666,7 @@ FORMS.hrnet = {
     },
     {
       type: "number",
-      kind: "steps",
+      kind: "port",
       path: "heart_rate.network_port",
       min: 1024,
       max: 65535,

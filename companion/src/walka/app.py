@@ -876,6 +876,7 @@ class App:
             # Walka is tied to one treadmill (see _pin_treadmill).
             pinned=bool(self.config.treadmill.address) and hasattr(self.treadmill, "address"),
             moving=self._was_moving,
+            range_known=bool(getattr(self.treadmill, "speed_range_known", False)),
         )
         snapshot: dict[str, Any] = {
             "version": __version__,
@@ -887,6 +888,8 @@ class App:
             "game": self.game.status(),
             "session": self.recorder.live() if self.recorder is not None else None,
             "last_session": self.last_record.summary() if self.last_record is not None else None,
+            # Goes up whenever a walk on file is added, changed (filed under a game session) or deleted.
+            "walks_rev": self.store.rev,
             "totals": self.totals(wall),
             "heart_rate": None if hr is None else {
                 **hr.to_dict(),

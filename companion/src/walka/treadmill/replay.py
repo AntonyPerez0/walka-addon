@@ -40,6 +40,10 @@ class ReplayTreadmill(Treadmill):
         self.status = self._reader.status  # one status: the reader's
         self._reader.on_event = self._relay
 
+    @property
+    def speed_range_known(self) -> bool:  # type: ignore[override]
+        return self._reader.speed_range_known
+
     def _relay(self, event: TreadmillEvent) -> None:
         self._emit(event)
 

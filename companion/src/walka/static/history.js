@@ -1,7 +1,7 @@
 // The history view: totals, the 7-day steps chart, and the list of walks with
 // per-walk detail (speed / heart-rate chart, TCX download, delete).
 
-import { $, U, api, del, fmt, h, icon, run, setShown, setText, toast } from "./util.js";
+import { $, Backoff, U, api, del, fmt, h, icon, run, setShown, setText, toast } from "./util.js";
 import { SessionChart, WeekChart } from "./charts.js";
 import { walkLabel } from "./status.js";
 import { otherAccountWalkWords, sentWalkWords } from "./walkaaccount.js";
@@ -17,6 +17,7 @@ let limit = FIRST_PAGE;
 let listTrigger = null; // changes when the set of stored walks may have changed
 let sentTrigger = null; // changes when a walk may have gone to the Walka account
 let loading = false;
+const retry = new Backoff(); // after a list that could not be loaded
 let openId = null;
 let openChart = null;
 const details = new Map(); // id -> full record with samples
@@ -291,6 +292,7 @@ async function loadSessions(quietly = false) {
     const found = data.sessions || [];
     same = quietly && JSON.stringify(found) === JSON.stringify(sessions);
     sessions = found;
+    retry.ok();
     setShown($("sessions-error"), false);
   } catch (error) {
     if (quietly) {
@@ -299,7 +301,8 @@ async function loadSessions(quietly = false) {
     } else {
       setText($("sessions-error"), `Could not load your walks. ${error.message}`);
       setShown($("sessions-error"), true);
-      listTrigger = null; // try again on the next snapshot
+      listTrigger = null; // try again with a snapshot - after a pause that grows with every failure
+      retry.failed();
     }
   } finally {
     loading = false;
@@ -328,14 +331,14 @@ export function initHistory() {
 export function updateHistory(s) {
   updateTotals(s);
   updateWeek(s);
-  // A walk was saved, discarded or deleted somewhere: refresh the list.
-  const trigger = `${s.totals.all.sessions}|${s.last_session ? s.last_session.id : ""}`;
+  // A walk was saved, discarded, deleted or filed under a game session somewhere: refresh the list.
+  const trigger = `${s.totals.all.sessions}|${s.last_session ? s.last_session.id : ""}|${s.walks_rev ?? ""}`;
   // The Walka account's part of the snapshot changed (only there when Walka has that part): a
   // walk may have been sent, and the question before deleting it then says where its copy is.
   const sent = s.walka_account ? s.walka_account.rev : null;
   if (trigger !== listTrigger) {
     // (Not while a list is on its way: that one may be from before the change. With the next snapshot.)
-    if (loading) return;
+    if (loading || !retry.due()) return;
     listTrigger = trigger;
     sentTrigger = sent;
     loadSessions();

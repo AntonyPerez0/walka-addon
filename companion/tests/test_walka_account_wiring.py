@@ -149,6 +149,7 @@ SNAPSHOT_KEYS = {
     "game",
     "session",
     "last_session",
+    "walks_rev",
     "totals",
     "heart_rate",
     "addon",

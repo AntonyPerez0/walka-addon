@@ -526,6 +526,7 @@ def test_snapshot_is_json_serialisable_and_says_nothing_about_control(rig: Rig):
         "game",
         "session",
         "last_session",
+        "walks_rev",
         "totals",
         "heart_rate",
         "addon",
@@ -1214,3 +1215,23 @@ def test_state_json_is_never_left_half_written(rig: Rig, monkeypatch):
     rig.app._save_state()
     monkeypatch.undo()
     assert json.loads(path.read_text("utf-8"))["treadmill"]["name"] == "URTM030"
+
+
+def test_filing_a_walk_under_a_game_session_is_news_to_the_walk_list(rig: Rig):
+    """The History list asks for the walks again only when the snapshot says
+    something changed: a walk filed under a character must be such news."""
+
+    async def scenario():
+        await rig.connect()
+        await rig.walk()
+        await rig.run(120)
+        await rig.step_off()
+
+    run(scenario())
+    (walk,) = rig.app.store.records
+    before = rig.app.snapshot()["walks_rev"]
+    assert rig.game_saves(game_db([(walk.start - 60, walk.end + 60, 3, ME)]))
+    assert rig.app.store.records[0].source == "wow"
+    after = rig.app.snapshot()
+    assert after["walks_rev"] > before
+    assert after["totals"]["all"]["sessions"] == 1, "(the count of walks alone did not change)"

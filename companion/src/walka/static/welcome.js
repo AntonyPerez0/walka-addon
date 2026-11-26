@@ -23,8 +23,10 @@ let onUnitsChosen = () => {};
 const stepEl = (name) => document.querySelector(`.wz-step[data-step="${name}"]`);
 const current = () => STEPS[index];
 
-/** The units the computer's region uses, else the browser's language, else what is set. */
-function suggestedUnits(s) {
+/** The units the computer's region uses, else the browser's language, else what is set.
+ * Once the guide has been done, what is set: reopening it changes nothing by itself. */
+export function suggestedUnits(s) {
+  if (s.config && s.config.welcome_done) return s.units;
   if (s.setup && s.setup.system_units) return s.setup.system_units;
   const match = /[-_]([A-Za-z]{2})$/.exec(navigator.language || "");
   if (match) return ["US", "GB", "LR", "MM"].includes(match[1].toUpperCase()) ? "mph" : "kmh";
@@ -136,7 +138,8 @@ async function next(button) {
   const name = current();
   if (name === "units") {
     const picked = document.querySelector('input[name="wz-units"]:checked');
-    if (picked) {
+    // (Saved when it is a choice: one made here, or the guide's first suggestion.)
+    if (picked && (unitsTouched || !(last && last.config && last.config.welcome_done) || picked.value !== last.units)) {
       const done = await run(button, async () => {
         const data = await post("/api/config", { units: picked.value });
         onUnitsChosen(data.config.units);

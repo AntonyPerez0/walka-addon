@@ -102,6 +102,9 @@ class Treadmill(abc.ABC):
     """
 
     kind = "abstract"
+    # Did the treadmill say what speeds it has (status.min_kmh / max_kmh)?
+    # Otherwise those are Walka's defaults, not the pad's.
+    speed_range_known = False
 
     def __init__(self) -> None:
         self.status = TreadmillStatus()

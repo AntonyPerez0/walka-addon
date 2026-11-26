@@ -199,6 +199,10 @@ class FtmsTreadmill(Treadmill):
         self.raw_speed_range: ftms.SpeedRange | None = None
 
     # ---- backend ---------------------------------------------------------------
+    @property
+    def speed_range_known(self) -> bool:  # type: ignore[override]
+        return self.raw_speed_range is not None
+
     def _get_backend(self) -> BleBackend:
         if self._backend is None:
             from .bleak_backend import BleakBackend  # imported lazily: needs bleak

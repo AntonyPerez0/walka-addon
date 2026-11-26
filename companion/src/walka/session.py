@@ -591,6 +591,7 @@ class SessionStore:
         # disk): the only copy of that walk. It is kept, and tried again.
         self.recovery_failed = False
         self.records: list[SessionRecord] = []  # oldest first
+        self.rev = 0  # goes up with every walk added, changed or deleted
         self.dir.mkdir(parents=True, exist_ok=True)
         self._load()
 
@@ -688,6 +689,7 @@ class SessionStore:
         self._write(self.dir / f"{record.id}.json", record.to_json())
         self.records.append(record)
         self.records.sort(key=lambda r: r.start)
+        self.rev += 1
         return record
 
     def update(self, record: SessionRecord) -> None:
@@ -696,11 +698,13 @@ class SessionStore:
         if record not in self.records:
             raise KeyError(record.id)
         self._write(self.dir / f"{record.id}.json", record.to_json())
+        self.rev += 1
 
     def delete(self, session_id: str) -> bool:
         for record in self.records:
             if record.id == session_id:
                 self.records.remove(record)
+                self.rev += 1
                 try:
                     (self.dir / f"{session_id}.json").unlink()
                 except FileNotFoundError:

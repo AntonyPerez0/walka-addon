@@ -259,6 +259,30 @@ export async function api(path, { method = "GET", body, timeoutMs = 10000 } = {}
 }
 
 export const post = (path, body, options) => api(path, { ...options, method: "POST", body });
+
+/**
+ * When to try again after a request failed: a second, then two, four, ...
+ * thirty at most. ``failed()`` after each failure, ``ok()`` after a success,
+ * ``due(now)`` says whether it is time.
+ */
+export class Backoff {
+  constructor({ first = 1000, most = 30000 } = {}) {
+    this.first = first;
+    this.most = most;
+    this.ok();
+  }
+  ok() {
+    this.failures = 0;
+    this.at = 0;
+  }
+  failed(now = Date.now()) {
+    this.failures += 1;
+    this.at = now + Math.min(this.most, this.first * 2 ** (this.failures - 1));
+  }
+  due(now = Date.now()) {
+    return now >= this.at;
+  }
+}
 export const del = (path) => api(path, { method: "DELETE", body: {} });
 
 /** Run an async action from a button: busy state, and errors as a toast. */

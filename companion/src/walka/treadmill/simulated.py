@@ -25,6 +25,7 @@ from .base import KMH_PER_MPH, BeltState, Treadmill, TreadmillEvent, kmh_to_mph_
 
 class SimulatedTreadmill(Treadmill):
     kind = "simulated"
+    speed_range_known = True  # (it is its own pad)
 
     def __init__(
         self,

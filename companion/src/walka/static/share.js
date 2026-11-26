@@ -7,7 +7,7 @@
 // until the user saves or copies it. The choices made here are kept in this
 // browser only.
 
-import { $, api, h, run, setAttr, setDisabled, setShown, setText, state, toast } from "./util.js";
+import { $, Backoff, api, h, run, setAttr, setDisabled, setShown, setText, state, toast } from "./util.js";
 import {
   DEFAULT_TEXTS,
   SIZES,
@@ -52,6 +52,7 @@ let snapshot = null; // the last state snapshot seen while this view was open
 let journey = null; // the last answer of /api/journey
 let fetchedRev = null; // the journey revision that answer was fetched for
 let fetching = false;
+const journeyRetry = new Backoff(); // after an answer that could not be had
 // The road of the chosen character (GET /api/road): the companion reads it
 // from the file the game writes at logout or /reload, so it is asked for
 // again now and then while this view is open.
@@ -452,11 +453,13 @@ async function fetchJourney(rev) {
   try {
     journey = await api("/api/journey");
     fetchedRev = rev;
+    journeyRetry.ok();
     setShown($("share-error"), false);
   } catch (error) {
     setText($("share-error"), `Could not load your character's numbers. ${error.message}`);
     setShown($("share-error"), true);
-    fetchedRev = null; // try again with the next snapshot
+    fetchedRev = null; // try again with a snapshot - after a pause that grows with every failure
+    journeyRetry.failed();
   } finally {
     fetching = false;
   }
@@ -468,7 +471,7 @@ export function updateShare(s) {
   if (!s) return;
   snapshot = s;
   const rev = s.journey ? s.journey.rev : 0;
-  if (rev !== fetchedRev) fetchJourney(rev);
+  if (rev !== fetchedRev && journeyRetry.due()) fetchJourney(rev);
   refreshRoad();
   refresh();
 }
