@@ -379,7 +379,9 @@ says so, with an **Update now** button. One click and Walka:
    installed, it is brought up to date too (your walks' file in it is
    kept): type `/reload` in the game to load it.
 
-Walka only offers this while the belt is standing still. To find out about
+Walka only offers this while the belt is standing still. If you start the
+belt while the new version is downloading, Walka waits until that walk is
+over before it restarts. To find out about
 new versions, Walka asks GitHub, at every start and then once a day while
 it runs, which release is the newest (the request names the program and its version, and nothing
 about you). Nothing is downloaded until you press **Update now**. *Settings

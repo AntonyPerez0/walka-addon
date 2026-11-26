@@ -512,3 +512,44 @@ def test_a_trial_is_offered_its_final_release_and_anything_newer():
     assert not is_newer("v0.12.9", current="0.13.0-rc1")
     assert not is_newer("v0.13.0", current="0.13.0")
     assert not is_newer("v0.13.0-rc2", current="0.13.0-rc1"), "a trial is never offered"
+
+
+def test_a_belt_started_during_the_download_is_waited_for_before_the_restart(rig: Rig, tmp_path):
+    """"Update now" was pressed with the belt standing; while the new version
+    downloads, the walker starts the belt. Walka does not restart mid-walk:
+    it waits until the walk is over (and saved)."""
+    ready_to_update(rig, tmp_path)
+    real_download = rig.app.update_download
+    quit_asked = []
+    rig.app.quit = lambda: quit_asked.append(True)
+    walking = asyncio.Event()
+
+    async def slow_download(*args, **kwargs):
+        await walking.wait()
+        return await real_download(*args, **kwargs)
+
+    rig.app.update_download = slow_download
+
+    async def scenario():
+        await rig.connect()
+        await rig.app.tick()
+        await rig.app._update_task
+        assert rig.app.install_update() == ""
+        await rig.walk()
+        walking.set()
+        for _ in range(200):  # (the new program is checked and put in place on a worker thread: real time)
+            if rig.app.update.stage not in ("downloading", "checking", "installing"):
+                break
+            await asyncio.sleep(0.05)
+        await rig.run(30)
+        assert quit_asked == [] and rig.app.recorder is not None, "not in the middle of the walk"
+        assert rig.app.snapshot()["update"]["install"]["stage"] == "waiting"
+        await rig.step_off()
+        for _ in range(40):
+            await rig.run(1)
+            await asyncio.sleep(0.1)  # (the wait looks again every half second, in real time)
+            if quit_asked:
+                break
+
+    asyncio.run(scenario())
+    assert quit_asked == [True] and len(rig.app.store.records) == 1

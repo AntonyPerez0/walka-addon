@@ -117,6 +117,8 @@ function updateNotice(update) {
         : "Downloading the update...";
   } else if (stage === "checking") {
     detail = "Checking the download against the release's checksum...";
+  } else if (stage === "waiting") {
+    detail = "Installed. Walka restarts once this walk is over - nothing to do meanwhile.";
   } else if (stage === "restarting") {
     detail = "Installed. Walka saves the walk and restarts - it will be back in a moment.";
   } else if (stage === "failed") {
@@ -127,7 +129,7 @@ function updateNotice(update) {
     detail = `You have ${update.current}. ${update.cannot_install}`;
   }
   setText($("update-detail"), detail);
-  const busy = stage === "downloading" || stage === "checking" || stage === "restarting";
+  const busy = stage === "downloading" || stage === "checking" || stage === "waiting" || stage === "restarting";
   const button = $("update-install");
   setShown(button, (update.self_update || busy) && stage !== "restarting");
   setDisabled(button, busy || !update.can_install);

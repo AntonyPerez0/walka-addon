@@ -708,6 +708,20 @@ class App:
             )
             self.log_event(self.update.install_error, "warning")
             return
+        # The belt may have been started while the new version came down:
+        # Walka does not restart in the middle of a walk. It waits until the
+        # walk is over (and saved), however long that is.
+        if self._was_moving or self.recorder is not None:
+            self.update.stage = "waiting"
+            self.log_event(f"Walka {restart.to_version} is ready: Walka restarts once this walk is over.")
+            while (self._was_moving or self.recorder is not None) and not self._stopping.is_set():
+                await asyncio.sleep(1.0 if self.recorder is None else 0.5)
+            if self._stopping.is_set():
+                # Closed meanwhile: Walka is not started again by itself. The
+                # new version is in place and is what starts next, which then
+                # says that it was updated (and updates the addon).
+                updates.note_done(restart)
+                return
         self.update.stage = "restarting"
         updates.restart_when_stopped(restart)
         self.log_event(f"Walka {restart.to_version} is ready: Walka saves the walk and restarts.")

@@ -420,6 +420,13 @@ def _write_done(restart: Restart) -> None:
         log.warning("could not note the update: %s", exc)
 
 
+def note_done(restart: Restart) -> None:
+    """The new version is in place, and Walka is closing without restarting
+    (it was closed while it waited for a walk to end): the next start says
+    that it was updated, as after a restart."""
+    _write_done(restart)
+
+
 def take_done(data_dir: Path) -> dict[str, str] | None:
     """At start: was this Walka just updated, and from what? (Read once.)"""
     path = data_dir / DONE_FILE
