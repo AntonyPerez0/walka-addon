@@ -190,3 +190,16 @@ def test_a_failing_list_is_asked_for_again_less_and_less_often(browser_ready, tm
     with Served(tmp_path) as served:
         gaps, due, after = served.look(tmp_path, steps)["waits"]
     assert gaps == [1000, 2000, 4000, 8000, 16000, 30000, 30000] and due == [False, True] and after is True
+
+
+def test_a_language_written_from_the_right_turns_the_page(browser_ready, tmp_path):
+    locales = Path(__file__).resolve().parents[1] / "src" / "walka" / "static" / "locales"
+    steps = [
+        ("dir", "const m = await import('/static/i18n.js');"
+                "window.fetch = async () => ({ json: async () => ({ language: 'he', strings: {} }) });"
+                "m.AVAILABLE.push('he'); await m.loadLanguage(['he-IL']);"
+                "return [document.documentElement.lang, document.documentElement.dir];"),
+    ]  # fmt: skip
+    assert not (locales / "he.json").exists()
+    with Served(tmp_path) as served:
+        assert served.look(tmp_path, steps)["dir"] == ["he", "rtl"]
