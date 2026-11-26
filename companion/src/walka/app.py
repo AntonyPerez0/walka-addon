@@ -251,21 +251,25 @@ class App:
             self._was_moving = moving
             if self.treadmill.status.connected:  # (a belt out of reach has not been heard to stop)
                 self.log_event("The belt is moving." if moving else "The belt has stopped.")
-        self._record(wall, speed)
-        self._retry_saving(wall)
+        self._record(wall, speed, mono)
+        self._retry_saving(mono)
         self._maybe_check_for_update()
 
     # ---- recording ---------------------------------------------------------------
-    def _record(self, wall: float, speed_kmh: float) -> None:
+    def _record(self, wall: float, speed_kmh: float, mono: float | None = None) -> None:
         """A walk is whatever the belt does: it begins when the belt moves
         and ends when it has stood still for a while. (Which game session it
-        was in is learnt later, from the game's saved file: file_walks.)"""
+        was in is learnt later, from the game's saved file: file_walks.)
+        How long anything lasts - the stand-still, the time between
+        checkpoints, the walk - is counted by the monotonic clock ``mono``:
+        a computer clock set back mid-walk changes none of it."""
+        mono = self.mono() if mono is None else mono
         moving = speed_kmh > MOVING_KMH
         if moving:
             self._idle_since = None
         elif self._idle_since is None:
-            self._idle_since = wall
-        idle_for = 0.0 if self._idle_since is None else wall - self._idle_since
+            self._idle_since = mono
+        idle_for = 0.0 if self._idle_since is None else mono - self._idle_since
 
         recorder = self.recorder
         want = moving or (recorder is not None and idle_for < FREE_WALK_GRACE_S)
@@ -280,7 +284,7 @@ class App:
             made_up = self.treadmill.kind == "simulated"
             recorder = SessionRecorder(treadmill=status.name, started_at=wall, made_up=made_up)
             self.recorder = recorder
-            self._last_checkpoint = wall
+            self._last_checkpoint = mono
 
         if recorder is not None:
             status = self.treadmill.status
@@ -298,9 +302,10 @@ class App:
                 machine_steps=status.steps,
                 heart_rate=bpm,
                 connected=status.connected,
+                mono=mono,
             )
-            if wall - self._last_checkpoint >= CHECKPOINT_EVERY_S:
-                self._last_checkpoint = wall
+            if mono - self._last_checkpoint >= CHECKPOINT_EVERY_S:
+                self._last_checkpoint = mono
                 if self._unsaved:
                     # (Only then. Saving clears the checkpoint, and with it
                     # goes the lock that tells another Walka that this walk
@@ -312,15 +317,15 @@ class App:
                     # the checkpoint file is what keeps it safe: leave it.)
                     self.store.checkpoint(recorder.snapshot(wall))
 
-    def _retry_saving(self, wall: float) -> None:
+    def _retry_saving(self, mono: float) -> None:
         """With no walk going, a walk that could not be written (a full
         disk) is tried again now and then. (While one is going, its
         checkpoints do that: _record.)"""
-        if self.recorder is not None or wall - self._last_checkpoint < CHECKPOINT_EVERY_S:
+        if self.recorder is not None or mono - self._last_checkpoint < CHECKPOINT_EVERY_S:
             return
         if not self._unsaved and not self.store.recovery_failed:
             return
-        self._last_checkpoint = wall
+        self._last_checkpoint = mono
         if self.store.recovery_failed and self.store.retry_recovery():
             self._totals_cache = None
             self.log_event("The walk from before Walka was last closed is saved now.")

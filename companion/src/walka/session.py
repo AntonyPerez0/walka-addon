@@ -145,6 +145,11 @@ class SessionRecorder:
         self.made_up = made_up
         self.started_at = started_at
         self.last_at = started_at
+        # The monotonic clock, where it is given: durations are counted by
+        # it, so that a computer clock set back or forward changes nothing
+        # of the walk. (started_at stays the wall clock's: when it began.)
+        self._mono_start: float | None = None
+        self._mono_last: float | None = None
         self.seconds = 0.0
         self.max_kmh = 0.0
         # Our own integration of the reported belt speed.
@@ -240,13 +245,22 @@ class SessionRecorder:
         machine_steps: float | None = None,
         heart_rate: int | None = None,
         connected: bool = True,
+        mono: float | None = None,
     ) -> None:
         """Account for the time since the previous call.
 
-        ``now`` is epoch seconds. Gaps longer than a few seconds (app
-        suspended, treadmill reconnecting) are not integrated.
+        ``now`` is epoch seconds; ``mono``, if given, the monotonic clock,
+        which the time between calls is then taken from. Gaps longer than a
+        few seconds (app suspended, treadmill reconnecting) are not
+        integrated.
         """
-        dt = now - self.last_at
+        if mono is not None:
+            if self._mono_start is None:
+                self._mono_start = self._mono_last = mono - max(0.0, now - self.started_at)
+            dt = mono - self._mono_last
+            self._mono_last = mono
+        else:
+            dt = now - self.last_at
         self.last_at = now
         if dt <= 0:
             return
@@ -310,10 +324,16 @@ class SessionRecorder:
         else:
             self.last_hr = None
 
-        offset = now - self.started_at
+        offset = self._elapsed(now)
         if offset >= self._next_sample:
             self._next_sample = offset + SAMPLE_EVERY_S
             self.samples.append([round(offset, 1), round(speed_kmh, 2), heart_rate or None])
+
+    def _elapsed(self, now: float) -> float:
+        """Seconds since the walk began: by the monotonic clock, where it is known."""
+        if self._mono_start is not None and self._mono_last is not None:
+            return self._mono_last - self._mono_start
+        return now - self.started_at
 
     def finish(self, now: float) -> SessionRecord | None:
         """Close the walk. Returns ``None`` if it was too short to keep."""
@@ -327,7 +347,7 @@ class SessionRecorder:
         return SessionRecord(
             id=time.strftime("%Y%m%d-%H%M%S", time.localtime(self.started_at)),
             start=round(self.started_at, 1),
-            end=round(max(now, self.started_at), 1),
+            end=round(self.started_at + max(0.0, self._elapsed(now)), 1),
             seconds=round(self.seconds, 1),
             distance_m=round(self.distance_m, 1),
             steps=int(round(self.steps)),

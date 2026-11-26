@@ -1173,3 +1173,26 @@ def test_a_made_up_run_does_not_write_the_installed_addons_file(tmp_path: Path):
     app = App(config, tmp_path / "data", treadmill=SimulatedTreadmill(auto_run=False), writes_addon=False)
     assert app.sync_addon() is False and "made-up" in app.addon_error
     assert not (addon / "CompanionData.lua").exists()
+
+
+def test_a_clock_set_back_in_the_middle_of_a_walk_changes_nothing_of_it(rig: Rig):
+    """The computer's clock is set back an hour (by hand, or by a time
+    server): the walk goes on being counted and checkpointed, and is saved
+    as long as it was, so that it can still be filed under a game session."""
+
+    async def scenario():
+        await rig.connect()
+        await rig.walk()
+        await rig.run(120)
+        rig.clock.wall -= 3600
+        checkpoint = rig.app.data_dir / "active-session.json"
+        before = json.loads(checkpoint.read_text("utf-8"))["seconds"]
+        await rig.run(300)
+        assert json.loads(checkpoint.read_text("utf-8"))["seconds"] > before + 250, "checkpoints go on"
+        assert rig.app.recorder.seconds > 400
+        await rig.step_off()
+
+    run(scenario())
+    (record,) = rig.app.store.records
+    assert record.seconds > 400
+    assert record.end - record.start == pytest.approx(record.seconds + FREE_WALK_GRACE_S + 6, abs=15)
