@@ -393,6 +393,12 @@ def sign_out(
     for account in place["accounts"].values():
         account["sending"] = False
         account["mark"] = None
+        # Not needed once nobody is signed in to it: a sign-in writes them
+        # again. What stays is the account's id and which walks went to it
+        # (so that signing in again sends none of them twice).
+        account["email"] = ""
+        account["way"] = ""
+        account["chosen"] = None
     place["notice"] = notice
     if left_in_store:
         place["left_in_store"] = True

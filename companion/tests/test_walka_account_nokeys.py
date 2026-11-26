@@ -690,9 +690,10 @@ def test_after_a_whole_story_no_key_of_a_sign_in_stands_in_any_file_any_answer_o
     assert of_the_part == [book, "data/walka-account.lock"]
 
     # The canaries: the search does find what IS there.
-    assert set(places_with(story.emails, places)) == {book, *shown}
+    # (The story ends signed out: the book no longer holds the e-mail address.)
+    assert set(places_with(story.emails, places)) == set(shown)
     assert places_with(story.users, places) == {book: sorted(story.users)}
-    assert found(story.emails, places[book]) == sorted(story.emails) == found(story.emails, places["/api/state"])
+    assert found(story.emails, places[book]) == [] and found(story.emails, places["/api/state"]) == sorted(story.emails)
     # (The database's sentence about the walk it did not take has quotation marks in it: in the file
     # and in the snapshot it stands as JSON spells it, and is found there all the same - and only there.)
     for sentence in NOT_TAKEN.values():

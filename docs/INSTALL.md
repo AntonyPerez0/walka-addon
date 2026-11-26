@@ -276,7 +276,10 @@ touched.
   you signed in with Discord, GitHub or Google), whether sending is
   switched on and what you chose when you switched it on, and what became
   of each walk: sent, there already, or not taken, with the reason that
-  was given. While sending is on it holds a mark beside that switch as
+  was given. Once you sign out, it no longer holds the e-mail address,
+  how you signed in or what you chose: only the account's id and what
+  became of each walk (so that signing in again sends none of them a
+  second time). While sending is on it holds a mark beside that switch as
   well: a random text that is a key to nothing, which Walka keeps a
   second time where the sign-in is kept. It also notes that a sign-in
   ended (until you press *OK*), that a sign-in may still be in Windows'
