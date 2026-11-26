@@ -775,7 +775,13 @@ local function parseMeasure(text, units)
     if feet then
         return (tonumber(feet) * 12 + (tonumber(inches) or 0)), "in"
     end
-    local number, unit = string.match(text, "^([%d%.]+)%s*(%a*)")
+    local number, unit = string.match(text, "^([%d%.,]+)%s*(%a*)")
+    -- "2,4": a decimal comma, as most of Europe types it. (One separator at
+    -- most: "2,4,1" and "1.000,5" are no number.)
+    if number then
+        local _, separators = string.gsub(number, "[%.,]", "")
+        number = separators <= 1 and string.gsub(number, ",", ".") or nil
+    end
     number = tonumber(number)
     if not number then
         return nil
@@ -800,6 +806,8 @@ local HELP = {
 local function slash(message)
     local command, rest = string.match(message or "", "^%s*(%S*)%s*(.-)%s*$")
     command = string.lower(command or "")
+    rest = rest or ""
+    local word = string.lower(rest)    -- ("on", "OFF", "On": all the same)
     local self = Walka
     if not self.loaded then
         return
@@ -812,7 +820,14 @@ local function slash(message)
             self:Print(HELP[index])
         end
     elseif command == "start" or command == "go" then
-        self:StartSession()
+        if self.session and not self.session.paused then
+            self:Print(self.session.auto
+                and "a session is running already - Walka started it by itself when you logged in, "
+                    .. "and your walks on the treadmill count for this character."
+                or "a session is running already.")
+        else
+            self:StartSession()
+        end
     elseif command == "pause" then
         self:PauseSession("user")
     elseif command == "resume" then
@@ -830,9 +845,9 @@ local function slash(message)
         self:Print("the addon has no windows any more: your walks, history, journey and road are in the "
             .. "Walka app. For the walk on top of the game: Settings -> Floating window, in the app.")
     elseif command == "auto" then
-        if rest == "on" or rest == "off" then
-            self:Set("autoSession", rest == "on")
-            if rest == "on" then
+        if word == "on" or word == "off" then
+            self:Set("autoSession", word == "on")
+            if word == "on" then
                 self:Print("Walka starts the session by itself when you log in.")
                 self:StartAutoSession()
             else
@@ -843,10 +858,10 @@ local function slash(message)
             self:Print("use /walka auto on or /walka auto off.")
         end
     elseif command == "road" then
-        if rest == "on" or rest == "off" then
-            self:Set("recordRoad", rest == "on")
-            RoadRecorder.SetEnabled(rest == "on")
-            self:Print(rest == "on" and "recording your character's road." or
+        if word == "on" or word == "off" then
+            self:Set("recordRoad", word == "on")
+            RoadRecorder.SetEnabled(word == "on")
+            self:Print(word == "on" and "recording your character's road." or
                 "no longer recording your character's road (what is recorded so far is kept).")
         else
             self:Print("use /walka road on or /walka road off. The road is shown in the Walka app (Share).")

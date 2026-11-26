@@ -368,3 +368,31 @@ def test_the_commands_of_the_old_windows_point_to_the_app(rt, command):
     assert len(rt.printed) == 1
     assert "no windows any more" in rt.printed[0] and "Walka app" in rt.printed[0]
     assert rt.walka.session is None
+
+
+# ---- what the audit found -----------------------------------------------------------------------
+
+
+def test_a_pace_with_a_decimal_comma_is_read_as_it_is_meant(rt):
+    rt.slash("/walka units kmh")
+    rt.slash("/walka pace 2,4")
+    assert settings(rt)["paceKmh"] == pytest.approx(2.4)
+    rt.slash("/walka pace 2,4,1")
+    assert settings(rt)["paceKmh"] == pytest.approx(2.4) and "usage: /walka pace" in last(rt)
+
+
+def test_start_while_the_automatic_session_runs_says_so(make_rt):
+    rt = make_rt(auto_session=True)
+    rt.tick()
+    rt.clear_printed()
+    rt.slash("/walka start")
+    assert "already" in last(rt) and rt.walka.session.auto is True
+
+
+@pytest.mark.parametrize("command", ["auto", "road"])
+def test_on_and_off_in_capitals_are_understood(rt, command):
+    rt.slash(f"/walka {command} OFF")
+    key = {"auto": "autoSession", "road": "recordRoad"}[command]
+    assert settings(rt)[key] is False
+    rt.slash(f"/walka {command} On")
+    assert settings(rt)[key] is True
