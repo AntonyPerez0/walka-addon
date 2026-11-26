@@ -29,7 +29,7 @@ from . import config as config_module
 from .config import Config
 from .journey import attach as attach_journeys
 from .metrics import Profile
-from .road import RoadBook
+from .road import RoadBook, walked_spans
 from .session import SessionRecord, SessionRecorder, SessionStore
 from .treadmill import Treadmill, TreadmillError, TreadmillEvent
 from .treadmill_check import REPORTS_DIR, CheckState, run_check
@@ -748,6 +748,15 @@ class App:
         totals = self.store.totals(wall, extra)
         self._totals_cache = (wall, totals)
         return totals
+
+    def walked_spans(self) -> list[tuple[float, float]]:
+        """When the treadmill's belt was moving, from the walks on file and
+        the one in progress: the road travelled then is the road walked on
+        the treadmill (road.walked_spans). On the loop: it reads the store."""
+        walks: list[SessionRecord] = list(self.store.records)
+        if self.recorder is not None and self.recorder.seconds > 0:
+            walks.append(self.recorder.snapshot(self.wall()))
+        return walked_spans(walks)
 
     def snapshot(self) -> dict[str, Any]:
         wall = self.wall()

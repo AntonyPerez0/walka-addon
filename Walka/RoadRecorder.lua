@@ -169,10 +169,17 @@ local function travelMode(state)
 end
 
 -- Is the walker on the treadmill, as far as the addon can tell? It cannot
--- see the belt: a walking session that is running and not paused is the
--- walker saying so.
+-- see the belt: a session the player started by hand, running and not
+-- paused, is the walker saying so. The automatic session is not: it runs
+-- from login to logout, treadmill or none. (The Walka app does not take
+-- this mark for the belt either: it knows when its walks were measured,
+-- and marks the road walked then - road.py.)
 local function beltMoving()
-    return core ~= nil and core:IsActive() and not core:IsPaused()
+    if core == nil or not core:IsActive() or core:IsPaused() then
+        return false
+    end
+    local session = core:GetSession()
+    return not (session and session.auto)
 end
 
 local function look()
@@ -265,7 +272,7 @@ end
 --- The end of the road that is not stored yet: from the last stored point
 -- of the stretch being recorded to where the character was at the last
 -- look. Returns continent, fromX, fromY, toX, toY, mode, belt (true if a
--- walking session is counting), level and the segment being recorded (to
+-- session the player started is counting), level and the segment being recorded (to
 -- tell one stretch from the next) - or nil when no stretch is being
 -- recorded (standing in a dungeon, recording switched off).
 function RoadRecorder.Tail()

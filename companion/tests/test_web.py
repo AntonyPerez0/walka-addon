@@ -634,13 +634,13 @@ def install_game(rig: Rig, tmp_path: Path, monkeypatch) -> Path:
     return game
 
 
-def save_road(rig: Rig, game: Path, key: str, yards: int) -> None:
+def save_road(rig: Rig, game: Path, key: str, yards: int, at: float = 1_790_000_000) -> None:
     path = game / "WTF" / "Account" / "ACCOUNT" / "Realm" / "Name" / "SavedVariables" / "Walka.lua"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         f'\r\nWalkaCharDB = {{\r\n\t["version"] = 1,\r\n\t["key"] = "{key}",\r\n\t["segments"] = {{\r\n\t\t{{\r\n'
         f'\t\t\t["c"] = 1,\r\n\t\t\t["m"] = "w",\r\n\t\t\t["b"] = 1,\r\n\t\t\t["l"] = 12,\r\n\t\t\t["x"] = 100,\r\n'
-        f'\t\t\t["y"] = -200,\r\n\t\t\t["d"] = "3,{yards},0",\r\n\t\t}}, -- [1]\r\n\t}},\r\n}}\r\n',
+        f'\t\t\t["y"] = -200,\r\n\t\t\t["t"] = {at:.0f},\r\n\t\t\t["d"] = "60,{yards},0",\r\n\t\t}}, -- [1]\r\n\t}},\r\n}}\r\n',
         encoding="utf-8",
         newline="",
     )
@@ -664,8 +664,18 @@ def test_the_road_of_a_character(rig: Rig, tmp_path: Path, monkeypatch):
         body = await response.json()
         assert body["game_found"] is True and body["files"] == 1 and body["demo"] is False
         road = body["road"]
-        assert road["id"] == mine and road["yards"] == 250 and road["belt_yards"] == 250 and road["level"] == 12
+        # The addon's b = 1 says only that a session was running: with no
+        # walk measured then, none of it was walked on the treadmill.
+        assert road["id"] == mine and road["yards"] == 250 and road["belt_yards"] == 0 and road["level"] == 12
         assert road["as_of"] == pytest.approx(rig.clock.wall - 60, abs=1)
+        assert road["continents"][0]["paths"] == [{"style": "road", "p": [100, -200, 350, -200]}]
+
+        # A walk the app measured over that minute: now it is.
+        walk = SessionRecord(id="w", start=1_790_000_000, end=1_790_000_090, seconds=60, distance_m=100,
+                             steps=100, kcal=5, samples=[[i * 5.0, 3.0, None] for i in range(12)])
+        rig.app.store.add(walk)
+        road = (await (await client.get(f"/api/road?character={mine}")).json())["road"]
+        assert road["belt_yards"] == 250
         assert road["continents"] == [
             {
                 "id": 1,

@@ -22,6 +22,7 @@ folder name nor the character's realm is passed on or logged.
 
 from __future__ import annotations
 
+import bisect
 import logging
 import math
 import os
@@ -29,8 +30,8 @@ import re
 import sys
 import threading
 import time
-from collections.abc import Callable, Iterable
-from dataclasses import dataclass, field
+from collections.abc import Callable, Iterable, Sequence
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -63,7 +64,13 @@ CONTINENT_NAMES = {0: "Eastern Kingdoms", 1: "Kalimdor"}
 MAX_NAME_CHARS = 40  # of a land's name, as the game gave it
 MAX_LANDS = 64  # lands whose names are taken from one file
 
-_STEP = re.compile(r"-?\d+,(-?\d+),(-?\d+)")
+_STEP = re.compile(r"(-?\d+),(-?\d+),(-?\d+)")
+TIME_LIMIT_S = 10**11  # no saved time is this far from 1970
+
+# The walks the app measured, as spans of time the belt was moving: a
+# sample of a walk's speed series stands for at most this long.
+SAMPLE_SPAN_S = 10.0
+MOVING_KMH = 0.05
 
 
 def character_id(key: str) -> str:
@@ -87,9 +94,12 @@ class Stretch:
 
     continent: int
     mode: str  # "w" | "r" | "t" | "g"
-    belt: bool  # the treadmill belt was moving
+    belt: bool  # the treadmill belt was moving (as the app measured it: see walked_spans)
     level: int
     points: tuple[tuple[int, int], ...]  # world yards: x to the north, y to the west
+    # When the character was at each point (epoch seconds), or () if the
+    # saved road did not say. (Not part of what the road is.)
+    times: tuple[int, ...] = field(default=(), compare=False)
 
     @property
     def style(self) -> str:
@@ -113,11 +123,17 @@ class Road:
     def id(self) -> str:
         return character_id(self.key)
 
-    def to_api(self, as_of: float, budget: int = POINT_BUDGET) -> dict[str, Any]:
-        """The road as the page draws it."""
+    def to_api(
+        self, as_of: float, budget: int = POINT_BUDGET, walked: Sequence[tuple[float, float]] = ()
+    ) -> dict[str, Any]:
+        """The road as the page draws it. ``walked``: when the belt was
+        moving, as the app measured it (``walked_spans``) - the road the
+        character travelled on foot or mounted then is "walked on the
+        treadmill", and no other."""
+        stretches = on_the_belt(self.stretches, walked)
         ground = belt = flight = 0.0
         per_continent: dict[int, float] = {}
-        for stretch in self.stretches:
+        for stretch in stretches:
             yards = stretch.yards
             if stretch.mode == "t":
                 flight += yards
@@ -127,7 +143,7 @@ class Road:
             if stretch.belt:
                 belt += yards
 
-        paths = _thin(_join(self.stretches), budget)
+        paths = _thin(_join(stretches), budget)
         continents: dict[int, dict[str, Any]] = {}
         for continent, style, points in paths:
             entry = continents.get(continent)
@@ -158,7 +174,7 @@ class Road:
             if drawn:
                 entry["land"] = drawn
 
-        first, last = self.stretches[0], self.stretches[-1]
+        first, last = stretches[0], stretches[-1]
         return {
             "id": self.id,
             "as_of": as_of,
@@ -168,12 +184,112 @@ class Road:
             "level": last.level,
             "start": _place(first.continent, first.points[0]),
             "end": _place(last.continent, last.points[-1]),
-            "milestones": _milestones(self.stretches),
-            "crossings": _crossings(self.stretches),
+            "milestones": _milestones(stretches),
+            "crossings": _crossings(stretches),
             # Where most of the road is comes first.
             "continents": sorted(continents.values(), key=lambda entry: entry["yards"], reverse=True),
             "truncated": self.truncated,
         }
+
+
+def walked_spans(walks: Iterable[Any]) -> list[tuple[float, float]]:
+    """When the treadmill's belt was moving, from the walks the app
+    measured (``session.SessionRecord``: ``start``, ``seconds`` and the
+    speed series ``samples``, one ``[offset, km/h, bpm]`` every few
+    seconds). Sorted spans of epoch seconds that do not overlap. A walk
+    without a series counts from its start for the time the belt moved.
+    Whatever is damaged in a walk is left out: this never claims more."""
+    spans: list[tuple[float, float]] = []
+    for walk in walks:
+        start = getattr(walk, "start", None)
+        if not _finite(start):
+            continue
+        samples = [
+            (sample[0], sample[1])
+            for sample in (getattr(walk, "samples", None) or [])
+            if isinstance(sample, (list, tuple)) and len(sample) >= 2 and _finite(sample[0]) and _finite(sample[1])
+        ]
+        if not samples:
+            seconds = getattr(walk, "seconds", None)
+            if _finite(seconds) and seconds > 0:
+                spans.append((float(start), float(start + seconds)))
+            continue
+        end = getattr(walk, "end", None)
+        end_offset = end - start if _finite(end) else math.inf
+        for index, (offset, kmh) in enumerate(samples):
+            if kmh <= MOVING_KMH or offset < 0:
+                continue
+            until = samples[index + 1][0] if index + 1 < len(samples) else offset + SAMPLE_SPAN_S / 2
+            until = min(until, offset + SAMPLE_SPAN_S, end_offset)
+            if until > offset:
+                spans.append((float(start + offset), float(start + until)))
+    spans.sort()
+    merged: list[tuple[float, float]] = []
+    for begin, finish in spans:
+        if merged and begin <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], finish))
+        else:
+            merged.append((begin, finish))
+    return merged
+
+
+def _finite(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def on_the_belt(stretches: Sequence[Stretch], walked: Sequence[tuple[float, float]]) -> list[Stretch]:
+    """The stretches, marked walked on the treadmill where the character
+    went on foot or mounted while the belt was moving (``walked``: sorted
+    spans that do not overlap) and nowhere else. A stretch the belt
+    started or stopped on is cut there (the point in between is where the
+    character was then, along the line). A stretch whose times are not
+    known keeps the mark it has (only the demo's have one)."""
+    edges = [moment for span in walked for moment in span]  # start, end, start, end, ...
+    out: list[Stretch] = []
+    for stretch in stretches:
+        times = stretch.times
+        if not times or len(times) != len(stretch.points):
+            out.append(stretch)
+        elif stretch.mode == "t" or not edges or times[-1] < edges[0] or times[0] > edges[-1]:
+            out.append(replace(stretch, belt=False))
+        else:
+            out += _cut(stretch, edges)
+    return out
+
+
+def _moving(edges: Sequence[float], moment: float) -> bool:
+    return bisect.bisect_right(edges, moment) % 2 == 1
+
+
+def _cut(stretch: Stretch, edges: Sequence[float]) -> list[Stretch]:
+    """``stretch`` in pieces on and off the belt (``edges``: the starts and
+    ends of the spans it was moving, in order)."""
+    times = stretch.times
+    pieces: list[tuple[bool, list[tuple[int, int]], list[int]]] = []
+    for index in range(1, len(times)):
+        (ax, ay), (bx, by) = stretch.points[index - 1], stretch.points[index]
+        begin, finish = times[index - 1], times[index]
+        if finish <= begin:
+            steps = [((bx, by), finish, _moving(edges, finish))]
+        else:
+            cuts = edges[bisect.bisect_right(edges, begin) : bisect.bisect_left(edges, finish)]
+            moments = [begin, *cuts, finish]
+            steps = []
+            for low, high in zip(moments, moments[1:], strict=False):
+                share = (high - begin) / (finish - begin)
+                point = (round(ax + (bx - ax) * share), round(ay + (by - ay) * share))
+                steps.append((point, round(high), _moving(edges, (low + high) / 2)))
+        for point, moment, belt in steps:
+            if pieces and pieces[-1][0] == belt:
+                pieces[-1][1].append(point)
+                pieces[-1][2].append(moment)
+            elif pieces:
+                pieces.append((belt, [pieces[-1][1][-1], point], [pieces[-1][2][-1], moment]))
+            else:
+                pieces.append((belt, [stretch.points[0], point], [times[0], moment]))
+    return [
+        replace(stretch, belt=belt, points=tuple(points), times=tuple(moments)) for belt, points, moments in pieces
+    ]
 
 
 def _place(continent: int, point: tuple[int, int]) -> dict[str, int]:
@@ -276,11 +392,16 @@ def decode(table: Any) -> Road | None:
         if continent is None or x is None or y is None or mode not in MODES:
             continue
         points = [(x, y)]
+        began = _whole(segment.get("t"), TIME_LIMIT_S)
+        moment = began or 0
+        times = [moment]
         steps = segment.get("d")
         if isinstance(steps, str):
-            for dx, dy in _STEP.findall(steps):
+            for seconds, dx, dy in _STEP.findall(steps):
                 x, y = x + int(dx), y + int(dy)
+                moment += max(0, int(seconds))
                 points.append((x, y))
+                times.append(moment)
         if len(points) < 2 or any(abs(px) > WORLD_LIMIT_YD or abs(py) > WORLD_LIMIT_YD for px, py in points):
             continue
         if total + len(points) > MAX_POINTS:
@@ -288,7 +409,12 @@ def decode(table: Any) -> Road | None:
             break
         total += len(points)
         level = _whole(segment.get("l"), 1000) or 0
-        stretches.append(Stretch(continent, mode, segment.get("b") == 1, max(0, level), tuple(points)))
+        # (The addon's "b" is not read: the addon cannot see the belt, so it
+        # only says that a session was running. Which road was walked on the
+        # treadmill is known from the walks the app measured: to_api.)
+        stretches.append(
+            Stretch(continent, mode, False, max(0, level), tuple(points), tuple(times) if began is not None else ())
+        )
     if not stretches:
         return None
     return Road(key, tuple(stretches), truncated, _names(table.get("maps")))
@@ -452,7 +578,10 @@ class _File:
     waiting_since: float = 0.0
     mtime: float = 0.0
     id: str = ""  # whose road it is
+    road: Road | None = None
+    # The road as the page gets it, and the walks it was drawn with.
     api: dict[str, Any] | None = None
+    api_walked: tuple[tuple[float, float], ...] | None = None
 
 
 @dataclass
@@ -477,9 +606,10 @@ class RoadBook:
         with self._lock:
             self._demo[road.id] = road.to_api(self.wall())
 
-    def for_character(self, wanted: str) -> dict[str, Any]:
+    def for_character(self, wanted: str, walked: Sequence[tuple[float, float]] = ()) -> dict[str, Any]:
         """What the Share page asks: the road of the character with this
-        id, and whether there was anywhere to look.
+        id, and whether there was anywhere to look. ``walked``: when the
+        treadmill's belt was moving (``walked_spans``).
 
         ``road`` is None if no saved file holds one for that character -
         most often because the game has not written its files since the
@@ -490,8 +620,12 @@ class RoadBook:
             if wanted in self._demo:
                 return {"road": self._demo[wanted], "game_found": True, "files": 0, "demo": True}
             self._scan()
-            mine = [entry for entry in self._files.values() if entry.id == wanted and entry.api is not None]
+            mine = [entry for entry in self._files.values() if entry.id == wanted and entry.road is not None]
             newest = max(mine, key=lambda entry: entry.mtime, default=None)
+            if newest is not None and newest.road is not None:
+                spans = tuple(walked)
+                if newest.api is None or newest.api_walked != spans:
+                    newest.api, newest.api_walked = newest.road.to_api(newest.mtime, walked=spans), spans
             return {
                 "road": newest.api if newest else None,
                 "game_found": bool(self._dirs),
@@ -562,7 +696,7 @@ class RoadBook:
             return
         entry.mtime = status.st_mtime
         entry.id = road.id if road else ""
-        entry.api = road.to_api(status.st_mtime) if road else None
+        entry.road, entry.api, entry.api_walked = road, None, None
 
 
 # ---- the demo -------------------------------------------------------------------------------------

@@ -827,7 +827,9 @@ def test_the_companion_reads_the_road_out_of_the_saved_file(rt):
     run_north(rt, 600, 20)
     rt.set(taxi=False)
     rt.slash("/walka start")
+    began = float(rt.game.clock)
     run_north(rt, 300, 43)
+    walked = [(began, float(rt.game.clock))]   # when the app measured the belt moving
     db = char_db(rt)
     # (What the game would write, by the mock client's own writer.)
     file = b"\r\nWalkaCharDB = " + rt.M.serialize("WalkaCharDB").encode("utf-8") + b"\r\n"
@@ -838,10 +840,13 @@ def test_the_companion_reads_the_road_out_of_the_saved_file(rt):
     assert road.id == companion_road.character_id("Tester-Azeroth")
     assert [stretch.mode for stretch in road.stretches] == [segment["m"] for segment in db["segments"]]
     assert [len(stretch.points) for stretch in road.stretches] == [segment["n"] + 1 for segment in db["segments"]]
-    api = road.to_api(1_800_000_000.0)
+    api = road.to_api(1_800_000_000.0, walked=walked)
     # The same yards the addon counts (it measures as it goes, the companion from the points).
     assert api["yards"] + api["flight_yards"] == pytest.approx(db["yards"], abs=6)
+    # Walked on the treadmill: what the app measured, which here is the
+    # time of the session the player started.
     assert api["belt_yards"] == pytest.approx(db["beltYards"], abs=6)
+    assert road.to_api(1_800_000_000.0)["belt_yards"] == 0, "and nothing without a measured walk"
     assert api["start"]["c"] == 1 and api["end"]["c"] == 1
     assert api["end"]["x"] == pytest.approx(rt.north, abs=20)
     assert {path["style"] for entry in api["continents"] for path in entry["paths"]} == {"road", "flight", "walked"}
@@ -875,3 +880,37 @@ def test_the_starting_isle_of_the_skyborne_reaches_the_companion_with_its_name(r
     assert "land" not in by_id[1]
     min_x, min_y, max_x, max_y = by_id[2600]["land"]["bounds"]
     assert min_x < 100 and max_x > 500 and min_y < 300 < max_y
+
+
+# ---- with the session the addon starts by itself (the default) -------------------------------------
+
+
+def test_the_automatic_session_marks_no_road_walked_on_the_treadmill(make_rt):
+    """The automatic session runs from login to logout, with or without a
+    treadmill: it is not the walker saying the belt is moving."""
+    rt = make_rt(auto_session=True)
+    rt.tick()
+    assert rt.walka.IsActive(rt.walka) and rt.walka.session.auto is True
+    run_north(rt, 300, 43)
+    db = char_db(rt)
+    assert db["segments"] and all("b" not in segment for segment in db["segments"])
+    assert db["beltYards"] == 0
+    # Nor does the picture claim any, without a walk the app measured.
+    file = b"\r\nWalkaCharDB = " + rt.M.serialize("WalkaCharDB").encode("utf-8") + b"\r\n"
+    api = companion_road.decode(savedvars.parse(file)["WalkaCharDB"]).to_api(1_800_000_000.0)
+    assert api["yards"] > 250 and api["belt_yards"] == 0
+
+
+def test_with_the_automatic_session_the_picture_marks_what_the_app_measured(make_rt):
+    rt = make_rt(auto_session=True)
+    rt.tick()
+    run_north(rt, 300, 43)
+    began = rt.game.clock
+    run_north(rt, 300, 43)
+    walked = [(float(began), float(rt.game.clock))]   # the belt moved for the second half
+    run_north(rt, 300, 43)
+    char_db(rt)
+    file = b"\r\nWalkaCharDB = " + rt.M.serialize("WalkaCharDB").encode("utf-8") + b"\r\n"
+    api = companion_road.decode(savedvars.parse(file)["WalkaCharDB"]).to_api(1_800_000_000.0, walked=walked)
+    assert api["yards"] == pytest.approx(900, abs=40)
+    assert api["belt_yards"] == pytest.approx(300, abs=30)

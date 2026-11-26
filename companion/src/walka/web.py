@@ -340,8 +340,10 @@ def create_app(app: App) -> web.Application:
         if not re.fullmatch(r"[0-9a-f]{1,16}", wanted):
             raise web.HTTPBadRequest(text="character: the id of a character from /api/journey")
         # Finding and reading the game's files can take a moment: never on
-        # the loop that records the walk.
-        return web.json_response(await asyncio.to_thread(app.roads.for_character, wanted))
+        # the loop that records the walk. (Which of the road was walked on
+        # the treadmill is known from the walks: read here, on the loop.)
+        walked = app.walked_spans()
+        return web.json_response(await asyncio.to_thread(app.roads.for_character, wanted, walked))
 
     @routes.post("/api/update/install")
     async def update_install(_request: web.Request) -> web.Response:

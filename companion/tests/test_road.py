@@ -84,10 +84,11 @@ def test_a_saved_road_is_decoded():
     assert got.stretches == (
         Stretch(1, "w", False, 7, ((-600, 4200), (-580, 4200), (-561, 4196), (-561, 4217))),
         Stretch(1, "t", False, 7, ((-541, 4217), (-481, 4247), (-411, 4267))),
-        Stretch(0, "r", True, 8, ((100, 100), (100, 80), (95, 60))),
+        # (The addon's b = 1 is not taken for the belt: see to_api's "walked".)
+        Stretch(0, "r", False, 8, ((100, 100), (100, 80), (95, 60))),
         Stretch(1, "g", False, 8, ((95, 60), (96, 61))),
     )
-    assert [stretch.style for stretch in got.stretches] == ["road", "flight", "walked", "road"]
+    assert [stretch.style for stretch in got.stretches] == ["road", "flight", "road", "road"]
     assert got.stretches[0].yards == pytest.approx(20 + math.hypot(19, 4) + 21)
 
 
@@ -161,15 +162,15 @@ def test_a_road_too_long_to_take_is_cut_and_says_so(monkeypatch):
 def test_the_road_as_the_page_gets_it():
     got = read(
         database(
-            segment(0, 0, [(0, 100), (100, 0)], level=9),  # on foot, belt off
-            segment(100, 100, [(100, 0)], b=1, level=9),  # the same road, now walked for real
-            segment(200, 100, [(100, 0)], b=1, level=10),  # (a new stretch at every level)
-            segment(300, 100, [(1000, 500)], m="t", level=10),  # a flight
-            segment(-50, -50, [(0, 30), (40, 0)], c=0, m="r", level=10),  # a ride on the other continent
+            segment(0, 0, [(0, 100), (100, 0)], level=9, t=1000),  # on foot, belt off
+            segment(100, 100, [(100, 0)], level=9, t=2000),  # the same road, now walked for real
+            segment(200, 100, [(100, 0)], level=10, t=2003),  # (a new stretch at every level)
+            segment(300, 100, [(1000, 500)], m="t", level=10, t=3000),  # a flight
+            segment(-50, -50, [(0, 30), (40, 0)], c=0, m="r", level=10, t=4000),  # a ride on the other continent
         )
     )
     assert got is not None
-    api = got.to_api(NOW)
+    api = got.to_api(NOW, walked=[(2000.0, 2006.0)])  # when the app measured the belt moving
     assert api == {
         "id": character_id(KEY),
         "as_of": NOW,
@@ -737,3 +738,79 @@ def test_a_file_the_game_holds_open_can_still_be_read(tmp_path: Path):
         held.write(b" open")
         held.flush()
         assert road.read_shared(path) == b"held open"
+
+
+# ---- walked on the treadmill: from the walks the app measured -----------------------------------
+
+
+class Walk:
+    """What road.walked_spans reads of a walk on file."""
+
+    def __init__(self, start, seconds, speeds, every=5.0):
+        self.start, self.seconds = start, seconds
+        self.end = start + len(speeds) * every
+        self.samples = [[round(i * every, 1), kmh, None] for i, kmh in enumerate(speeds)]
+
+
+def test_the_addons_belt_flag_claims_nothing():
+    """The addon cannot see the belt: its b = 1 only says a session was
+    running, and the automatic one runs from login to logout. Without a
+    walk the app measured, nothing is walked on the treadmill."""
+    got = read(database(segment(0, 0, [(100, 0), (100, 0)], b=1), segment(200, 0, [(0, 100)], b=1, t=2000)))
+    assert got is not None and not any(stretch.belt for stretch in got.stretches)
+    api = got.to_api(NOW)
+    assert api["belt_yards"] == 0 and api["yards"] == 300
+    assert {path["style"] for entry in api["continents"] for path in entry["paths"]} == {"road"}
+
+
+def test_every_point_of_a_saved_road_has_its_time():
+    got = read(database(segment(0, 0, [(10, 0), (10, 0)], t=1000), {**segment(5, 5), "d": "4,1,0;junk;7,0,1"}))
+    assert got.stretches[0].times == (1000, 1003, 1006)
+    assert got.stretches[1].times == (1000, 1004, 1011)
+    no_time = read(database({**segment(0, 0, [(10, 0)]), "t": "soon"}))
+    assert no_time.stretches[0].times == ()
+    assert no_time.to_api(NOW, walked=[(0, 10**12)])["belt_yards"] == 0, "no time, no claim"
+
+
+def test_the_road_walked_while_the_belt_moved_is_marked_walked():
+    # On foot from 1000 for 60 seconds, 10 yards every 3 seconds (200 yards).
+    got = read(database(segment(0, 0, [(10, 0)] * 20, t=1000)))
+    walks = road.walked_spans([Walk(1015, 30, [3.0] * 6)])  # the belt moved from 1015 to 1045
+    assert walks == [(1015.0, 1045.0)]
+    api = got.to_api(NOW, walked=walks)
+    assert api["yards"] == 200 and api["belt_yards"] == 100
+    (kalimdor,) = api["continents"]
+    assert [path["style"] for path in kalimdor["paths"]] == ["road", "walked", "road"]
+    assert kalimdor["paths"][1]["p"][0] == 50 and kalimdor["paths"][1]["p"][-2] == 150
+
+
+def test_a_belt_standing_still_in_a_walk_is_not_walked():
+    walks = road.walked_spans([Walk(1000, 20, [3.0, 3.0, 0.0, 0.0, 0.0, 3.0, 3.0])])
+    assert walks == [(1000.0, 1010.0), (1025.0, 1035.0)]
+    # A walk with no speed series: the time the belt moved, from its start.
+    bare = Walk(1000, 20, [])
+    bare.end = 1100
+    assert road.walked_spans([bare]) == [(1000.0, 1020.0)]
+    # Damaged walks are left out, not raised over.
+    broken = Walk(1000, 20, [3.0])
+    broken.samples = [["x", 3.0, None], [5, float("nan"), None], None]
+    broken.start = float("nan")
+    assert road.walked_spans([broken]) == []
+
+
+def test_a_flight_is_never_walked():
+    got = read(database(segment(0, 0, [(100, 0)], m="t", t=1000)))
+    assert got.to_api(NOW, walked=[(0, 10**12)])["belt_yards"] == 0
+
+
+def test_the_road_book_marks_the_walks_it_is_given(tmp_path):
+    folder = tmp_path / "World of Warcraft" / "_anniversary_"
+    path = folder / "WTF" / "Account" / "ACC" / "Realm" / "Tester" / "SavedVariables" / "Walka.lua"
+    path.parent.mkdir(parents=True)
+    path.write_bytes(saved(database(segment(0, 0, [(10, 0)] * 20, t=1000))))
+    old = path.stat().st_mtime - 60
+    os.utime(path, (old, old))
+    book = RoadBook(lambda: [folder])
+    assert book.for_character(character_id(KEY))["road"]["belt_yards"] == 0
+    assert book.for_character(character_id(KEY), walked=[(1000.0, 1060.0)])["road"]["belt_yards"] == 200
+    assert book.for_character(character_id(KEY))["road"]["belt_yards"] == 0

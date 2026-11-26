@@ -175,7 +175,8 @@ WalkaCharDB = {
     segments = {                -- unbroken stretches travelled the same way
         { c = 1,                -- continent id (the game's, of the world position)
           m = "w",              -- on foot; "r" mounted, "t" flight path, "g" ghost
-          b = 1,                -- a walking session was running (absent otherwise)
+          b = 1,                -- a session the player started was running (absent otherwise;
+                                -- never for the automatic one, and not read by the app)
           l = 17,               -- character level
           t = 1795000000,       -- when it began (epoch seconds)
           x = -600, y = 4200,   -- first point, world yards (x north, y west)
@@ -209,8 +210,15 @@ How the app reads it (`road.py`):
   runs on the loop that records the walk.
 * **For the page** the road is thinned to at most 6,000 points
   (Ramer-Douglas-Peucker, the same tolerance everywhere) and grouped by
-  continent and by how it was travelled (`walked` during a walking session,
-  `road` without, `flight`), with its length measured before the thinning.
+  continent and by how it was travelled (`walked` on the treadmill, `road`
+  otherwise, `flight`), with its length measured before the thinning.
+* **Walked on the treadmill.** The addon cannot see the belt, so the app
+  does not take its `b` for it. Every point of the road has a time (`t`
+  and the seconds in `d`), and the app knows when it measured the belt
+  moving (the speed series of each walk it recorded, a sample every five
+  seconds). The road travelled on foot or mounted while the belt was
+  moving is `walked`; a stretch the belt started or stopped on is cut
+  there. With no walk measured, none of the road is `walked`.
   With it go the places where the road begins and ends, where every tenth
   level was reached, and the passages from one continent to another (from
   where to where; the dozen made most often - the page draws an arc for up

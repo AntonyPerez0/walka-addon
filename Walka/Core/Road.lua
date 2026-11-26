@@ -7,7 +7,7 @@
 --
 --   { version = 1, guid = "...", key = "Name-Realm",
 --     yards = n,         -- length of the road recorded so far
---     beltYards = n,     -- ... of which with the treadmill belt moving
+--     beltYards = n,     -- ... of which in a session the player started (see b)
 --     maps = { [continent id] = { id = map id, name = "its name" }, ... },
 --     segments = { segment, ... } }
 --
@@ -20,7 +20,9 @@
 --
 --   { c = continent id,
 --     m = "w" on foot | "r" mounted | "t" flight path | "g" as a ghost,
---     b = 1 if the treadmill belt was moving (absent otherwise),
+--     b = 1 if a session the player started was running (absent otherwise).
+--         The addon cannot see the belt; the Walka app marks the road
+--         walked on the treadmill from the times of its own walks, not this,
 --     l = character level,
 --     t = time of its first point (seconds since the epoch),
 --     x = .., y = ..     its first point, in whole world yards,

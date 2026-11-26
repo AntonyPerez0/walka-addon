@@ -249,9 +249,9 @@ the picture over a small map of the continent - not the game's map, but a
 low-poly drawing of Walka's own: the shape of the land in facets, in the
 picture's colours.
 
-* The stretches you walked **on the treadmill** - a walking session was
-  running in the game - are a bright line; what the character travelled
-  without one is the same line in a quieter colour; flight paths are fine dashes. A key under the map shows a
+* The stretches you walked **on the treadmill** - the app measured the
+  belt moving while the character travelled them - are a bright line;
+  the rest of the road is the same line in a quieter colour; flight paths are fine dashes. A key under the map shows a
   piece of each kind of line with what it means - and how much of the road
   you walked for real.
 * *START* marks where the road begins, a gem marked *NOW* with the
@@ -329,7 +329,8 @@ From the moment the addon is installed it keeps the road your character
 travels - install it before you start a character and the road begins at
 level 1. It is drawn on the [Share picture](#the-road-on-the-picture), on
 Walka's own map of the world: coloured by level, brightest where you walked
-on the treadmill, with flight paths thin and pale. (Until version 0.9 the
+on the treadmill (the times the app measured the belt moving; with no
+treadmill, none of it), with flight paths thin and pale. (Until version 0.9 the
 addon also drew it on the game's world map. The addon has no windows any
 more; the road is in the app.)
 
