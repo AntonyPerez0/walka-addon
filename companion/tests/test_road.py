@@ -153,6 +153,8 @@ def test_a_road_too_long_to_take_is_cut_and_says_so(monkeypatch):
     monkeypatch.setattr(road, "MAX_POINTS", 7)
     got = decode(savedvars.parse(saved(database(*[segment(i * 100, 0) for i in range(5)])))["WalkaCharDB"])
     assert got is not None and len(got.stretches) == 2 and got.truncated
+    # The newest road is kept: it is where the character is now.
+    assert [stretch.points[0][0] for stretch in got.stretches] == [300, 400]
     assert got.to_api(NOW)["truncated"] is True
 
 

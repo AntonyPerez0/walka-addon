@@ -385,7 +385,9 @@ def decode(table: Any) -> Road | None:
     stretches: list[Stretch] = []
     total = 0
     truncated = False
-    for segment in savedvars.sequence(table.get("segments")):
+    # From the newest back: past MAX_POINTS it is the oldest road that is
+    # left out, not where the character is now. (Put in order again below.)
+    for segment in reversed(list(savedvars.sequence(table.get("segments")))):
         if not isinstance(segment, dict):
             continue
         continent = _whole(segment.get("c"), 10**6)
@@ -419,6 +421,7 @@ def decode(table: Any) -> Road | None:
         )
     if not stretches:
         return None
+    stretches.reverse()
     return Road(key, tuple(stretches), truncated, _names(table.get("maps")))
 
 

@@ -188,6 +188,12 @@ WalkaCharDB = {
 }
 ```
 
+The file does not grow without end: past 400,000 points (a road from
+level 1 to 60 is about 100,000) the addon keeps every other point of its
+oldest stretches when it loads, so that the road keeps its shape and its
+two ends. The app reads up to a million points; past that it leaves out
+the oldest road, never the newest.
+
 `maps` is how a land that is no continent of Azeroth is found again. The
 game lists Kalimdor and the Eastern Kingdoms as the continents of its
 world; the Skyborne's Zephras Isle lies in Skywall and is listed under

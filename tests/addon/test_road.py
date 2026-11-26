@@ -914,3 +914,24 @@ def test_with_the_automatic_session_the_picture_marks_what_the_app_measured(make
     api = companion_road.decode(savedvars.parse(file)["WalkaCharDB"]).to_api(1_800_000_000.0, walked=walked)
     assert api["yards"] == pytest.approx(900, abs=40)
     assert api["belt_yards"] == pytest.approx(300, abs=30)
+
+
+def test_a_road_too_long_for_the_saved_file_has_its_oldest_stretches_thinned(rt):
+    """The saved file must not grow without end: past the most points the
+    addon keeps, the oldest stretches keep every other point, and the
+    newest are left as they are. The road still begins and ends where it did."""
+    road = rt.ns.Road
+    rt.run("local road = ... road.MAX_POINTS = 600", road)
+    steps = ";".join(["3,20,0"] * 99)
+    segments = ",".join(f"{{c=1,m='w',l=1,t={T0 + i * 1000},x={i * 5000},y=0,n=99,d='{steps}'}}" for i in range(10))
+    db = rt.run("local road = ... return road.database({ version = 1, yards = 0, beltYards = 0, segments = {"
+                + segments + "} }, nil, 'Tester-Azeroth')", road)
+    kept = lua_plain(db)["segments"]
+    kept = list(kept.values()) if isinstance(kept, dict) else kept
+    assert len(kept) == 10
+    assert sum(segment["n"] + 1 for segment in kept) <= 600
+    assert kept[-1]["n"] == 99 and kept[0]["n"] < 99
+    for segment in kept:
+        total = sum(int(part.split(",")[1]) for part in segment["d"].split(";"))
+        assert total == 99 * 20, "every stretch ends where it ended"
+        assert sum(int(part.split(",")[0]) for part in segment["d"].split(";")) == 99 * 3
