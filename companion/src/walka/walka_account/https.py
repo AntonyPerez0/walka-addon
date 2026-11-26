@@ -345,10 +345,33 @@ class Answer:
     def json(self) -> Any:
         """The body as JSON. ``ValueError`` if it is none - and the body is not in that error."""
         try:
-            return json.loads(self.body.decode("utf-8"), parse_constant=_no_constant, parse_float=_a_number)
+            value = json.loads(self.body.decode("utf-8"), parse_constant=_no_constant, parse_float=_a_number)
         except (ValueError, RecursionError):  # not text, not JSON, NaN, a number without end, or nested without end
             pass
+        else:
+            # Nested without end is refused here, not left to the
+            # interpreter: a newer Python may parse 100,000 levels without a
+            # RecursionError (and what reads the answer then would not).
+            if _depth(value) <= MOST_DEPTH:
+                return value
         raise ValueError("the answer is not JSON")
+
+
+# How deep the accounts' answers may be nested (theirs are three or four levels).
+MOST_DEPTH = 64
+
+
+def _depth(value: Any) -> int:
+    """How deeply ``value`` is nested, counted without recursion."""
+    deepest, waiting = 0, [(value, 1)]
+    while waiting:
+        item, level = waiting.pop()
+        if isinstance(item, (list, dict)):
+            deepest = max(deepest, level)
+            if level > MOST_DEPTH:
+                return level
+            waiting.extend((child, level + 1) for child in (item.values() if isinstance(item, dict) else item))
+    return deepest
 
 
 def _dumps(body: Any) -> str:

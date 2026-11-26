@@ -581,6 +581,7 @@ def test_the_body_as_json():
         b'{"a":1e999}',  # JSON by the letter, and no number: Python would make infinity of it
         b"[-1E400]",
         b"[" * 100_000 + b"]" * 100_000,
+        b"[" * 65 + b"]" * 65,  # (deeper than any answer: refused whatever the interpreter can parse)
         b'{"a":' + b"9" * 5000 + b"}",
     ):
         with pytest.raises(ValueError) as caught:
