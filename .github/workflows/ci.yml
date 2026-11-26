@@ -429,6 +429,16 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release_version != '')
     needs: [test, virus-scan]
     runs-on: ubuntu-latest
+    # Settings -> Environments -> release: a reviewer added there has to
+    # approve every run of this job before it can publish anything.
+    environment: release
+    # One run per version at a time: a second waits, then finds the first's release.
+    concurrency:
+      group: release-${{ github.event_name == 'workflow_dispatch' && format('v{0}', inputs.release_version) || github.ref_name }}
+      cancel-in-progress: false
+    defaults:
+      run:
+        shell: bash
     permissions:
       contents: write
       # For the signed statement that this run built these files (below).
@@ -441,19 +451,31 @@ jobs:
       DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0  # (the whole history: to see that this commit is on the main line)
       - name: The tag is the version written in the code
         run: |
-          echo "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$' || { echo "::error::'$TAG' is not a version like v0.1.0"; exit 1; }
+          # The whole value, and one line of it: [[ =~ ]] matches the whole
+          # text (grep would pass a value with one good line among others).
+          shape='^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'
+          [[ "$TAG" =~ $shape ]] || { echo "::error::'$TAG' is not a version like v0.1.0"; exit 1; }
           # Run by hand, a release is made from the main line of the code and from nowhere else.
           if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && [ "$GITHUB_REF_NAME" != "$DEFAULT_BRANCH" ]; then
             echo "::error::A release is published from the branch '$DEFAULT_BRANCH', not from '$GITHUB_REF_NAME'. Choose it under 'Use workflow from'."
             exit 1
           fi
+          # From a pushed tag too: a tag can be pushed on any commit of any
+          # branch, and only a commit that is on the main line is published.
+          git fetch --no-tags --quiet origin "+refs/heads/$DEFAULT_BRANCH:refs/remotes/origin/$DEFAULT_BRANCH"
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" "refs/remotes/origin/$DEFAULT_BRANCH"; then
+            echo "::error::$GITHUB_SHA is not on the branch '$DEFAULT_BRANCH'. Merge it there first, then tag the commit on '$DEFAULT_BRANCH'."
+            exit 1
+          fi
           version="${TAG#v}"
           fail() { echo "::error::tag $TAG does not match $1"; exit 1; }
-          grep -qx "version = \"$version\"" companion/pyproject.toml || fail "version in companion/pyproject.toml"
-          grep -qx "__version__ = \"$version\"" companion/src/walka/__init__.py || fail "__version__ in companion/src/walka/__init__.py"
-          grep -qx "## Version: $version" Walka/Walka.toc || fail "## Version in Walka/Walka.toc"
+          grep -Fqx "version = \"$version\"" companion/pyproject.toml || fail "version in companion/pyproject.toml"
+          grep -Fqx "__version__ = \"$version\"" companion/src/walka/__init__.py || fail "__version__ in companion/src/walka/__init__.py"
+          grep -Fqx "## Version: $version" Walka/Walka.toc || fail "## Version in Walka/Walka.toc"
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: Walka-release
@@ -507,7 +529,8 @@ jobs:
           # A tag like v0.2.0-rc1 is a trial: published, but never "the latest" that the README's button gives.
           pre=""
           case "$TAG" in *-*) pre="--prerelease" ;; esac
-          if draft=$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null); then
+          if found=$(gh release view "$TAG" --json isDraft,targetCommitish --jq '"\(.isDraft) \(.targetCommitish)"' 2>/dev/null); then
+            draft="${found%% *}" target="${found#* }"
             # A second run for the same tag. A published release is never
             # changed: people may have downloaded its files, checked them,
             # or be comparing a download with its checksums right now.
@@ -515,7 +538,16 @@ jobs:
               echo "::error::Release $TAG is already published, and a published release is never changed. Give the fix a new version number and publish that."
               exit 1
             fi
-            # A draft that a failed first try left behind: finish it.
+            # A draft that a failed first try left behind: finished only by a
+            # run of the commit it was made from. (Its tag, if there is one
+            # already, is what publishing it would point at; else its target.)
+            git fetch --force --quiet origin "+refs/tags/$TAG:refs/tags/$TAG" 2>/dev/null || true
+            made_from=$(git rev-parse -q --verify "refs/tags/$TAG^{commit}" || true)
+            if [ -z "$made_from" ] && [[ "$target" =~ ^[0-9a-f]{40}$ ]]; then made_from="$target"; fi
+            if [ "$made_from" != "$GITHUB_SHA" ] || { [[ "$target" =~ ^[0-9a-f]{40}$ ]] && [ "$target" != "$GITHUB_SHA" ]; }; then
+              echo "::error::The draft release $TAG was made from ${made_from:-a branch, not a commit}, not from this run's commit $GITHUB_SHA. Delete the draft on the Releases page and run this again."
+              exit 1
+            fi
             gh release upload "$TAG" $files --clobber
             gh release edit "$TAG" --draft=false
           else

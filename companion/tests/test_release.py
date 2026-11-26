@@ -5,8 +5,12 @@ and the workflow that builds and publishes it."""
 from __future__ import annotations
 
 import importlib.util
+import os
 import re
+import shutil
+import subprocess
 import sys
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -151,8 +155,8 @@ def test_a_tag_of_the_version_in_the_code_passes_the_release_jobs_own_look(repo_
     text = workflow(repo_root)
     step = text[text.index("- name: The tag is the version written in the code") :]
     step = step[: step.index("\n      - ")]
-    (shape,) = re.findall(r"grep -Eq '(\^v\S+\$)'", step)
-    looks = re.findall(r'grep -qx "((?:[^"\\]|\\")*)" (\S+) \|\| fail', step)
+    (shape,) = re.findall(r"shape='(\^v\S+\$)'", step)
+    looks = re.findall(r'grep -Fqx "((?:[^"\\]|\\")*)" (\S+) \|\| fail', step)
     assert [file for _line, file in looks] == [
         "companion/pyproject.toml",
         "companion/src/walka/__init__.py",
@@ -209,3 +213,134 @@ def test_what_a_package_carries_goes_with_its_licence_too(repo_root: Path):
     assert "WebView2" in name and "Copyright (C) Microsoft Corporation" in text
     assert "Redistributions in binary form must reproduce" in text
     assert third_party.licence_files(Pywebview(), "darwin") == []
+
+
+# ---- the release job's own looks, run as the job runs them -------------------------------------
+
+
+def release_step(repo_root: Path, name: str) -> str:
+    """The script of a step of the release job, as bash gets it."""
+    text = workflow(repo_root)
+    job = text[text.index("\n  release:") :]
+    step = job[job.index(f"- name: {name}") :]
+    body = step[step.index("run: |\n") + len("run: |\n") :]
+    end = re.search(r"\n      - |\n  \w|\Z", body)
+    return textwrap.dedent(body[: end.start()])
+
+
+def git(cwd: Path, *args: str) -> str:
+    return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
+
+
+@pytest.fixture
+def checkout(repo_root: Path, tmp_path: Path):
+    """A checkout as the release job has it: an origin with the main line,
+    and a commit on another branch that was never merged."""
+    if sys.platform == "win32" or shutil.which("bash") is None or shutil.which("git") is None:
+        pytest.skip("the release job runs on Linux: needs bash and git (on Windows, bash may be WSL's)")
+    origin = tmp_path / "origin.git"
+    work = tmp_path / "work"
+    git(tmp_path, "init", "-q", "--bare", "-b", "main", str(origin))
+    git(tmp_path, "init", "-q", "-b", "main", str(work))
+    for relative in ("companion/pyproject.toml", "companion/src/walka/__init__.py", "Walka/Walka.toc"):
+        (work / relative).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(repo_root / relative, work / relative)
+    git(work, "add", "-A")
+    git(work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "main")
+    main = git(work, "rev-parse", "HEAD")
+    git(work, "remote", "add", "origin", str(origin))
+    git(work, "push", "-q", "origin", "main")
+    git(work, "checkout", "-q", "-b", "side")
+    git(work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "side")
+    side = git(work, "rev-parse", "HEAD")
+    git(work, "push", "-q", "origin", "side")
+    return work, main, side
+
+
+def run_step(script: str, cwd: Path, **env: str) -> subprocess.CompletedProcess:
+    full = {**os.environ, "GITHUB_EVENT_NAME": "push", "GITHUB_REF_NAME": "v0", "DEFAULT_BRANCH": "main", **env}
+    return subprocess.run(["bash", "-eo", "pipefail", "-c", script], cwd=cwd, env=full, capture_output=True,
+                          text=True, timeout=60)  # fmt: skip
+
+
+def code_version(repo_root: Path) -> str:
+    return tomllib.loads((repo_root / "companion" / "pyproject.toml").read_text("utf-8"))["project"]["version"]
+
+
+def test_a_tag_is_published_only_from_a_commit_on_the_main_line(repo_root: Path, checkout):
+    work, main, side = checkout
+    script = release_step(repo_root, "The tag is the version written in the code")
+    tag = f"v{code_version(repo_root)}"
+    assert run_step(script, work, TAG=tag, GITHUB_SHA=main).returncode == 0
+    # A tag pushed on a commit of another branch: refused.
+    refused = run_step(script, work, TAG=tag, GITHUB_SHA=side)
+    assert refused.returncode != 0 and "is not on the branch 'main'" in refused.stdout
+
+
+@pytest.mark.parametrize("value", ["{tag}\n{tag}", "{tag}\nx", "x\n{tag}", "{tag} ", "v1.2", "{tag}\n"])
+def test_a_tag_of_more_than_one_line_or_another_shape_is_refused(repo_root: Path, checkout, value: str):
+    work, main, _side = checkout
+    tag = value.format(tag=f"v{code_version(repo_root)}")
+    result = run_step(release_step(repo_root, "The tag is the version written in the code"), work, TAG=tag,
+                      GITHUB_SHA=main)  # fmt: skip
+    assert result.returncode != 0 and "is not a version like v0.1.0" in result.stdout
+
+
+FAKE_GH = """#!/usr/bin/env bash
+echo "gh $*" >> "$GH_LOG"
+if [ "$1 $2" = "release view" ]; then
+  [ -n "$GH_FOUND" ] || exit 1
+  echo "$GH_FOUND"
+fi
+"""
+
+
+@pytest.mark.parametrize("made_from", ["main", "side", "branch"])
+def test_a_leftover_draft_is_finished_only_by_a_run_of_its_own_commit(repo_root: Path, checkout, tmp_path, made_from):
+    work, main, side = checkout
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "gh").write_text(FAKE_GH)
+    (bin_dir / "gh").chmod(0o755)
+    (work / "assets").mkdir()
+    for name in ("Walka.exe", "Walka-mac-apple-silicon.zip", "Walka-mac-intel.zip", "Walka-addon.zip",
+                 "virus-scan.json", "SHA256SUMS.txt"):  # fmt: skip
+        (work / "assets" / name).write_text("x")
+    target = {"main": main, "side": side, "branch": "main"}[made_from]
+    log = tmp_path / "gh.log"
+    result = run_step(release_step(repo_root, "Publish"), work, TAG="v9.9.9", GITHUB_SHA=main, GH_REPO="o/r",
+                      GH_LOG=str(log), GH_FOUND=f"true {target}", PATH=f"{bin_dir}{os.pathsep}{os.environ['PATH']}")  # fmt: skip
+    calls = log.read_text().splitlines()
+    if made_from == "main":
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert any(call.startswith("gh release upload v9.9.9") for call in calls)
+        assert "gh release edit v9.9.9 --draft=false" in calls
+    else:
+        assert result.returncode != 0 and "Delete the draft" in result.stdout
+        assert not any(call.startswith(("gh release upload", "gh release edit")) for call in calls)
+
+
+def test_a_published_release_is_left_alone(repo_root: Path, checkout, tmp_path):
+    work, main, _side = checkout
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "gh").write_text(FAKE_GH)
+    (bin_dir / "gh").chmod(0o755)
+    (work / "assets").mkdir()
+    for name in ("Walka.exe", "Walka-mac-apple-silicon.zip", "Walka-mac-intel.zip", "Walka-addon.zip",
+                 "virus-scan.json", "SHA256SUMS.txt"):  # fmt: skip
+        (work / "assets" / name).write_text("x")
+    log = tmp_path / "gh.log"
+    result = run_step(release_step(repo_root, "Publish"), work, TAG="v9.9.9", GITHUB_SHA=main, GH_REPO="o/r",
+                      GH_LOG=str(log), GH_FOUND=f"false {main}", PATH=f"{bin_dir}{os.pathsep}{os.environ['PATH']}")  # fmt: skip
+    assert result.returncode != 0 and "already published" in result.stdout
+    assert log.read_text().splitlines() == [line for line in log.read_text().splitlines() if "view" in line]
+
+
+def test_the_release_job_waits_for_a_reviewer_and_runs_once_per_version(repo_root: Path):
+    text = workflow(repo_root)
+    job = text[text.index("\n  release:") :]
+    head = job[: job.index("    steps:")]
+    assert "\n    environment: release\n" in head
+    assert "\n    concurrency:\n      group: release-${{" in head and "cancel-in-progress: false" in head
+    assert "fetch-depth: 0" in job[: job.index("- name: The tag is the version")]

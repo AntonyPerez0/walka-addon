@@ -61,7 +61,11 @@ companion/requirements-dev.lock`, and no install of Walka itself.)
   `companion/pyproject.toml`, `companion/src/walka/__init__.py` and
   `Walka/Walka.toc`, commit and push. Then, on GitHub, open **Actions** →
   **CI** → **Run workflow**, type the number (`0.1.0`) and run it. (Pushing
-  a tag does the same: `git tag v0.1.0`, `git push origin v0.1.0`.) When
+  a tag does the same: `git tag v0.1.0`, `git push origin v0.1.0`. Only a
+  commit that is on the default branch is published: a tag on any other
+  commit is refused.) The publishing job runs in the GitHub environment
+  `release`: a reviewer added to it under *Settings → Environments* has to
+  approve each release before anything is published. When
   the run finishes, the **Releases** page has `Walka.exe`, the two Mac
   zips (the download buttons at the top of this page always give the
   latest ones) and `Walka-addon.zip`, which you upload to CurseForge
