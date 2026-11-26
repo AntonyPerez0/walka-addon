@@ -166,7 +166,8 @@ def test_the_report_says_truthfully_what_the_probe_writes(radio: Radio):
         (ftms.HEART_RATE_SERVICE, True),
         (VENDOR_SERVICE, False),
         ("0000fee0-0000-1000-8000-00805f9b34fb", False),
-        (ftms.RSC_SERVICE, False),
+        (ftms.RSC_SERVICE, True),  # (a foot pod: Walka reads it)
+        (ftms.uuid16(0xFE00), True),  # (WalkingPad: Walka reads it)
     ],
 )
 def test_which_services_are_listened_to(service_uuid: str, expected: bool):
@@ -292,3 +293,14 @@ def test_a_treadmill_of_another_make_is_probed_and_a_bike_is_not(radio: Radio):
 
     radio.adverts.pop("88:88:88:88:88:88")
     assert "No treadmill found" in "\n".join(run_probe())
+
+
+def test_the_check_listens_to_the_devices_walka_can_read_too():
+    """docs/HARDWARE.md asks owners of foot pods and of pads with their
+    maker's protocol for a recording: the check must listen to those too
+    (switching notifications on, and sending nothing)."""
+    from walka import ftms, probe
+
+    for service in (ftms.RSC_SERVICE, ftms.uuid16(0xFE00), ftms.uuid16(0xFBA0)):
+        assert probe.listens_to(service), service
+    assert not probe.listens_to(ftms.uuid16(0x180F))  # (the battery: nothing of the walk)
