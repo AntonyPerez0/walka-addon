@@ -753,8 +753,11 @@ class SessionStore:
         """Newest first."""
         return list(reversed(self.records[-limit:])) if limit > 0 else []
 
-    def totals(self, now: float | None = None, extra: Iterable[SessionRecord] = ()) -> dict[str, Any]:
-        """Totals for today, the last 7 days and all time, plus a 7-day series."""
+    def totals(
+        self, now: float | None = None, extra: Iterable[SessionRecord] = (), *, made_up: bool = True
+    ) -> dict[str, Any]:
+        """Totals for today, the last 7 days and all time, plus a 7-day series.
+        ``made_up=False``: walks walked on no treadmill (``is_made_up``) count for nothing."""
         now = time.time() if now is None else now
         today_key = day_key(now)
         noon = _local_noon(now)
@@ -768,6 +771,8 @@ class SessionStore:
         today, week, all_time = _bucket(), _bucket(), _bucket()
         walked: set[str] = set()
         for record in [*self.records, *extra]:
+            if not made_up and is_made_up(record):
+                continue
             key = day_key(record.start)
             walked.add(key)
             _add(all_time, record)

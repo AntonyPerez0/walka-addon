@@ -78,6 +78,7 @@ class App:
         treadmill: Treadmill,
         heart_rate: Any = None,
         walka_account: Any = None,
+        writes_addon: bool = True,
         wall_clock: Callable[[], float] = time.time,
         mono_clock: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -147,6 +148,10 @@ class App:
         self._idle_since: float | None = None
         self._was_moving = False
         self._totals_cache: tuple[float, dict[str, Any]] | None = None
+        # False for a made-up run started from the command line (--demo,
+        # --simulate, --replay): the installed addon's file is not written,
+        # so that the game never shows made-up walks.
+        self.writes_addon = writes_addon
         self._sync_task: asyncio.Task | None = None  # writing the addon's file, on a worker thread
         self._sync_wanted = False
         self._state = self._load_state()
@@ -404,7 +409,15 @@ class App:
         }
         known = self._state.get("treadmill")
         name = known.get("name", "") if isinstance(known, dict) else ""
-        return addon_sync.build_payload(list(self.store.records), profile=profile, treadmill_name=name)
+        walks = [record for record in self.store.records if self.shows_made_up or not is_made_up(record)]
+        return addon_sync.build_payload(walks, profile=profile, treadmill_name=name)
+
+    @property
+    def shows_made_up(self) -> bool:
+        """Do made-up walks count (the totals, the addon's file)? Only while
+        Walka itself runs on the simulated treadmill (or a recording): with
+        a real one they are kept, and listed, but count for nothing."""
+        return self.treadmill.kind == "simulated"
 
     def request_sync(self) -> None:
         """Have the addon's file written again, from the loop: on a worker
@@ -441,6 +454,9 @@ class App:
         """Write history and profile into the addon folder (``payload``:
         made beforehand with ``addon_payload``). Waits on the disk: from the
         loop, ``request_sync``."""
+        if not self.writes_addon:
+            self.addon_error = "not written: Walka runs on a made-up treadmill, and the game is not shown made-up walks"
+            return False
         directory = self.find_addon_dir()
         if directory is None:
             self.addon_error = "Walka addon folder not found - install the addon or set its folder in Settings."
@@ -819,7 +835,7 @@ class App:
         extra = []
         if self.recorder is not None and self.recorder.seconds > 0:
             extra.append(self.recorder.snapshot(wall))
-        totals = self.store.totals(wall, extra)
+        totals = self.store.totals(wall, extra, made_up=self.shows_made_up)
         self._totals_cache = (wall, totals)
         return totals
 

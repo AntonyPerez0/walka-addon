@@ -320,8 +320,14 @@ Private by default:
   own drawing too (see [THIRD-PARTY-NOTICES.md](../THIRD-PARTY-NOTICES.md) for
   how their outlines were made).
 
-`py -m walka --demo` has a made-up character to try the page with; it is
-never saved.
+`py -m walka --demo` has a made-up character to try the page with; the
+character is never saved. The demo's walks are: like every walk made with
+the simulated treadmill (`--simulate`) or a recording played back
+(`--replay`), they are kept in Walka's data folder, marked as made up.
+Such a run does not write the game addon's file. Once Walka runs with
+your real treadmill again, made-up walks are still listed in *History*,
+but they count for nothing: not in the totals, not in the game, and never
+sent to a Walka account.
 
 ## The road map
 

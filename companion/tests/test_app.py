@@ -1126,3 +1126,50 @@ def test_the_addons_file_is_written_off_the_loop(rig: Rig, monkeypatch):
 
     run(scenario())
     assert load_companion_data(rig).sessions[1] is not None
+
+
+# ---- made-up walks among real ones -------------------------------------------------------------------
+
+
+class RealPad(SimulatedTreadmill):
+    """The simulated pad's workings under a real reader's kind."""
+
+    kind = "ftms"
+
+
+def test_made_up_walks_are_kept_but_count_for_nothing_with_a_real_treadmill(tmp_path: Path):
+    from walka.session import SessionRecord
+
+    data = tmp_path / "data"
+    store = SessionStore(data)
+    common = {"distance_m": 1000.0, "steps": 1500, "kcal": 60.0, "seconds": 900.0}
+    store.add(SessionRecord(id="real", start=1_799_990_000.0, end=1_799_991_000.0, treadmill="URTM030", **common))
+    store.add(SessionRecord(id="demo", start=1_799_992_000.0, end=1_799_993_000.0, treadmill="URTM030",
+                            made_up=True, **common))  # fmt: skip
+    store.add(SessionRecord(id="old", start=1_799_994_000.0, end=1_799_995_000.0, treadmill="Simulated pad", **common))
+    del store
+    config = Config()
+    addon = tmp_path / "AddOns" / "Walka"
+    addon.mkdir(parents=True)
+    (addon / "Walka.toc").write_text("## Interface: 16001\n")
+    config.wow.addon_dir = str(addon)
+    real = App(config, data, treadmill=RealPad(auto_run=False), wall_clock=lambda: 1_800_000_000.0)
+    assert [r.id for r in real.store.records] == ["real", "demo", "old"], "kept: History lists them"
+    assert real.totals(1_800_000_000.0)["all"]["sessions"] == 1
+    assert real.sync_addon()
+    text = (addon / "CompanionData.lua").read_text("utf-8")
+    assert text.count("steps = 1500") == 1
+    # On the simulated treadmill itself, what it made up is shown.
+    made_up = App(config, data, treadmill=SimulatedTreadmill(auto_run=False), wall_clock=lambda: 1_800_000_000.0)
+    assert made_up.totals(1_800_000_000.0)["all"]["sessions"] == 3
+
+
+def test_a_made_up_run_does_not_write_the_installed_addons_file(tmp_path: Path):
+    config = Config()
+    addon = tmp_path / "AddOns" / "Walka"
+    addon.mkdir(parents=True)
+    (addon / "Walka.toc").write_text("## Interface: 16001\n")
+    config.wow.addon_dir = str(addon)
+    app = App(config, tmp_path / "data", treadmill=SimulatedTreadmill(auto_run=False), writes_addon=False)
+    assert app.sync_addon() is False and "made-up" in app.addon_error
+    assert not (addon / "CompanionData.lua").exists()

@@ -657,6 +657,8 @@ async def _run(
         treadmill=treadmill,
         heart_rate=heart_rate,
         walka_account=_build_walka_account(data_dir, treadmill),
+        # (Made up: the walks are kept, marked, and the game is not shown them.)
+        writes_addon=treadmill.kind != "simulated",
     )
     if args.demo:
         # The demo's made-up character must not turn up among the real ones later.
