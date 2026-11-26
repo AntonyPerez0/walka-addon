@@ -262,7 +262,9 @@ touched.
   half minute. If a walk cannot be saved (a full disk), it stays in that
   file until it can, even across a restart. There is also
   `active-session.lock`, an empty file: through it one Walka tells
-  another that it is recording a walk. Once you have
+  another that it is recording a walk. `walka.lock`, empty too, is held
+  for as long as Walka runs: a second Walka started on the same folder
+  says that one is running already, and does not start. Once you have
   signed in to
   [your Walka account](WALKA-ACCOUNT.md#your-walka-account-on-walkadev) there is also
   `walka-account.json` (with an empty `walka-account.lock` beside it). It

@@ -478,6 +478,34 @@ class _Hold:
             pass
 
 
+# Held by a running Walka for as long as it runs, on the data folder it
+# runs on: a second Walka on the same folder would write over the first's
+# config.json and the addon's file. Empty, like the walk's lock.
+FOLDER_LOCK_NAME = "walka.lock"
+
+
+def hold_data_folder(data_dir: Path) -> tuple[str, _Hold | None]:
+    """Take the lock that says a Walka runs on ``data_dir``. Never waits.
+
+    ``("ours", hold)``: taken, until ``hold.let_go()`` or the process ends.
+    ``("theirs", None)``: another Walka runs on this folder.
+    ``("no lock", None)``: this folder has no locks to be had (then nothing
+    can be told, and nothing is refused).
+    """
+    try:
+        Path(data_dir).mkdir(parents=True, exist_ok=True)
+        fd = os.open(Path(data_dir) / FOLDER_LOCK_NAME, os.O_RDWR | os.O_CREAT | _BINARY, 0o600)
+    except OSError:
+        return _NO_LOCK, None
+    try:
+        _lock(fd)
+    except OSError as refusal:
+        theirs = _held_elsewhere(fd, refusal)
+        os.close(fd)
+        return (_THEIRS if theirs else _NO_LOCK), None
+    return _OURS, _Hold(fd)
+
+
 # The locks THIS process holds, by the real path of the lock file. The
 # system's lock belongs to one open descriptor: a second store on the same
 # folder in the same process would be refused by the first one's lock, and

@@ -757,3 +757,22 @@ def test_probe_reports_a_time_out_readably_and_passes_all_on(tmp_path: Path, cap
     assert cli.main(["--data-dir", str(tmp_path), "probe", "--all", "--out", str(tmp_path)]) == 0
     assert seen["all_characteristics"] is True
     assert list(tmp_path.glob("walka-probe-*.txt"))
+
+
+def test_a_second_walka_on_the_same_data_folder_is_refused(tmp_path: Path, capsys):
+    """Two copies on one data folder would write over each other's
+    config.json and the addon's file: the second says so, and stops."""
+    from walka import session
+
+    whose, hold = session.hold_data_folder(tmp_path)
+    assert whose == "ours" and hold is not None
+    try:
+        args = cli.build_parser().parse_args(["--simulate", "--no-capture", "--no-browser", "--data-dir", str(tmp_path)])
+        assert asyncio.run(cli._run(args)) == 2
+        assert "already running on this data folder" in capsys.readouterr().err
+        assert not (tmp_path / "config.json").exists()
+    finally:
+        hold.let_go()
+    again, second = session.hold_data_folder(tmp_path)
+    assert again == "ours"
+    second.let_go()

@@ -621,6 +621,32 @@ async def _run(
     goes: str | None = None,
     started: Callable[[_Running], None] | None = None,
 ) -> int:
+    """Run the companion until it is told to stop - unless another Walka
+    runs on the same data folder: then say so, and stop (exit code 2)."""
+    from .session import hold_data_folder
+
+    data_dir = _data_dir(args)
+    whose, hold = hold_data_folder(data_dir)
+    if whose == "theirs":
+        _could_not_start(
+            f"Walka is already running on this data folder ({data_dir}). Use the Walka that is open "
+            "(its window, or its address in the browser), or close it first."
+        )
+        return 2
+    try:
+        return await _run_on_the_folder(args, cfg=cfg, goes=goes, started=started)
+    finally:
+        if hold is not None:
+            hold.let_go()
+
+
+async def _run_on_the_folder(
+    args: argparse.Namespace,
+    *,
+    cfg: config_module.Config | None = None,
+    goes: str | None = None,
+    started: Callable[[_Running], None] | None = None,
+) -> int:
     """Run the companion until it is told to stop.
 
     ``goes``: where the dashboard is shown (see ``_dashboard_goes``; worked
