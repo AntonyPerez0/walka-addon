@@ -154,3 +154,21 @@ def test_the_real_listener_answers_on_its_own_port(tmp_path):
 
     asyncio.run(asyncio.wait_for(scenario(), 20))
     assert got == [66] and not receiver.running
+
+
+@pytest.mark.parametrize("text", ["1e999", "-1e999", '{"bpm": 1e999}', "[1e999]", "nan", "inf"])
+def test_a_number_too_large_to_be_one_is_no_heart_rate(text):
+    assert hr_network.parse_bpm(text) is None
+
+
+def test_a_code_in_other_letters_is_a_wrong_code_not_a_crash():
+    got: list[int] = []
+    receiver = hr_network.NetworkHeartRate(got.append, code="123456", clock=lambda: 1000.0)
+
+    async def scenario(client):
+        assert (await client.post("/%C3%A9%C3%A9%C3%A9123/hr", data="70")).status == 404
+        assert (await client.post("/123456/hr", data="1e999")).status == 400
+        assert (await client.post("/123456/hr", data="70")).status == 200
+
+    run_server(receiver, scenario)
+    assert got == [70]

@@ -68,7 +68,7 @@ def parse_bpm(text: str) -> int | None:
             value = next((value[key] for key in KEYS if key in value), None)
     try:
         bpm = round(float(value))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):  # (1e999 is a float of infinity, which rounds to nothing)
         return None
     return bpm if 25 <= bpm <= 240 else None
 
@@ -130,7 +130,10 @@ class NetworkHeartRate:
             peer = request.remote or "?"
             if self._locked(peer):
                 raise web.HTTPTooManyRequests(text="too many wrong codes: try again later")
-            if not secrets.compare_digest(request.match_info["code"], self.code):
+            # (As bytes: compare_digest refuses text that is not ASCII, and a
+            # code in other letters is a wrong code like any other.)
+            given = request.match_info["code"].encode("utf-8", "surrogatepass")
+            if not secrets.compare_digest(given, self.code.encode("utf-8")):
                 self._wrong.setdefault(peer, []).append(self.clock())
                 raise web.HTTPNotFound()
             if request.method == "GET":
