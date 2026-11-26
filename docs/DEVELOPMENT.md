@@ -88,8 +88,9 @@ Walka itself.)
 * **What a release is built from** is fixed in the repository: the
   packages in `companion/requirements-build.lock` and
   `requirements-dev.lock` (exact versions with checksums; the top of each
-  file says how to write them again after changing `pyproject.toml`, and a
-  test fails if they fall behind it), and the GitHub actions in
+  file says how to write them again after changing `pyproject.toml`; a
+  test fails if they fall behind it, and the build writes them again with
+  those commands and fails if anything comes out different: `tools/check_locks.py`), and the GitHub actions in
   `.github/workflows/ci.yml` by commit (Dependabot proposes newer ones).
   `companion/third_party.py` writes the licences of the packed libraries
   into the program at build time. A release publishes `SHA256SUMS.txt`

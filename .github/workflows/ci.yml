@@ -47,6 +47,14 @@ jobs:
       - name: Lint
         working-directory: companion
         run: ruff check src tests
+      # The lock files are written by a tool, from pyproject.toml: written
+      # again now, they must come out the same. (A version pyproject.toml
+      # has raised shows here, not only a package that is missing.)
+      - name: The lock files are up to date
+        if: runner.os == 'Linux'
+        run: |
+          python -m pip install --require-hashes -r companion/requirements-locktool.lock
+          python tools/check_locks.py
       - name: Test
         # (-rs: a test that could not be run on this machine says why.
         # --durations: the fifteen slowest tests are named, with their

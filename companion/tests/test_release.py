@@ -429,3 +429,18 @@ def test_the_build_refuses_a_packed_library_without_its_licence(repo_root: Path)
     build = (repo_root / "companion" / "build_exe.py").read_text("utf-8")
     for module in ("setuptools", "pkg_resources", "packaging"):
         assert f'"--exclude-module", "{module}"' in build
+
+
+def test_the_lock_files_are_written_again_and_compared_by_the_build(repo_root: Path):
+    text = workflow(repo_root)
+    step = text[text.index("- name: The lock files are up to date") :]
+    step = step[: step.index("\n      - ")]
+    assert "python tools/check_locks.py" in step and "requirements-locktool.lock" in step
+    assert "--require-hashes -r companion/requirements-locktool.lock" in step
+    tool = locked(repo_root / "companion" / "requirements-locktool.lock")
+    assert set(tool) == {"uv"}
+    check = load_tool(repo_root, "check_locks")
+    for lock in check.LOCKS:
+        header = check.header_of((repo_root / "companion" / lock).read_text("utf-8"))
+        command = check.command_for(header, lock)
+        assert command[:3] == ["uv", "pip", "compile"] and "--generate-hashes" in command
