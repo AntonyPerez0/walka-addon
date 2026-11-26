@@ -2450,7 +2450,7 @@ def test_a_connection_or_a_look_up_that_leaves_this_computer_fails_a_test(_nothi
         async with aiohttp.ClientSession() as session:
             try:
                 await session.get("http://192.0.2.1:9/", timeout=aiohttp.ClientTimeout(total=10))
-            except (AssertionError, OSError, aiohttp.ClientError, asyncio.TimeoutError) as refused:
+            except (TimeoutError, AssertionError, OSError, aiohttp.ClientError) as refused:
                 said.append(type(refused).__name__)
         # (Windows' event loop, which goes round the socket: its own way of connecting, by itself.)
         from asyncio import proactor_events

@@ -15,7 +15,7 @@ import asyncio
 import inspect
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -44,7 +44,7 @@ def refusal(code: str, message: str, details: str | None = None) -> dict:
 
 
 def utc_text(start: float) -> str:
-    return datetime.fromtimestamp(start, timezone.utc).isoformat()
+    return datetime.fromtimestamp(start, UTC).isoformat()
 
 
 async def sending(rig: Rig, send: str = "all", **person) -> str:

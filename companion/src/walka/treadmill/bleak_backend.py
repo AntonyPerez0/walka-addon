@@ -140,7 +140,7 @@ class BleakBackend:
         async with BleakScanner() as scanner:
             try:
                 return await asyncio.wait_for(listen(scanner), timeout)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
         if not nameless:
             return None

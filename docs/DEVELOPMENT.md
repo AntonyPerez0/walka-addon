@@ -11,9 +11,11 @@ py -m pip install -e "companion[dev]"
 py -m pytest          # companion tests + addon tests (the addon runs under a mocked game client)
 ```
 
-(That takes the newest versions of the libraries. The build and its tests
-take pinned ones: `py -m pip install --require-hashes -r
-companion/requirements-dev.lock`, and no install of Walka itself.)
+(Python 3.14 or newer: what the build and its tests run on, and what the
+programs people download carry. That takes the newest versions of the
+libraries. The build and its tests take pinned ones: `py -m pip install
+--require-hashes -r companion/requirements-dev.lock`, and no install of
+Walka itself.)
 
 (`python3` in place of `py` on a Mac or Linux.)
 

@@ -81,7 +81,7 @@ for any of that.
    [`Walka.exe`](https://github.com/AntonyPerez0/walka-addon/releases/latest/download/Walka.exe)
    (every version is on the
    [Releases page](https://github.com/AntonyPerez0/walka-addon/releases)),
-   or run it from source (Python 3.10 or newer):
+   or run it from source (Python 3.14 or newer):
 
    ```powershell
    cd companion
@@ -175,7 +175,7 @@ What is different from Windows:
   is concerned: it is **Terminal** that is asked about, and allowed,
   Bluetooth.
 * **From source:** `cd companion`, `python3 -m pip install -e .`,
-  `python3 -m walka` (Python 3.10 or newer).
+  `python3 -m walka` (Python 3.14 or newer).
 
 ## Is the download safe?
 

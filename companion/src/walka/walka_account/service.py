@@ -377,7 +377,7 @@ class WalkaAccount:
         self.cancel()
         try:
             await asyncio.wait_for(self._wind_up(), CLOSE_WITHIN_S)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             log.warning("the Walka account's part did not close in time: what was left was dropped")
         except asyncio.CancelledError:
             raise

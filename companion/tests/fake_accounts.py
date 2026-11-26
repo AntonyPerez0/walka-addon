@@ -89,7 +89,7 @@ import string
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 from urllib.parse import urlencode
@@ -201,7 +201,7 @@ _TIME = re.compile(
     r"(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?\s*(Z|z|[+-]\d{2}(?::?\d{2})?)?"
 )
 _IN = re.compile(r"in\.\((.*)\)", re.DOTALL)
-_UTC = timezone.utc
+_UTC = UTC
 _YEAR_2000 = datetime(2000, 1, 1, tzinfo=_UTC)
 _TWO_DAYS = timedelta(days=2)
 _UNSET: Any = object()

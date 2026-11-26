@@ -11,10 +11,10 @@ import shutil
 import subprocess
 import sys
 import textwrap
+import tomllib
 from pathlib import Path
 
 import pytest
-import tomllib
 
 
 def load(repo_root: Path, name: str):
@@ -344,3 +344,33 @@ def test_the_release_job_waits_for_a_reviewer_and_runs_once_per_version(repo_roo
     assert "\n    environment: release\n" in head
     assert "\n    concurrency:\n      group: release-${{" in head and "cancel-in-progress: false" in head
     assert "fetch-depth: 0" in job[: job.index("- name: The tag is the version")]
+
+
+# ---- the Python packed into the program ---------------------------------------------------------
+
+
+def test_the_build_refuses_a_program_with_an_older_python_than_expected(repo_root: Path):
+    check = load_tool(repo_root, "check_bundled_python")
+    line = "selfcheck OK: 17 modules, ...; Python {}, OpenSSL 3.5.4 30 Sep 2025"
+    assert check.problem(line.format("3.14.2"), (3, 14, 2)) == ""
+    assert "older than 3.14.0" in check.problem(line.format("3.12.10"), (3, 12, 10))
+    assert "built with 3.14.2" in check.problem(line.format("3.14.1"), (3, 14, 2))
+    assert "did not say" in check.problem("selfcheck OK", (3, 14, 2))
+
+
+def test_the_builds_and_tests_run_on_the_python_the_check_expects(repo_root: Path):
+    check = load_tool(repo_root, "check_bundled_python")
+    versions = re.findall(r'python-version:\s*"([\d.]+)"', workflow(repo_root))
+    assert len(versions) >= 3 and set(versions) == {".".join(map(str, check.MINIMUM[:2]))}, versions
+    for lock in ("requirements-build.lock", "requirements-dev.lock"):
+        header = (repo_root / "companion" / lock).read_text("utf-8")[:2000]
+        assert header.count(f"--python-version {versions[0]}") == 2, lock
+    text = workflow(repo_root)
+    assert text.count("python tools/check_bundled_python.py") == 2, "the Windows and both Mac builds"
+
+
+def load_tool(repo_root: Path, name: str):
+    spec = importlib.util.spec_from_file_location(f"walka_tool_{name}", repo_root / "tools" / f"{name}.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module

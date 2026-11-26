@@ -19,7 +19,7 @@ import logging
 import socket
 import traceback
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import parse_qsl, urlsplit
 
@@ -33,7 +33,7 @@ from walka.walka_account.https import Answer, Client, NetError, Origin, parse_or
 from walka.walka_account.row import ROW_KEYS
 
 NOW = 1795300000.0  # 21 November 2026, 22:26:40 UTC
-START = datetime(2026, 11, 19, 20, 30, tzinfo=timezone.utc)
+START = datetime(2026, 11, 19, 20, 30, tzinfo=UTC)
 VERIFIER = "v" * 43  # the shortest a verifier may be
 SOME_ID = "0b6f0a52-6d6f-4a8e-9d1c-3a1f0e5b7c21"
 TOKEN = "an.access-token_of~some+length/=="  # shaped like one; nobody gave it out
@@ -1393,7 +1393,7 @@ def test_pkey_is_said_only_of_the_rule_that_an_id_is_new_in_the_whole_table(stat
 def test_a_walk_that_starts_in_the_days_to_come_says_so():
     async def scenario():
         async with Accounts() as a:
-            ahead = datetime.fromtimestamp(NOW, timezone.utc) + timedelta(days=3)
+            ahead = datetime.fromtimestamp(NOW, UTC) + timedelta(days=3)
             row = a_row(0, started_at=stamp(ahead), ended_at=stamp(ahead + timedelta(minutes=30)))
             row["local_day"] = ahead.strftime("%Y-%m-%d")
             error = await refused(calls.push(a.client, a.key, access_token=a.token, rows=[row]))
@@ -1698,7 +1698,7 @@ def test_a_certificate_that_cannot_be_checked_means_nothing_is_asked():
         # The client raises nothing else. If it ever does, nothing of that error gets out.
         (RuntimeError("GET https://accounts.example/x Authorization: Bearer " + TOKEN), "later"),
         (OSError(111, "Connect call failed ('127.0.0.1', 54321)"), "later"),
-        (asyncio.TimeoutError(), "later"),
+        (TimeoutError(), "later"),
         (ValueError(TOKEN), "later"),
         # And what is no answer is not read as one.
         ({"status": 201, "body": []}, "stop"),

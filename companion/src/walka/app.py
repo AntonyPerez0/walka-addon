@@ -951,7 +951,7 @@ class App:
                 # look again soon. Otherwise back off between attempts.
                 idle = self.treadmill.status.connected or not self.connection_wanted()
                 await asyncio.wait_for(self._connect_now.wait(), timeout=2.0 if idle else backoff)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
 
     def should_watch(self) -> bool:
@@ -985,7 +985,7 @@ class App:
                     return False
                 try:
                     await asyncio.wait_for(returned.wait(), 1.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     pass
         finally:
             self.watching = False

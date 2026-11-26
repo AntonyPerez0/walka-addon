@@ -186,7 +186,7 @@ class HeartRateMonitor:
             await client.start_notify(ftms.HEART_RATE_MEASUREMENT, take)
             try:
                 await asyncio.wait_for(got.wait(), seconds)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
         return heard[-1] if heard else None
 
@@ -269,7 +269,7 @@ class HeartRateMonitor:
                 break
             try:
                 await asyncio.wait_for(self._changed.wait(), timeout=RETRY_S)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
 
     async def close(self) -> None:

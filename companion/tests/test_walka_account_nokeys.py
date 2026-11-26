@@ -48,7 +48,7 @@ import os
 import re
 import subprocess
 from collections.abc import Iterable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, quote, quote_plus, urlencode, urlsplit
@@ -258,7 +258,7 @@ def refusal(code: str, message: str, details: str | None = None) -> dict:
 
 
 def utc_text(start: float) -> str:
-    return datetime.fromtimestamp(start, timezone.utc).isoformat()
+    return datetime.fromtimestamp(start, UTC).isoformat()
 
 
 def with_another_challenge(opened: str, challenge: str) -> str:

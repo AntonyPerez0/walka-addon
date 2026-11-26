@@ -368,6 +368,17 @@ def test_selfcheck_finds_everything_in_a_source_checkout(capsys):
     assert len(out) == 1 and out[0].startswith("selfcheck OK")
 
 
+def test_selfcheck_says_which_python_and_openssl_the_program_runs_on(capsys):
+    """The build compares these with what it was built with: a program
+    packed with an old Python (and its old OpenSSL) does not pass."""
+    import platform
+    import ssl
+
+    assert cli.main(["selfcheck"]) == 0
+    (line,) = capsys.readouterr().out.strip().splitlines()
+    assert f"Python {platform.python_version()}" in line and ssl.OPENSSL_VERSION in line
+
+
 def test_selfcheck_says_what_is_missing(capsys, monkeypatch):
     from walka import addon_sync
 
@@ -734,7 +745,7 @@ def test_probe_reports_a_time_out_readably_and_passes_all_on(tmp_path: Path, cap
         seen.update(kwargs)
         if kwargs["all_characteristics"]:
             return ["report"]
-        raise asyncio.TimeoutError()  # how bleak reports a connection that timed out: no text
+        raise TimeoutError()  # how bleak reports a connection that timed out: no text
 
     monkeypatch.setattr(probe, "probe", fake_probe)
     assert cli.main(["--data-dir", str(tmp_path), "probe", "--seconds", "1", "--out", str(tmp_path)]) == 2

@@ -162,7 +162,7 @@ def create_app(app: App) -> web.Application:
                 await response.write(f"data: {payload}\n\n".encode())
                 try:
                     await asyncio.wait_for(stopping.wait(), PUSH_INTERVAL_S)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     pass
         except (ConnectionResetError, ConnectionError):
             pass

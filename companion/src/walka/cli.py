@@ -230,7 +230,7 @@ async def _demo_game(app, stop: asyncio.Event) -> None:
         app.take_game_file()
         try:
             await asyncio.wait_for(stop.wait(), DEMO_SAVES_EVERY_S)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pass
 
 
@@ -1149,7 +1149,14 @@ def _selfcheck() -> int:
     if problems:
         print("selfcheck FAILED: " + "; ".join(problems))
         return 1
-    print(f"selfcheck OK: {len(modules)} modules, the dashboard page and the addon folder are all there")
+    import platform
+    import ssl
+
+    # (The build compares these with what it was built with: see ci.yml.)
+    print(
+        f"selfcheck OK: {len(modules)} modules, the dashboard page and the addon folder are all there; "
+        f"Python {platform.python_version()}, {ssl.OPENSSL_VERSION}"
+    )
     return 0
 
 
