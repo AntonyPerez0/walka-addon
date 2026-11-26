@@ -4,8 +4,11 @@
 
 ## Your Walka account (on walka.dev)
 
-Optional. Walka works in full without it, and if you never sign in it
-sends nothing and asks nobody.
+Optional. Walka works in full without it, and if you never sign in, the
+Walka account part sends nothing and asks nobody. (Apart from that, Walka
+asks GitHub whether a new version is out, at every start and then once a
+day: see [Updates](USING.md#updates). *Settings → Updates* switches that
+off.)
 
 On Walka's website, <https://walka.dev/>, you can have a Walka account. It
 holds your walks - and, if you put them there, body numbers and a food

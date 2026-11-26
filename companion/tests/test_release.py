@@ -374,3 +374,27 @@ def load_tool(repo_root: Path, name: str):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+# ---- what the words say goes over the internet --------------------------------------------------
+
+
+def test_nobody_is_told_that_walka_asks_nobody(repo_root: Path):
+    """Walka asks GitHub for the newest release (at every start, then once a
+    day): "sends nothing and asks nobody" is true of the Walka account part
+    only, and is said of that only. And "once a day" never stands alone."""
+    texts = {
+        path: path.read_text("utf-8")
+        for path in [*repo_root.glob("*.md"), *(repo_root / "docs").glob("*.md"), repo_root / ".github/workflows/ci.yml"]
+    }
+    for path, text in texts.items():
+        flat = " ".join(text.split())
+        for found in re.finditer(r"sends nothing and asks nobody", flat):
+            before = flat[max(0, found.start() - 80) : found.start()]
+            assert "Walka account part" in before, f"{path.name}: {before!r}"
+        for found in re.finditer(r"once a day", flat):
+            around = flat[max(0, found.start() - 60) : found.end()]
+            if "GitHub" in flat[max(0, found.start() - 200) : found.end() + 100]:
+                assert "every start" in around, f"{path.name}: {around!r}"
+    development = " ".join(texts[repo_root / "docs" / "DEVELOPMENT.md"].split())
+    assert "the only part that asks anything over the internet" not in development

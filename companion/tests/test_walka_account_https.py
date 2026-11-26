@@ -1,4 +1,4 @@
-"""The one maker of requests (walka_account.https): which address it takes,
+"""The Walka account's maker of requests (walka_account.https): which address it takes,
 what it puts on the wire, what it keeps of an answer - and that nothing of
 a request, a key least of all, is in what it says when something goes wrong."""
 

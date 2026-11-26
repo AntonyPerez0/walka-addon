@@ -58,7 +58,8 @@ never listened to. Walka does not ask the treadmill for control.
 
 ## What reaches outside your computer
 
-Walka asks GitHub, once a day, which version of Walka is the newest -
+Walka asks GitHub, at every start and then once a day, which version of
+Walka is the newest -
 nothing about you is sent, and *Settings → Updates* switches it off. A new
 version is downloaded from GitHub only when you press **Update now** (see
 [USING.md](USING.md#updates)). Heart rate over the local network is off

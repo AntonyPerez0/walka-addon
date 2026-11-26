@@ -374,8 +374,8 @@ says so, with an **Update now** button. One click and Walka:
    kept): type `/reload` in the game to load it.
 
 Walka only offers this while the belt is standing still. To find out about
-new versions, Walka asks GitHub, once a day while it runs, which release is
-the newest (the request names the program and its version, and nothing
+new versions, Walka asks GitHub, at every start and then once a day while
+it runs, which release is the newest (the request names the program and its version, and nothing
 about you). Nothing is downloaded until you press **Update now**. *Settings
 → Updates → Tell me when a new version of Walka is out* switches the
 question off; then Walka asks nothing.

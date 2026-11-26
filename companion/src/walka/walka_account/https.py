@@ -1,7 +1,10 @@
-"""The one maker of requests to another machine: one address, checked, and nothing kept.
+"""The Walka account's maker of requests to another machine: one address, checked, and nothing kept.
 
-Walka has never made an HTTPS request before this part, so everything
-about how one is made stands here, in one place:
+Every request of the Walka account part is made here, so everything
+about how one is made stands here, in one place. (The other part of
+Walka that asks anything over the internet is updates.py: it asks GitHub
+for the newest release, at every start and once a day, unless that is
+switched off.)
 
 - a client asks ONE address, the one it was made for, and no other. A
   redirect is not followed: it comes back as the answer it is.

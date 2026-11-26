@@ -30,7 +30,8 @@ Walka itself.)
   `session.py` (recording walks), `addon_sync.py` (`CompanionData.lua`,
   and finding and installing the addon), `web.py` + `static/`
   (dashboard), `walka_account/` (signing in to a Walka account and sending
-  walks to it - the only part that asks anything over the internet), `window.py` (Walka's own window, which shows the dashboard), `app.py` (wiring), `cli.py`,
+  walks to it), `updates.py` (asking GitHub for the newest release, and
+  "Update now") - the two parts that ask anything over the internet, `window.py` (Walka's own window, which shows the dashboard), `app.py` (wiring), `cli.py`,
   `winsession.py` (hearing that Windows is shutting down, to save the walk); `journey.py` (each character's
   journey, put together from the game's saved file), `savedvars.py` (the
   reader of the game's saved files, which runs no Lua) + `road.py` (the
