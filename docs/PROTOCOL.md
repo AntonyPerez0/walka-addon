@@ -79,8 +79,11 @@ reads of each one:
 The rest of a record (the addon's own estimates) is for the addon.
 
 `active` is the session that was still running when the game saved the
-file. If the player comes back within three minutes (a `/reload`, a quick
-relog), the addon carries it on; otherwise it closes it at `savedAt`. To the
+file. If the same character comes back within three minutes (a `/reload`,
+a quick relog), the addon carries it on; otherwise it closes it at
+`savedAt`. `WalkaDB` is shared by every character of the account, so a
+different character logging in closes it too, at `savedAt`, and starts its
+own. To the
 app it is a session that ran from its `start` until at least `savedAt`; the
 next file says how long it really lasted.
 

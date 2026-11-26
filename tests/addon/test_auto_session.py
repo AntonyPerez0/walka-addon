@@ -139,3 +139,32 @@ def test_it_asks_for_the_time_played_only_while_it_is_not_known(make_rt):
     fresh = rt.reload(gap=600)
     fresh.tick(2)
     assert lua_list(fresh.log.played_requests) == [], "known, and counted on since: not asked again"
+
+
+def test_logging_over_to_another_character_closes_the_first_ones_session(make_rt):
+    """WalkaDB is the account's: a session saved at logout must not be
+    resumed by the next character, however soon it logs in. It is closed
+    at the time it was saved, and the new character starts its own."""
+    rt = make_rt(auto_session=True)
+    rt.advance(600)
+    first = lua_plain(rt.walka.session)
+    assert first["character"] == ME
+    logged_out_at = rt.game.clock
+    rt.set(name="Other")
+    other = rt.reload(gap=30)
+    other.tick()
+    session = lua_plain(other.walka.session)
+    assert session["character"] == "Other-Azeroth" and session["id"] != first["id"]
+    (closed,) = [s for s in lua_list(other.db.sessions) if s.id == first["id"]]
+    assert closed.character == ME and closed["end"] == logged_out_at
+    assert closed.seconds >= 599 and closed.seconds <= 601
+
+
+def test_the_same_character_back_within_three_minutes_carries_on(make_rt):
+    rt = make_rt(auto_session=True)
+    rt.advance(120)
+    first = lua_plain(rt.walka.session)
+    back = rt.reload(gap=30)
+    back.tick()
+    assert lua_plain(back.walka.session)["id"] == first["id"]
+    assert [s for s in lua_list(back.db.sessions) if s.id == first["id"]] == []

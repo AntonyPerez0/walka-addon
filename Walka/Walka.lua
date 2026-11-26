@@ -554,6 +554,9 @@ function Walka:Tick(dt)
     -- The journey counts every yard, with or without a session.
     Tracker.Travel(state, dt)
     RoadRecorder.Watchdog()
+    if self.restoredAt then
+        self:CloseRestoredSessionOfAnother()
+    end
     if not self.autoTried then
         self:StartAutoSession()
     end
@@ -670,13 +673,42 @@ local function restoreSession(self)
     session.afkStill, session.pausedAt = nil, nil
     session.auto = session.auto == true or nil
     local savedAt = tonumber(saved.savedAt) or 0
-    if Game.Now() - savedAt <= Walka.RESUME_WINDOW_SECONDS then
-        self.session = session
-        self:Fire("SESSION", "restore")
-    else
-        self.session = session
+    self.session = session
+    if Game.Now() - savedAt > Walka.RESUME_WINDOW_SECONDS then
         self:StopSession(savedAt)
+        return
     end
+    -- WalkaDB is the account's, and so is the session saved in it: logging
+    -- out of one character and in on another within the window must not
+    -- carry the first one's session over. Checked again on the tick while
+    -- the game has not said yet who is logged in.
+    self.restoredAt = savedAt
+    if not self:CloseRestoredSessionOfAnother() then
+        self:Fire("SESSION", "restore")
+    end
+end
+
+--- A session picked up after a logout belongs to the character that saved
+-- it. If another character has logged in meanwhile, the session is closed
+-- at the time it was saved (and this character starts its own), so that
+-- nothing walked in this login is filed under the other one. True if it
+-- was closed.
+function Walka:CloseRestoredSessionOfAnother()
+    local savedAt, session = self.restoredAt, self.session
+    if not savedAt or not session then
+        self.restoredAt = nil
+        return false
+    end
+    local now = Tracker.CharacterName()
+    if not ns.Journey.isCharacter(now) then
+        return false    -- not known yet: the next tick asks again
+    end
+    self.restoredAt = nil
+    if ns.Journey.isCharacter(session.character) and session.character ~= now then
+        self:StopSession(savedAt)
+        return true
+    end
+    return false
 end
 
 local function saveSession(self)

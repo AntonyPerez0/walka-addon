@@ -193,12 +193,21 @@ class Toc:
     metadata: dict[str, str] = field(default_factory=dict)
     files: list[str] = field(default_factory=list)
 
-    @property
-    def saved_variables(self) -> list[str]:
+    def _names(self, *keys: str) -> list[str]:
         names: list[str] = []
-        for key in ("SavedVariables", "SavedVariablesPerCharacter"):
+        for key in keys:
             names += [name for name in re.split(r"[,\s]+", self.metadata.get(key, "")) if name]
         return names
+
+    @property
+    def saved_variables(self) -> list[str]:
+        return self._names("SavedVariables", "SavedVariablesPerCharacter")
+
+    @property
+    def per_character_saved_variables(self) -> list[str]:
+        """Saved once for each character: the game hands a character only
+        its own copy."""
+        return self._names("SavedVariablesPerCharacter")
 
 
 def parse_toc(path: Path) -> Toc:
@@ -237,6 +246,7 @@ class WowRuntime:
         state: dict[str, Any] | None = None,
         snapshot: Snapshot | None = None,
         auto_session: bool = True,
+        characters: dict[str, dict[str, str]] | None = None,
     ):
         self.snapshot = snapshot or load_snapshot()
         # False: the addon's setting that starts a session by itself at login
@@ -250,6 +260,10 @@ class WowRuntime:
         self.toc = parse_toc(tocs[0])
         self.addon_name = self.toc.name
         self.saved_variables = dict(saved_variables or {})
+        # The per-character saved variables of every other character, by
+        # "Name-Realm": what the game keeps in each character's own folder.
+        self.characters: dict[str, dict[str, str]] = dict(characters or {})
+        self.character: str | None = None   # who was logged in when the addon loaded
         self.files = dict(files or {})      # TOC path -> replacement source
         self.loaded_files: list[str] = []
         self.skipped_files: list[str] = []
@@ -340,7 +354,12 @@ class WowRuntime:
             chunk_name = f"{self.addon_name}/{relative.replace(chr(92), '/')}"
             self.M.load_file(source, chunk_name, self.addon_name, self.ns)
             self.loaded_files.append(relative)
-        # Saved variables are loaded after the addon's files have run ...
+        # Saved variables are loaded after the addon's files have run: the
+        # account's, and the per-character ones of the character logging in
+        # (another character's are never handed over).
+        self.character = f"{self.game.name}-{self.game.realm}"
+        for name, source in self.characters.get(self.character, {}).items():
+            self.saved_variables.setdefault(name, source)
         for name, source in self.saved_variables.items():
             self.M.set_global(name, self.M.deserialize(source))
         self.loaded = True
@@ -355,14 +374,20 @@ class WowRuntime:
     def reload(self, *, gap: float = 0.0) -> WowRuntime:
         """Simulate /reload (or logging out and in again ``gap`` seconds
         later): the saved variables go through the client's serialiser and
-        into a fresh Lua state. The game state carries over."""
+        into a fresh Lua state. The game state carries over. A name changed
+        with ``set(name=...)`` before the reload logs in another character:
+        it gets its own per-character saved variables, not these."""
         self.fire_event("PLAYER_LEAVING_WORLD")
         self.fire_event("PLAYER_LOGOUT")
+        per_character = set(self.toc.per_character_saved_variables)
         saved = {}
+        mine = {}
         for name in self.toc.saved_variables:
             source = self.M.serialize(name)
             if source is not None:
-                saved[name] = source
+                (mine if name in per_character else saved)[name] = source
+        characters = dict(self.characters)
+        characters[self.character or ""] = mine
         state = {key: value for key, value in self.game.items()}
         state["clock"] = state["clock"] + gap
         state["uptime"] = state["uptime"] + gap
@@ -373,6 +398,7 @@ class WowRuntime:
             state=state,
             snapshot=self.snapshot,
             auto_session=self.auto_session,
+            characters=characters,
         )
         return fresh.load_addon(reloading=gap == 0.0)
 

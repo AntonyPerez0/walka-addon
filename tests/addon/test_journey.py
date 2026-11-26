@@ -795,22 +795,25 @@ def test_a_paused_session_still_counts(rt):
     assert real(rt) == paused and paused["walks"] == 1
 
 
-def test_a_session_begun_on_another_character_is_that_characters(rt):
-    """Logging over to another character within three minutes carries the
-    session along; it stays the walk of the character it began on."""
+def test_a_session_begun_on_another_character_ends_when_another_logs_in(rt):
+    """Logging over to another character within three minutes does not
+    carry the session along (the account's saved file holds it, not the
+    character's): it is closed at logout, as the walk of the character it
+    began on, and nothing of the next login is filed under that one."""
     rt.set(speed=7.0)
     rt.slash("/walka start")
     rt.advance(120)
     rt.set(name="Other")
     other = rt.reload(gap=30)
-    assert other.walka.IsActive(other.walka) and other.walka.GetSession(other.walka).character == ME
+    assert not other.walka.IsActive(other.walka)
     other.advance(60)
     assert real(other)["walks"] == 0 and real(other)["steps"] == 0
-    other.slash("/walka stop")
-    assert real(other)["walks"] == 0
     other.set(name="Tester")
     back = other.reload(gap=30)
-    assert real(back)["walks"] == 1 and real(back)["steps"] > 100
+    assert not back.walka.IsActive(back.walka)
+    assert real(back)["walks"] == 1 and 100 < real(back)["steps"]
+    (filed,) = lua_list(back.db.sessions)
+    assert filed.character == ME and filed.seconds == pytest.approx(120, abs=1)
 
 
 def test_a_session_left_running_at_logout_is_filed_and_settled_at_the_next_login(rt):
