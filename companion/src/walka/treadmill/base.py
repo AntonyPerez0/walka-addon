@@ -32,6 +32,10 @@ class TreadmillEvent(str, Enum):
     DISCONNECTED = "disconnected"
 
 
+# A heart rate the machine sent longer ago than this is not used.
+HEART_RATE_FRESH_S = 5.0
+
+
 @dataclass
 class TreadmillStatus:
     """Everything a reader knows about its treadmill.
@@ -56,7 +60,8 @@ class TreadmillStatus:
     energy_kcal: float | None = None
     steps: int | None = None
     elapsed_s: int | None = None
-    heart_rate_bpm: int | None = None
+    heart_rate_bpm: int | None = None  # from the machine itself (hand grips), if it says
+    heart_rate_at: float = 0.0  # time.monotonic() of when it last said it
     updated_at: float = 0.0  # time.monotonic() of the last data packet
     detail: str = ""  # human-readable connection detail / last error
 
@@ -65,9 +70,21 @@ class TreadmillStatus:
             return math.inf
         return (time.monotonic() if now is None else now) - self.updated_at
 
+    def heart_rate_age_s(self, now: float | None = None) -> float:
+        if not self.heart_rate_at or self.heart_rate_bpm is None:
+            return math.inf
+        return (time.monotonic() if now is None else now) - self.heart_rate_at
+
+    def fresh_heart_rate(self, now: float | None = None) -> int | None:
+        """The machine's heart rate if it said it a moment ago: one touch of
+        the hand grips is not the heart rate of the rest of the walk."""
+        return self.heart_rate_bpm if self.heart_rate_age_s(now) <= HEART_RATE_FRESH_S else None
+
     def to_dict(self) -> dict:
         data = asdict(self)
         data["state"] = self.state.value
+        data["heart_rate_bpm"] = self.fresh_heart_rate()
+        data.pop("heart_rate_at")
         data.pop("updated_at")
         age = self.age_s()
         data["age_s"] = None if math.isinf(age) else round(age, 2)

@@ -371,6 +371,7 @@ class FtmsTreadmill(Treadmill):
         """Read what the treadmill says it is, and start listening to it."""
         self._data = ftms.TreadmillData()
         self._coast_until = 0.0
+        self.status.heart_rate_bpm, self.status.heart_rate_at = None, 0.0
 
         speed_range = None
         if client.has_characteristic(ftms.SUPPORTED_SPEED_RANGE):
@@ -453,6 +454,7 @@ class FtmsTreadmill(Treadmill):
         status.state = BeltState.UNKNOWN
         status.speed_kmh = 0.0
         status.target_kmh = None
+        status.heart_rate_bpm, status.heart_rate_at = None, 0.0
         status.detail = detail
         if was:
             self._emit(TreadmillEvent.DISCONNECTED)
@@ -483,8 +485,11 @@ class FtmsTreadmill(Treadmill):
             status.elapsed_s = packet.elapsed_time_s
         if packet.vendor_steps is not None:
             status.steps = packet.vendor_steps
-        if packet.heart_rate_bpm:
-            status.heart_rate_bpm = packet.heart_rate_bpm
+        if packet.heart_rate_bpm is not None:
+            # (0: the hands are off the grips.) A pad that stops sending the
+            # field leaves a reading that grows old: fresh_heart_rate.
+            status.heart_rate_bpm = packet.heart_rate_bpm or None
+            status.heart_rate_at = now
 
     def _on_status(self, data: bytes) -> None:
         event = ftms.parse_machine_status(bytes(data))

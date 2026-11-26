@@ -278,8 +278,8 @@ class App:
             hr = self.heart_rate
             if hr is not None and getattr(hr, "fresh", False):
                 bpm = hr.bpm
-            elif status.heart_rate_bpm:
-                bpm = status.heart_rate_bpm
+            elif status.fresh_heart_rate(self.mono()):
+                bpm = status.fresh_heart_rate(self.mono())
             recorder.update(
                 wall,
                 speed_kmh=speed_kmh,

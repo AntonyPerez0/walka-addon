@@ -1005,3 +1005,22 @@ def test_a_walk_still_unwritten_survives_a_crash_and_a_start_on_a_full_disk(rig:
     later = App(Config(), tmp_path / "data", treadmill=SimulatedTreadmill(auto_run=False))
     assert [record.seconds for record in later.store.records] == [seconds]
     assert not checkpoint.exists()
+
+
+def test_one_touch_of_the_hand_grips_does_not_last_the_walk(rig: Rig):
+    """A heart rate the pad reported once, long ago, is not this walk's."""
+
+    async def scenario():
+        await rig.connect()
+        await rig.walk()
+        rig.treadmill.status.heart_rate_bpm = 140
+        rig.treadmill.status.heart_rate_at = rig.clock.mono
+        await rig.run(3)
+        assert rig.app.recorder.last_hr == 140, "fresh: it counts"
+        await rig.run(120)  # the pad never says it again
+        assert rig.app.recorder.last_hr is None
+        await rig.step_off()
+
+    run(scenario())
+    record = rig.app.store.records[-1]
+    assert record.calories_source == "speed" and record.max_hr == 140 and record.avg_hr == pytest.approx(140)
