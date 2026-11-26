@@ -35,6 +35,7 @@ import threading
 import webbrowser
 from pathlib import Path
 from typing import Any
+from unittest import mock
 from urllib.parse import parse_qsl, urlsplit
 
 import aiohttp
@@ -46,8 +47,8 @@ from conftest import HERE, SRC
 from fake_accounts import FakeAccounts, waits_for_a_caller
 from test_app import Rig as HouseRig
 from test_app_ftms import PadRig
+from walka import addon_sync, cli, web
 from walka import app as app_module
-from walka import cli, web
 from walka.app import FREE_WALK_GRACE_S, TICK_S, App
 from walka.config import Config
 from walka.session import SessionStore
@@ -606,13 +607,16 @@ def test_every_button_of_the_card_through_its_route(tmp_path):
             assert "account" not in told and "walker@" not in told and "sign" not in told
             # And the game's addon hears nothing of it: what Walka writes into the addon's folder is, byte
             # for byte, what a Walka without the part writes there.
+            # (The file says when it was written, to the second, by the computer's clock: held still
+            # here, so that two writes a moment apart are not told apart by a second ticking over.)
             written = Path(app.config.wow.addon_dir) / "CompanionData.lua"
-            assert app.sync_addon()
-            with_the_part = written.read_bytes()
-            assert b"WalkaCompanionData = {" in with_the_part and b"walker@" not in with_the_part
-            assert [key for key in rig.needles() if key and key.encode() in with_the_part] == []
-            written.unlink()
-            assert hand_in(rig, tmp_path, part=False).sync_addon() and written.read_bytes() == with_the_part
+            with mock.patch.object(addon_sync.time, "time", return_value=NOW):
+                assert app.sync_addon()
+                with_the_part = written.read_bytes()
+                assert b"WalkaCompanionData = {" in with_the_part and b"walker@" not in with_the_part
+                assert [key for key in rig.needles() if key and key.encode() in with_the_part] == []
+                written.unlink()
+                assert hand_in(rig, tmp_path, part=False).sync_addon() and written.read_bytes() == with_the_part
 
     run(scenario)
 
