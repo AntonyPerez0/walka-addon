@@ -66,7 +66,12 @@ companion/requirements-dev.lock`, and no install of Walka itself.)
   zips (the download buttons at the top of this page always give the
   latest ones) and `Walka-addon.zip`, which you upload to CurseForge
   yourself. If the run
-  fails nothing is published: fix it and run it again.
+  fails nothing is published: fix it and run it again. Once it is
+  published, every Walka that is running shows *Walka 0.x.y is out* with
+  an **Update now** button within a day (at once when it is next opened):
+  the update takes `Walka.exe` or the Mac zip from the release and checks
+  it against `SHA256SUMS.txt` (`companion/src/walka/updates.py`). So keep
+  those file names as they are. A trial (`v0.2.0-rc1`) is never offered.
 * **What a release is built from** is fixed in the repository: the
   packages in `companion/requirements-build.lock` and
   `requirements-dev.lock` (exact versions with checksums; the top of each

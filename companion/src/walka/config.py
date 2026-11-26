@@ -99,11 +99,21 @@ class OverlayConfig:
     y: int | None = None
 
 
+def _packed() -> bool:
+    return bool(getattr(sys, "frozen", False))
+
+
 @dataclass
 class UpdatesConfig:
-    """The update notice (updates.py): asks GitHub only when switched on."""
+    """Updates (updates.py): asks GitHub only when switched on. On in the
+    packaged program unless it is switched off; run from source, off unless
+    switched on (such a copy is updated with git)."""
 
-    check: bool = False
+    check: bool = field(default_factory=_packed)
+    # Switched on or off in Settings by the person (and not just the default)?
+    # Up to 0.11 the file held "check": false for everybody who had not
+    # switched it on: that was the default then, not a choice (see load()).
+    chosen: bool = False
 
 
 @dataclass
@@ -294,6 +304,12 @@ def load(data_dir: Path | None = None) -> Config:
         apply_update(config, raw)
         if "welcome_done" not in raw:
             config.welcome_done = True  # set up before there was a first-run guide
+        written = raw.get("updates")
+        if not (isinstance(written, dict) and "chosen" in written):
+            # Written up to 0.11, when the check was off unless switched on:
+            # a "false" there was the default of the time. Today's default, then -
+            # and anybody who had switched it on keeps it on.
+            config.updates.check = config.updates.check or _packed()
     if tuple(config.treadmill.name_prefixes) == LEGACY_NAME_PREFIXES:
         # Written when UREVO was the only make known by name (the file holds
         # every setting, changed or not): move on to today's list.

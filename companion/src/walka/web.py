@@ -343,6 +343,14 @@ def create_app(app: App) -> web.Application:
         # the loop that records the walk.
         return web.json_response(await asyncio.to_thread(app.roads.for_character, wanted))
 
+    @routes.post("/api/update/install")
+    async def update_install(_request: web.Request) -> web.Response:
+        # (Only the release that GitHub names the newest, checked against its checksum: see updates.py.)
+        why_not = app.install_update()
+        if why_not:
+            return web.json_response({"ok": False, "error": why_not}, status=409)
+        return ok()
+
     @routes.get("/api/addon/locations")
     async def addon_locations(_request: web.Request) -> web.Response:
         found = [str(path) for path in addon_sync.find_addons_dirs()]

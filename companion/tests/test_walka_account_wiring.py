@@ -222,6 +222,9 @@ def a_config(tmp_path: Path) -> Config:
     addon.mkdir(parents=True, exist_ok=True)
     (addon / "Walka.toc").write_text("## Interface: 16001\n")
     config.wow.addon_dir = str(addon)
+    # (On in the packaged program: it asks GitHub for the newest version. That is
+    # test_updates.py's; what is looked at here is what the Walka account's part asks.)
+    config.updates.check = False
     return config
 
 

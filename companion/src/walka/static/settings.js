@@ -612,7 +612,7 @@ FORMS.updates = {
       type: "check",
       path: "updates.check",
       label: "Tell me when a new version of Walka is out",
-      help: "Off unless you switch it on. Then Walka asks GitHub, once a day, which version is the newest - nothing else is sent, and nothing is downloaded or installed by itself: you get a link to the new version's page.",
+      help: "Walka asks GitHub, once a day, which version is the newest - nothing else is sent. Nothing is downloaded until you press Update now: then Walka downloads the new version from GitHub, checks it against the release's checksum, and restarts.",
     },
   ],
 };
@@ -709,7 +709,7 @@ function updateStatusCards(s, links) {
   if (update.enabled) {
     if (update.error) status = update.error;
     else if (!update.checked_at) status = "Asking GitHub...";
-    else if (update.newer) status = `Walka ${update.latest.replace(/^v/, "")} is out (you have ${update.current}).`;
+    else if (update.newer) status = `Walka ${update.latest.replace(/^v/, "")} is out (you have ${update.current}): Update now is at the top of the page.`;
     else status = `You have the newest version (${update.current}). Last asked ${fmt.timeOfDay(update.checked_at)}.`;
   }
   setText($("update-status"), status);

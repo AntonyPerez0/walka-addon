@@ -5,7 +5,7 @@
 // visible view, which writes only what changed (see the setters in util.js).
 // Everything that changes state goes out as a JSON POST/DELETE (util.js: api).
 
-import { $, U, fmt, setAttr, setShown, setText, setTone, state } from "./util.js";
+import { $, U, fmt, post, run, setAttr, setDisabled, setShown, setText, setTone, state } from "./util.js";
 import { OFFLINE, describe, health, staleHealth } from "./status.js";
 import { initLive, updateLive } from "./live.js";
 import { historyUnitsChanged, initHistory, updateHistory } from "./history.js";
@@ -93,16 +93,53 @@ function updateChrome(s, summary, links, online) {
   if (document.title !== title) document.title = title;
   // "Nothing is uploaded", on every view - unless walks are being sent to a Walka account.
   updateFeet(s);
-  // A newer Walka, when the update notice is switched on.
-  const update = online && s && s.update;
-  const newer = !!(update && update.enabled && update.newer);
-  setShown($("update-note"), newer);
-  if (newer) {
-    setText($("update-title"), `Walka ${update.latest.replace(/^v/, "")} is out.`);
-    setText($("update-detail"), `You have ${update.current}. Walka does not update itself: download the new version from its page.`);
-    setAttr($("update-link"), "href", update.url);
-  }
+  updateNotice(online && s && s.update);
 }
+
+// A newer Walka (Settings -> Updates), and "Update now".
+function updateNotice(update) {
+  const newer = !!(update && update.enabled && update.newer);
+  // (While it restarts, the companion goes quiet: the notice stays as it was.)
+  if (!update && $("update-note").dataset.stage === "restarting") return;
+  setShown($("update-note"), newer);
+  if (!newer) return;
+  const version = update.latest.replace(/^v/, "");
+  const install = update.install || {};
+  const stage = install.stage || "";
+  $("update-note").dataset.stage = stage;
+  setAttr($("update-link"), "href", update.url);
+  setText($("update-title"), `Walka ${version} is out.`);
+  let detail;
+  if (stage === "downloading") {
+    detail =
+      install.progress != null
+        ? `Downloading the update... ${Math.round(install.progress * 100)}%`
+        : "Downloading the update...";
+  } else if (stage === "checking") {
+    detail = "Checking the download against the release's checksum...";
+  } else if (stage === "restarting") {
+    detail = "Installed. Walka saves the walk and restarts - it will be back in a moment.";
+  } else if (stage === "failed") {
+    detail = install.error || "The update could not be installed.";
+  } else if (update.can_install) {
+    detail = `You have ${update.current}. One click updates Walka: it saves the walk, installs the new version and restarts.`;
+  } else {
+    detail = `You have ${update.current}. ${update.cannot_install}`;
+  }
+  setText($("update-detail"), detail);
+  const busy = stage === "downloading" || stage === "checking" || stage === "restarting";
+  const button = $("update-install");
+  setShown(button, (update.self_update || busy) && stage !== "restarting");
+  setDisabled(button, busy || !update.can_install);
+  setText(button, stage === "failed" ? "Try again" : busy ? "Updating..." : "Update now");
+  setShown($("update-bar"), stage === "downloading" || stage === "checking");
+  const fill = stage === "checking" ? 1 : install.progress || 0;
+  $("update-bar-fill").style.width = `${Math.round(fill * 100)}%`;
+}
+
+$("update-install").addEventListener("click", (event) =>
+  run(event.currentTarget, () => post("/api/update/install", {}, { timeoutMs: 20000 })),
+);
 
 function render() {
   const s = state.snapshot;

@@ -3135,6 +3135,34 @@ body[data-welcome="1"] main {
 .update-note strong {
   color: var(--ink);
 }
+.update-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+/* How much of the update is downloaded. */
+.update-bar {
+  flex: 1 0 100%;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--line-2);
+  overflow: hidden;
+}
+.update-bar[hidden] {
+  display: none;
+}
+.update-bar span {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .update-bar span {
+    transition: none;
+  }
+}
 .device-note {
   margin: -4px 0 4px;
   padding: 8px 12px;
