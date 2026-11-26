@@ -9,6 +9,7 @@ import base64
 import gzip
 import json
 import logging
+import shutil
 import socket
 import ssl
 import subprocess
@@ -847,8 +848,10 @@ def test_a_folder_of_roots_is_counted_too(monkeypatch, tmp_path: Path):
         (folder / f"root{number}.pem").write_text(certificate[certificate.index("-----BEGIN") :] + "\n", "ascii")
     (folder / "README").write_text("not a certificate", "ascii")
     (folder / "again.0").write_bytes((folder / "root0.pem").read_bytes())
-    monkeypatch.setenv("SSL_CERT_FILE", str(tmp_path / "not-there.pem"))
-    monkeypatch.setenv("SSL_CERT_DIR", str(folder))
+    # A system whose OpenSSL was built to look in such a folder, and in no file.
+    paths = ssl.DefaultVerifyPaths(None, str(folder), "SSL_CERT_FILE", str(tmp_path / "not-there.pem"),
+                                   "SSL_CERT_DIR", str(folder))  # fmt: skip
+    monkeypatch.setattr(ssl, "get_default_verify_paths", lambda: paths)
     context = https.make_ssl_context("linux")
     assert https.roots_report(context, "linux")["count"] == len(certificates) == 3
     assert context.verify_mode == ssl.CERT_REQUIRED and context.check_hostname is True
@@ -1029,6 +1032,7 @@ def test_a_look_up_that_never_answers_holds_nobody(monkeypatch):
 
 ASKS_WHILE_NO_NAME_IS_EVER_LOOKED_UP = """\
 import asyncio
+import shutil
 import socket
 import sys
 import threading
@@ -1077,3 +1081,28 @@ def test_the_program_closes_while_a_look_up_still_hangs(tmp_path: Path):
     assert ran.returncode == 0, ran.stderr.decode("utf-8", "replace")
     assert ran.stdout.decode("ascii").split() == ["cancelled", "closed"]
     assert b"Traceback" not in ran.stderr and b"Exception" not in ran.stderr
+
+
+@pytest.mark.skipif(sys.platform == "darwin", reason="on a Mac the context takes macOS's own list, by name")
+@pytest.mark.skipif(shutil.which("openssl") is None, reason="needs openssl to make a certificate")
+def test_ssl_cert_file_and_dir_add_nobody_to_whom_walka_trusts(tmp_path, monkeypatch):
+    """SSL_CERT_FILE and SSL_CERT_DIR are read by Python's default context:
+    anybody who can set a variable could have Walka trust a root of theirs.
+    The account's client takes the system's own roots and no others."""
+    from walka.walka_account.https import make_ssl_context
+
+    key, cert = tmp_path / "k.pem", tmp_path / "planted.pem"
+    subprocess.run(
+        ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", str(key), "-out", str(cert),
+         "-days", "2", "-subj", "/CN=Planted Root CA"],
+        check=True, capture_output=True,
+    )  # fmt: skip
+    folder = tmp_path / "certs"
+    folder.mkdir()
+    shutil.copy(cert, folder / "planted.pem")
+    monkeypatch.setenv("SSL_CERT_FILE", str(cert))
+    monkeypatch.setenv("SSL_CERT_DIR", str(folder))
+    context = make_ssl_context()
+    names = [dict(part[0] for part in ca["subject"]).get("commonName") for ca in context.get_ca_certs()]
+    assert "Planted Root CA" not in names
+    assert context.cert_store_stats()["x509_ca"] > 0 or sys.platform == "win32", "the system's roots are there"
