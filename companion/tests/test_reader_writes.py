@@ -332,3 +332,50 @@ def test_closing_walka_while_a_connection_is_being_made_leaves_the_pad_alone(air
 
     asyncio.run(scenario())
     assert air.writes == [] and air.connected == set()
+
+
+# ---- finding the pad -----------------------------------------------------------------------------
+
+
+def scanner_hearing(monkeypatch, heard: list[tuple[float, str, str, int]]):
+    """A scanner that hears (after seconds, address, name, rssi), in order, and then nothing."""
+
+    class Scanner:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc) -> None:
+            pass
+
+        async def advertisement_data(self):
+            for after, address, name, rssi in heard:
+                await asyncio.sleep(after)
+                yield BLEDevice(address, name or None, None), AdvertisementData(name or None, {}, {}, [], None, rssi, ())
+            await asyncio.Event().wait()
+
+    monkeypatch.setattr(bleak_backend, "BleakScanner", Scanner)
+
+
+def test_of_two_pads_with_a_known_name_the_stronger_is_taken(monkeypatch):
+    """A neighbour's pad, heard first and faintly, must not be taken over
+    the one under the desk, heard a moment later and loud."""
+    scanner_hearing(monkeypatch, [(0.0, "AA:00:00:00:00:21", "URTM030", -92), (0.3, "AA:00:00:00:00:22", "URTM030", -45)])
+    found = asyncio.run(bleak_backend.BleakBackend().find(None, ("URTM",), 10.0))
+    assert found is not None and found.address == "AA:00:00:00:00:22"
+
+
+def test_a_pad_whose_name_comes_in_a_later_packet_is_found_with_its_name(monkeypatch):
+    """Asked for by address: the first packet heard may have no name (the
+    name is in the scan response). FitShow is read only with its name."""
+    scanner_hearing(monkeypatch, [(0.0, "AA:00:00:00:00:05", "", -50), (0.3, "AA:00:00:00:00:05", "FS-AB12CD", -50)])
+    found = asyncio.run(bleak_backend.BleakBackend().find("AA:00:00:00:00:05", (), 10.0))
+    assert found is not None and found.name == "FS-AB12CD"
+
+
+def test_a_pad_that_never_says_its_name_is_still_found_by_its_address(monkeypatch):
+    scanner_hearing(monkeypatch, [(0.0, "AA:00:00:00:00:06", "", -50)])
+    found = asyncio.run(bleak_backend.BleakBackend().find("AA:00:00:00:00:06", (), 10.0))
+    assert found is not None and found.address == "AA:00:00:00:00:06" and found.name == ""

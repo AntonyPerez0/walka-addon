@@ -102,6 +102,11 @@ class BleakClientAdapter:
         await self._client.start_notify(uuid, lambda _char, data: callback(bytes(data)))
 
 
+# Once a pad with a known name (or the one asked for) is heard: listen this
+# much longer for a stronger one, or for the packet that carries its name.
+KNOWN_SETTLE_S = 2.0
+
+
 class BleakBackend:
     async def discover(self, timeout: float) -> list[FoundDevice]:
         prepare_windows_threading()
@@ -113,8 +118,11 @@ class BleakBackend:
     async def find(self, address: str | None, name_prefixes: Sequence[str], timeout: float) -> FoundDevice | None:
         """Scan for the treadmill to connect to (see ``BleBackend.find``).
 
-        With an address, or once a device with a known name is heard, the
-        scan ends at once. A device that only advertises the Fitness Machine
+        With an address, the scan ends once that device is heard with its
+        name (a pad may say it only in a later packet), or two seconds after
+        it is heard without one. Once a device with a known name is heard,
+        two seconds more are listened, and the strongest such device is
+        taken: a neighbour's pad heard first and faintly is not yours. A device that only advertises the Fitness Machine
         Service could just as well be a bike trainer or the neighbours'
         treadmill - whose walk would then be counted as yours - so it is
         only settled for when the whole scan has turned up no known name,
@@ -125,25 +133,57 @@ class BleakBackend:
         prepare_windows_threading()
         wanted = address.upper() if address else None
         nameless: dict[str, FoundDevice] = {}  # Fitness Machine advertisers without a known name
+        known: dict[str, FoundDevice] = {}  # devices with a known name (or the one asked for), as last heard
+        heard = asyncio.Event()  # the first of those was heard
+        named = asyncio.Event()  # the device asked for was heard with its name
 
-        async def listen(scanner: BleakScanner) -> FoundDevice:
+        async def listen(scanner: BleakScanner) -> None:
             async with aclosing(scanner.advertisement_data()) as advertisements:
                 async for device, adv in advertisements:
                     found = _found(device, adv)
                     if wanted is not None:
                         if device.address.upper() == wanted:
-                            return found
+                            # (A name heard once is kept: the next packet may carry none.)
+                            before = known.get(found.address)
+                            if not found.name and before is not None and before.name:
+                                found = FoundDevice(before.name, found.address, found.rssi, found.ftms or before.ftms,
+                                                    found.handle, found.treadmill)  # fmt: skip
+                            known[found.address] = found
+                            heard.set()
+                            if found.name:
+                                named.set()
                     elif name_matches(found.name, name_prefixes):
-                        return found
+                        known[found.address] = found
+                        heard.set()
                     elif found.ftms and found.treadmill is not False:
                         nameless[found.address] = found
-            raise RuntimeError("the Bluetooth scan ended by itself")
 
+        def strongest(devices: dict[str, FoundDevice]) -> FoundDevice:
+            return max(devices.values(), key=lambda d: d.rssi if d.rssi is not None else -999)
+
+        loop = asyncio.get_running_loop()
+        end = loop.time() + timeout
         async with BleakScanner() as scanner:
+            listening = asyncio.create_task(listen(scanner))
             try:
-                return await asyncio.wait_for(listen(scanner), timeout)
-            except TimeoutError:
-                pass
+                try:
+                    await asyncio.wait_for(heard.wait(), timeout)
+                except TimeoutError:
+                    pass
+                if heard.is_set():
+                    # A moment more: by its address, for the packet that has its
+                    # name in it; by name, for a stronger pad than the first one
+                    # heard (the neighbour's may be heard first).
+                    settle = min(KNOWN_SETTLE_S, max(0.0, end - loop.time()))
+                    try:
+                        await asyncio.wait_for(named.wait() if wanted is not None else asyncio.sleep(settle), settle)
+                    except TimeoutError:
+                        pass
+            finally:
+                listening.cancel()
+                await asyncio.gather(listening, return_exceptions=True)
+        if known:
+            return strongest(known)
         if not nameless:
             return None
         return max(nameless.values(), key=lambda d: d.rssi if d.rssi is not None else -999)
