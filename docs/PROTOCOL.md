@@ -74,7 +74,8 @@ reads of each one:
 * `id` - the addon's session counter, 1-255;
 * `character` - the character's "Name-Realm". A session whose name the game
   hid when it began (it starts with `?`) belongs to nobody;
-* `auto` - the addon started it by itself.
+* `auto` - the addon started it by itself. (For the addon: the app does
+  not read it, and files a walk under such a session like any other.)
 
 The rest of a record (the addon's own estimates) is for the addon.
 
@@ -200,8 +201,8 @@ world; the Skyborne's Zephras Isle lies in Skywall and is listed under
 neither. So the first time the character stands on a land, the addon goes
 up from the map the game shows it on to the largest map that still shows
 that land alone (its continent's map, where it has one; never a map of a
-whole world) and keeps that map's id and name. The addon's own road window
-draws the land on that map; the app uses the name.
+whole world) and keeps that map's id and name. The app uses the name.
+(The addon has no road window any more: the road is drawn in the app.)
 
 How the app reads it (`road.py`):
 
