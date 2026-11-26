@@ -1024,3 +1024,26 @@ def test_one_touch_of_the_hand_grips_does_not_last_the_walk(rig: Rig):
     run(scenario())
     record = rig.app.store.records[-1]
     assert record.calories_source == "speed" and record.max_hr == 140 and record.avg_hr == pytest.approx(140)
+
+
+def test_the_checkpoint_goes_as_soon_as_the_walk_is_written(rig: Rig, monkeypatch):
+    """Not after the addon's file and the Walka account: a Walka killed in
+    between would find the checkpoint at its next start."""
+    seen: list[bool] = []
+    real_sync = rig.app.sync_addon
+
+    def sync(*args, **kwargs):
+        seen.append((rig.app.data_dir / "active-session.json").exists())
+        return real_sync(*args, **kwargs)
+
+    monkeypatch.setattr(rig.app, "sync_addon", sync)
+
+    async def scenario():
+        await rig.connect()
+        await rig.walk()
+        await rig.run(120)
+        assert (rig.app.data_dir / "active-session.json").exists()
+        await rig.step_off()
+
+    run(scenario())
+    assert len(rig.app.store.records) == 1 and seen and seen[-1] is False

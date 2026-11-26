@@ -565,7 +565,12 @@ class SessionStore:
             log.warning("the unfinished walk's checkpoint is damaged: %s", exc)
             self.recovery_failed = False
             return True
-        if record.seconds >= MIN_SESSION_SECONDS:
+        if self._on_file(record):
+            # Saved already: Walka was closed (or killed) after it wrote the
+            # walk and before it cleared the checkpoint, which is a snapshot
+            # of that walk from a little earlier.
+            log.info("the unfinished walk from %s is on file already", day_key(record.start))
+        elif record.seconds >= MIN_SESSION_SECONDS:
             try:
                 self.add(record)
             except Exception as exc:
@@ -575,6 +580,15 @@ class SessionStore:
             log.info("recovered an unfinished walk from %s", day_key(record.start))
         self.recovery_failed = False
         return True
+
+    def _on_file(self, record: SessionRecord) -> bool:
+        """Is the walk of this checkpoint on file already? The same walk:
+        the same start, from the same treadmill, and on file at least as
+        long (a checkpoint is a snapshot taken before the walk ended)."""
+        return any(
+            kept.start == record.start and kept.treadmill == record.treadmill and kept.seconds >= record.seconds
+            for kept in self.records
+        )
 
     @staticmethod
     def _write(path: Path, data: dict[str, Any]) -> None:

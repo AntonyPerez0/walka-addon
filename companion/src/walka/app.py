@@ -337,9 +337,12 @@ class App:
 
     def _save_unsaved(self, *, announce: bool = False) -> None:
         """Write finished walks to disk. The file is written first and the
-        crash checkpoint cleared only afterwards; a walk that cannot be
-        written stays in memory for another try and in the checkpoint, where
-        the next start of the companion finds it."""
+        crash checkpoint cleared right afterwards - before anything else is
+        told of the walk, so that a Walka killed meanwhile does not find it
+        again; a walk that cannot be written stays in memory for another
+        try and in the checkpoint, where the next start of the companion
+        finds it."""
+        saved: list[SessionRecord] = []
         while self._unsaved:
             record = self._unsaved[0]
             try:
@@ -352,27 +355,32 @@ class App:
                         "check that the disk is not full and the data folder can be written.",
                         "error",
                     )
-                return
+                break
             self._unsaved.pop(0)
+            saved.append(record)
+        if not self._unsaved:
+            self.store.clear_checkpoint()
+        if not saved:
+            return
+        for record in saved:
             self.last_record = record
-            self._totals_cache = None
             self.log_event(
                 f"Walk saved: {record.seconds / 60:.0f} min, {record.distance_m / 1000:.2f} km, "
                 f"{record.steps} steps, {record.kcal:.0f} kcal."
             )
-            self.sync_addon()
-            if self.walka_account is not None:
+        self._totals_cache = None
+        self.sync_addon()
+        if self.walka_account is not None:
+            for _record in saved:
                 try:
                     self.walka_account.walk_saved()  # (only wakes its sender: nothing is waited for here)
                 except Exception as exc:
-                    # This walk is on disk, and the next one in the list
-                    # must get there too: nothing of a Walka account may
-                    # stand in its way. (The kind of error only, as in start().)
+                    # These walks are on disk: nothing of a Walka account may
+                    # stand in the way of the rest. (The kind of error only, as in start().)
                     log.warning(
                         "the Walka account's part could not be told of a saved walk: an error of the kind %s",
                         type(exc).__name__,
                     )
-        self.store.clear_checkpoint()
 
     # ---- addon sync --------------------------------------------------------------
     def find_addon_dir(self) -> Path | None:

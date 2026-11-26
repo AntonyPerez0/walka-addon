@@ -627,11 +627,24 @@ def test_too_short_or_corrupt_checkpoints_are_dropped(tmp_path: Path):
     assert not (tmp_path / "active-session.json").exists()
 
 
-def test_recovered_checkpoint_gets_a_unique_id(tmp_path: Path):
-    """The walk was saved, and a stale checkpoint with the same start survived."""
+def test_a_checkpoint_whose_walk_is_on_file_already_is_not_saved_twice(tmp_path: Path):
+    """The walk was saved, and Walka was killed before its checkpoint was
+    cleared: the checkpoint (a snapshot from a little earlier, with the
+    same start) is that walk, which is on file already."""
+    store = SessionStore(tmp_path)
+    saved = store.add(make_record(T0, seconds=600.0))
+    (tmp_path / "active-session.json").write_text(json.dumps(make_record(T0, seconds=580.0).to_json()), "utf-8")
+    recovered = SessionStore(tmp_path)
+    assert [r.id for r in recovered.records] == [saved.id]
+    assert recovered.records[0].seconds == 600.0
+    assert not (tmp_path / "active-session.json").exists()
+
+
+def test_another_walk_that_began_in_the_same_second_still_gets_a_unique_id(tmp_path: Path):
+    """A walk with another start (to the tenth) is another walk, even with the same id."""
     store = SessionStore(tmp_path)
     saved = store.add(make_record(T0))
-    (tmp_path / "active-session.json").write_text(json.dumps(make_record(T0).to_json()), "utf-8")
+    (tmp_path / "active-session.json").write_text(json.dumps(make_record(T0 + 0.5).to_json()), "utf-8")
     recovered = SessionStore(tmp_path)
     assert [r.id for r in recovered.records] == [saved.id, f"{saved.id}-2"]
 
