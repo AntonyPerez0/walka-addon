@@ -502,3 +502,13 @@ def test_after_an_update_it_says_so_and_brings_the_addon_up_to_date(rig: Rig, tm
     assert (rig.addon / "Walka.lua").exists()  # the bundled addon's files
     assert "## Version:" in (rig.addon / "Walka.toc").read_text()
     assert not (tmp_path / "data" / updates.DONE_FILE).exists()
+
+
+def test_a_trial_is_offered_its_final_release_and_anything_newer():
+    from walka.updates import is_newer
+
+    assert is_newer("v0.13.0", current="0.13.0-rc1")
+    assert is_newer("v0.13.1", current="0.13.0-rc1")
+    assert not is_newer("v0.12.9", current="0.13.0-rc1")
+    assert not is_newer("v0.13.0", current="0.13.0")
+    assert not is_newer("v0.13.0-rc2", current="0.13.0-rc1"), "a trial is never offered"

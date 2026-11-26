@@ -83,7 +83,8 @@ Walka itself.)
   an **Update now** button within a day (at once when it is next opened):
   the update takes `Walka.exe` or the Mac zip from the release and checks
   it against `SHA256SUMS.txt` (`companion/src/walka/updates.py`). So keep
-  those file names as they are. A trial (`v0.2.0-rc1`) is never offered.
+  those file names as they are. A trial (`v0.2.0-rc1`) is never offered;
+  a Walka that is itself a trial is offered its final release.
 * **What a release is built from** is fixed in the repository: the
   packages in `companion/requirements-build.lock` and
   `requirements-dev.lock` (exact versions with checksums; the top of each
