@@ -26,7 +26,8 @@ nothing.
 <!-- treadmill-table:end -->
 
 Only the UREVO Strol 2E (URTM030) has been tried with Walka on the real
-machine; the warning at the top of this page is for every other one.
+machine; [Before your first walk](INSTALL.md#before-your-first-walk) is for
+every other one.
 Details and sources: [docs/HARDWARE.md](HARDWARE.md).
 
 Things to know:
@@ -41,8 +42,10 @@ Things to know:
   yours. *Forget this treadmill* on the dashboard lets you move to another.
 
 **What will not work:** treadmills that only talk to their maker's app in
-a private language (many NordicTrack / iFIT machines, the older KingSmith
-WalkingPads), and bikes or rowers - Walka only reads treadmills.
+a private language Walka does not read (many NordicTrack / iFIT machines),
+and bikes or rowers - Walka only reads treadmills. (The older KingSmith
+WalkingPads have a private language too, but Walka reads that one: see
+the table above. It is untried on a real pad.)
 
 **Is yours not listed, or not behaving?** Press **Check my treadmill** on
 the dashboard (*Live → Treadmill*) with the treadmill on, and work it with

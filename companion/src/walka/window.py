@@ -19,7 +19,7 @@ opens in the browser as before.
 
 The window wants the program's main thread for itself (macOS insists, and
 pywebview with it). So with a window, everything else Walka does - the
-Bluetooth, the screen, the server - runs on a second thread: see
+Bluetooth, the game's saved files, the server - runs on a second thread: see
 ``cli._run_in_window``. Bluetooth on Windows is happier there too: the
 window makes its thread a single-threaded COM apartment, which the
 Windows Runtime's Bluetooth cannot be used from.

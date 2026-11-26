@@ -27,7 +27,8 @@
 *These steps are for Windows. On a Mac, steps 1 and 2 are different - they
 are under [On a Mac](#on-a-mac) - and the rest is the same.*
 
-1. **Download `Walka.exe`** with the button above. It goes to your
+1. **Download [`Walka.exe`](https://github.com/AntonyPerez0/walka-addon/releases/latest/download/Walka.exe)**
+   (the *Download Walka for Windows* button in the [README](../README.md)). It goes to your
    *Downloads* folder. If the browser says it "isn't commonly downloaded",
    choose **Keep** (in Edge: **...** → **Keep** → **Show more** → **Keep
    anyway**).

@@ -217,7 +217,8 @@ end
 local function guardedLook()
     local ok, problem = pcall(look)
     if not ok and not RoadRecorder.problem then
-        -- Remembered for /walka mapcheck; not shouted four times a second.
+        -- Remembered (RoadRecorder.problem), for a test or a debugger to
+        -- read; not shouted four times a second. (No command shows it.)
         RoadRecorder.problem = tostring(problem)
     end
 end

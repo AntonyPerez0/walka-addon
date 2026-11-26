@@ -75,7 +75,7 @@ Walka itself.)
   `release`: a reviewer added to it under *Settings → Environments* has to
   approve each release before anything is published. When
   the run finishes, the **Releases** page has `Walka.exe`, the two Mac
-  zips (the download buttons at the top of this page always give the
+  zips (the download buttons at the top of the README always give the
   latest ones) and `Walka-addon.zip`, which you upload to CurseForge
   yourself. If the run
   fails nothing is published: fix it and run it again. Once it is
@@ -102,8 +102,8 @@ Walka itself.)
   scans the files of the release - `Walka.exe`, the Mac programs, the
   addon - after showing that it catches the standard test file. A
   release needs that job, and it writes `virus-scan.json`, which is
-  published next to `Walka.exe` and is what the badge at the top of this
-  page shows. Nothing to set up. The green *Scanned for viruses* picture
+  published next to `Walka.exe` and is what the badge at the top of the
+  README shows. Nothing to set up. The green *Scanned for viruses* picture
   above the badge is a fixed picture (`docs/images/virus-scan.svg`). It
   says what is done, not what a scan can never prove: that a file is
   harmless.

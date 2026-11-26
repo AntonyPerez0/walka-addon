@@ -516,3 +516,20 @@ def test_a_pull_request_commit_is_built_once(repo_root: Path):
         assert f"\n    if: {once}\n" in head, name
     scan = text[text.index("\n  virus-scan:\n") :]
     assert "needs: [windows-exe, mac-app]" in scan[: scan.index("    steps:")]  # (so it is skipped with them)
+
+
+def test_the_addon_carries_the_same_notices_as_the_repository(repo_root: Path):
+    """Walka/THIRD-PARTY-NOTICES.md goes out with the addon's zip: a copy of
+    the repository's, word for word, not an older one."""
+    assert (repo_root / "Walka" / "THIRD-PARTY-NOTICES.md").read_text("utf-8") == (
+        repo_root / "THIRD-PARTY-NOTICES.md"
+    ).read_text("utf-8")
+
+
+def test_no_page_points_at_a_button_it_does_not_have(repo_root: Path):
+    """The download buttons are in the README. Pages split off from it
+    must not say "the button above" or "at the top of this page"."""
+    for page in (repo_root / "docs").glob("*.md"):
+        text = " ".join(page.read_text("utf-8").split())
+        for words in ("the button above", "at the top of this page", "buttons at the top of this page"):
+            assert words not in text, f"{page.name}: {words}"
