@@ -139,6 +139,13 @@ def pyinstaller_args(platform: str = sys.platform) -> list[str]:
         # bleak picks its Bluetooth backend (WinRT on Windows, CoreBluetooth
         # on a Mac) at run time, which PyInstaller's static analysis cannot see.
         "--collect-submodules", "bleak",
+        # Build tools, which nothing Walka runs on imports: PyInstaller's
+        # hooks would pack them all the same, with no licence text.
+        # (tools/check_packed_licences.py checks what is packed.)
+        "--exclude-module", "setuptools",
+        "--exclude-module", "pkg_resources",
+        "--exclude-module", "_distutils_hack",
+        "--exclude-module", "packaging",
         "--distpath", str(HERE / "dist"),
         "--workpath", str(HERE / "build"),
         "--specpath", str(HERE / "build"),

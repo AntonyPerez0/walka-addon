@@ -98,6 +98,9 @@ jobs:
           # build has, and one that still gets fixes.
           python tools/check_bundled_python.py "$check"
           if ($LASTEXITCODE -ne 0) { throw "Walka.exe carries an older Python than expected" }
+          # Every library packed into it has its licence in it.
+          python tools/check_packed_licences.py companion/dist/Walka.exe
+          if ($LASTEXITCODE -ne 0) { throw "Walka.exe packs a library whose licence is not in it" }
           # The licences of the libraries packed into the program go with it.
           $licences = Walka "licenses"
           foreach ($wanted in "THIRD-PARTY SOFTWARE IN WALKA", "Apache License", "aiohttp", "winrt-runtime", "pywebview", "pythonnet", "Microsoft.Web.WebView2") {
@@ -259,6 +262,8 @@ jobs:
           # The Python packed into it (and its OpenSSL) is the one this
           # build has, and one that still gets fixes.
           python tools/check_bundled_python.py "$check" || fail "Walka carries an older Python than expected"
+          # Every library packed into it has its licence in it.
+          python tools/check_packed_licences.py "$exe" || fail "Walka packs a library whose licence is not in it"
           # The licences of the libraries packed into the program go with it.
           "$exe" licenses > "$RUNNER_TEMP/licences.txt" || fail "Walka does not print the licences of what is packed into it"
           for wanted in "THIRD-PARTY SOFTWARE IN WALKA" "Apache License" "aiohttp" "pyobjc-core" "pywebview"; do

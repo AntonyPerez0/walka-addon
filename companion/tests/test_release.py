@@ -37,7 +37,8 @@ def test_every_library_the_program_runs_on_is_listed_with_its_licence(repo_root:
     names = {canonical(d.metadata["Name"]) for d in distributions}
     # What Walka asks for by name, and what those bring along.
     assert {"aiohttp", "bleak", "yarl", "multidict", "frozenlist", "aiosignal", "attrs", "idna"} <= names
-    # Not the tools that only build or test: they are not in the program.
+    # Not the tools that only build or test: they are not in the program (build_exe.py leaves
+    # them out, and tools/check_packed_licences.py checks what IS packed against this list).
     assert not names & {"pytest", "ruff", "lupa", "pyinstaller", "pip", "setuptools", "packaging"}
     # Walka's window, where the program is packaged with one.
     assert ("pywebview" in names) == (sys.platform in ("win32", "darwin"))
@@ -407,3 +408,24 @@ def test_the_walka_account_page_says_what_stopping_and_signing_out_do(repo_root:
     assert "takes effect at once" not in text
     assert "A request that was already on its way is not called back" in text
     assert "Signing out in Walka does not always end the sign-in at walka.dev" in text
+
+
+def test_the_build_refuses_a_packed_library_without_its_licence(repo_root: Path):
+    check = load_tool(repo_root, "check_packed_licences")
+    text = (
+        "Contents of 'Walka' (PKG/CArchive):\n struct\n walka_launcher\n aiohttp/_http_parser.so\n"
+        " packaging-26.4.dist-info/RECORD\n walka/static/app.js\n PYZ.pyz\nContents of 'PYZ.pyz' (PYZ):\n"
+        " aiohttp.client\n setuptools.dist\n json.decoder\n walka.app\n"
+    )
+    names = {n for n in check.top_level_names(text) if not any(n.startswith(o) for o in check.OURS)}
+    names -= set(sys.stdlib_module_names)
+    packed = check.packed_distributions(names)
+    assert {"aiohttp", "packaging", "setuptools"} <= set(packed) and "json" not in packed
+    wrong = check.problems(packed, check.listed_distributions())
+    assert [line.split()[0] for line in wrong] == ["packaging", "setuptools"]
+    assert check.problems({"aiohttp": {"aiohttp"}}, check.listed_distributions()) == []
+    text = workflow(repo_root)
+    assert text.count("python tools/check_packed_licences.py") == 2, "the Windows and both Mac builds"
+    build = (repo_root / "companion" / "build_exe.py").read_text("utf-8")
+    for module in ("setuptools", "pkg_resources", "packaging"):
+        assert f'"--exclude-module", "{module}"' in build
