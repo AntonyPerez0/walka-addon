@@ -9,7 +9,6 @@ walk, once the app's file brings it.
 
 from __future__ import annotations
 
-
 from .harness import State, lua_list, lua_plain
 from .test_journey import ME, NOW, companion, measured, real, saved
 

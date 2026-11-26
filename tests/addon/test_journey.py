@@ -9,9 +9,8 @@ logout - is in test_saved_file.py.
 
 from __future__ import annotations
 
-import re
-
 import math
+import re
 
 import pytest
 
@@ -958,8 +957,8 @@ def test_a_walk_shared_with_a_record_that_appears_later_is_not_counted_twice(mak
     rt = make_rt(saved_variables=saved(own(NOW - 90000, 2400, steps=3000)), files=companion(walked))
     assert real(rt)["steps"] == 6000
     rt.run(
-        "table.insert(WalkaDB.sessions, {id=2,start=%d,['end']=%d,seconds=1200,distanceM=0,steps=1500,kcal=0,"
-        "yards=0,maxKmh=0,character='Other-Azeroth'})" % (NOW - 87600, NOW - 86400)
+        f"table.insert(WalkaDB.sessions, {{id=2,start={NOW - 87600},['end']={NOW - 86400},seconds=1200,distanceM=0,"
+        "steps=1500,kcal=0,yards=0,maxKmh=0,character='Other-Azeroth'})"
     )
     later = rt.reload(gap=3600)
     mine, other = record(later)["real"], record(later, "Other-Azeroth")["real"]

@@ -348,7 +348,7 @@ WIDE = dict(left=-1e9, top=-1e9, right=1e9, bottom=1e9)
 def segment_of(points, *, continent=1, mode="w", belt=False, level=10):
     """A saved segment through `points` (whole world yards). (Continent 1
     is the one the tests' map shows; see lines_of.)"""
-    steps = [f"1,{bx - ax},{by - ay}" for (ax, ay), (bx, by) in zip(points, points[1:])]
+    steps = [f"1,{bx - ax},{by - ay}" for (ax, ay), (bx, by) in zip(points, points[1:], strict=False)]
     belt_text = ",b=1" if belt else ""
     return (
         f"{{c={continent},m='{mode}',l={level},t={T0}{belt_text},x={points[0][0]},y={points[0][1]},"
@@ -437,7 +437,7 @@ def test_only_the_end_of_a_growing_road_is_read_again(rt):
     # The segment being recorded grows: its chapter is read anew, the others are the same tables.
     rt.run("local s = ...; s.n = 3; s.d = s.d .. ';1,20,0'", lua_list(db.segments)[19])
     after = chapters_of(rt, db)
-    assert all(same_table(rt, a, b) for a, b in zip(before[:19], after[:19]))
+    assert all(same_table(rt, a, b) for a, b in zip(before[:19], after[:19], strict=False))
     assert not same_table(rt, before[19], after[19]) and after[19].count == 4
     # A new segment that carries on is added to the last chapter; an empty one at the end comes and goes.
     rt.run(
@@ -448,10 +448,11 @@ def test_only_the_end_of_a_growing_road_is_read_again(rt):
     )
     grown = chapters_of(rt, db)
     assert len(grown) == 20 and path_of(rt, grown[19])[-1] == (38060, 50)
+    assert all(chapter.count <= road.CHAPTER_POINTS for chapter in grown)
     rt.run("local db = ...; db.segments[#db.segments] = nil", db)
     assert len(chapters_of(rt, db)) == 20
     # Nothing changed: nothing is read again.
-    assert all(same_table(rt, a, b) for a, b in zip(grown, chapters_of(rt, db)))
+    assert all(same_table(rt, a, b) for a, b in zip(grown, chapters_of(rt, db), strict=False))
 
 
 def test_a_long_road_can_be_read_a_little_at_a_time(rt):
@@ -521,6 +522,7 @@ def test_a_chapter_read_again_is_what_it_was_when_the_segment_has_grown_since(rt
     assert path_of(rt, chapter) == [(0, 0), (20, 0), (40, 0)], "the list a window holds stays whole"
     (again,) = chapters_of(rt, db)
     assert path_of(rt, again) == [(0, 0), (20, 0), (40, 0), (60, 0)] and not same_table(rt, again, chapter)
+    assert again.count == 4 <= road.CHAPTER_POINTS
 
 
 def test_coarser_copies_of_a_chapter_stay_close_to_it(rt):
@@ -532,7 +534,7 @@ def test_coarser_copies_of_a_chapter_stay_close_to_it(rt):
 
     def distance_to_path(px, py, path):
         best = float("inf")
-        for (ax, ay), (bx, by) in zip(path, path[1:]):
+        for (ax, ay), (bx, by) in zip(path, path[1:], strict=False):
             dx, dy = bx - ax, by - ay
             t = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)))
             best = min(best, math.hypot(px - (ax + t * dx), py - (ay + t * dy)))
@@ -613,7 +615,7 @@ def test_a_road_in_thousands_of_short_segments_is_drawn_as_a_few_lines(rt):
     # 20000 yards are 2000 units, in a straight line: a handful of pieces do.
     assert 1 <= len(pieces) <= 300 and out.cut == 0
     assert pieces[0][0] == (0, 0) and pieces[-1][1] == (2000, 0)
-    assert all(a[1] == b[0] for a, b in zip([p[:2] for p in pieces], [p[:2] for p in pieces][1:])), "one unbroken line"
+    assert all(a[1] == b[0] for a, b in zip([p[:2] for p in pieces], [p[:2] for p in pieces][1:], strict=False)), "one unbroken line"
     assert out.passes <= 3
     # A road in one piece fits the smallest budget.
     few, out = lines_of(rt, db, tolerance=0.5, most=3)
