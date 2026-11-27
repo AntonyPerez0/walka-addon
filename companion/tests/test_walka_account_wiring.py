@@ -230,6 +230,13 @@ def a_config(tmp_path: Path) -> Config:
     return config
 
 
+async def no_treadmill_in_range(**kwargs):
+    """Stands in for the probe of "Check my treadmill", which scans the real
+    Bluetooth radio: a route of the dashboard starts it like any other."""
+    kwargs["report"].append("No treadmill found.")
+    return kwargs["report"]
+
+
 def hand_in(rig: Rig, tmp_path: Path, *, treadmill: Any = None, part: bool = True) -> App:
     """A real ``App`` on the rig's folder and clock - with a part of the rig's handed in, or with none.
 
@@ -245,6 +252,7 @@ def hand_in(rig: Rig, tmp_path: Path, *, treadmill: Any = None, part: bool = Tru
         wall_clock=rig.clock.wall,
         mono_clock=rig.clock.mono,
     )
+    app.probe_fn = no_treadmill_in_range
     rig.app = app  # type: ignore[assignment]
     if account is not None:
         rig.account = account
@@ -1085,6 +1093,7 @@ def on_the_emulated_pad(rig: Rig, tmp_path: Path, monkeypatch) -> tuple[PadRig, 
         wall_clock=HouseClock.wall,
         mono_clock=HouseClock.mono,
     )
+    app.probe_fn = no_treadmill_in_range
     house.app, rig.app, rig.account = app, app, part  # type: ignore[assignment]
     return house, app, part
 

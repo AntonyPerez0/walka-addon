@@ -369,6 +369,44 @@ def _no_real_keystore_and_no_real_browser(request, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_real_bluetooth_radio(monkeypatch):
+    """A test hands in a made-up radio (walka_fakes, or a stand-in for
+    ``probe_fn``). One that forgot would, on a computer with Bluetooth,
+    scan the real air and could connect to a real treadmill in range - and
+    on a build machine, with no radio, it fails at once and passes unseen.
+    Here it fails the test instead, written down and looked at again when
+    the test is over, since Walka takes a Bluetooth error and goes on."""
+    import bleak
+
+    from walka.treadmill import bleak_backend
+
+    reached: list[str] = []
+
+    class NoRadio:
+        def __init__(self, *_args, **_how):
+            reached.append(f"the real Bluetooth radio was reached for (bleak.{type(self).__name__})")
+            raise AssertionError(reached[-1] + ": hand the test a made-up radio")
+
+    class BleakScanner(NoRadio):
+        @classmethod
+        async def discover(cls, *_args, **_how):
+            cls()
+
+        @classmethod
+        async def find_device_by_address(cls, *_args, **_how):
+            cls()
+
+    class BleakClient(NoRadio):
+        pass
+
+    for module in (bleak, bleak_backend):
+        monkeypatch.setattr(module, "BleakScanner", BleakScanner)
+        monkeypatch.setattr(module, "BleakClient", BleakClient)
+    yield reached
+    assert reached == []
+
+
+@pytest.fixture(autouse=True)
 def message_boxes(monkeypatch) -> list[str]:
     """On Windows, without a console, Walka says some things in a message
     box - which waits for a click that no test is there to give. Here a box
