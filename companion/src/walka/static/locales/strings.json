@@ -532,7 +532,7 @@
   "Walka",
   "Walka - live view",
   "Walka account",
-  "Walka asks GitHub, once a day, which version is the newest - nothing else is sent. Nothing is downloaded until you press Update now: then Walka downloads the new version from GitHub, checks it against the release's checksum, and restarts.",
+  "Walka asks GitHub, at every start and then once a day, which version is the newest - nothing else is sent. Nothing is downloaded until you press Update now: then Walka downloads the new version from GitHub, checks it against the release's checksum, and restarts.",
   "Walka can read it: it sends {1}. Connecting.",
   "Walka cannot read it as a treadmill. It offers: {1}.",
   "Walka companion",

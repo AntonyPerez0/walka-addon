@@ -395,10 +395,18 @@ def load_tool(repo_root: Path, name: str):
 def test_nobody_is_told_that_walka_asks_nobody(repo_root: Path):
     """Walka asks GitHub for the newest release (at every start, then once a
     day): "sends nothing and asks nobody" is true of the Walka account part
-    only, and is said of that only. And "once a day" never stands alone."""
+    only, and is said of that only. And "once a day" never stands alone,
+    in the documents nor on the dashboard."""
     texts = {
         path: path.read_text("utf-8")
-        for path in [*repo_root.glob("*.md"), *(repo_root / "docs").glob("*.md"), repo_root / ".github/workflows/ci.yml"]
+        for path in [
+            *repo_root.glob("*.md"),
+            *(repo_root / "docs").glob("*.md"),
+            repo_root / ".github/workflows/ci.yml",
+            # (And what the dashboard itself says, in Settings.)
+            *(repo_root / "companion/src/walka/static").glob("*.js"),
+            *(repo_root / "companion/src/walka/static").glob("*.html"),
+        ]
     }
     for path, text in texts.items():
         flat = " ".join(text.split())

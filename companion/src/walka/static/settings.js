@@ -651,7 +651,7 @@ FORMS.updates = {
       type: "check",
       path: "updates.check",
       label: "Tell me when a new version of Walka is out",
-      help: "Walka asks GitHub, once a day, which version is the newest - nothing else is sent. Nothing is downloaded until you press Update now: then Walka downloads the new version from GitHub, checks it against the release's checksum, and restarts.",
+      help: "Walka asks GitHub, at every start and then once a day, which version is the newest - nothing else is sent. Nothing is downloaded until you press Update now: then Walka downloads the new version from GitHub, checks it against the release's checksum, and restarts.",
     },
   ],
 };
