@@ -78,7 +78,10 @@ export function parseNumber(text, { whole = false, decimal = DECIMAL } = {}) {
   return Number(clean);
 }
 
-const trim = (value, digits) => String(+value.toFixed(digits));
+/** A number for a box: as few digits as it needs, written the browser's way ("82,5" in German),
+ * without grouping (parseNumber reads it back either way). */
+const local = (text) => (DECIMAL === "," ? text.replace(".", ",") : text);
+const trim = (value, digits) => local(String(+value.toFixed(digits)));
 /** Two texts that mean the same number ("3" and "3.0") are not a change. */
 const sameText = (a, b, how) => a === b || (a !== "" && b !== "" && parseNumber(a, how) === parseNumber(b, how));
 const ceilTo = (value, digits) => Math.ceil(value * 10 ** digits - 1e-9) / 10 ** digits;
@@ -170,7 +173,7 @@ class NumberField extends Field {
     const metric = getPath(source, this.spec.path);
     const { lo, hi, digits } = this.bounds();
     const shown = metric == null ? null : this.kind.shown(metric);
-    this.base = shown == null ? "" : this.kind.fixed ? shown.toFixed(digits) : trim(shown, digits);
+    this.base = shown == null ? "" : this.kind.fixed ? local(shown.toFixed(digits)) : trim(shown, digits);
     this.input.value = this.base;
     setText(this.unitEl, this.kind.unit());
     setText(this.rangeEl, `(${trim(lo, digits)} to ${trim(hi, digits)})`);

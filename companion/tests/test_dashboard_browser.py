@@ -216,3 +216,17 @@ def test_numbers_on_one_line_are_written_one_way(browser_ready, tmp_path):
         english = served.look(tmp_path, steps, locale="en-US")["shown"]
     assert german[1] == "1.234" and "," in german[0] and "." not in german[0]
     assert english[1] == "1,234" and "." in english[0]
+
+
+def test_the_settings_boxes_write_numbers_the_browsers_way(browser_ready, tmp_path):
+    steps = [
+        ("values", until("[...document.querySelectorAll('#view-settings input')].some((i) => i.value)",
+                         "[...document.querySelectorAll('#view-settings input')].map((i) => i.value)")),
+    ]  # fmt: skip
+    with Served(tmp_path) as served:
+        served.app.config.units = "kmh"
+        served.app.config.profile.weight_kg = 82.5
+        german = served.look(tmp_path, steps, locale="de-DE", hash_="#settings")["values"]
+        english = served.look(tmp_path, steps, locale="en-US", hash_="#settings")["values"]
+    assert "82,5" in german and "82.5" not in german
+    assert "82.5" in english
