@@ -371,6 +371,17 @@ def test_the_builds_and_tests_run_on_the_python_the_check_expects(repo_root: Pat
     assert text.count("python tools/check_bundled_python.py") == 2, "the Windows and both Mac builds"
 
 
+def test_every_build_takes_the_newest_python_of_its_line(repo_root: Path):
+    """A runner keeps a Python of its own, and setup-python takes that one
+    when it matches "3.14", however old: the Intel Mac program carried
+    3.14.7 and an OpenSSL of three months before (macos-15-intel), the other
+    two 3.14.10. Each setup asks for the newest 3.14 instead."""
+    steps = re.findall(r"(?m)^\s*- uses: actions/setup-python@\S+.*\n((?:\s{8,}.*\n)+)", workflow(repo_root))
+    assert len(steps) == 3
+    for step in steps:
+        assert re.search(r"(?m)^\s+check-latest:\s*true\b", step), step
+
+
 def load_tool(repo_root: Path, name: str):
     spec = importlib.util.spec_from_file_location(f"walka_tool_{name}", repo_root / "tools" / f"{name}.py")
     module = importlib.util.module_from_spec(spec)
