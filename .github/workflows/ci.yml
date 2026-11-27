@@ -450,7 +450,7 @@ jobs:
 
   # Publishes a release: the programs people download from the buttons at
   # the top of the README (Walka.exe for Windows, a zip for each kind of
-  # Mac), and the addon as a zip that is ready to upload to CurseForge. One way to ask for one: push a
+  # Mac), and the addon as a zip (which the job after this one uploads to CurseForge). To ask for one: push a
   # version tag (v0.1.0) on a commit of the default branch. A tag ruleset lets only the repository's
   # admins make such tags, and the environment "release" waits for its reviewer. Only after the tests
   # and the build above have passed for that same commit.
@@ -588,3 +588,41 @@ jobs:
               exit 1
             }
           fi
+
+  # The addon on CurseForge: the Walka-addon.zip of the release just
+  # published - taken from it and checked against its SHA256SUMS.txt, so
+  # CurseForge gets the very file that was scanned and attested. A job of
+  # its own: if CurseForge refuses or is down, the release on GitHub is
+  # already out and stays as it is, and this job alone can be run again
+  # ("Re-run failed jobs"). Its token is a secret of the environment
+  # "curseforge" (CURSEFORGE_TOKEN), with the project's number beside it
+  # (variable CURSEFORGE_PROJECT_ID). With neither, it uploads nothing and
+  # says so.
+  curseforge:
+    name: Upload the addon to CurseForge
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [release]
+    runs-on: ubuntu-latest
+    environment: curseforge
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Take the addon from the published release
+        run: |
+          gh release download "$TAG" --pattern Walka-addon.zip --pattern SHA256SUMS.txt --dir published
+          cd published
+          grep -q '  Walka-addon\.zip$' SHA256SUMS.txt || { echo "::error::SHA256SUMS.txt of $TAG has no Walka-addon.zip"; exit 1; }
+          sha256sum --check --ignore-missing SHA256SUMS.txt
+      - name: Upload
+        env:
+          CURSEFORGE_TOKEN: ${{ secrets.CURSEFORGE_TOKEN }}
+          CURSEFORGE_PROJECT_ID: ${{ vars.CURSEFORGE_PROJECT_ID }}
+        run: python3 tools/curseforge_upload.py published/Walka-addon.zip "$TAG"

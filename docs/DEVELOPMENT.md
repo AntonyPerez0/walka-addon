@@ -76,8 +76,7 @@ Walka itself.)
   approves each release before anything is published. When
   the run finishes, the **Releases** page has `Walka.exe`, the two Mac
   zips (the download buttons at the top of the README always give the
-  latest ones) and `Walka-addon.zip`, which you upload to CurseForge
-  yourself. If the run
+  latest ones) and `Walka-addon.zip`. If the run
   fails nothing is published: fix it and run it again. Once it is
   published, every Walka that is running shows *Walka 0.x.y is out* with
   an **Update now** button within a day (at once when it is next opened):
@@ -85,6 +84,19 @@ Walka itself.)
   it against `SHA256SUMS.txt` (`companion/src/walka/updates.py`). So keep
   those file names as they are. A trial (`v0.2.0-rc1`) is never offered;
   a Walka that is itself a trial is offered its final release.
+* **CurseForge** gets the addon from the same run: once the release is
+  published, the job *Upload the addon to CurseForge* takes its
+  `Walka-addon.zip`, checks it against `SHA256SUMS.txt` and uploads that
+  file (`tools/curseforge_upload.py`), marked for the game versions of the
+  `## Interface:` line of `Walka/Walka.toc` (16001 is 1.60.1); a trial
+  goes up as a beta. It runs in the GitHub environment `curseforge`,
+  which holds the secret `CURSEFORGE_TOKEN` (an API token from
+  <https://legacy.curseforge.com/account/api-tokens>) and the variable
+  `CURSEFORGE_PROJECT_ID` (the number on the project's page). With
+  neither set it uploads nothing and says so. If it fails, the release on
+  GitHub is out all the same: fix the cause and use *Re-run failed jobs*.
+  A file uploaded to CurseForge is not taken back by running it again:
+  remove a wrong one on CurseForge's own pages.
 * **What a release is built from** is fixed in the repository: the
   packages in `companion/requirements-build.lock` and
   `requirements-dev.lock` (exact versions with checksums; the top of each
