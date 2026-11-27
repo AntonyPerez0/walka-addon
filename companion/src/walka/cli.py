@@ -33,6 +33,8 @@ DISCLAIMER_URL = "https://github.com/AntonyPerez0/walka-addon/blob/HEAD/DISCLAIM
 # download button and never see the repository's README or DISCLAIMER.md.
 LISTENS_ONLY = (
     "\nWalka only listens to your treadmill: it cannot start, stop or change the speed of the belt.\n"
+    "(Older WalkingPads and FitShow pads report only when asked: Walka sends them one fixed\n"
+    "\"report your numbers\" question once a second, and nothing else.)\n"
     "You set the speed on the treadmill itself. Walking while you play is at your own risk.\n"
     f"  disclaimer: {DISCLAIMER_URL}\n"
 )
@@ -1315,7 +1317,10 @@ def _httpscheck(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="walka",
-        description="Walka companion: records your walks on a walking pad while you play. It only listens to the pad.",
+        description=(
+            "Walka companion: records your walks on a walking pad while you play. It only listens to the pad "
+            '(only a fixed "report your numbers" question goes to the older pads that report only when asked).'
+        ),
     )
     parser.add_argument("--version", action="version", version=f"walka {__version__}")
     parser.add_argument("--data-dir", help="folder for config and recorded walks")

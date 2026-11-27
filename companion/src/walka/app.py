@@ -595,7 +595,7 @@ class App:
         try:
             self.log_event(
                 "Checking the treadmill: Walka lets go of it for about 45 seconds, so that the check can connect. "
-                "Like Walka, the check only listens."
+                "The check only listens: it sends the treadmill nothing at all."
             )
             try:
                 await self.treadmill.disconnect()

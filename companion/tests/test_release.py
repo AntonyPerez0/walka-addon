@@ -552,3 +552,22 @@ def test_no_page_points_at_a_button_it_does_not_have(repo_root: Path):
         text = " ".join(page.read_text("utf-8").split())
         for words in ("the button above", "at the top of this page", "buttons at the top of this page"):
             assert words not in text, f"{page.name}: {words}"
+
+
+def test_where_walka_says_it_only_listens_it_says_what_it_asks_some_pads(repo_root: Path):
+    """The dashboard, the start-up text and --help: "only listens" is said
+    with the one exception, a fixed status question to two kinds of pads."""
+    import html
+
+    src = repo_root / "companion" / "src" / "walka"
+    places = {
+        "index.html": html.unescape((src / "static" / "index.html").read_text("utf-8")),
+        "cli.py": (src / "cli.py").read_text("utf-8").replace('"\n    "', "").replace("\\n", " "),
+    }
+    for name, text in places.items():
+        flat = " ".join(text.split())
+        found = list(re.finditer(r"only listens to (your treadmill|the pad)", flat))
+        assert found, name
+        for match in found:
+            assert "report your numbers" in flat[match.end() : match.end() + 400], f"{name}: {flat[match.start():][:200]}"
+    assert "It only listens to the pad" not in (repo_root / "companion" / "pyproject.toml").read_text("utf-8")
