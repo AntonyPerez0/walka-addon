@@ -109,9 +109,11 @@ def test_a_walk_replayed(clock):
 
 
 def test_the_registry_and_a_replay_pick_the_walkingpad_reader():
-    assert readers.reader_for([ftms.uuid16(0xFE01)]).key == "walkingpad"
+    assert readers.reader_for([ftms.uuid16(0xFE01)], "WalkingPad").key == "walkingpad"
+    # Only a device named as a KingSmith pad: it is sent the query.
+    assert readers.reader_for([ftms.uuid16(0xFE01)]) is None
     # A pad with FTMS too is read the standard way.
-    assert readers.reader_for([ftms.uuid16(0xFE01), ftms.TREADMILL_DATA]).key == "ftms"
+    assert readers.reader_for([ftms.uuid16(0xFE01), ftms.TREADMILL_DATA], "WalkingPad").key == "ftms"
     assert isinstance(readers.build("walkingpad", ADDRESS), WalkingPadTreadmill)
     assert isinstance(ReplayTreadmill(a_walk(), time_scale=0)._reader, WalkingPadTreadmill)
 

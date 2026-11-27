@@ -3,6 +3,10 @@
 # GitHub retires old versions of its actions, and a build pinned to one
 # then stops on the day it is needed. Once a month, and all of them in one
 # pull request, which runs the tests and the builds: green means merge.
+#
+# The Python packages are not here: Dependabot does not read the lock files
+# (companion/requirements-*.lock). .github/workflows/advisories.yml asks
+# OSV.dev about every version pinned in them, every week.
 version: 2
 updates:
   - package-ecosystem: github-actions

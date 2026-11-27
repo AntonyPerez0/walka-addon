@@ -646,3 +646,47 @@ def test_a_wellfit_is_read_like_any_pad(clock):
     assert status.max_kmh == pytest.approx(10.0 * KMH_PER_MPH, abs=1e-9)  # what it says it can do: shown, nothing more
     assert status.state is BeltState.RUNNING and status.speed_kmh == pytest.approx(4.82)
     assert pad.writes == []
+
+
+# ---- heart rate from the hand grips ---------------------------------------------------------------
+
+
+def grips(driver: FtmsTreadmill, bpm: int | None, kmh: float = 3.0) -> None:
+    driver._on_data(ftms.build_treadmill_data(kmh, heart_rate_bpm=bpm))
+
+
+def test_a_heart_rate_the_pad_stops_reporting_is_not_kept(clock):
+    driver, pad, _backend, _events = rig()
+    run(driver.connect())
+    grips(driver, 112)
+    assert driver.status.heart_rate_bpm == 112 and driver.status.heart_rate_age_s(clock.now) == 0
+    grips(driver, 0)  # hands off the grips: the pad says 0
+    assert driver.status.heart_rate_bpm is None
+    grips(driver, 108)
+    grips(driver, None)  # ... or leaves the field out: it grows old
+    clock.now += 30
+    assert driver.status.heart_rate_age_s(clock.now) == 30
+    assert driver.status.fresh_heart_rate(clock.now) is None
+
+
+def test_a_heart_rate_does_not_outlive_the_connection(clock):
+    driver, pad, _backend, _events = rig()
+    run(driver.connect())
+    grips(driver, 120)
+    run(driver.disconnect())
+    assert driver.status.heart_rate_bpm is None
+    run(driver.connect())
+    assert driver.status.heart_rate_bpm is None and driver.status.fresh_heart_rate(clock.now) is None
+
+
+def test_packets_without_a_speed_do_not_keep_an_old_speed_fresh(clock):
+    """The speed counts as current only as long as packets that carry one
+    keep coming; packets of distance or time alone say nothing of the belt."""
+    driver, pad, _backend, _events = rig()
+    run(driver.connect())
+    driver._on_data(ftms.build_treadmill_data(3.2))
+    assert driver.status.age_s(clock.now) == 0
+    for _ in range(30):
+        clock.now += 1
+        driver._on_data(ftms.build_treadmill_data(None, total_distance_m=100))
+    assert driver.status.age_s(clock.now) == 30 and driver.status.distance_m == 100

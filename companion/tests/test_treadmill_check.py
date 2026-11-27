@@ -139,3 +139,40 @@ def test_the_reports_can_be_downloaded_and_nothing_else(tmp_path, monkeypatch):
                 assert (await client.get(f"/api/treadmill/check/{bad}")).status == 404
 
     asyncio.run(asyncio.wait_for(main(), 30))
+
+
+def test_closing_walka_during_a_check_waits_until_the_probe_has_let_go(tmp_path, monkeypatch):
+    """Walka is closed while "Check my treadmill" holds the pad: stop() is
+    over only once the probe has let go of it (its connection is closed as
+    the real one's ``async with BleakClient`` is, which takes a turn of the
+    radio), the walk is saved before that is waited for, and nothing asks
+    to connect again."""
+    rig = PadRig(tmp_path, monkeypatch)
+    seen: list[str] = []
+    holding = asyncio.Event()
+
+    async def holds_the_pad(**kwargs):
+        try:
+            seen.append("connected")
+            holding.set()
+            await asyncio.Event().wait()
+        finally:
+            seen.append(f"walks on file: {len(rig.app.store.records)}")
+            await asyncio.sleep(0.05)
+            seen.append("let go")
+
+    rig.app.probe_fn = holds_the_pad
+
+    async def scenario():
+        await rig.walking(seconds=60)
+        assert rig.app.recorder is not None and not rig.app.store.records
+        rig.app.start_check()
+        await holding.wait()
+        monkeypatch.setattr(rig.app, "connect", lambda *_a: seen.append("connect again"))
+        await rig.app.stop()
+        assert seen == ["connected", "walks on file: 1", "let go"], "stop() was over while the probe held the pad"
+        assert rig.app._check_task.done()
+
+    asyncio.run(scenario())
+    assert not rig.app.check.running
+    assert rig.pad.writes == []

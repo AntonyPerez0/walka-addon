@@ -113,7 +113,9 @@ not from the dashboard, not when something goes wrong.
 What Walka does to a treadmill is this, and no more: it connects, reads
 the speed range the treadmill says it has, and switches on the
 notifications through which the treadmill reports its speed, distance and
-status. The channel through which an app could control the belt (the
+status. Older WalkingPads and FitShow pads report only when asked: to
+those, and only those, Walka also sends one fixed "report your numbers"
+question once a second ([docs/SAFETY.md](SAFETY.md#one-exception-for-pads-that-only-report-when-asked)). The channel through which an app could control the belt (the
 *Fitness Machine Control Point*) is never written to, and the code that
 once did has been deleted - there is no setting that brings it back. How
 that is checked: [docs/SAFETY.md](SAFETY.md).
@@ -130,9 +132,11 @@ Short version - the long one is [docs/SAFETY.md](SAFETY.md):
 
 * **Walka cannot move the belt.** It only listens to the treadmill. There
   is no command in it to send, no interface in it to send one through, and
-  nothing the game or the dashboard does reaches the treadmill. The tests
-  check that an emulated treadmill has been sent nothing after long runs of
-  everything Walka can be made to do.
+  nothing the game or the dashboard does reaches the treadmill. The one
+  exception is a fixed status question to two kinds of older pads, which
+  say nothing until asked. The tests check that an emulated treadmill has
+  been sent nothing else after long runs of everything Walka can be made
+  to do.
 * **So the belt is entirely yours** - and so is stopping it. Walka is not a
   safety device and cannot stop a belt: the treadmill's own stop button,
   remote and safety key are what does.

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import math
 import os
 import time
 from pathlib import Path
@@ -492,7 +493,7 @@ def test_record_from_json_ignores_unknown_keys_and_needs_the_required_ones():
     data = {"id": "x", "start": 1.0, "end": 2.0, "seconds": 1.0, "distance_m": 0.5, "steps": 1, "kcal": 0.1}
     record = SessionRecord.from_json({**data, "added_in_a_later_version": True})
     assert record.id == "x" and record.source == "manual" and record.samples == []
-    with pytest.raises(TypeError):
+    with pytest.raises(ValueError):
         SessionRecord.from_json({"id": "x"})
 
 
@@ -627,11 +628,24 @@ def test_too_short_or_corrupt_checkpoints_are_dropped(tmp_path: Path):
     assert not (tmp_path / "active-session.json").exists()
 
 
-def test_recovered_checkpoint_gets_a_unique_id(tmp_path: Path):
-    """The walk was saved, and a stale checkpoint with the same start survived."""
+def test_a_checkpoint_whose_walk_is_on_file_already_is_not_saved_twice(tmp_path: Path):
+    """The walk was saved, and Walka was killed before its checkpoint was
+    cleared: the checkpoint (a snapshot from a little earlier, with the
+    same start) is that walk, which is on file already."""
+    store = SessionStore(tmp_path)
+    saved = store.add(make_record(T0, seconds=600.0))
+    (tmp_path / "active-session.json").write_text(json.dumps(make_record(T0, seconds=580.0).to_json()), "utf-8")
+    recovered = SessionStore(tmp_path)
+    assert [r.id for r in recovered.records] == [saved.id]
+    assert recovered.records[0].seconds == 600.0
+    assert not (tmp_path / "active-session.json").exists()
+
+
+def test_another_walk_that_began_in_the_same_second_still_gets_a_unique_id(tmp_path: Path):
+    """A walk with another start (to the tenth) is another walk, even with the same id."""
     store = SessionStore(tmp_path)
     saved = store.add(make_record(T0))
-    (tmp_path / "active-session.json").write_text(json.dumps(make_record(T0).to_json()), "utf-8")
+    (tmp_path / "active-session.json").write_text(json.dumps(make_record(T0 + 0.5).to_json()), "utf-8")
     recovered = SessionStore(tmp_path)
     assert [r.id for r in recovered.records] == [saved.id, f"{saved.id}-2"]
 
@@ -744,3 +758,87 @@ def test_totals_across_the_autumn_daylight_saving_change(tmp_path: Path, pacific
     ]
     assert totals["week"]["steps"] == 305
     assert totals["streak"] == 3  # not 4: no walk on 31 October
+
+
+# ---- a walk that cannot be written yet ---------------------------------------------------------
+
+
+def disk_full(monkeypatch, store_cls=SessionStore):
+    """Every write of a walk fails, as on a full disk. Returns a switch."""
+    real_write = store_cls._write
+    state = {"full": True}
+
+    def write(path, data):
+        if state["full"]:
+            raise OSError(28, "No space left on device")
+        real_write(path, data)
+
+    monkeypatch.setattr(store_cls, "_write", staticmethod(write))
+    return state
+
+
+def test_a_checkpoint_that_cannot_be_written_as_a_walk_is_kept(tmp_path: Path, monkeypatch):
+    """The disk was full when the walk ended, and is still full at the next
+    start: the checkpoint is the only copy of the walk, and stays."""
+    store = SessionStore(tmp_path)
+    in_progress = make_record(T0, seconds=1234.0, steps=2222)
+    store.checkpoint(in_progress)
+    del store
+    full = disk_full(monkeypatch)
+    again = SessionStore(tmp_path)
+    assert again.records == []
+    assert (tmp_path / "active-session.json").exists(), "the only copy of the walk"
+    assert again.recovery_failed
+    # A new walk's checkpoint must not take its place while it is not on file.
+    again.checkpoint(make_record(T0 + 9000, seconds=60.0))
+    assert json.loads((tmp_path / "active-session.json").read_text("utf-8"))["steps"] == 2222
+    again.clear_checkpoint()
+    assert (tmp_path / "active-session.json").exists()
+    # Room again: the next checkpoint files it first.
+    full["full"] = False
+    again.checkpoint(make_record(T0 + 9000, seconds=90.0))
+    assert [r.steps for r in again.records] == [2222] and not again.recovery_failed
+    assert json.loads((tmp_path / "active-session.json").read_text("utf-8"))["seconds"] == 90.0
+    again.clear_checkpoint()
+    assert [r.steps for r in SessionStore(tmp_path).records] == [2222]
+
+
+def test_a_checkpoint_kept_for_lack_of_room_is_filed_at_a_later_start(tmp_path: Path, monkeypatch):
+    SessionStore(tmp_path).checkpoint(make_record(T0, seconds=1234.0, steps=2222))
+    full = disk_full(monkeypatch)
+    SessionStore(tmp_path)
+    full["full"] = False
+    later = SessionStore(tmp_path)
+    assert [r.steps for r in later.records] == [2222]
+    assert not (tmp_path / "active-session.json").exists()
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        {"start": "yesterday"},
+        {"start": True},
+        {"seconds": None},
+        {"seconds": "600"},
+        {"distance_m": float("nan")},
+        {"kcal": float("inf")},
+        {"steps": "many"},
+        {"steps": 1.5e300},
+        {"end": [1]},
+        {"id": 7},
+        {"samples": "none"},
+        {"treadmill": {"name": "x"}},
+        {"avg_hr": "high"},
+    ],
+)
+def test_a_walk_file_with_wrong_values_is_skipped_not_trusted(tmp_path: Path, damage: dict):
+    """One hand-edited or damaged file must neither stop Walka starting nor
+    break the totals: it is left out, and the others are read."""
+    store = SessionStore(tmp_path)
+    good = store.add(make_record(T0))
+    bad = {**make_record(T0 + 9000).to_json(), "id": "20990101-000000", **damage}
+    (tmp_path / "sessions" / "20990101-000000.json").write_text(json.dumps(bad), "utf-8")
+    again = SessionStore(tmp_path)
+    assert [r.id for r in again.records] == [good.id]
+    totals = again.totals(T0)
+    assert totals["all"]["sessions"] == 1 and math.isfinite(totals["all"]["distance_m"])

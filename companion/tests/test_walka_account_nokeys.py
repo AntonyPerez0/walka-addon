@@ -48,7 +48,7 @@ import os
 import re
 import subprocess
 from collections.abc import Iterable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, quote, quote_plus, urlencode, urlsplit
@@ -258,7 +258,7 @@ def refusal(code: str, message: str, details: str | None = None) -> dict:
 
 
 def utc_text(start: float) -> str:
-    return datetime.fromtimestamp(start, timezone.utc).isoformat()
+    return datetime.fromtimestamp(start, UTC).isoformat()
 
 
 def with_another_challenge(opened: str, challenge: str) -> str:
@@ -690,9 +690,10 @@ def test_after_a_whole_story_no_key_of_a_sign_in_stands_in_any_file_any_answer_o
     assert of_the_part == [book, "data/walka-account.lock"]
 
     # The canaries: the search does find what IS there.
-    assert set(places_with(story.emails, places)) == {book, *shown}
+    # (The story ends signed out: the book no longer holds the e-mail address.)
+    assert set(places_with(story.emails, places)) == set(shown)
     assert places_with(story.users, places) == {book: sorted(story.users)}
-    assert found(story.emails, places[book]) == sorted(story.emails) == found(story.emails, places["/api/state"])
+    assert found(story.emails, places[book]) == [] and found(story.emails, places["/api/state"]) == sorted(story.emails)
     # (The database's sentence about the walk it did not take has quotation marks in it: in the file
     # and in the snapshot it stands as JSON spells it, and is found there all the same - and only there.)
     for sentence in NOT_TAKEN.values():

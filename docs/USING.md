@@ -249,9 +249,9 @@ the picture over a small map of the continent - not the game's map, but a
 low-poly drawing of Walka's own: the shape of the land in facets, in the
 picture's colours.
 
-* The stretches you walked **on the treadmill** - a walking session was
-  running in the game - are a bright line; what the character travelled
-  without one is the same line in a quieter colour; flight paths are fine dashes. A key under the map shows a
+* The stretches you walked **on the treadmill** - the app measured the
+  belt moving while the character travelled them - are a bright line;
+  the rest of the road is the same line in a quieter colour; flight paths are fine dashes. A key under the map shows a
   piece of each kind of line with what it means - and how much of the road
   you walked for real.
 * *START* marks where the road begins, a gem marked *NOW* with the
@@ -320,8 +320,14 @@ Private by default:
   own drawing too (see [THIRD-PARTY-NOTICES.md](../THIRD-PARTY-NOTICES.md) for
   how their outlines were made).
 
-`py -m walka --demo` has a made-up character to try the page with; it is
-never saved.
+`py -m walka --demo` has a made-up character to try the page with; the
+character is never saved. The demo's walks are: like every walk made with
+the simulated treadmill (`--simulate`) or a recording played back
+(`--replay`), they are kept in Walka's data folder, marked as made up.
+Such a run does not write the game addon's file. Once Walka runs with
+your real treadmill again, made-up walks are still listed in *History*,
+but they count for nothing: not in the totals, not in the game, and never
+sent to a Walka account.
 
 ## The road map
 
@@ -329,7 +335,8 @@ From the moment the addon is installed it keeps the road your character
 travels - install it before you start a character and the road begins at
 level 1. It is drawn on the [Share picture](#the-road-on-the-picture), on
 Walka's own map of the world: coloured by level, brightest where you walked
-on the treadmill, with flight paths thin and pale. (Until version 0.9 the
+on the treadmill (the times the app measured the belt moving; with no
+treadmill, none of it), with flight paths thin and pale. (Until version 0.9 the
 addon also drew it on the game's world map. The addon has no windows any
 more; the road is in the app.)
 
@@ -372,9 +379,11 @@ says so, with an **Update now** button. One click and Walka:
    installed, it is brought up to date too (your walks' file in it is
    kept): type `/reload` in the game to load it.
 
-Walka only offers this while the belt is standing still. To find out about
-new versions, Walka asks GitHub, once a day while it runs, which release is
-the newest (the request names the program and its version, and nothing
+Walka only offers this while the belt is standing still. If you start the
+belt while the new version is downloading, Walka waits until that walk is
+over before it restarts. To find out about
+new versions, Walka asks GitHub, at every start and then once a day while
+it runs, which release is the newest (the request names the program and its version, and nothing
 about you). Nothing is downloaded until you press **Update now**. *Settings
 → Updates → Tell me when a new version of Walka is out* switches the
 question off; then Walka asks nothing.

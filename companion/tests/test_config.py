@@ -431,3 +431,24 @@ def test_system_units_on_a_mac_prefers_the_chosen_measurement_system(monkeypatch
     assert locale_units.system_units("darwin") == "kmh"
     answers.pop("AppleMetricUnits")
     assert locale_units.system_units("darwin") == "mph"
+
+
+def test_a_config_written_with_a_byte_order_mark_is_read(tmp_path):
+    """Notepad and PowerShell write UTF-8 with a BOM."""
+    from walka import config as config_module
+
+    (tmp_path / "config.json").write_bytes(b"\xef\xbb\xbf" + json.dumps({"web": {"port": 8899}}).encode())
+    assert config_module.load(tmp_path).web.port == 8899
+
+
+def test_a_config_that_cannot_be_read_is_set_aside_not_written_over(tmp_path):
+    from walka import config as config_module
+
+    broken = '{"web": {"port": 8899},'  # cut short
+    (tmp_path / "config.json").write_text(broken, "utf-8")
+    loaded = config_module.load(tmp_path)
+    assert loaded.web.port != 8899
+    kept = sorted(tmp_path.glob("config.json.unreadable*"))
+    assert len(kept) == 1 and kept[0].read_text("utf-8") == broken
+    config_module.save(loaded, tmp_path)
+    assert kept[0].read_text("utf-8") == broken, "the next save leaves it alone"

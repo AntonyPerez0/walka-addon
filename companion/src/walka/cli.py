@@ -33,6 +33,8 @@ DISCLAIMER_URL = "https://github.com/AntonyPerez0/walka-addon/blob/HEAD/DISCLAIM
 # download button and never see the repository's README or DISCLAIMER.md.
 LISTENS_ONLY = (
     "\nWalka only listens to your treadmill: it cannot start, stop or change the speed of the belt.\n"
+    "(Older WalkingPads and FitShow pads report only when asked: Walka sends them one fixed\n"
+    "\"report your numbers\" question once a second, and nothing else.)\n"
     "You set the speed on the treadmill itself. Walking while you play is at your own risk.\n"
     f"  disclaimer: {DISCLAIMER_URL}\n"
 )
@@ -230,7 +232,7 @@ async def _demo_game(app, stop: asyncio.Event) -> None:
         app.take_game_file()
         try:
             await asyncio.wait_for(stop.wait(), DEMO_SAVES_EVERY_S)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pass
 
 
@@ -621,6 +623,32 @@ async def _run(
     goes: str | None = None,
     started: Callable[[_Running], None] | None = None,
 ) -> int:
+    """Run the companion until it is told to stop - unless another Walka
+    runs on the same data folder: then say so, and stop (exit code 2)."""
+    from .session import hold_data_folder
+
+    data_dir = _data_dir(args)
+    whose, hold = hold_data_folder(data_dir)
+    if whose == "theirs":
+        _could_not_start(
+            f"Walka is already running on this data folder ({data_dir}). Use the Walka that is open "
+            "(its window, or its address in the browser), or close it first."
+        )
+        return 2
+    try:
+        return await _run_on_the_folder(args, cfg=cfg, goes=goes, started=started)
+    finally:
+        if hold is not None:
+            hold.let_go()
+
+
+async def _run_on_the_folder(
+    args: argparse.Namespace,
+    *,
+    cfg: config_module.Config | None = None,
+    goes: str | None = None,
+    started: Callable[[_Running], None] | None = None,
+) -> int:
     """Run the companion until it is told to stop.
 
     ``goes``: where the dashboard is shown (see ``_dashboard_goes``; worked
@@ -642,8 +670,8 @@ async def _run(
         goes = _dashboard_goes(args, cfg)
         if goes == "window":
             goes = "browser"  # nobody is here to open one
-    if args.port:
-        cfg.web.port = args.port
+    # --port is for this run: config.json keeps the port that is set there.
+    wanted_port = args.port or cfg.web.port
     replay = getattr(args, "replay", None)
     simulate = bool(args.simulate or args.demo or replay)
 
@@ -657,6 +685,8 @@ async def _run(
         treadmill=treadmill,
         heart_rate=heart_rate,
         walka_account=_build_walka_account(data_dir, treadmill),
+        # (Made up: the walks are kept, marked, and the game is not shown them.)
+        writes_addon=treadmill.kind != "simulated",
     )
     if args.demo:
         # The demo's made-up character must not turn up among the real ones later.
@@ -678,7 +708,7 @@ async def _run(
             demo_tasks.append(asyncio.create_task(_demo_game(app, stop)))
             demo_tasks.append(asyncio.create_task(_demo_walker(treadmill, stop)))
         await app.start()
-        port = cfg.web.port
+        port = wanted_port
         for attempt in range(10):
             try:
                 runner = await web.serve(app, cfg.web.host, port + attempt)
@@ -687,7 +717,7 @@ async def _run(
             except OSError:
                 continue
         if runner is None:
-            _could_not_start(f"Could not open a port near {cfg.web.port} for the dashboard.")
+            _could_not_start(f"Could not open a port near {wanted_port} for the dashboard.")
             return 2
         shown_host = "127.0.0.1" if cfg.web.host in ("0.0.0.0", "::", "") else cfg.web.host
         url = f"http://{shown_host}:{port}/"
@@ -1149,7 +1179,14 @@ def _selfcheck() -> int:
     if problems:
         print("selfcheck FAILED: " + "; ".join(problems))
         return 1
-    print(f"selfcheck OK: {len(modules)} modules, the dashboard page and the addon folder are all there")
+    import platform
+    import ssl
+
+    # (The build compares these with what it was built with: see ci.yml.)
+    print(
+        f"selfcheck OK: {len(modules)} modules, the dashboard page and the addon folder are all there; "
+        f"Python {platform.python_version()}, {ssl.OPENSSL_VERSION}"
+    )
     return 0
 
 
@@ -1280,7 +1317,10 @@ def _httpscheck(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="walka",
-        description="Walka companion: records your walks on a walking pad while you play. It only listens to the pad.",
+        description=(
+            "Walka companion: records your walks on a walking pad while you play. It only listens to the pad "
+            '(only a fixed "report your numbers" question goes to the older pads that report only when asked).'
+        ),
     )
     parser.add_argument("--version", action="version", version=f"walka {__version__}")
     parser.add_argument("--data-dir", help="folder for config and recorded walks")

@@ -123,3 +123,24 @@ def test_peeking_at_the_sensor_in_use_does_not_connect_again():
     monitor.connected = True
     monitor.feed(bytes([0x00, 64]))
     assert asyncio.run(monitor.peek("aa")) == 64
+
+
+def test_with_no_sensor_chosen_the_strongest_is_taken_not_the_first_heard(radio, monkeypatch):
+    """The neighbour's chest strap may be heard first: the one on you is the loud one."""
+    radio("11:00:00:00:00:07", "Polar H10 NEIGHBOUR", hr=True, rssi=-95)
+    radio("11:00:00:00:00:08", "Polar H10 MINE", hr=True, rssi=-48)
+    radio("11:00:00:00:00:09", "[TV] Living room", rssi=-30)
+    tried: list[str] = []
+
+    class Client:
+        def __init__(self, device, **kwargs) -> None:
+            tried.append(device.address)
+
+        async def connect(self):
+            raise OSError("stop here")
+
+    monkeypatch.setattr(bleak, "BleakClient", Client)
+    monitor = HeartRateMonitor(enabled=True)
+    with pytest.raises(OSError):
+        asyncio.run(monitor._connect_once())
+    assert tried == ["11:00:00:00:00:08"]

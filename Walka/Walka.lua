@@ -477,6 +477,10 @@ local function finishRecord(session, endTime)
         maxKmh = math.floor((session.maxKmh or 0) * 100 + 0.5) / 100,
         character = session.character,
         auto = session.auto,
+        -- What of the app's measured walks it has taken over while it ran
+        -- (Tracker: a /reload brings them): not to be counted again.
+        counted = session.counted,
+        banked = session.banked,
     }
 end
 
@@ -554,6 +558,9 @@ function Walka:Tick(dt)
     -- The journey counts every yard, with or without a session.
     Tracker.Travel(state, dt)
     RoadRecorder.Watchdog()
+    if self.restoredAt then
+        self:CloseRestoredSessionOfAnother()
+    end
     if not self.autoTried then
         self:StartAutoSession()
     end
@@ -670,13 +677,42 @@ local function restoreSession(self)
     session.afkStill, session.pausedAt = nil, nil
     session.auto = session.auto == true or nil
     local savedAt = tonumber(saved.savedAt) or 0
-    if Game.Now() - savedAt <= Walka.RESUME_WINDOW_SECONDS then
-        self.session = session
-        self:Fire("SESSION", "restore")
-    else
-        self.session = session
+    self.session = session
+    if Game.Now() - savedAt > Walka.RESUME_WINDOW_SECONDS then
         self:StopSession(savedAt)
+        return
     end
+    -- WalkaDB is the account's, and so is the session saved in it: logging
+    -- out of one character and in on another within the window must not
+    -- carry the first one's session over. Checked again on the tick while
+    -- the game has not said yet who is logged in.
+    self.restoredAt = savedAt
+    if not self:CloseRestoredSessionOfAnother() then
+        self:Fire("SESSION", "restore")
+    end
+end
+
+--- A session picked up after a logout belongs to the character that saved
+-- it. If another character has logged in meanwhile, the session is closed
+-- at the time it was saved (and this character starts its own), so that
+-- nothing walked in this login is filed under the other one. True if it
+-- was closed.
+function Walka:CloseRestoredSessionOfAnother()
+    local savedAt, session = self.restoredAt, self.session
+    if not savedAt or not session then
+        self.restoredAt = nil
+        return false
+    end
+    local now = Tracker.CharacterName()
+    if not ns.Journey.isCharacter(now) then
+        return false    -- not known yet: the next tick asks again
+    end
+    self.restoredAt = nil
+    if ns.Journey.isCharacter(session.character) and session.character ~= now then
+        self:StopSession(savedAt)
+        return true
+    end
+    return false
 end
 
 local function saveSession(self)
@@ -739,7 +775,13 @@ local function parseMeasure(text, units)
     if feet then
         return (tonumber(feet) * 12 + (tonumber(inches) or 0)), "in"
     end
-    local number, unit = string.match(text, "^([%d%.]+)%s*(%a*)")
+    local number, unit = string.match(text, "^([%d%.,]+)%s*(%a*)")
+    -- "2,4": a decimal comma, as most of Europe types it. (One separator at
+    -- most: "2,4,1" and "1.000,5" are no number.)
+    if number then
+        local _, separators = string.gsub(number, "[%.,]", "")
+        number = separators <= 1 and string.gsub(number, ",", ".") or nil
+    end
     number = tonumber(number)
     if not number then
         return nil
@@ -764,6 +806,8 @@ local HELP = {
 local function slash(message)
     local command, rest = string.match(message or "", "^%s*(%S*)%s*(.-)%s*$")
     command = string.lower(command or "")
+    rest = rest or ""
+    local word = string.lower(rest)    -- ("on", "OFF", "On": all the same)
     local self = Walka
     if not self.loaded then
         return
@@ -776,7 +820,14 @@ local function slash(message)
             self:Print(HELP[index])
         end
     elseif command == "start" or command == "go" then
-        self:StartSession()
+        if self.session and not self.session.paused then
+            self:Print(self.session.auto
+                and "a session is running already - Walka started it by itself when you logged in, "
+                    .. "and your walks on the treadmill count for this character."
+                or "a session is running already.")
+        else
+            self:StartSession()
+        end
     elseif command == "pause" then
         self:PauseSession("user")
     elseif command == "resume" then
@@ -794,9 +845,9 @@ local function slash(message)
         self:Print("the addon has no windows any more: your walks, history, journey and road are in the "
             .. "Walka app. For the walk on top of the game: Settings -> Floating window, in the app.")
     elseif command == "auto" then
-        if rest == "on" or rest == "off" then
-            self:Set("autoSession", rest == "on")
-            if rest == "on" then
+        if word == "on" or word == "off" then
+            self:Set("autoSession", word == "on")
+            if word == "on" then
                 self:Print("Walka starts the session by itself when you log in.")
                 self:StartAutoSession()
             else
@@ -807,10 +858,10 @@ local function slash(message)
             self:Print("use /walka auto on or /walka auto off.")
         end
     elseif command == "road" then
-        if rest == "on" or rest == "off" then
-            self:Set("recordRoad", rest == "on")
-            RoadRecorder.SetEnabled(rest == "on")
-            self:Print(rest == "on" and "recording your character's road." or
+        if word == "on" or word == "off" then
+            self:Set("recordRoad", word == "on")
+            RoadRecorder.SetEnabled(word == "on")
+            self:Print(word == "on" and "recording your character's road." or
                 "no longer recording your character's road (what is recorded so far is kept).")
         else
             self:Print("use /walka road on or /walka road off. The road is shown in the Walka app (Share).")

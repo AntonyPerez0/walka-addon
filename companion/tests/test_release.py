@@ -5,12 +5,17 @@ and the workflow that builds and publishes it."""
 from __future__ import annotations
 
 import importlib.util
+import json
+import os
 import re
+import shutil
+import subprocess
 import sys
+import textwrap
+import tomllib
 from pathlib import Path
 
 import pytest
-import tomllib
 
 
 def load(repo_root: Path, name: str):
@@ -33,7 +38,8 @@ def test_every_library_the_program_runs_on_is_listed_with_its_licence(repo_root:
     names = {canonical(d.metadata["Name"]) for d in distributions}
     # What Walka asks for by name, and what those bring along.
     assert {"aiohttp", "bleak", "yarl", "multidict", "frozenlist", "aiosignal", "attrs", "idna"} <= names
-    # Not the tools that only build or test: they are not in the program.
+    # Not the tools that only build or test: they are not in the program (build_exe.py leaves
+    # them out, and tools/check_packed_licences.py checks what IS packed against this list).
     assert not names & {"pytest", "ruff", "lupa", "pyinstaller", "pip", "setuptools", "packaging"}
     # Walka's window, where the program is packaged with one.
     assert ("pywebview" in names) == (sys.platform in ("win32", "darwin"))
@@ -151,8 +157,8 @@ def test_a_tag_of_the_version_in_the_code_passes_the_release_jobs_own_look(repo_
     text = workflow(repo_root)
     step = text[text.index("- name: The tag is the version written in the code") :]
     step = step[: step.index("\n      - ")]
-    (shape,) = re.findall(r"grep -Eq '(\^v\S+\$)'", step)
-    looks = re.findall(r'grep -qx "((?:[^"\\]|\\")*)" (\S+) \|\| fail', step)
+    (shape,) = re.findall(r"shape='(\^v\S+\$)'", step)
+    looks = re.findall(r'grep -Fqx "((?:[^"\\]|\\")*)" (\S+) \|\| fail', step)
     assert [file for _line, file in looks] == [
         "companion/pyproject.toml",
         "companion/src/walka/__init__.py",
@@ -209,3 +215,377 @@ def test_what_a_package_carries_goes_with_its_licence_too(repo_root: Path):
     assert "WebView2" in name and "Copyright (C) Microsoft Corporation" in text
     assert "Redistributions in binary form must reproduce" in text
     assert third_party.licence_files(Pywebview(), "darwin") == []
+
+
+# ---- the release job's own looks, run as the job runs them -------------------------------------
+
+
+def release_step(repo_root: Path, name: str) -> str:
+    """The script of a step of the release job, as bash gets it."""
+    text = workflow(repo_root)
+    job = text[text.index("\n  release:") :]
+    step = job[job.index(f"- name: {name}") :]
+    body = step[step.index("run: |\n") + len("run: |\n") :]
+    end = re.search(r"\n      - |\n  \w|\Z", body)
+    return textwrap.dedent(body[: end.start()])
+
+
+def git(cwd: Path, *args: str) -> str:
+    return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
+
+
+@pytest.fixture
+def checkout(repo_root: Path, tmp_path: Path):
+    """A checkout as the release job has it: an origin with the main line,
+    and a commit on another branch that was never merged."""
+    if sys.platform == "win32" or shutil.which("bash") is None or shutil.which("git") is None:
+        pytest.skip("the release job runs on Linux: needs bash and git (on Windows, bash may be WSL's)")
+    origin = tmp_path / "origin.git"
+    work = tmp_path / "work"
+    git(tmp_path, "init", "-q", "--bare", "-b", "main", str(origin))
+    git(tmp_path, "init", "-q", "-b", "main", str(work))
+    for relative in ("companion/pyproject.toml", "companion/src/walka/__init__.py", "Walka/Walka.toc"):
+        (work / relative).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(repo_root / relative, work / relative)
+    git(work, "add", "-A")
+    git(work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "main")
+    main = git(work, "rev-parse", "HEAD")
+    git(work, "remote", "add", "origin", str(origin))
+    git(work, "push", "-q", "origin", "main")
+    git(work, "checkout", "-q", "-b", "side")
+    git(work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "side")
+    side = git(work, "rev-parse", "HEAD")
+    git(work, "push", "-q", "origin", "side")
+    return work, main, side
+
+
+def run_step(script: str, cwd: Path, **env: str) -> subprocess.CompletedProcess:
+    full = {**os.environ, "GITHUB_EVENT_NAME": "push", "GITHUB_REF_TYPE": "tag", "GITHUB_REF_NAME": "v0",
+            "DEFAULT_BRANCH": "main", **env}  # fmt: skip
+    return subprocess.run(["bash", "-eo", "pipefail", "-c", script], cwd=cwd, env=full, capture_output=True,
+                          text=True, timeout=60)  # fmt: skip
+
+
+def code_version(repo_root: Path) -> str:
+    return tomllib.loads((repo_root / "companion" / "pyproject.toml").read_text("utf-8"))["project"]["version"]
+
+
+def test_a_tag_is_published_only_from_a_commit_on_the_main_line(repo_root: Path, checkout):
+    work, main, side = checkout
+    script = release_step(repo_root, "The tag is the version written in the code")
+    tag = f"v{code_version(repo_root)}"
+    assert run_step(script, work, TAG=tag, GITHUB_SHA=main).returncode == 0
+    # A tag pushed on a commit of another branch: refused.
+    refused = run_step(script, work, TAG=tag, GITHUB_SHA=side)
+    assert refused.returncode != 0 and "is not on the branch 'main'" in refused.stdout
+
+
+@pytest.mark.parametrize("value", ["{tag}\n{tag}", "{tag}\nx", "x\n{tag}", "{tag} ", "v1.2", "{tag}\n"])
+def test_a_tag_of_more_than_one_line_or_another_shape_is_refused(repo_root: Path, checkout, value: str):
+    work, main, _side = checkout
+    tag = value.format(tag=f"v{code_version(repo_root)}")
+    result = run_step(release_step(repo_root, "The tag is the version written in the code"), work, TAG=tag,
+                      GITHUB_SHA=main)  # fmt: skip
+    assert result.returncode != 0 and "is not a version like v0.1.0" in result.stdout
+
+
+FAKE_GH = """#!/usr/bin/env bash
+echo "gh $*" >> "$GH_LOG"
+if [ "$1 $2" = "release view" ]; then
+  [ -n "$GH_FOUND" ] || exit 1
+  echo "$GH_FOUND"
+fi
+"""
+
+
+@pytest.mark.parametrize("made_from", ["main", "side", "branch"])
+def test_a_leftover_draft_is_finished_only_by_a_run_of_its_own_commit(repo_root: Path, checkout, tmp_path, made_from):
+    work, main, side = checkout
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "gh").write_text(FAKE_GH)
+    (bin_dir / "gh").chmod(0o755)
+    (work / "assets").mkdir()
+    for name in ("Walka.exe", "Walka-mac-apple-silicon.zip", "Walka-mac-intel.zip", "Walka-addon.zip",
+                 "virus-scan.json", "SHA256SUMS.txt"):  # fmt: skip
+        (work / "assets" / name).write_text("x")
+    target = {"main": main, "side": side, "branch": "main"}[made_from]
+    log = tmp_path / "gh.log"
+    result = run_step(release_step(repo_root, "Publish"), work, TAG="v9.9.9", GITHUB_SHA=main, GH_REPO="o/r",
+                      GH_LOG=str(log), GH_FOUND=f"true {target}", PATH=f"{bin_dir}{os.pathsep}{os.environ['PATH']}")  # fmt: skip
+    calls = log.read_text().splitlines()
+    if made_from == "main":
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert any(call.startswith("gh release upload v9.9.9") for call in calls)
+        assert "gh release edit v9.9.9 --draft=false" in calls
+    else:
+        assert result.returncode != 0 and "Delete the draft" in result.stdout
+        assert not any(call.startswith(("gh release upload", "gh release edit")) for call in calls)
+
+
+def test_a_published_release_is_left_alone(repo_root: Path, checkout, tmp_path):
+    work, main, _side = checkout
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    (bin_dir / "gh").write_text(FAKE_GH)
+    (bin_dir / "gh").chmod(0o755)
+    (work / "assets").mkdir()
+    for name in ("Walka.exe", "Walka-mac-apple-silicon.zip", "Walka-mac-intel.zip", "Walka-addon.zip",
+                 "virus-scan.json", "SHA256SUMS.txt"):  # fmt: skip
+        (work / "assets" / name).write_text("x")
+    log = tmp_path / "gh.log"
+    result = run_step(release_step(repo_root, "Publish"), work, TAG="v9.9.9", GITHUB_SHA=main, GH_REPO="o/r",
+                      GH_LOG=str(log), GH_FOUND=f"false {main}", PATH=f"{bin_dir}{os.pathsep}{os.environ['PATH']}")  # fmt: skip
+    assert result.returncode != 0 and "already published" in result.stdout
+    assert log.read_text().splitlines() == [line for line in log.read_text().splitlines() if "view" in line]
+
+
+def test_the_release_job_waits_for_a_reviewer_and_runs_once_per_version(repo_root: Path):
+    text = workflow(repo_root)
+    job = text[text.index("\n  release:") :]
+    head = job[: job.index("    steps:")]
+    assert "\n    environment: release\n" in head
+    assert "\n    concurrency:\n      group: release-${{" in head and "cancel-in-progress: false" in head
+    assert "fetch-depth: 0" in job[: job.index("- name: The tag is the version")]
+
+
+# ---- the Python packed into the program ---------------------------------------------------------
+
+
+def test_the_build_refuses_a_program_with_an_older_python_than_expected(repo_root: Path):
+    check = load_tool(repo_root, "check_bundled_python")
+    line = "selfcheck OK: 17 modules, ...; Python {}, OpenSSL 3.5.4 30 Sep 2025"
+    assert check.problem(line.format("3.14.2"), (3, 14, 2)) == ""
+    assert "older than 3.14.0" in check.problem(line.format("3.12.10"), (3, 12, 10))
+    assert "built with 3.14.2" in check.problem(line.format("3.14.1"), (3, 14, 2))
+    assert "did not say" in check.problem("selfcheck OK", (3, 14, 2))
+
+
+def test_the_builds_and_tests_run_on_the_python_the_check_expects(repo_root: Path):
+    check = load_tool(repo_root, "check_bundled_python")
+    versions = re.findall(r'python-version:\s*"([\d.]+)"', workflow(repo_root))
+    assert len(versions) >= 3 and set(versions) == {".".join(map(str, check.MINIMUM[:2]))}, versions
+    for lock in ("requirements-build.lock", "requirements-dev.lock"):
+        header = (repo_root / "companion" / lock).read_text("utf-8")[:2000]
+        assert header.count(f"--python-version {versions[0]}") == 2, lock
+    text = workflow(repo_root)
+    assert text.count("python tools/check_bundled_python.py") == 2, "the Windows and both Mac builds"
+
+
+def test_every_build_takes_the_newest_python_of_its_line(repo_root: Path):
+    """A runner keeps a Python of its own, and setup-python takes that one
+    when it matches "3.14", however old: the Intel Mac program carried
+    3.14.7 and an OpenSSL of three months before (macos-15-intel), the other
+    two 3.14.10. Each setup asks for the newest 3.14 instead."""
+    steps = re.findall(r"(?m)^\s*- uses: actions/setup-python@\S+.*\n((?:\s{8,}.*\n)+)", workflow(repo_root))
+    assert len(steps) == 3
+    for step in steps:
+        assert re.search(r"(?m)^\s+check-latest:\s*true\b", step), step
+
+
+def load_tool(repo_root: Path, name: str):
+    spec = importlib.util.spec_from_file_location(f"walka_tool_{name}", repo_root / "tools" / f"{name}.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+# ---- what the words say goes over the internet --------------------------------------------------
+
+
+def test_nobody_is_told_that_walka_asks_nobody(repo_root: Path):
+    """Walka asks GitHub for the newest release (at every start, then once a
+    day): "sends nothing and asks nobody" is true of the Walka account part
+    only, and is said of that only. And "once a day" never stands alone,
+    in the documents nor on the dashboard."""
+    texts = {
+        path: path.read_text("utf-8")
+        for path in [
+            *repo_root.glob("*.md"),
+            *(repo_root / "docs").glob("*.md"),
+            repo_root / ".github/workflows/ci.yml",
+            # (And what the dashboard itself says, in Settings.)
+            *(repo_root / "companion/src/walka/static").glob("*.js"),
+            *(repo_root / "companion/src/walka/static").glob("*.html"),
+        ]
+    }
+    for path, text in texts.items():
+        flat = " ".join(text.split())
+        for found in re.finditer(r"sends nothing and asks nobody", flat):
+            before = flat[max(0, found.start() - 80) : found.start()]
+            assert "Walka account part" in before, f"{path.name}: {before!r}"
+        for found in re.finditer(r"once a day", flat):
+            around = flat[max(0, found.start() - 60) : found.end()]
+            if "GitHub" in flat[max(0, found.start() - 200) : found.end() + 100]:
+                assert "every start" in around, f"{path.name}: {around!r}"
+    development = " ".join(texts[repo_root / "docs" / "DEVELOPMENT.md"].split())
+    assert "the only part that asks anything over the internet" not in development
+
+
+def test_the_walka_account_page_says_what_stopping_and_signing_out_do(repo_root: Path):
+    """Neither cuts short a request already started, and a sign-out tells
+    walka.dev only with a sign-in in hand: the page says both, plainly."""
+    text = " ".join((repo_root / "docs" / "WALKA-ACCOUNT.md").read_text("utf-8").split())
+    assert "takes effect at once" not in text
+    assert "A request that was already on its way is not called back" in text
+    assert "Signing out in Walka does not always end the sign-in at walka.dev" in text
+
+
+def test_the_build_refuses_a_packed_library_without_its_licence(repo_root: Path):
+    check = load_tool(repo_root, "check_packed_licences")
+    text = (
+        "Contents of 'Walka' (PKG/CArchive):\n struct\n walka_launcher\n aiohttp/_http_parser.so\n"
+        " packaging-26.4.dist-info/RECORD\n walka/static/app.js\n PYZ.pyz\nContents of 'PYZ.pyz' (PYZ):\n"
+        " aiohttp.client\n setuptools.dist\n json.decoder\n walka.app\n"
+    )
+    names = {n for n in check.top_level_names(text) if not any(n.startswith(o) for o in check.OURS)}
+    names -= set(sys.stdlib_module_names)
+    packed = check.packed_distributions(names)
+    assert {"aiohttp", "packaging", "setuptools"} <= set(packed) and "json" not in packed
+    wrong = check.problems(packed, check.listed_distributions())
+    assert [line.split()[0] for line in wrong] == ["packaging", "setuptools"]
+    assert check.problems({"aiohttp": {"aiohttp"}}, check.listed_distributions()) == []
+    text = workflow(repo_root)
+    assert text.count("python tools/check_packed_licences.py") == 2, "the Windows and both Mac builds"
+    build = (repo_root / "companion" / "build_exe.py").read_text("utf-8")
+    for module in ("setuptools", "pkg_resources", "packaging"):
+        assert f'"--exclude-module", "{module}"' in build
+
+
+def test_the_lock_files_are_written_again_and_compared_by_the_build(repo_root: Path):
+    text = workflow(repo_root)
+    step = text[text.index("- name: The lock files are up to date") :]
+    step = step[: step.index("\n      - ")]
+    assert "python tools/check_locks.py" in step and "requirements-locktool.lock" in step
+    assert "--require-hashes -r companion/requirements-locktool.lock" in step
+    tool = locked(repo_root / "companion" / "requirements-locktool.lock")
+    assert set(tool) == {"uv"}
+    check = load_tool(repo_root, "check_locks")
+    for lock in check.LOCKS:
+        header = check.header_of((repo_root / "companion" / lock).read_text("utf-8"))
+        command = check.command_for(header, lock)
+        assert command[:3] == ["uv", "pip", "compile"] and "--generate-hashes" in command
+
+
+def test_the_pins_are_watched_for_advisories(repo_root: Path):
+    check = load_tool(repo_root, "check_advisories")
+    pinned = check.all_pins()
+    assert ("aiohttp", locked_version(repo_root, "aiohttp")) in pinned and ("uv", "0.13.10") in pinned
+
+    class Answer:
+        def __init__(self, body):
+            self.body = body
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return self.body
+
+    asked = []
+
+    def opener(request, timeout):
+        asked.append(json.loads(request.data))
+        return Answer(json.dumps({"results": [{"vulns": [{"id": "GHSA-x"}]}, {}]}).encode())
+
+    assert check.ask([("aiohttp", "3.9.0"), ("idna", "3.10")], opener) == [["GHSA-x"], []]
+    (query,) = asked
+    assert query == {"queries": [{"package": {"name": "aiohttp", "ecosystem": "PyPI"}, "version": "3.9.0"},
+                                 {"package": {"name": "idna", "ecosystem": "PyPI"}, "version": "3.10"}]}  # fmt: skip
+    text = (repo_root / ".github" / "workflows" / "advisories.yml").read_text("utf-8")
+    assert "schedule:" in text and "python tools/check_advisories.py" in text
+    for action, rest in re.findall(r"(?m)^\s*-?\s*uses:\s*(\S+)(.*)$", text):
+        assert re.fullmatch(r"[\w.-]+/[\w./-]+@[0-9a-f]{40}", action) and re.search(r"#\s*v\d+\.\d+\.\d+", rest)
+
+
+def locked_version(repo_root: Path, name: str) -> str:
+    text = (repo_root / "companion" / "requirements-build.lock").read_text("utf-8")
+    return re.search(rf"(?m)^{name}==(\S+)", text).group(1)
+
+
+def test_text_is_checked_out_with_lf_everywhere(repo_root: Path):
+    """The addon's zip is packed from a Windows checkout: without this its
+    files had Windows line endings, and the Mac bundle's did not."""
+    if shutil.which("git") is None or not (repo_root / ".git").exists():
+        pytest.skip("needs git and the repository")
+    files = ["Walka/Walka.lua", "Walka/Walka.toc", "companion/src/walka/static/app.js", "docs/demo/index.html",
+             "companion/icons/walka.ico", "docs/images/demo.webp"]  # fmt: skip
+    said = subprocess.run(["git", "check-attr", "eol", "binary", "--", *files], cwd=repo_root, capture_output=True,
+                          text=True, check=True).stdout  # fmt: skip
+    attrs = {}
+    for line in said.splitlines():
+        path, name, value = line.split(": ")
+        attrs.setdefault(path, {})[name] = value
+    for text in files[:4]:
+        assert attrs[text]["eol"] == "lf", text
+    for binary in files[4:]:
+        assert attrs[binary]["binary"] == "set", binary
+
+
+def test_a_pull_request_commit_is_built_once(repo_root: Path):
+    """push runs on every branch, pull_request on every pull request: a
+    commit of a pull request from this repository ran twice."""
+    text = workflow(repo_root)
+    once = "github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository"
+    for name in ("test", "windows-exe", "mac-app"):
+        job = text[text.index(f"\n  {name}:\n") :]
+        head = job[: job.index("    steps:")]
+        assert f"\n    if: {once}\n" in head, name
+    scan = text[text.index("\n  virus-scan:\n") :]
+    assert "needs: [windows-exe, mac-app]" in scan[: scan.index("    steps:")]  # (so it is skipped with them)
+
+
+def test_the_addon_carries_the_same_notices_as_the_repository(repo_root: Path):
+    """Walka/THIRD-PARTY-NOTICES.md goes out with the addon's zip: a copy of
+    the repository's, word for word, not an older one."""
+    assert (repo_root / "Walka" / "THIRD-PARTY-NOTICES.md").read_text("utf-8") == (
+        repo_root / "THIRD-PARTY-NOTICES.md"
+    ).read_text("utf-8")
+
+
+def test_no_page_points_at_a_button_it_does_not_have(repo_root: Path):
+    """The download buttons are in the README. Pages split off from it
+    must not say "the button above" or "at the top of this page"."""
+    for page in (repo_root / "docs").glob("*.md"):
+        text = " ".join(page.read_text("utf-8").split())
+        for words in ("the button above", "at the top of this page", "buttons at the top of this page"):
+            assert words not in text, f"{page.name}: {words}"
+
+
+def test_where_walka_says_it_only_listens_it_says_what_it_asks_some_pads(repo_root: Path):
+    """The dashboard, the start-up text and --help: "only listens" is said
+    with the one exception, a fixed status question to two kinds of pads."""
+    import html
+
+    src = repo_root / "companion" / "src" / "walka"
+    places = {
+        "index.html": html.unescape((src / "static" / "index.html").read_text("utf-8")),
+        "cli.py": (src / "cli.py").read_text("utf-8").replace('"\n    "', "").replace("\\n", " "),
+    }
+    for name, text in places.items():
+        flat = " ".join(text.split())
+        found = list(re.finditer(r"only listens to (your treadmill|the pad)", flat))
+        assert found, name
+        for match in found:
+            assert "report your numbers" in flat[match.end() : match.end() + 400], f"{name}: {flat[match.start():][:200]}"
+    assert "It only listens to the pad" not in (repo_root / "companion" / "pyproject.toml").read_text("utf-8")
+
+
+def test_a_release_comes_from_a_pushed_tag_and_from_nothing_else(repo_root: Path, checkout):
+    """A run by hand would have to make the tag itself, and the tag ruleset
+    lets only admins make v* tags: so a run by hand publishes nothing."""
+    text = workflow(repo_root)
+    assert "release_version" not in text and "--target" not in text
+    job = text[text.index("\n  release:") :]
+    assert "\n    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')\n" in job
+    publish = job[job.index("- name: Publish") :]
+    assert "--verify-tag" in publish
+    work, main, _side = checkout
+    tag = f"v{code_version(repo_root)}"
+    script = release_step(repo_root, "The tag is the version written in the code")
+    by_hand = run_step(script, work, TAG=tag, GITHUB_SHA=main, GITHUB_EVENT_NAME="workflow_dispatch",
+                       GITHUB_REF_TYPE="branch", GITHUB_REF_NAME="main")  # fmt: skip
+    assert by_hand.returncode != 0 and "from a pushed tag only" in by_hand.stdout

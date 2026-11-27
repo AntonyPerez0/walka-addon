@@ -76,7 +76,7 @@ import calendar
 import json
 import math
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 MOST_SECONDS = 86_400
@@ -114,7 +114,7 @@ WALKA_ID = re.compile(r"([0-9]{4})([0-9]{2})([0-9]{2})-([0-9]{2})([0-9]{2})([0-9
 # A time as _utc() writes it, and a day as walk_row() writes it.
 WRITTEN_TIME = re.compile(r"([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})\.([0-9]{3})Z")
 WRITTEN_DAY = re.compile(r"([0-9]{4})-([0-9]{2})-([0-9]{2})")
-EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
+EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
 def _no_such_number(word: str) -> Any:

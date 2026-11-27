@@ -11,22 +11,27 @@ py -m pip install -e "companion[dev]"
 py -m pytest          # companion tests + addon tests (the addon runs under a mocked game client)
 ```
 
-(That takes the newest versions of the libraries. The build and its tests
-take pinned ones: `py -m pip install --require-hashes -r
-companion/requirements-dev.lock`, and no install of Walka itself.)
+(Python 3.14 or newer: what the build and its tests run on, and what the
+programs people download carry. That takes the newest versions of the
+libraries. The build and its tests take pinned ones: `py -m pip install
+--require-hashes -r companion/requirements-dev.lock`, and no install of
+Walka itself.)
 
 (`python3` in place of `py` on a Mac or Linux.)
 
 * `Walka/` - the addon. `Core/` is pure Lua (no game API) and is unit
   tested; `Game.lua` is the only file that touches values the game may hide.
 * `companion/src/walka/` - `treadmill/` (the Bluetooth FTMS reader, which
-  has no way to write to a treadmill, and a simulator), `ftms.py` (decoding
+  has no way to write to a treadmill; the readers of makers' own
+  protocols, two of which send one fixed status query through
+  `query_link.py`; and a simulator), `ftms.py` (decoding
   what a treadmill says), `game_file.py` (the addon's saved file
   `WalkaDB`: the game's walking sessions, and filing walks under them),
   `session.py` (recording walks), `addon_sync.py` (`CompanionData.lua`,
   and finding and installing the addon), `web.py` + `static/`
   (dashboard), `walka_account/` (signing in to a Walka account and sending
-  walks to it - the only part that asks anything over the internet), `window.py` (Walka's own window, which shows the dashboard), `app.py` (wiring), `cli.py`,
+  walks to it), `updates.py` (asking GitHub for the newest release, and
+  "Update now") - the two parts that ask anything over the internet, `window.py` (Walka's own window, which shows the dashboard), `app.py` (wiring), `cli.py`,
   `winsession.py` (hearing that Windows is shutting down, to save the walk); `journey.py` (each character's
   journey, put together from the game's saved file), `savedvars.py` (the
   reader of the game's saved files, which runs no Lua) + `road.py` (the
@@ -55,15 +60,22 @@ companion/requirements-dev.lock`, and no install of Walka itself.)
   file" every few seconds, with one walking session and a character.
   `py -m walka game` prints what the real game has saved for Walka.
 * **The one rule for changes:** the companion listens to the treadmill and
-  never writes to it. `companion/tests/test_ftms_ble.py` and `test_app.py`
-  fail if a way to do so comes back.
+  sends it nothing that could start, stop or steer a belt. The only bytes
+  it ever writes are the two fixed status queries in
+  `treadmill/proprietary.py` (`QUERIES`), for pads that report only when
+  asked. `companion/tests/test_reader_writes.py`, `test_vendor_queries.py`,
+  `test_ftms_ble.py` and `test_app.py` fail if anything else is written.
 * **Publishing a version:** put the same number in
   `companion/pyproject.toml`, `companion/src/walka/__init__.py` and
-  `Walka/Walka.toc`, commit and push. Then, on GitHub, open **Actions** →
-  **CI** → **Run workflow**, type the number (`0.1.0`) and run it. (Pushing
-  a tag does the same: `git tag v0.1.0`, `git push origin v0.1.0`.) When
+  `Walka/Walka.toc`, commit, and get it onto the default branch. Then tag
+  that commit and push the tag: `git tag v0.1.0`, `git push origin v0.1.0`.
+  That is the only way: a tag ruleset lets only the repository's admins
+  make `v*` tags, a tag on a commit that is not on the default branch is
+  refused, and running the workflow by hand only tests and builds. The
+  publishing job runs in the GitHub environment `release`, whose reviewer
+  approves each release before anything is published. When
   the run finishes, the **Releases** page has `Walka.exe`, the two Mac
-  zips (the download buttons at the top of this page always give the
+  zips (the download buttons at the top of the README always give the
   latest ones) and `Walka-addon.zip`, which you upload to CurseForge
   yourself. If the run
   fails nothing is published: fix it and run it again. Once it is
@@ -71,12 +83,14 @@ companion/requirements-dev.lock`, and no install of Walka itself.)
   an **Update now** button within a day (at once when it is next opened):
   the update takes `Walka.exe` or the Mac zip from the release and checks
   it against `SHA256SUMS.txt` (`companion/src/walka/updates.py`). So keep
-  those file names as they are. A trial (`v0.2.0-rc1`) is never offered.
+  those file names as they are. A trial (`v0.2.0-rc1`) is never offered;
+  a Walka that is itself a trial is offered its final release.
 * **What a release is built from** is fixed in the repository: the
   packages in `companion/requirements-build.lock` and
   `requirements-dev.lock` (exact versions with checksums; the top of each
-  file says how to write them again after changing `pyproject.toml`, and a
-  test fails if they fall behind it), and the GitHub actions in
+  file says how to write them again after changing `pyproject.toml`; a
+  test fails if they fall behind it, and the build writes them again with
+  those commands and fails if anything comes out different: `tools/check_locks.py`), and the GitHub actions in
   `.github/workflows/ci.yml` by commit (Dependabot proposes newer ones).
   `companion/third_party.py` writes the licences of the packed libraries
   into the program at build time. A release publishes `SHA256SUMS.txt`
@@ -88,8 +102,8 @@ companion/requirements-dev.lock`, and no install of Walka itself.)
   scans the files of the release - `Walka.exe`, the Mac programs, the
   addon - after showing that it catches the standard test file. A
   release needs that job, and it writes `virus-scan.json`, which is
-  published next to `Walka.exe` and is what the badge at the top of this
-  page shows. Nothing to set up. The green *Scanned for viruses* picture
+  published next to `Walka.exe` and is what the badge at the top of the
+  README shows. Nothing to set up. The green *Scanned for viruses* picture
   above the badge is a fixed picture (`docs/images/virus-scan.svg`). It
   says what is done, not what a scan can never prove: that a file is
   harmless.

@@ -74,13 +74,17 @@ reads of each one:
 * `id` - the addon's session counter, 1-255;
 * `character` - the character's "Name-Realm". A session whose name the game
   hid when it began (it starts with `?`) belongs to nobody;
-* `auto` - the addon started it by itself.
+* `auto` - the addon started it by itself. (For the addon: the app does
+  not read it, and files a walk under such a session like any other.)
 
 The rest of a record (the addon's own estimates) is for the addon.
 
 `active` is the session that was still running when the game saved the
-file. If the player comes back within three minutes (a `/reload`, a quick
-relog), the addon carries it on; otherwise it closes it at `savedAt`. To the
+file. If the same character comes back within three minutes (a `/reload`,
+a quick relog), the addon carries it on; otherwise it closes it at
+`savedAt`. `WalkaDB` is shared by every character of the account, so a
+different character logging in closes it too, at `savedAt`, and starts its
+own. To the
 app it is a session that ran from its `start` until at least `savedAt`; the
 next file says how long it really lasted.
 
@@ -172,7 +176,8 @@ WalkaCharDB = {
     segments = {                -- unbroken stretches travelled the same way
         { c = 1,                -- continent id (the game's, of the world position)
           m = "w",              -- on foot; "r" mounted, "t" flight path, "g" ghost
-          b = 1,                -- a walking session was running (absent otherwise)
+          b = 1,                -- a session the player started was running (absent otherwise;
+                                -- never for the automatic one, and not read by the app)
           l = 17,               -- character level
           t = 1795000000,       -- when it began (epoch seconds)
           x = -600, y = 4200,   -- first point, world yards (x north, y west)
@@ -184,14 +189,20 @@ WalkaCharDB = {
 }
 ```
 
+The file does not grow without end: past 400,000 points (a road from
+level 1 to 60 is about 100,000) the addon keeps every other point of its
+oldest stretches when it loads, so that the road keeps its shape and its
+two ends. The app reads up to a million points; past that it leaves out
+the oldest road, never the newest.
+
 `maps` is how a land that is no continent of Azeroth is found again. The
 game lists Kalimdor and the Eastern Kingdoms as the continents of its
 world; the Skyborne's Zephras Isle lies in Skywall and is listed under
 neither. So the first time the character stands on a land, the addon goes
 up from the map the game shows it on to the largest map that still shows
 that land alone (its continent's map, where it has one; never a map of a
-whole world) and keeps that map's id and name. The addon's own road window
-draws the land on that map; the app uses the name.
+whole world) and keeps that map's id and name. The app uses the name.
+(The addon has no road window any more: the road is drawn in the app.)
 
 How the app reads it (`road.py`):
 
@@ -206,8 +217,15 @@ How the app reads it (`road.py`):
   runs on the loop that records the walk.
 * **For the page** the road is thinned to at most 6,000 points
   (Ramer-Douglas-Peucker, the same tolerance everywhere) and grouped by
-  continent and by how it was travelled (`walked` during a walking session,
-  `road` without, `flight`), with its length measured before the thinning.
+  continent and by how it was travelled (`walked` on the treadmill, `road`
+  otherwise, `flight`), with its length measured before the thinning.
+* **Walked on the treadmill.** The addon cannot see the belt, so the app
+  does not take its `b` for it. Every point of the road has a time (`t`
+  and the seconds in `d`), and the app knows when it measured the belt
+  moving (the speed series of each walk it recorded, a sample every five
+  seconds). The road travelled on foot or mounted while the belt was
+  moving is `walked`; a stretch the belt started or stopped on is cut
+  there. With no walk measured, none of the road is `walked`.
   With it go the places where the road begins and ends, where every tenth
   level was reached, and the passages from one continent to another (from
   where to where; the dozen made most often - the page draws an arc for up
@@ -240,7 +258,10 @@ Both files are read the same way (`savedvars.py`, `game_file.py`,
   next look; one that cannot be read is tried again only once it has
   changed, and what was read before it stands meanwhile.
 * **Off the recording loop.** The files are read on a worker thread, never
-  on the loop that records the walk, so a slow disk cannot hold up a walk.
+  on the loop that records the walk, and what the loop asks of them is
+  answered from the last look while the next one is under way. The addon's
+  `CompanionData.lua` is written on a worker thread too. So a slow disk
+  cannot hold up a walk.
 * **Checked.** Every time and number is checked against what can be true
   (a session cannot begin before 2020 or last longer than a week), and a
   file, a session or a journey that does not pass is left out.

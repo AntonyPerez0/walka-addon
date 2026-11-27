@@ -299,7 +299,7 @@ def run(command: list[str], how: str, look, starts_within_s: float, clock) -> li
                 # would say nothing. (Looked at before the program is ended:
                 # what is written then is not cut off.)
                 asked = clock()
-                while not any(path.is_file() for path in data.rglob("*")):
+                while not (data / "walka.log").is_file():
                     if clock() - asked > WRITES_WITHIN_S:
                         raise CheckFailed("the program wrote nothing into the data folder it was given")
                     time.sleep(0.25)

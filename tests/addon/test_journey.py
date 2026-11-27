@@ -9,9 +9,8 @@ logout - is in test_saved_file.py.
 
 from __future__ import annotations
 
-import re
-
 import math
+import re
 
 import pytest
 
@@ -795,22 +794,25 @@ def test_a_paused_session_still_counts(rt):
     assert real(rt) == paused and paused["walks"] == 1
 
 
-def test_a_session_begun_on_another_character_is_that_characters(rt):
-    """Logging over to another character within three minutes carries the
-    session along; it stays the walk of the character it began on."""
+def test_a_session_begun_on_another_character_ends_when_another_logs_in(rt):
+    """Logging over to another character within three minutes does not
+    carry the session along (the account's saved file holds it, not the
+    character's): it is closed at logout, as the walk of the character it
+    began on, and nothing of the next login is filed under that one."""
     rt.set(speed=7.0)
     rt.slash("/walka start")
     rt.advance(120)
     rt.set(name="Other")
     other = rt.reload(gap=30)
-    assert other.walka.IsActive(other.walka) and other.walka.GetSession(other.walka).character == ME
+    assert not other.walka.IsActive(other.walka)
     other.advance(60)
     assert real(other)["walks"] == 0 and real(other)["steps"] == 0
-    other.slash("/walka stop")
-    assert real(other)["walks"] == 0
     other.set(name="Tester")
     back = other.reload(gap=30)
-    assert real(back)["walks"] == 1 and real(back)["steps"] > 100
+    assert not back.walka.IsActive(back.walka)
+    assert real(back)["walks"] == 1 and 100 < real(back)["steps"]
+    (filed,) = lua_list(back.db.sessions)
+    assert filed.character == ME and filed.seconds == pytest.approx(120, abs=1)
 
 
 def test_a_session_left_running_at_logout_is_filed_and_settled_at_the_next_login(rt):
@@ -924,3 +926,88 @@ def test_the_totals_never_step_back_while_walking_stopping_and_pruning(make_rt):
     # shorter than the 20 seconds it takes to count as a walk.
     assert previous["walks"] == 7 and len(lua_list(rt.db.sessions)) == 4
     assert real(rt.reload()) == previous
+
+
+# ---- each measured walk once, for every record it is part of ------------------------------------
+
+
+def auto_login(start, seconds) -> str:
+    return own(start, seconds, steps=0, distance=0, kcal=0, extra=",auto=true")
+
+
+def test_a_second_walk_of_a_login_that_arrives_later_is_added(make_rt):
+    """One login (the automatic session) with two walks in it; the app's
+    file at the next login knows the first only, the file after that both."""
+    start = NOW - 20000
+    login = auto_login(start, 7200)
+    first, second = measured(start + 600, 1200, steps=2000), measured(start + 5400, 1200, steps=3000)
+    rt = make_rt(saved_variables=saved(login), files=companion(first))
+    assert real(rt)["walks"] == 1 and real(rt)["steps"] == 2000
+    rt.files["CompanionData.lua"] = companion(first, second)["CompanionData.lua"]
+    later = rt.reload(gap=3600)
+    assert real(later)["walks"] == 2 and real(later)["steps"] == 5000
+    # And not again at the next login.
+    assert real(later.reload(gap=3600))["steps"] == 5000
+
+
+def test_a_walk_shared_with_a_record_that_appears_later_is_not_counted_twice(make_rt):
+    """A walk counted whole for one record; then a second record of the same
+    time appears (another character's): between them they get it once."""
+    walked = measured(NOW - 90000, 3600, steps=6000, distance=3000, kcal=240.0)
+    rt = make_rt(saved_variables=saved(own(NOW - 90000, 2400, steps=3000)), files=companion(walked))
+    assert real(rt)["steps"] == 6000
+    rt.run(
+        f"table.insert(WalkaDB.sessions, {{id=2,start={NOW - 87600},['end']={NOW - 86400},seconds=1200,distanceM=0,"
+        "steps=1500,kcal=0,yards=0,maxKmh=0,character='Other-Azeroth'})"
+    )
+    later = rt.reload(gap=3600)
+    mine, other = record(later)["real"], record(later, "Other-Azeroth")["real"]
+    assert mine["steps"] == pytest.approx(4000) and other["steps"] == pytest.approx(2000)
+    assert mine["steps"] + other["steps"] == pytest.approx(6000)
+    assert mine["walks"] == 1 and other["walks"] == 1
+    again = later.reload(gap=3600)
+    assert record(again)["real"]["steps"] == pytest.approx(4000)
+
+
+def test_a_record_banked_by_an_older_version_is_left_as_it_was(make_rt):
+    """Before `counted`, what a banked record had taken is not known: it is
+    not counted again (that could count a walk twice)."""
+    walked = measured(NOW - 90000, 1800, steps=2600)
+    rt = make_rt(saved_variables=saved(own(NOW - 90000, extra=",banked=true")), files=companion(walked))
+    assert real(rt)["walks"] == 0 and real(rt)["steps"] == 0
+    assert "counted" not in lua_plain(rt.db.sessions[1])
+
+
+def test_what_another_characters_journey_gains_in_this_login_reaches_the_app(make_rt):
+    """The app reads `shared` before `real`. A walk of Other's, settled while
+    Tester is logged in, must be in Other's `shared` once the game saves."""
+    other = "Other-Azeroth"
+    earlier = f"{{real={{walks=1,seconds=600,distanceM=500,steps=700,kcal=30,estimated=false}},since={NOW - 200000}," \
+              f"shared={{savedAt={NOW - 100000},walks=1,seconds=600,distanceM=500,steps=700,kcal=30,estimated=false}}}}"
+    rt = make_rt(
+        saved_variables=saved(own(NOW - 90000, 1800, character=other), more=f",journeys={{['{other}']={earlier}}}"),
+        files=companion(measured(NOW - 90000, 1800, steps=2600)),
+    )
+    assert record(rt, other)["real"]["steps"] == 700 + 2600
+    fresh = rt.reload()
+    shared = record(fresh, other)["shared"]
+    assert shared["steps"] == 700 + 2600 and shared["walks"] == 2
+    assert shared["savedAt"] >= NOW
+
+
+def test_a_reload_takes_over_the_measured_walks_of_the_session_still_running(make_rt):
+    """docs/IN-GAME-CHECKLIST.md: after the walk, /reload - the numbers are
+    the treadmill's. The automatic session runs on through the /reload."""
+    rt = make_rt(auto_session=True)
+    rt.tick()
+    start = rt.walka.GetSession(rt.walka).start
+    rt.advance(1800)
+    rt.files["CompanionData.lua"] = companion(measured(start + 300, 1200, steps=2000))["CompanionData.lua"]
+    fresh = rt.reload()
+    fresh.tick()
+    assert fresh.walka.IsActive(fresh.walka)
+    assert real(fresh)["walks"] == 1 and real(fresh)["steps"] == 2000
+    # When the session ends, the walk is not counted again.
+    fresh.slash("/walka stop")
+    assert real(fresh)["steps"] == 2000
+    assert real(fresh.reload(gap=3600))["steps"] == 2000

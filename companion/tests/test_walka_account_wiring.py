@@ -149,6 +149,7 @@ SNAPSHOT_KEYS = {
     "game",
     "session",
     "last_session",
+    "walks_rev",
     "totals",
     "heart_rate",
     "addon",
@@ -229,6 +230,13 @@ def a_config(tmp_path: Path) -> Config:
     return config
 
 
+async def no_treadmill_in_range(**kwargs):
+    """Stands in for the probe of "Check my treadmill", which scans the real
+    Bluetooth radio: a route of the dashboard starts it like any other."""
+    kwargs["report"].append("No treadmill found.")
+    return kwargs["report"]
+
+
 def hand_in(rig: Rig, tmp_path: Path, *, treadmill: Any = None, part: bool = True) -> App:
     """A real ``App`` on the rig's folder and clock - with a part of the rig's handed in, or with none.
 
@@ -244,6 +252,7 @@ def hand_in(rig: Rig, tmp_path: Path, *, treadmill: Any = None, part: bool = Tru
         wall_clock=rig.clock.wall,
         mono_clock=rig.clock.mono,
     )
+    app.probe_fn = no_treadmill_in_range
     rig.app = app  # type: ignore[assignment]
     if account is not None:
         rig.account = account
@@ -1084,6 +1093,7 @@ def on_the_emulated_pad(rig: Rig, tmp_path: Path, monkeypatch) -> tuple[PadRig, 
         wall_clock=HouseClock.wall,
         mono_clock=HouseClock.mono,
     )
+    app.probe_fn = no_treadmill_in_range
     house.app, rig.app, rig.account = app, app, part  # type: ignore[assignment]
     return house, app, part
 
@@ -2450,7 +2460,7 @@ def test_a_connection_or_a_look_up_that_leaves_this_computer_fails_a_test(_nothi
         async with aiohttp.ClientSession() as session:
             try:
                 await session.get("http://192.0.2.1:9/", timeout=aiohttp.ClientTimeout(total=10))
-            except (AssertionError, OSError, aiohttp.ClientError, asyncio.TimeoutError) as refused:
+            except (TimeoutError, AssertionError, OSError, aiohttp.ClientError) as refused:
                 said.append(type(refused).__name__)
         # (Windows' event loop, which goes round the socket: its own way of connecting, by itself.)
         from asyncio import proactor_events

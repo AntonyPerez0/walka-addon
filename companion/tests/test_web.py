@@ -561,9 +561,10 @@ def test_sessions_list_detail_tcx_delete(rig: Rig):
         assert [r.id for r in rig.app.store.records] == [new.id]
         assert not (rig.app.data_dir / "sessions" / f"{old.id}.json").exists()
         assert (rig.app.data_dir / "sessions" / f"{new.id}.json").exists()
-        # Totals and the addon's file follow straight away.
+        # Totals follow straight away, and the addon's file as soon as it is written (on a worker thread).
         totals = (await (await client.get("/api/state")).json())["totals"]
         assert totals["all"]["sessions"] == 1 and totals["all"]["steps"] == 222
+        await rig.app.synced()
         text = (rig.addon / "CompanionData.lua").read_text("utf-8")
         assert "steps = 222" in text and "steps = 111" not in text
 
@@ -634,13 +635,13 @@ def install_game(rig: Rig, tmp_path: Path, monkeypatch) -> Path:
     return game
 
 
-def save_road(rig: Rig, game: Path, key: str, yards: int) -> None:
+def save_road(rig: Rig, game: Path, key: str, yards: int, at: float = 1_790_000_000) -> None:
     path = game / "WTF" / "Account" / "ACCOUNT" / "Realm" / "Name" / "SavedVariables" / "Walka.lua"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         f'\r\nWalkaCharDB = {{\r\n\t["version"] = 1,\r\n\t["key"] = "{key}",\r\n\t["segments"] = {{\r\n\t\t{{\r\n'
         f'\t\t\t["c"] = 1,\r\n\t\t\t["m"] = "w",\r\n\t\t\t["b"] = 1,\r\n\t\t\t["l"] = 12,\r\n\t\t\t["x"] = 100,\r\n'
-        f'\t\t\t["y"] = -200,\r\n\t\t\t["d"] = "3,{yards},0",\r\n\t\t}}, -- [1]\r\n\t}},\r\n}}\r\n',
+        f'\t\t\t["y"] = -200,\r\n\t\t\t["t"] = {at:.0f},\r\n\t\t\t["d"] = "60,{yards},0",\r\n\t\t}}, -- [1]\r\n\t}},\r\n}}\r\n',
         encoding="utf-8",
         newline="",
     )
@@ -664,8 +665,18 @@ def test_the_road_of_a_character(rig: Rig, tmp_path: Path, monkeypatch):
         body = await response.json()
         assert body["game_found"] is True and body["files"] == 1 and body["demo"] is False
         road = body["road"]
-        assert road["id"] == mine and road["yards"] == 250 and road["belt_yards"] == 250 and road["level"] == 12
+        # The addon's b = 1 says only that a session was running: with no
+        # walk measured then, none of it was walked on the treadmill.
+        assert road["id"] == mine and road["yards"] == 250 and road["belt_yards"] == 0 and road["level"] == 12
         assert road["as_of"] == pytest.approx(rig.clock.wall - 60, abs=1)
+        assert road["continents"][0]["paths"] == [{"style": "road", "p": [100, -200, 350, -200]}]
+
+        # A walk the app measured over that minute: now it is.
+        walk = SessionRecord(id="w", start=1_790_000_000, end=1_790_000_090, seconds=60, distance_m=100,
+                             steps=100, kcal=5, samples=[[i * 5.0, 3.0, None] for i in range(12)])
+        rig.app.store.add(walk)
+        road = (await (await client.get(f"/api/road?character={mine}")).json())["road"]
+        assert road["belt_yards"] == 250
         assert road["continents"] == [
             {
                 "id": 1,
@@ -850,5 +861,19 @@ def test_no_page_of_the_dashboard_can_be_framed(rig: Rig):
             assert response.status == 200, path
             assert response.headers["X-Frame-Options"] == "DENY", path
             assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"], path
+
+    serve(rig, scenario)
+
+
+def test_every_walk_can_be_listed_not_only_the_newest_two_thousand(rig: Rig):
+    for index in range(2100):
+        rig.app.store.records.append(
+            SessionRecord(id=f"w{index:05d}", start=1_700_000_000 + index * 3600, end=1_700_000_600 + index * 3600,
+                          seconds=600, distance_m=500, steps=700, kcal=30)  # fmt: skip
+        )
+
+    async def scenario(client: TestClient):
+        body = await (await client.get("/api/sessions?limit=1000000")).json()
+        assert len(body["sessions"]) == 2100
 
     serve(rig, scenario)

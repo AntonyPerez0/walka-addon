@@ -1,7 +1,10 @@
-"""The one maker of requests to another machine: one address, checked, and nothing kept.
+"""The Walka account's maker of requests to another machine: one address, checked, and nothing kept.
 
-Walka has never made an HTTPS request before this part, so everything
-about how one is made stands here, in one place:
+Every request of the Walka account part is made here, so everything
+about how one is made stands here, in one place. (The other part of
+Walka that asks anything over the internet is updates.py: it asks GitHub
+for the newest release, at every start and once a day, unless that is
+switched off.)
 
 - a client asks ONE address, the one it was made for, and no other. A
   redirect is not followed: it comes back as the answer it is.
@@ -197,9 +200,23 @@ def make_ssl_context(platform: str = sys.platform) -> ssl.SSLContext:
     if platform == "darwin":
         context = ssl.create_default_context(cafile=MAC_ROOTS)
     else:
-        context = ssl.create_default_context()
-        if platform != "win32" and not context.cert_store_stats()["x509_ca"]:
-            _load_folder(context)
+        # Not create_default_context(): it also reads SSL_CERT_FILE and
+        # SSL_CERT_DIR, and with them whoever can set a variable chooses
+        # whom Walka trusts. The system's own roots, and no others.
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        for flag in ("VERIFY_X509_PARTIAL_CHAIN", "VERIFY_X509_STRICT"):  # (as create_default_context sets)
+            if hasattr(ssl, flag):
+                context.verify_flags |= getattr(ssl, flag)
+        if platform == "win32":
+            _load_windows_store(context)
+        else:
+            paths = ssl.get_default_verify_paths()  # (openssl_*: where OpenSSL was built to look, not the variables)
+            if paths.openssl_cafile and os.path.isfile(paths.openssl_cafile):
+                context.load_verify_locations(cafile=paths.openssl_cafile)
+            if paths.openssl_capath and os.path.isdir(paths.openssl_capath):
+                context.load_verify_locations(capath=paths.openssl_capath)
+            if not context.cert_store_stats()["x509_ca"]:
+                _load_folder(context)
     # (What create_default_context sets already. Said again, so that it is not left to a default.)
     context.check_hostname = True
     context.verify_mode = ssl.CERT_REQUIRED
@@ -208,11 +225,28 @@ def make_ssl_context(platform: str = sys.platform) -> ssl.SSLContext:
     return context
 
 
+def _load_windows_store(context: ssl.SSLContext) -> None:
+    """The root and intermediate certificates of Windows' own store that
+    are trusted for servers - what Python's default context loads, read
+    here without the variables it reads as well."""
+    found = bytearray()
+    for store in ("CA", "ROOT"):
+        try:
+            entries = ssl.enum_certificates(store)  # type: ignore[attr-defined]  # (Windows only)
+        except (AttributeError, OSError):
+            continue
+        for certificate, encoding, trust in entries:
+            if encoding == "x509_asn" and (trust is True or ssl.Purpose.SERVER_AUTH.oid in trust):
+                found += certificate
+    if found:
+        context.load_verify_locations(cadata=bytes(found))
+
+
 def _load_folder(context: ssl.SSLContext) -> None:
     """Some systems keep their root certificates one to a file, in a
     folder that OpenSSL reads only when it needs one - so a count says
     none. Read them now: then what is counted is what is there."""
-    folder = ssl.get_default_verify_paths().capath
+    folder = ssl.get_default_verify_paths().openssl_capath  # (not .capath: that one is SSL_CERT_DIR's, if it is set)
     if not folder or not os.path.isdir(folder):
         return
     seen: set[str] = set()
@@ -342,10 +376,33 @@ class Answer:
     def json(self) -> Any:
         """The body as JSON. ``ValueError`` if it is none - and the body is not in that error."""
         try:
-            return json.loads(self.body.decode("utf-8"), parse_constant=_no_constant, parse_float=_a_number)
+            value = json.loads(self.body.decode("utf-8"), parse_constant=_no_constant, parse_float=_a_number)
         except (ValueError, RecursionError):  # not text, not JSON, NaN, a number without end, or nested without end
             pass
+        else:
+            # Nested without end is refused here, not left to the
+            # interpreter: a newer Python may parse 100,000 levels without a
+            # RecursionError (and what reads the answer then would not).
+            if _depth(value) <= MOST_DEPTH:
+                return value
         raise ValueError("the answer is not JSON")
+
+
+# How deep the accounts' answers may be nested (theirs are three or four levels).
+MOST_DEPTH = 64
+
+
+def _depth(value: Any) -> int:
+    """How deeply ``value`` is nested, counted without recursion."""
+    deepest, waiting = 0, [(value, 1)]
+    while waiting:
+        item, level = waiting.pop()
+        if isinstance(item, (list, dict)):
+            deepest = max(deepest, level)
+            if level > MOST_DEPTH:
+                return level
+            waiting.extend((child, level + 1) for child in (item.values() if isinstance(item, dict) else item))
+    return deepest
 
 
 def _dumps(body: Any) -> str:

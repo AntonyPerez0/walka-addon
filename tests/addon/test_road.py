@@ -348,7 +348,7 @@ WIDE = dict(left=-1e9, top=-1e9, right=1e9, bottom=1e9)
 def segment_of(points, *, continent=1, mode="w", belt=False, level=10):
     """A saved segment through `points` (whole world yards). (Continent 1
     is the one the tests' map shows; see lines_of.)"""
-    steps = [f"1,{bx - ax},{by - ay}" for (ax, ay), (bx, by) in zip(points, points[1:])]
+    steps = [f"1,{bx - ax},{by - ay}" for (ax, ay), (bx, by) in zip(points, points[1:], strict=False)]
     belt_text = ",b=1" if belt else ""
     return (
         f"{{c={continent},m='{mode}',l={level},t={T0}{belt_text},x={points[0][0]},y={points[0][1]},"
@@ -437,7 +437,7 @@ def test_only_the_end_of_a_growing_road_is_read_again(rt):
     # The segment being recorded grows: its chapter is read anew, the others are the same tables.
     rt.run("local s = ...; s.n = 3; s.d = s.d .. ';1,20,0'", lua_list(db.segments)[19])
     after = chapters_of(rt, db)
-    assert all(same_table(rt, a, b) for a, b in zip(before[:19], after[:19]))
+    assert all(same_table(rt, a, b) for a, b in zip(before[:19], after[:19], strict=False))
     assert not same_table(rt, before[19], after[19]) and after[19].count == 4
     # A new segment that carries on is added to the last chapter; an empty one at the end comes and goes.
     rt.run(
@@ -448,10 +448,11 @@ def test_only_the_end_of_a_growing_road_is_read_again(rt):
     )
     grown = chapters_of(rt, db)
     assert len(grown) == 20 and path_of(rt, grown[19])[-1] == (38060, 50)
+    assert all(chapter.count <= road.CHAPTER_POINTS for chapter in grown)
     rt.run("local db = ...; db.segments[#db.segments] = nil", db)
     assert len(chapters_of(rt, db)) == 20
     # Nothing changed: nothing is read again.
-    assert all(same_table(rt, a, b) for a, b in zip(grown, chapters_of(rt, db)))
+    assert all(same_table(rt, a, b) for a, b in zip(grown, chapters_of(rt, db), strict=False))
 
 
 def test_a_long_road_can_be_read_a_little_at_a_time(rt):
@@ -521,6 +522,7 @@ def test_a_chapter_read_again_is_what_it_was_when_the_segment_has_grown_since(rt
     assert path_of(rt, chapter) == [(0, 0), (20, 0), (40, 0)], "the list a window holds stays whole"
     (again,) = chapters_of(rt, db)
     assert path_of(rt, again) == [(0, 0), (20, 0), (40, 0), (60, 0)] and not same_table(rt, again, chapter)
+    assert again.count == 4 <= road.CHAPTER_POINTS
 
 
 def test_coarser_copies_of_a_chapter_stay_close_to_it(rt):
@@ -532,7 +534,7 @@ def test_coarser_copies_of_a_chapter_stay_close_to_it(rt):
 
     def distance_to_path(px, py, path):
         best = float("inf")
-        for (ax, ay), (bx, by) in zip(path, path[1:]):
+        for (ax, ay), (bx, by) in zip(path, path[1:], strict=False):
             dx, dy = bx - ax, by - ay
             t = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)))
             best = min(best, math.hypot(px - (ax + t * dx), py - (ay + t * dy)))
@@ -613,7 +615,7 @@ def test_a_road_in_thousands_of_short_segments_is_drawn_as_a_few_lines(rt):
     # 20000 yards are 2000 units, in a straight line: a handful of pieces do.
     assert 1 <= len(pieces) <= 300 and out.cut == 0
     assert pieces[0][0] == (0, 0) and pieces[-1][1] == (2000, 0)
-    assert all(a[1] == b[0] for a, b in zip([p[:2] for p in pieces], [p[:2] for p in pieces][1:])), "one unbroken line"
+    assert all(a[1] == b[0] for a, b in zip([p[:2] for p in pieces], [p[:2] for p in pieces][1:], strict=False)), "one unbroken line"
     assert out.passes <= 3
     # A road in one piece fits the smallest budget.
     few, out = lines_of(rt, db, tolerance=0.5, most=3)
@@ -827,7 +829,9 @@ def test_the_companion_reads_the_road_out_of_the_saved_file(rt):
     run_north(rt, 600, 20)
     rt.set(taxi=False)
     rt.slash("/walka start")
+    began = float(rt.game.clock)
     run_north(rt, 300, 43)
+    walked = [(began, float(rt.game.clock))]   # when the app measured the belt moving
     db = char_db(rt)
     # (What the game would write, by the mock client's own writer.)
     file = b"\r\nWalkaCharDB = " + rt.M.serialize("WalkaCharDB").encode("utf-8") + b"\r\n"
@@ -838,10 +842,13 @@ def test_the_companion_reads_the_road_out_of_the_saved_file(rt):
     assert road.id == companion_road.character_id("Tester-Azeroth")
     assert [stretch.mode for stretch in road.stretches] == [segment["m"] for segment in db["segments"]]
     assert [len(stretch.points) for stretch in road.stretches] == [segment["n"] + 1 for segment in db["segments"]]
-    api = road.to_api(1_800_000_000.0)
+    api = road.to_api(1_800_000_000.0, walked=walked)
     # The same yards the addon counts (it measures as it goes, the companion from the points).
     assert api["yards"] + api["flight_yards"] == pytest.approx(db["yards"], abs=6)
+    # Walked on the treadmill: what the app measured, which here is the
+    # time of the session the player started.
     assert api["belt_yards"] == pytest.approx(db["beltYards"], abs=6)
+    assert road.to_api(1_800_000_000.0)["belt_yards"] == 0, "and nothing without a measured walk"
     assert api["start"]["c"] == 1 and api["end"]["c"] == 1
     assert api["end"]["x"] == pytest.approx(rt.north, abs=20)
     assert {path["style"] for entry in api["continents"] for path in entry["paths"]} == {"road", "flight", "walked"}
@@ -875,3 +882,58 @@ def test_the_starting_isle_of_the_skyborne_reaches_the_companion_with_its_name(r
     assert "land" not in by_id[1]
     min_x, min_y, max_x, max_y = by_id[2600]["land"]["bounds"]
     assert min_x < 100 and max_x > 500 and min_y < 300 < max_y
+
+
+# ---- with the session the addon starts by itself (the default) -------------------------------------
+
+
+def test_the_automatic_session_marks_no_road_walked_on_the_treadmill(make_rt):
+    """The automatic session runs from login to logout, with or without a
+    treadmill: it is not the walker saying the belt is moving."""
+    rt = make_rt(auto_session=True)
+    rt.tick()
+    assert rt.walka.IsActive(rt.walka) and rt.walka.session.auto is True
+    run_north(rt, 300, 43)
+    db = char_db(rt)
+    assert db["segments"] and all("b" not in segment for segment in db["segments"])
+    assert db["beltYards"] == 0
+    # Nor does the picture claim any, without a walk the app measured.
+    file = b"\r\nWalkaCharDB = " + rt.M.serialize("WalkaCharDB").encode("utf-8") + b"\r\n"
+    api = companion_road.decode(savedvars.parse(file)["WalkaCharDB"]).to_api(1_800_000_000.0)
+    assert api["yards"] > 250 and api["belt_yards"] == 0
+
+
+def test_with_the_automatic_session_the_picture_marks_what_the_app_measured(make_rt):
+    rt = make_rt(auto_session=True)
+    rt.tick()
+    run_north(rt, 300, 43)
+    began = rt.game.clock
+    run_north(rt, 300, 43)
+    walked = [(float(began), float(rt.game.clock))]   # the belt moved for the second half
+    run_north(rt, 300, 43)
+    char_db(rt)
+    file = b"\r\nWalkaCharDB = " + rt.M.serialize("WalkaCharDB").encode("utf-8") + b"\r\n"
+    api = companion_road.decode(savedvars.parse(file)["WalkaCharDB"]).to_api(1_800_000_000.0, walked=walked)
+    assert api["yards"] == pytest.approx(900, abs=40)
+    assert api["belt_yards"] == pytest.approx(300, abs=30)
+
+
+def test_a_road_too_long_for_the_saved_file_has_its_oldest_stretches_thinned(rt):
+    """The saved file must not grow without end: past the most points the
+    addon keeps, the oldest stretches keep every other point, and the
+    newest are left as they are. The road still begins and ends where it did."""
+    road = rt.ns.Road
+    rt.run("local road = ... road.MAX_POINTS = 600", road)
+    steps = ";".join(["3,20,0"] * 99)
+    segments = ",".join(f"{{c=1,m='w',l=1,t={T0 + i * 1000},x={i * 5000},y=0,n=99,d='{steps}'}}" for i in range(10))
+    db = rt.run("local road = ... return road.database({ version = 1, yards = 0, beltYards = 0, segments = {"
+                + segments + "} }, nil, 'Tester-Azeroth')", road)
+    kept = lua_plain(db)["segments"]
+    kept = list(kept.values()) if isinstance(kept, dict) else kept
+    assert len(kept) == 10
+    assert sum(segment["n"] + 1 for segment in kept) <= 600
+    assert kept[-1]["n"] == 99 and kept[0]["n"] < 99
+    for segment in kept:
+        total = sum(int(part.split(",")[1]) for part in segment["d"].split(";"))
+        assert total == 99 * 20, "every stretch ends where it ended"
+        assert sum(int(part.split(",")[0]) for part in segment["d"].split(";")) == 99 * 3

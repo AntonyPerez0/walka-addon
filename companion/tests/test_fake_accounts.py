@@ -15,7 +15,7 @@ import base64
 import hashlib
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
@@ -131,7 +131,7 @@ def play(scenario):
 
 def moment(epoch: float) -> str:
     """Seconds since 1970 -> the text Walka sends: UTC, to the millisecond."""
-    when = datetime.fromtimestamp(round(epoch * 1000) / 1000, timezone.utc)
+    when = datetime.fromtimestamp(round(epoch * 1000) / 1000, UTC)
     return when.strftime("%Y-%m-%dT%H:%M:%S.") + f"{when.microsecond // 1000:03d}Z"
 
 

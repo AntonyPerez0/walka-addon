@@ -368,6 +368,17 @@ def test_selfcheck_finds_everything_in_a_source_checkout(capsys):
     assert len(out) == 1 and out[0].startswith("selfcheck OK")
 
 
+def test_selfcheck_says_which_python_and_openssl_the_program_runs_on(capsys):
+    """The build compares these with what it was built with: a program
+    packed with an old Python (and its old OpenSSL) does not pass."""
+    import platform
+    import ssl
+
+    assert cli.main(["selfcheck"]) == 0
+    (line,) = capsys.readouterr().out.strip().splitlines()
+    assert f"Python {platform.python_version()}" in line and ssl.OPENSSL_VERSION in line
+
+
 def test_selfcheck_says_what_is_missing(capsys, monkeypatch):
     from walka import addon_sync
 
@@ -734,7 +745,7 @@ def test_probe_reports_a_time_out_readably_and_passes_all_on(tmp_path: Path, cap
         seen.update(kwargs)
         if kwargs["all_characteristics"]:
             return ["report"]
-        raise asyncio.TimeoutError()  # how bleak reports a connection that timed out: no text
+        raise TimeoutError()  # how bleak reports a connection that timed out: no text
 
     monkeypatch.setattr(probe, "probe", fake_probe)
     assert cli.main(["--data-dir", str(tmp_path), "probe", "--seconds", "1", "--out", str(tmp_path)]) == 2
@@ -746,3 +757,45 @@ def test_probe_reports_a_time_out_readably_and_passes_all_on(tmp_path: Path, cap
     assert cli.main(["--data-dir", str(tmp_path), "probe", "--all", "--out", str(tmp_path)]) == 0
     assert seen["all_characteristics"] is True
     assert list(tmp_path.glob("walka-probe-*.txt"))
+
+
+def test_a_second_walka_on_the_same_data_folder_is_refused(tmp_path: Path, capsys):
+    """Two copies on one data folder would write over each other's
+    config.json and the addon's file: the second says so, and stops."""
+    from walka import session
+
+    whose, hold = session.hold_data_folder(tmp_path)
+    assert whose == "ours" and hold is not None
+    try:
+        args = cli.build_parser().parse_args(["--simulate", "--no-capture", "--no-browser", "--data-dir", str(tmp_path)])
+        assert asyncio.run(cli._run(args)) == 2
+        assert "already running on this data folder" in capsys.readouterr().err
+        assert not (tmp_path / "config.json").exists()
+    finally:
+        hold.let_go()
+    again, second = session.hold_data_folder(tmp_path)
+    assert again == "ours"
+    second.let_go()
+
+
+def test_a_port_given_on_the_command_line_is_for_that_run_only(tmp_path: Path):
+    from walka.config import Config
+
+    port = free_port()
+    args = cli.build_parser().parse_args(
+        ["--simulate", "--no-capture", "--no-browser", "--port", str(port), "--data-dir", str(tmp_path)]
+    )
+
+    async def scenario():
+        task = asyncio.create_task(cli._run(args))
+        for _ in range(300):
+            await asyncio.sleep(0.02)
+            if (tmp_path / "config.json").exists():
+                break
+        await asyncio.sleep(0.3)
+        task.cancel()
+        assert await asyncio.wait_for(task, 30) == 0
+
+    asyncio.run(scenario())
+    saved = json.loads((tmp_path / "config.json").read_text("utf-8"))
+    assert saved["web"]["port"] == Config().web.port != port

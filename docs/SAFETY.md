@@ -31,9 +31,10 @@ That is everything. Switching a notification on is the only thing Walka
 ever writes to a standard (FTMS) treadmill, and it is what every app that
 shows a treadmill's numbers has to do.
 
-**One exception, for pads that only report when asked.** Some walking pads
-do not speak the standard: they speak their maker's own protocol, and send
-their numbers only in answer to a question. For those - and only those -
+### One exception, for pads that only report when asked
+
+Some walking pads do not speak the standard: they speak their maker's own
+protocol, and send their numbers only in answer to a question. For those - and only those -
 Walka sends **one fixed "report your numbers" query per protocol, and
 nothing else**:
 
@@ -57,7 +58,8 @@ never listened to. Walka does not ask the treadmill for control.
 
 ## What reaches outside your computer
 
-Walka asks GitHub, once a day, which version of Walka is the newest -
+Walka asks GitHub, at every start and then once a day, which version of
+Walka is the newest -
 nothing about you is sent, and *Settings → Updates* switches it off. A new
 version is downloaded from GitHub only when you press **Update now** (see
 [USING.md](USING.md#updates)). Heart rate over the local network is off
@@ -81,7 +83,9 @@ that moved the belt are gone:
   `companion/src/walka/treadmill/ftms_ble.py`), which can connect, read a
   value and switch notifications on. It has no write. The treadmill reader
   built on it (`Treadmill` in `treadmill/base.py`) can connect and
-  disconnect, and nothing else.
+  disconnect, and nothing else. The one door that writes is the query
+  link for the two pads above (`treadmill/query_link.py`): it takes no
+  bytes, and writes only its protocol's query.
 * **Nothing the game saves reaches the treadmill.** The addon's saved
   file, which the game writes at a logout or `/reload`, says one thing the
   companion uses for the walk: which walking session of which character it
@@ -97,8 +101,10 @@ that moved the belt are gone:
 
 The automated tests check each of these: that the reader and the Bluetooth
 adapter have no method that could write; that no command builder exists;
-that an emulated treadmill which records every byte written to it has
-recorded none after long runs of everything the game, the dashboard and
+that every reader kind, run against a stand-in for the Bluetooth library
+that records every write, sends nothing but the two status queries above,
+each to its own pad; that an emulated treadmill which records every byte
+written to it has recorded none after long runs of everything the game, the dashboard and
 the radio can do; and that a belt does the same, tick for tick, whether or
 not a companion is listening to it and whatever the game saves meanwhile.
 

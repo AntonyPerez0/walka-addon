@@ -26,7 +26,8 @@ nothing.
 <!-- treadmill-table:end -->
 
 Only the UREVO Strol 2E (URTM030) has been tried with Walka on the real
-machine; the warning at the top of this page is for every other one.
+machine; [Before your first walk](INSTALL.md#before-your-first-walk) is for
+every other one.
 Details and sources: [docs/HARDWARE.md](HARDWARE.md).
 
 Things to know:
@@ -41,14 +42,16 @@ Things to know:
   yours. *Forget this treadmill* on the dashboard lets you move to another.
 
 **What will not work:** treadmills that only talk to their maker's app in
-a private language (many NordicTrack / iFIT machines, the older KingSmith
-WalkingPads), and bikes or rowers - Walka only reads treadmills.
+a private language Walka does not read (many NordicTrack / iFIT machines),
+and bikes or rowers - Walka only reads treadmills. (The older KingSmith
+WalkingPads have a private language too, but Walka reads that one: see
+the table above. It is untried on a real pad.)
 
 **Is yours not listed, or not behaving?** Press **Check my treadmill** on
 the dashboard (*Live → Treadmill*) with the treadmill on, and work it with
 its remote while it listens. (From a command prompt it is
-`Walka.exe probe --record`; on a Mac [`Walka probe --record`](INSTALL.md#on-a-mac).) Like Walka itself it only
-listens - it sends the treadmill no commands - and saves a small text
+`Walka.exe probe --record`; on a Mac [`Walka probe --record`](INSTALL.md#on-a-mac).) It only
+listens - it sends the treadmill nothing at all - and saves a small text
 report and a recording of what the treadmill sent.
 [Fill in "My treadmill"](https://github.com/AntonyPerez0/walka-addon/issues/new?template=my-treadmill.yml)
 with both files and the treadmill's make and model, and it can be added.
@@ -64,7 +67,10 @@ of the window.)
 devices* lists everything in range. *Check* next to a device connects to
 it, looks at what it offers, and lets go: if it sends something Walka can
 read, Walka connects to it as your treadmill; if not, it says what the
-device does offer. Checking writes nothing to the device.
+device does offer. Checking writes nothing to the device. (Once it is your
+treadmill, an older WalkingPad or a FitShow pad gets the fixed status
+question that pad needs - and only a device named as one: `WalkingPad` or
+`KS-...`, `FS-...`.)
 
 **A treadmill that is not FTMS, or a foot pod:** Walka also reads standard
 *Running Speed and Cadence* sensors (untested on hardware so far) - see

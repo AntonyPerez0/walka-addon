@@ -82,11 +82,15 @@ function updateHero(s, view, online) {
   const speedAt = t.connected ? Math.max(0, Math.min(1, t.speed_kmh / scale)) : 0;
   setTransform($("meter-fill"), `scaleX(${speedAt.toFixed(4)})`);
   const padTop = `${fmt.speed(scale)} ${U.speedUnit}`;
-  setText($("meter-max"), t.name ? `${padTop} - the pad's top speed` : "");
+  // (Only a pad that said what speeds it has has a top speed: else the scale is Walka's own.)
+  const known = !!t.range_known;
+  setText($("meter-max"), t.name ? (known ? `${padTop} - the pad's top speed` : `${padTop} - the scale`) : "");
   setAttr(
     $("meter"),
     "aria-label",
-    t.connected ? `Belt at ${fmt.speedU(t.speed_kmh)}; the pad's top speed is ${padTop}` : "No reading from the belt",
+    t.connected
+      ? `Belt at ${fmt.speedU(t.speed_kmh)}; ${known ? "the pad's top speed is" : "the scale goes to"} ${padTop}`
+      : "No reading from the belt",
   );
 }
 
@@ -330,7 +334,17 @@ function updateCheck(s) {
   const out = $("tm-check-out");
   if (check.running) {
     out.replaceChildren(
-      h("p", {}, h("strong", { text: `Checking - ${check.seconds || 0} s of about ${check.expected_s} s.` })),
+      h(
+        "p",
+        {},
+        h("strong", {
+          // (Until the check has begun it does not know how long it takes.)
+          text:
+            check.expected_s != null
+              ? `Checking - ${check.seconds || 0} s of about ${check.expected_s} s.`
+              : "Checking - starting...",
+        }),
+      ),
       h("p", {
         text: "While it listens: start the belt with the treadmill's own remote, change the speed, pause, and stop. Walka is not connected to the treadmill until the check is done.",
       }),

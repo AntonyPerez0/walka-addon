@@ -28,7 +28,10 @@ version is out, and named in its notes if you want to be.
 * **Walka writing to a treadmill.** Any way - through the dashboard, the
   game's saved file, a setting, a file, a crafted Bluetooth device - to make
   the companion send a treadmill a command, or write to any of its
-  characteristics beyond switching on the notifications it listens to.
+  characteristics beyond switching on the notifications it listens to and
+  the two fixed status queries in [docs/SAFETY.md](docs/SAFETY.md#one-exception-for-pads-that-only-report-when-asked)
+  (each to its own kind of pad only). Making Walka send one of those
+  queries to any other device counts too.
   ([docs/SAFETY.md](docs/SAFETY.md) says what the companion does on a
   connection, and how the rest is kept out.)
 * Anything that lets someone or something other than the person at the

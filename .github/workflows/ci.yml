@@ -5,12 +5,8 @@ on:
     branches: ["**"]
     tags: ["v*"]
   pull_request:
+  # (By hand: the tests and the builds only. A release comes from a pushed tag alone.)
   workflow_dispatch:
-    inputs:
-      release_version:
-        description: "Publish a release with this version, for example 0.1.0 (leave empty to only run the tests and the build)"
-        required: false
-        default: ""
 
 permissions:
   contents: read
@@ -32,6 +28,9 @@ permissions:
 jobs:
   test:
     name: Tests (${{ matrix.os }})
+    # A pull request from a branch of this repository was tested on its push
+    # already (the same commit): only one from a fork runs here again.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -41,12 +40,22 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: "3.12"
+          python-version: "3.14"
+          check-latest: true  # (not the runner's own 3.14, which can be months old)
       - name: Install
         run: python -m pip install --require-hashes --build-constraint companion/requirements-dev.lock -r companion/requirements-dev.lock
       - name: Lint
         working-directory: companion
-        run: ruff check src tests
+        # (The addon's tests and the build's tools too: the same rules.)
+        run: ruff check src tests ../tests/addon ../tools
+      # The lock files are written by a tool, from pyproject.toml: written
+      # again now, they must come out the same. (A version pyproject.toml
+      # has raised shows here, not only a package that is missing.)
+      - name: The lock files are up to date
+        if: runner.os == 'Linux'
+        run: |
+          python -m pip install --require-hashes -r companion/requirements-locktool.lock
+          python tools/check_locks.py
       - name: Test
         # (-rs: a test that could not be run on this machine says why.
         # --durations: the fifteen slowest tests are named, with their
@@ -55,12 +64,16 @@ jobs:
 
   windows-exe:
     name: Windows executable
+    # A pull request from a branch of this repository was tested on its push
+    # already (the same commit): only one from a fork runs here again.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: "3.12"
+          python-version: "3.14"
+          check-latest: true  # (not the runner's own 3.14, which can be months old)
       - name: Install
         run: python -m pip install --require-hashes --build-constraint companion/requirements-build.lock -r companion/requirements-build.lock
       - name: Build
@@ -94,6 +107,13 @@ jobs:
           # notices a module missing from the bundle.
           $check = Walka "selfcheck"
           if ($code -ne 0 -or $check -notmatch "selfcheck OK") { throw "selfcheck failed: something the app needs at run time is missing from Walka.exe" }
+          # The Python packed into it (and its OpenSSL) is the one this
+          # build has, and one that still gets fixes.
+          python tools/check_bundled_python.py "$check"
+          if ($LASTEXITCODE -ne 0) { throw "Walka.exe carries an older Python than expected" }
+          # Every library packed into it has its licence in it.
+          python tools/check_packed_licences.py companion/dist/Walka.exe
+          if ($LASTEXITCODE -ne 0) { throw "Walka.exe packs a library whose licence is not in it" }
           # The licences of the libraries packed into the program go with it.
           $licences = Walka "licenses"
           foreach ($wanted in "THIRD-PARTY SOFTWARE IN WALKA", "Apache License", "aiohttp", "winrt-runtime", "pywebview", "pythonnet", "Microsoft.Web.WebView2") {
@@ -212,6 +232,9 @@ jobs:
   # and Intel.
   mac-app:
     name: Mac program (${{ matrix.chip }})
+    # A pull request from a branch of this repository was tested on its push
+    # already (the same commit): only one from a fork runs here again.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -223,7 +246,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: "3.12"
+          python-version: "3.14"
+          check-latest: true  # (not the runner's own 3.14, which can be months old)
       - name: Install
         run: python -m pip install --require-hashes --build-constraint companion/requirements-build.lock -r companion/requirements-build.lock
       - name: Build
@@ -250,7 +274,13 @@ jobs:
           # Everything the frozen app imports only at run time (the
           # CoreBluetooth modules behind Bluetooth, what draws its
           # window), the dashboard page and the bundled addon.
-          "$exe" selfcheck || fail "selfcheck failed: something the app needs at run time is missing from Walka"
+          check=$("$exe" selfcheck) || fail "selfcheck failed: something the app needs at run time is missing from Walka"
+          echo "$check"
+          # The Python packed into it (and its OpenSSL) is the one this
+          # build has, and one that still gets fixes.
+          python tools/check_bundled_python.py "$check" || fail "Walka carries an older Python than expected"
+          # Every library packed into it has its licence in it.
+          python tools/check_packed_licences.py "$exe" || fail "Walka packs a library whose licence is not in it"
           # The licences of the libraries packed into the program go with it.
           "$exe" licenses > "$RUNNER_TEMP/licences.txt" || fail "Walka does not print the licences of what is packed into it"
           for wanted in "THIRD-PARTY SOFTWARE IN WALKA" "Apache License" "aiohttp" "pyobjc-core" "pywebview"; do
@@ -420,15 +450,25 @@ jobs:
 
   # Publishes a release: the programs people download from the buttons at
   # the top of the README (Walka.exe for Windows, a zip for each kind of
-  # Mac), and the addon as a zip that is ready to upload to CurseForge. Two ways to ask for one: push a version tag (v0.1.0), or
-  # run this workflow by hand (Actions > CI > Run workflow) and type the
-  # version - the tag is then made here. Either way only after the tests
+  # Mac), and the addon as a zip that is ready to upload to CurseForge. One way to ask for one: push a
+  # version tag (v0.1.0) on a commit of the default branch. A tag ruleset lets only the repository's
+  # admins make such tags, and the environment "release" waits for its reviewer. Only after the tests
   # and the build above have passed for that same commit.
   release:
     name: Publish release
-    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release_version != '')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: [test, virus-scan]
     runs-on: ubuntu-latest
+    # Settings -> Environments -> release: a reviewer added there has to
+    # approve every run of this job before it can publish anything.
+    environment: release
+    # One run per version at a time: a second waits, then finds the first's release.
+    concurrency:
+      group: release-${{ github.ref_name }}
+      cancel-in-progress: false
+    defaults:
+      run:
+        shell: bash
     permissions:
       contents: write
       # For the signed statement that this run built these files (below).
@@ -437,23 +477,36 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
-      TAG: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', inputs.release_version) || github.ref_name }}
+      TAG: ${{ github.ref_name }}
       DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0  # (the whole history: to see that this commit is on the main line)
       - name: The tag is the version written in the code
         run: |
-          echo "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$' || { echo "::error::'$TAG' is not a version like v0.1.0"; exit 1; }
-          # Run by hand, a release is made from the main line of the code and from nowhere else.
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && [ "$GITHUB_REF_NAME" != "$DEFAULT_BRANCH" ]; then
-            echo "::error::A release is published from the branch '$DEFAULT_BRANCH', not from '$GITHUB_REF_NAME'. Choose it under 'Use workflow from'."
+          # The whole value, and one line of it: [[ =~ ]] matches the whole
+          # text (grep would pass a value with one good line among others).
+          shape='^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'
+          [[ "$TAG" =~ $shape ]] || { echo "::error::'$TAG' is not a version like v0.1.0"; exit 1; }
+          # Only from a pushed tag (a run by hand publishes nothing: it would have to make the tag
+          # itself, and the tag ruleset lets only admins make one).
+          if [ "$GITHUB_REF_TYPE" != "tag" ]; then
+            echo "::error::A release is published from a pushed tag only: git tag $TAG, then git push origin $TAG."
+            exit 1
+          fi
+          # From a pushed tag too: a tag can be pushed on any commit of any
+          # branch, and only a commit that is on the main line is published.
+          git fetch --no-tags --quiet origin "+refs/heads/$DEFAULT_BRANCH:refs/remotes/origin/$DEFAULT_BRANCH"
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" "refs/remotes/origin/$DEFAULT_BRANCH"; then
+            echo "::error::$GITHUB_SHA is not on the branch '$DEFAULT_BRANCH'. Merge it there first, then tag the commit on '$DEFAULT_BRANCH'."
             exit 1
           fi
           version="${TAG#v}"
           fail() { echo "::error::tag $TAG does not match $1"; exit 1; }
-          grep -qx "version = \"$version\"" companion/pyproject.toml || fail "version in companion/pyproject.toml"
-          grep -qx "__version__ = \"$version\"" companion/src/walka/__init__.py || fail "__version__ in companion/src/walka/__init__.py"
-          grep -qx "## Version: $version" Walka/Walka.toc || fail "## Version in Walka/Walka.toc"
+          grep -Fqx "version = \"$version\"" companion/pyproject.toml || fail "version in companion/pyproject.toml"
+          grep -Fqx "__version__ = \"$version\"" companion/src/walka/__init__.py || fail "__version__ in companion/src/walka/__init__.py"
+          grep -Fqx "## Version: $version" Walka/Walka.toc || fail "## Version in Walka/Walka.toc"
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: Walka-release
@@ -495,9 +548,9 @@ jobs:
 
           **Early version:** checked on one walking pad so far - a UREVO Strol 2E (URTM030) with Windows 11. Every other treadmill is untried. Read [Before your first walk](https://github.com/$GH_REPO/blob/$TAG/docs/INSTALL.md#before-your-first-walk).
 
-          **Walka only listens to your treadmill:** it cannot start, stop or change the speed of the belt - you set the speed on the treadmill itself. Walking while you play is at your own risk; Walka comes with no warranty and is not a medical device. Read the [disclaimer](https://github.com/$GH_REPO/blob/$TAG/DISCLAIMER.md) before your first walk.
+          **Walka only listens to your treadmill:** it cannot start, stop or change the speed of the belt - you set the speed on the treadmill itself. (Older WalkingPads and FitShow pads report only when asked: Walka sends them one fixed *report your numbers* question once a second, and nothing else.) Walking while you play is at your own risk; Walka comes with no warranty and is not a medical device. Read the [disclaimer](https://github.com/$GH_REPO/blob/$TAG/DISCLAIMER.md) before your first walk.
 
-          **Your Walka account (on walka.dev):** optional. Walka works in full without it, and if you never sign in it sends nothing and asks nobody. If you sign in and switch sending on yourself, each walk goes to your Walka account. What is sent, when, and how to stop: [Your Walka account](https://github.com/$GH_REPO/blob/$TAG/docs/WALKA-ACCOUNT.md#your-walka-account-on-walkadev).
+          **Your Walka account (on walka.dev):** optional. Walka works in full without it, and if you never sign in, its Walka account part sends nothing and asks nobody. (Apart from that, Walka asks GitHub whether a new version is out, at every start and then once a day: *Settings > Updates* switches that off.) If you sign in and switch sending on yourself, each walk goes to your Walka account. What is sent, when, and how to stop: [Your Walka account](https://github.com/$GH_REPO/blob/$TAG/docs/WALKA-ACCOUNT.md#your-walka-account-on-walkadev).
 
           **Virus scan:** before this was published, Microsoft Defender scanned Walka.exe, the Mac programs and the addon's files, and found nothing. *virus-scan.json* under Assets says when, and with which virus definitions. A scan that finds nothing is not proof that a file is harmless: see [Is the download safe?](https://github.com/$GH_REPO#is-the-download-safe)
 
@@ -507,7 +560,8 @@ jobs:
           # A tag like v0.2.0-rc1 is a trial: published, but never "the latest" that the README's button gives.
           pre=""
           case "$TAG" in *-*) pre="--prerelease" ;; esac
-          if draft=$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null); then
+          if found=$(gh release view "$TAG" --json isDraft,targetCommitish --jq '"\(.isDraft) \(.targetCommitish)"' 2>/dev/null); then
+            draft="${found%% *}" target="${found#* }"
             # A second run for the same tag. A published release is never
             # changed: people may have downloaded its files, checked them,
             # or be comparing a download with its checksums right now.
@@ -515,14 +569,22 @@ jobs:
               echo "::error::Release $TAG is already published, and a published release is never changed. Give the fix a new version number and publish that."
               exit 1
             fi
-            # A draft that a failed first try left behind: finish it.
+            # A draft that a failed first try left behind: finished only by a
+            # run of the commit it was made from. (Its tag, if there is one
+            # already, is what publishing it would point at; else its target.)
+            git fetch --force --quiet origin "+refs/tags/$TAG:refs/tags/$TAG" 2>/dev/null || true
+            made_from=$(git rev-parse -q --verify "refs/tags/$TAG^{commit}" || true)
+            if [ -z "$made_from" ] && [[ "$target" =~ ^[0-9a-f]{40}$ ]]; then made_from="$target"; fi
+            if [ "$made_from" != "$GITHUB_SHA" ] || { [[ "$target" =~ ^[0-9a-f]{40}$ ]] && [ "$target" != "$GITHUB_SHA" ]; }; then
+              echo "::error::The draft release $TAG was made from ${made_from:-a branch, not a commit}, not from this run's commit $GITHUB_SHA. Delete the draft on the Releases page and run this again."
+              exit 1
+            fi
             gh release upload "$TAG" $files --clobber
             gh release edit "$TAG" --draft=false
           else
-            # From a pushed tag: the tag must be there. Run by hand: the tag is made now, on this commit.
-            if [ "$GITHUB_REF_TYPE" = "tag" ]; then at="--verify-tag"; else at="--target $GITHUB_SHA"; fi
-            gh release create "$TAG" $files $at --title "Walka ${TAG#v}" --notes "$notes" $pre || {
-              echo "::error::The release was refused. If the message above is 'Resource not accessible by integration': GitHub does not let a workflow put a tag on a commit that itself changes a file under .github/workflows. Make any other commit on top of it and run this again."
+            # The tag was pushed: it must be there, and nothing here makes one.
+            gh release create "$TAG" $files --verify-tag --title "Walka ${TAG#v}" --notes "$notes" $pre || {
+              echo "::error::The release was refused: see the message above."
               exit 1
             }
           fi

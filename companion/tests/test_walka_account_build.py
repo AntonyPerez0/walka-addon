@@ -156,7 +156,8 @@ def test_the_check_passes_a_walka_that_is_packed(tool, tmp_path: Path, capsys, h
     # One button was pressed, and it is one that asks nobody.
     assert re.findall(r"(/api/walka-account/\S+) (\d+)", first) == [("/api/walka-account/sending/off", "409")]
     # It did start as Walka does, on the folder it was given: its own log says so. And no file of the part's.
-    assert "in its data folder: walka.log" in first and " is running: dashboard at http://127.0.0.1:" in first
+    # (walka.lock: held while it runs, so that a second Walka on the folder is refused.)
+    assert "in its data folder: walka.lock, walka.log" in first and " is running: dashboard at http://127.0.0.1:" in first
     # As the demo: the simulated treadmill, and every button but "Sign in" says "not here".
     assert re.search(r" --demo --data-dir \S+ --no-window --port \d+  \(with ", second)
     assert 'treadmill of the kind "simulated"' in second

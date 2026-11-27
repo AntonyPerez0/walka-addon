@@ -11,6 +11,7 @@ from __future__ import annotations
 import errno
 import json
 import logging
+import math
 import os
 import sys
 import time
@@ -88,6 +89,10 @@ class SessionRecord:
     calories_source: str = "speed"  # "speed" | "heart_rate"
     treadmill: str = ""
     samples: list[list[float | None]] = field(default_factory=list)  # [t, kmh, bpm]
+    # Walked on no treadmill: the simulated one (--simulate, --demo) or a
+    # recording played back (--replay). Marked when it is recorded, from the
+    # kind of treadmill, never from a name. Never sent to a Walka account.
+    made_up: bool = False
 
     @property
     def avg_kmh(self) -> float:
@@ -104,12 +109,56 @@ class SessionRecord:
 
     @classmethod
     def from_json(cls, data: dict[str, Any]) -> SessionRecord:
+        """A walk as read from its file. Raises ValueError for one that is
+        not what Walka writes: the file is then left out, not trusted (a
+        start that is text would stop Walka starting, a distance that is
+        not a number would break every total)."""
+        if not isinstance(data, dict):
+            raise ValueError("not a walk")
         known = {f for f in cls.__dataclass_fields__}  # type: ignore[attr-defined]
         values = {k: v for k, v in data.items() if k in known}
         if "game_session" not in values and "beacon_session" in data:
             # (Up to 0.10 the session's number was read off the screen.)
             values["game_session"] = data["beacon_session"]
+        for name in ("start", "end", "seconds", "distance_m", "kcal"):
+            values[name] = _number(values.get(name), name)
+        for name in ("kcal_extra", "max_kmh"):
+            if name in values:
+                values[name] = _number(values[name], name)
+        values["steps"] = int(_number(values.get("steps"), "steps", most=1e12))
+        for name in ("avg_hr", "max_hr", "game_session"):
+            if values.get(name) is not None:
+                values[name] = _number(values[name], name, most=1e9)
+                if name != "avg_hr":
+                    values[name] = int(values[name])
+        if not isinstance(values.get("id"), str) or not values["id"]:
+            raise ValueError("id: not a name")
+        for name in ("source", "character", "steps_source", "distance_source", "calories_source", "treadmill"):
+            if name in values and not isinstance(values[name], str):
+                raise ValueError(f"{name}: not text")
+        if not isinstance(values.get("samples", []), list):
+            raise ValueError("samples: not a list")
+        if not isinstance(values.get("made_up", False), bool):
+            values["made_up"] = True  # (a mark that is anything but false: made up - nothing is sent on a doubt)
         return cls(**values)
+
+
+def _number(value: Any, name: str, *, most: float = 1e13) -> float:
+    """``value`` as a finite number no larger than ``most``, or ValueError."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or abs(value) > most:
+        raise ValueError(f"{name}: not a number a walk can have")
+    return float(value)
+
+
+# What the simulated treadmill calls itself (treadmill/simulated.py): the
+# walks of Walkas before 0.13 that were made up are known by this name.
+SIMULATED_NAME = "Simulated pad"
+
+
+def is_made_up(record: object) -> bool:
+    """Was this walk walked on no treadmill (``SessionRecord.made_up``, or
+    the simulated pad's name in a walk saved before there was the mark)?"""
+    return getattr(record, "made_up", False) is True or getattr(record, "treadmill", "") == SIMULATED_NAME
 
 
 def _plausible(counter_total: float, integrated: float) -> bool:
@@ -122,13 +171,19 @@ def _plausible(counter_total: float, integrated: float) -> bool:
 class SessionRecorder:
     """Accumulates one walk from once-per-tick treadmill readings."""
 
-    def __init__(self, *, treadmill: str, started_at: float, source: str = "free") -> None:
+    def __init__(self, *, treadmill: str, started_at: float, source: str = "free", made_up: bool = False) -> None:
         # (Which game session the walk was in is known only once the game
         # has saved its file: game_file, App.file_walks.)
         self.source = source
         self.treadmill = treadmill
+        self.made_up = made_up
         self.started_at = started_at
         self.last_at = started_at
+        # The monotonic clock, where it is given: durations are counted by
+        # it, so that a computer clock set back or forward changes nothing
+        # of the walk. (started_at stays the wall clock's: when it began.)
+        self._mono_start: float | None = None
+        self._mono_last: float | None = None
         self.seconds = 0.0
         self.max_kmh = 0.0
         # Our own integration of the reported belt speed.
@@ -224,13 +279,22 @@ class SessionRecorder:
         machine_steps: float | None = None,
         heart_rate: int | None = None,
         connected: bool = True,
+        mono: float | None = None,
     ) -> None:
         """Account for the time since the previous call.
 
-        ``now`` is epoch seconds. Gaps longer than a few seconds (app
-        suspended, treadmill reconnecting) are not integrated.
+        ``now`` is epoch seconds; ``mono``, if given, the monotonic clock,
+        which the time between calls is then taken from. Gaps longer than a
+        few seconds (app suspended, treadmill reconnecting) are not
+        integrated.
         """
-        dt = now - self.last_at
+        if mono is not None:
+            if self._mono_start is None:
+                self._mono_start = self._mono_last = mono - max(0.0, now - self.started_at)
+            dt = mono - self._mono_last
+            self._mono_last = mono
+        else:
+            dt = now - self.last_at
         self.last_at = now
         if dt <= 0:
             return
@@ -294,10 +358,16 @@ class SessionRecorder:
         else:
             self.last_hr = None
 
-        offset = now - self.started_at
+        offset = self._elapsed(now)
         if offset >= self._next_sample:
             self._next_sample = offset + SAMPLE_EVERY_S
             self.samples.append([round(offset, 1), round(speed_kmh, 2), heart_rate or None])
+
+    def _elapsed(self, now: float) -> float:
+        """Seconds since the walk began: by the monotonic clock, where it is known."""
+        if self._mono_start is not None and self._mono_last is not None:
+            return self._mono_last - self._mono_start
+        return now - self.started_at
 
     def finish(self, now: float) -> SessionRecord | None:
         """Close the walk. Returns ``None`` if it was too short to keep."""
@@ -311,7 +381,7 @@ class SessionRecorder:
         return SessionRecord(
             id=time.strftime("%Y%m%d-%H%M%S", time.localtime(self.started_at)),
             start=round(self.started_at, 1),
-            end=round(max(now, self.started_at), 1),
+            end=round(self.started_at + max(0.0, self._elapsed(now)), 1),
             seconds=round(self.seconds, 1),
             distance_m=round(self.distance_m, 1),
             steps=int(round(self.steps)),
@@ -326,6 +396,7 @@ class SessionRecorder:
             calories_source=self.calories_source,
             treadmill=self.treadmill,
             samples=list(self.samples),
+            made_up=self.made_up,
         )
 
 
@@ -461,6 +532,34 @@ class _Hold:
             pass
 
 
+# Held by a running Walka for as long as it runs, on the data folder it
+# runs on: a second Walka on the same folder would write over the first's
+# config.json and the addon's file. Empty, like the walk's lock.
+FOLDER_LOCK_NAME = "walka.lock"
+
+
+def hold_data_folder(data_dir: Path) -> tuple[str, _Hold | None]:
+    """Take the lock that says a Walka runs on ``data_dir``. Never waits.
+
+    ``("ours", hold)``: taken, until ``hold.let_go()`` or the process ends.
+    ``("theirs", None)``: another Walka runs on this folder.
+    ``("no lock", None)``: this folder has no locks to be had (then nothing
+    can be told, and nothing is refused).
+    """
+    try:
+        Path(data_dir).mkdir(parents=True, exist_ok=True)
+        fd = os.open(Path(data_dir) / FOLDER_LOCK_NAME, os.O_RDWR | os.O_CREAT | _BINARY, 0o600)
+    except OSError:
+        return _NO_LOCK, None
+    try:
+        _lock(fd)
+    except OSError as refusal:
+        theirs = _held_elsewhere(fd, refusal)
+        os.close(fd)
+        return (_THEIRS if theirs else _NO_LOCK), None
+    return _OURS, _Hold(fd)
+
+
 # The locks THIS process holds, by the real path of the lock file. The
 # system's lock belongs to one open descriptor: a second store on the same
 # folder in the same process would be refused by the first one's lock, and
@@ -488,7 +587,11 @@ class SessionStore:
             self._lock_key = os.path.normcase(os.path.abspath(self.lock_path))
         self._taken: list[_Hold] | None = None  # the hold this store took, for the day the store is dropped
         self._own_checkpoint = False  # the checkpoint that lies there is this store's to clear
+        # A checkpoint lies there that could not be written as a walk (a full
+        # disk): the only copy of that walk. It is kept, and tried again.
+        self.recovery_failed = False
         self.records: list[SessionRecord] = []  # oldest first
+        self.rev = 0  # goes up with every walk added, changed or deleted
         self.dir.mkdir(parents=True, exist_ok=True)
         self._load()
 
@@ -514,18 +617,61 @@ class SessionStore:
         if self._claim() == _THEIRS:
             log.info("a walk is still going in another Walka on this data folder: its checkpoint is left alone")
             return
-        self._walk_of_the_checkpoint()
-        self._remove_checkpoint()
+        if self._walk_of_the_checkpoint():
+            self._remove_checkpoint()
 
-    def _walk_of_the_checkpoint(self) -> None:
-        """Make a finished walk of the checkpoint that lies there. Never raises."""
+    def _walk_of_the_checkpoint(self) -> bool:
+        """Make a finished walk of the checkpoint that lies there. Never raises.
+
+        True once the checkpoint can go: its walk is on file now, or it
+        holds none (too short, or not a walk at all). False while the walk
+        could not be written (a full disk, a folder that cannot be written,
+        a checkpoint that cannot be read just now): then the checkpoint is
+        the only copy of the walk, and must stay where it is.
+        """
         try:
-            record = SessionRecord.from_json(json.loads(self.active_path.read_text("utf-8")))
-            if record.seconds >= MIN_SESSION_SECONDS:
-                self.add(record)
-                log.info("recovered an unfinished walk from %s", day_key(record.start))
+            text = self.active_path.read_text("utf-8")
+        except FileNotFoundError:
+            self.recovery_failed = False
+            return True
+        except (OSError, UnicodeDecodeError) as exc:
+            if isinstance(exc, UnicodeDecodeError):
+                log.warning("the unfinished walk's checkpoint is damaged: %s", exc)
+                self.recovery_failed = False
+                return True
+            log.warning("could not read the unfinished walk's checkpoint (it is kept): %s", exc)
+            self.recovery_failed = True
+            return False
+        try:
+            record = SessionRecord.from_json(json.loads(text))
         except Exception as exc:
-            log.warning("could not recover the unfinished walk: %s", exc)
+            log.warning("the unfinished walk's checkpoint is damaged: %s", exc)
+            self.recovery_failed = False
+            return True
+        if self._on_file(record):
+            # Saved already: Walka was closed (or killed) after it wrote the
+            # walk and before it cleared the checkpoint, which is a snapshot
+            # of that walk from a little earlier.
+            log.info("the unfinished walk from %s is on file already", day_key(record.start))
+        elif record.seconds >= MIN_SESSION_SECONDS:
+            try:
+                self.add(record)
+            except Exception as exc:
+                log.warning("could not save the unfinished walk (its checkpoint is kept): %s", exc)
+                self.recovery_failed = True
+                return False
+            log.info("recovered an unfinished walk from %s", day_key(record.start))
+        self.recovery_failed = False
+        return True
+
+    def _on_file(self, record: SessionRecord) -> bool:
+        """Is the walk of this checkpoint on file already? The same walk:
+        the same start, from the same treadmill, and on file at least as
+        long (a checkpoint is a snapshot taken before the walk ended)."""
+        return any(
+            kept.start == record.start and kept.treadmill == record.treadmill and kept.seconds >= record.seconds
+            for kept in self.records
+        )
 
     @staticmethod
     def _write(path: Path, data: dict[str, Any]) -> None:
@@ -543,6 +689,7 @@ class SessionStore:
         self._write(self.dir / f"{record.id}.json", record.to_json())
         self.records.append(record)
         self.records.sort(key=lambda r: r.start)
+        self.rev += 1
         return record
 
     def update(self, record: SessionRecord) -> None:
@@ -551,11 +698,13 @@ class SessionStore:
         if record not in self.records:
             raise KeyError(record.id)
         self._write(self.dir / f"{record.id}.json", record.to_json())
+        self.rev += 1
 
     def delete(self, session_id: str) -> bool:
         for record in self.records:
             if record.id == session_id:
                 self.records.remove(record)
+                self.rev += 1
                 try:
                     (self.dir / f"{session_id}.json").unlink()
                 except FileNotFoundError:
@@ -605,15 +754,35 @@ class SessionStore:
         # The lock first, then the file: a checkpoint of a Walka that runs
         # never lies there without it. (Refused or not, the walk is written.)
         whose = self._claim()
-        if whose == _OURS and not self._own_checkpoint:
-            self._recover_what_was_left_meanwhile()
+        if whose == _OURS and not self._own_checkpoint and not self._recover_what_was_left_meanwhile():
+            # The walk of the checkpoint that lies there is not on file yet,
+            # and it is the only copy of it: it is not written over. (Its
+            # writing failed for want of room, as this one's would.)
+            log.debug("checkpoint not written: an earlier walk's checkpoint still waits to be saved")
+            return
         self._own_checkpoint = True
         try:
             self._write(self.active_path, record.to_json())
         except OSError as exc:
             log.debug("checkpoint failed: %s", exc)
 
-    def _recover_what_was_left_meanwhile(self) -> None:
+    def retry_recovery(self) -> bool:
+        """Try again to write the walk of a checkpoint that could not be
+        written at the start (``recovery_failed``). True once it is on file.
+        Never raises."""
+        if not self.recovery_failed or self._own_checkpoint:
+            return False
+        try:
+            if self._claim() != _OURS:
+                return False
+            if self._walk_of_the_checkpoint():
+                self._remove_checkpoint()
+                return True
+        except Exception as exc:
+            log.debug("the unfinished walk was not tried again: %s", type(exc).__name__)
+        return False
+
+    def _recover_what_was_left_meanwhile(self) -> bool:
         """Before this store writes a walk's first checkpoint, with the lock in its hand.
 
         A checkpoint that lies there now is not this store's, and nobody
@@ -623,15 +792,19 @@ class SessionStore:
         Written over now, it would be gone: so it is recovered first, as a
         start does it. (Only with the lock in hand: without one, nothing
         says that the other Walka is gone.) Never raises.
+
+        False if a walk lies there that could not be written: the
+        checkpoint must not be written over then.
         """
         try:
             hold = _HELD.get(self._lock_key)
             if not self._taken or self._taken[0] is not hold:
-                return  # the lock is held through another store of this process: nothing is known of that one's walk
+                return True  # the lock is held through another store of this process: nothing is known of that one's walk
             if self.active_path.exists():
-                self._walk_of_the_checkpoint()
+                return self._walk_of_the_checkpoint()
         except Exception as exc:
             log.debug("what was left of another walk was not looked at: %s", type(exc).__name__)
+        return True
 
     def clear_checkpoint(self) -> None:
         """This Walka's walk is saved, or came to nothing: its checkpoint goes.
@@ -666,8 +839,11 @@ class SessionStore:
         """Newest first."""
         return list(reversed(self.records[-limit:])) if limit > 0 else []
 
-    def totals(self, now: float | None = None, extra: Iterable[SessionRecord] = ()) -> dict[str, Any]:
-        """Totals for today, the last 7 days and all time, plus a 7-day series."""
+    def totals(
+        self, now: float | None = None, extra: Iterable[SessionRecord] = (), *, made_up: bool = True
+    ) -> dict[str, Any]:
+        """Totals for today, the last 7 days and all time, plus a 7-day series.
+        ``made_up=False``: walks walked on no treadmill (``is_made_up``) count for nothing."""
         now = time.time() if now is None else now
         today_key = day_key(now)
         noon = _local_noon(now)
@@ -681,6 +857,8 @@ class SessionStore:
         today, week, all_time = _bucket(), _bucket(), _bucket()
         walked: set[str] = set()
         for record in [*self.records, *extra]:
+            if not made_up and is_made_up(record):
+                continue
             key = day_key(record.start)
             walked.add(key)
             _add(all_time, record)

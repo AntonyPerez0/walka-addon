@@ -4,6 +4,7 @@ at login or /reload (body profile, measured sessions)."""
 from __future__ import annotations
 
 import pytest
+
 from walka import addon_sync
 from walka.session import SessionRecord
 
@@ -172,9 +173,9 @@ def test_a_walk_from_after_the_last_sync_counts_as_an_estimate(make_rt):
     after it last wrote its file: that one is an estimate waiting for the
     treadmill's numbers, and counts."""
     saved = (
-        "{sessions={{id=9,start=%d,['end']=%d,seconds=1190,distanceM=950,steps=1700,"
+        f"{{sessions={{{{id=9,start={NOW - 1800},['end']={NOW - 600},seconds=1190,distanceM=950,steps=1700,"
         "kcal=70.0,yards=8000,maxKmh=3.22,character='Tester-Azeroth'}}}"
-    ) % (NOW - 1800, NOW - 600)
+    )
     rt = make_rt(files={"CompanionData.lua": COMPANION}, saved_variables={"WalkaDB": saved}, state={"clock": NOW})
     newest = lua_dict(lua_list(rt.walka.GetHistory(rt.walka))[0])
     assert newest["steps"] == 1700 and newest["measured"] is False and "unconfirmed" not in newest

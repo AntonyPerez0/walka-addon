@@ -136,13 +136,18 @@ export const U = {
 
 const intFormat = new Intl.NumberFormat();
 const oneDecimal = new Intl.NumberFormat(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+// Every number on a line is written the browser's way: "2,4 km/h" beside "1.234 Schritte" in
+// German, not "2.4" beside "1.234". (Without grouping under a thousand: there is none there.)
+const fixed = [0, 1, 2].map(
+  (digits) => new Intl.NumberFormat(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits }),
+);
 
 export const fmt = {
   /** "2.4" - belt speeds live on a 0.1 grid in either unit. */
   speed(kmh, digits = 1) {
     if (kmh == null || !Number.isFinite(kmh)) return "-";
     const value = U.speed(kmh);
-    return (Math.abs(value) < 0.05 && digits === 1 ? 0 : value).toFixed(digits);
+    return fixed[Math.min(2, Math.max(0, digits))].format(Math.abs(value) < 0.05 && digits === 1 ? 0 : value);
   },
   speedU(kmh, digits = 1) {
     return `${fmt.speed(kmh, digits)} ${U.speedUnit}`;
@@ -152,7 +157,7 @@ export const fmt = {
     if (m == null || !Number.isFinite(m)) return "-";
     const value = U.dist(m);
     if (value >= 1000) return oneDecimal.format(value); // "4,756.2": grouped like the steps beside it
-    return value >= 100 ? value.toFixed(1) : value.toFixed(2);
+    return value >= 100 ? fixed[1].format(value) : fixed[2].format(value);
   },
   distU(m) {
     return `${fmt.dist(m)} ${U.distUnit}`;
@@ -259,6 +264,30 @@ export async function api(path, { method = "GET", body, timeoutMs = 10000 } = {}
 }
 
 export const post = (path, body, options) => api(path, { ...options, method: "POST", body });
+
+/**
+ * When to try again after a request failed: a second, then two, four, ...
+ * thirty at most. ``failed()`` after each failure, ``ok()`` after a success,
+ * ``due(now)`` says whether it is time.
+ */
+export class Backoff {
+  constructor({ first = 1000, most = 30000 } = {}) {
+    this.first = first;
+    this.most = most;
+    this.ok();
+  }
+  ok() {
+    this.failures = 0;
+    this.at = 0;
+  }
+  failed(now = Date.now()) {
+    this.failures += 1;
+    this.at = now + Math.min(this.most, this.first * 2 ** (this.failures - 1));
+  }
+  due(now = Date.now()) {
+    return now >= this.at;
+  }
+}
 export const del = (path) => api(path, { method: "DELETE", body: {} });
 
 /** Run an async action from a button: busy state, and errors as a toast. */

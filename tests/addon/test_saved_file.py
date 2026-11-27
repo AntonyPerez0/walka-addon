@@ -11,6 +11,7 @@ client's own writer), and read it with the companion's real reader
 from __future__ import annotations
 
 import pytest
+
 from walka import game_file, savedvars
 from walka.journey import character_id
 

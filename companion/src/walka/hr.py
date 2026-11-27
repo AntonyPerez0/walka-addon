@@ -186,7 +186,7 @@ class HeartRateMonitor:
             await client.start_notify(ftms.HEART_RATE_MEASUREMENT, take)
             try:
                 await asyncio.wait_for(got.wait(), seconds)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
         return heard[-1] if heard else None
 
@@ -198,13 +198,21 @@ class HeartRateMonitor:
         prepare_windows_threading()
         wanted = self.address.upper()
 
-        def match(device: Any, adv: Any) -> bool:
-            if wanted:
-                return device.address.upper() == wanted
-            return ftms.HEART_RATE_SERVICE in [u.lower() for u in adv.service_uuids]
-
         self.detail = "searching for the heart-rate sensor"
-        device = await BleakScanner.find_device_by_filter(match, timeout=12.0)
+        if wanted:
+            device = await BleakScanner.find_device_by_filter(
+                lambda found, _adv: found.address.upper() == wanted, timeout=12.0
+            )
+        else:
+            # None chosen: the whole scan is listened to and the strongest is
+            # taken - a neighbour's chest strap may well be heard first.
+            heard = await BleakScanner.discover(timeout=8.0, return_adv=True)
+            sensors = [
+                (adv.rssi if adv.rssi is not None else -999, found)
+                for found, adv in heard.values()
+                if ftms.HEART_RATE_SERVICE in [u.lower() for u in (adv.service_uuids or [])]
+            ]
+            device = max(sensors, key=lambda pair: pair[0])[1] if sensors else None
         if device is None:
             self.detail = "heart-rate sensor not found - is it broadcasting?"
             return
@@ -269,7 +277,7 @@ class HeartRateMonitor:
                 break
             try:
                 await asyncio.wait_for(self._changed.wait(), timeout=RETRY_S)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
 
     async def close(self) -> None:

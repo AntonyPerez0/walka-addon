@@ -77,7 +77,8 @@ MACOS_WINDOW_IMPORTS = ("webview.platforms.cocoa",)
 MAC_BUNDLE_ID = "io.github.antonyperez0.walka"
 MAC_APP = HERE / "dist" / "Walka.app"
 BLUETOOTH_REASON = (
-    "Walka listens to your walking pad over Bluetooth: its speed, distance and steps. It sends the pad nothing."
+    "Walka listens to your walking pad over Bluetooth: its speed, distance and steps. It never sends a command; "
+    "a few older pads that report only when asked get one fixed request for their numbers."
 )
 
 
@@ -138,6 +139,13 @@ def pyinstaller_args(platform: str = sys.platform) -> list[str]:
         # bleak picks its Bluetooth backend (WinRT on Windows, CoreBluetooth
         # on a Mac) at run time, which PyInstaller's static analysis cannot see.
         "--collect-submodules", "bleak",
+        # Build tools, which nothing Walka runs on imports: PyInstaller's
+        # hooks would pack them all the same, with no licence text.
+        # (tools/check_packed_licences.py checks what is packed.)
+        "--exclude-module", "setuptools",
+        "--exclude-module", "pkg_resources",
+        "--exclude-module", "_distutils_hack",
+        "--exclude-module", "packaging",
         "--distpath", str(HERE / "dist"),
         "--workpath", str(HERE / "build"),
         "--specpath", str(HERE / "build"),

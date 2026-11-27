@@ -1906,5 +1906,5 @@ def test_a_real_keychain_keeps_reads_and_forgets_a_made_up_secret():
 
     try:
         run(scenario, 300)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         pytest.fail("the keychain held the test for five minutes", pytrace=False)

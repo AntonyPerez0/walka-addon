@@ -15,7 +15,7 @@ import asyncio
 import inspect
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -44,7 +44,7 @@ def refusal(code: str, message: str, details: str | None = None) -> dict:
 
 
 def utc_text(start: float) -> str:
-    return datetime.fromtimestamp(start, timezone.utc).isoformat()
+    return datetime.fromtimestamp(start, UTC).isoformat()
 
 
 async def sending(rig: Rig, send: str = "all", **person) -> str:
@@ -113,8 +113,8 @@ def test_a_row_is_exactly_the_sixteen_keys_and_nothing_of_what_stays_here(tmp_pa
             record = rig.walk(3600, avg_hr=131.5, max_hr=158, source="wow", game_session=7, character="Tester")
             assert sorted(json.loads(rig.file_of(record).read_text("utf-8"))) == sorted(
                 "id start end seconds distance_m steps kcal kcal_extra max_kmh avg_hr max_hr source game_session "
-                "character steps_source distance_source calories_source treadmill samples".split()
-            )  # the nineteen keys of a walk's file
+                "character steps_source distance_source calories_source treadmill samples made_up".split()
+            )  # the twenty keys of a walk's file
             assert await a_pass(rig) == "sent"
 
             push = rig.asked("/rest/v1/walks", method="POST")[0]
@@ -128,7 +128,7 @@ def test_a_row_is_exactly_the_sixteen_keys_and_nothing_of_what_stays_here(tmp_pa
             # The row is the whole request - see "(sent,) = push.json" - and its keys are exactly the sixteen.)
             body = json.dumps({name: value for name, value in sent.items() if name != "id"})
             # The treadmill's name, the heart rate, the top speed, the samples and the character stay on the computer.
-            for stays in (PAD, "treadmill", "samples", "max_kmh", "avg_hr", "max_hr", "131.5", "158", "game_session", "Tester"):
+            for stays in (PAD, "treadmill", "samples", "made_up", "max_kmh", "avg_hr", "max_hr", "131.5", "158", "game_session", "Tester"):
                 assert stays not in body
 
     run(scenario)

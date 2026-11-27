@@ -27,7 +27,8 @@
 *These steps are for Windows. On a Mac, steps 1 and 2 are different - they
 are under [On a Mac](#on-a-mac) - and the rest is the same.*
 
-1. **Download `Walka.exe`** with the button above. It goes to your
+1. **Download [`Walka.exe`](https://github.com/AntonyPerez0/walka-addon/releases/latest/download/Walka.exe)**
+   (the *Download Walka for Windows* button in the [README](../README.md)). It goes to your
    *Downloads* folder. If the browser says it "isn't commonly downloaded",
    choose **Keep** (in Edge: **...** → **Keep** → **Show more** → **Keep
    anyway**).
@@ -81,7 +82,7 @@ for any of that.
    [`Walka.exe`](https://github.com/AntonyPerez0/walka-addon/releases/latest/download/Walka.exe)
    (every version is on the
    [Releases page](https://github.com/AntonyPerez0/walka-addon/releases)),
-   or run it from source (Python 3.10 or newer):
+   or run it from source (Python 3.14 or newer):
 
    ```powershell
    cd companion
@@ -175,7 +176,7 @@ What is different from Windows:
   is concerned: it is **Terminal** that is asked about, and allowed,
   Bluetooth.
 * **From source:** `cd companion`, `python3 -m pip install -e .`,
-  `python3 -m walka` (Python 3.10 or newer).
+  `python3 -m walka` (Python 3.14 or newer).
 
 ## Is the download safe?
 
@@ -258,8 +259,16 @@ touched.
   `walka.log`: what Walka used to write in its console window - what it
   connected to, what went wrong. It can hold your treadmill's name and
   Bluetooth address, and it stays on your computer unless you send it to
-  somebody. There is also `active-session.lock`, an empty file: through
-  it one Walka tells another that it is recording a walk. Once you have
+  somebody. Your settings are in `config.json`: if you edit it by hand
+  and Walka cannot read it, Walka starts with its defaults and keeps your
+  file as `config.json.unreadable`. `active-session.json` is the walk in
+  progress, written every
+  half minute. If a walk cannot be saved (a full disk), it stays in that
+  file until it can, even across a restart. There is also
+  `active-session.lock`, an empty file: through it one Walka tells
+  another that it is recording a walk. `walka.lock`, empty too, is held
+  for as long as Walka runs: a second Walka started on the same folder
+  says that one is running already, and does not start. Once you have
   signed in to
   [your Walka account](WALKA-ACCOUNT.md#your-walka-account-on-walkadev) there is also
   `walka-account.json` (with an empty `walka-account.lock` beside it). It
@@ -268,7 +277,10 @@ touched.
   you signed in with Discord, GitHub or Google), whether sending is
   switched on and what you chose when you switched it on, and what became
   of each walk: sent, there already, or not taken, with the reason that
-  was given. While sending is on it holds a mark beside that switch as
+  was given. Once you sign out, it no longer holds the e-mail address,
+  how you signed in or what you chose: only the account's id and what
+  became of each walk (so that signing in again sends none of them a
+  second time). While sending is on it holds a mark beside that switch as
   well: a random text that is a key to nothing, which Walka keeps a
   second time where the sign-in is kept. It also notes that a sign-in
   ended (until you press *OK*), that a sign-in may still be in Windows'

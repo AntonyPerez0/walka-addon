@@ -7,7 +7,7 @@
 --
 --   { version = 1, guid = "...", key = "Name-Realm",
 --     yards = n,         -- length of the road recorded so far
---     beltYards = n,     -- ... of which with the treadmill belt moving
+--     beltYards = n,     -- ... of which in a session the player started (see b)
 --     maps = { [continent id] = { id = map id, name = "its name" }, ... },
 --     segments = { segment, ... } }
 --
@@ -20,7 +20,9 @@
 --
 --   { c = continent id,
 --     m = "w" on foot | "r" mounted | "t" flight path | "g" as a ghost,
---     b = 1 if the treadmill belt was moving (absent otherwise),
+--     b = 1 if a session the player started was running (absent otherwise).
+--         The addon cannot see the belt; the Walka app marks the road
+--         walked on the treadmill from the times of its own walks, not this,
 --     l = character level,
 --     t = time of its first point (seconds since the epoch),
 --     x = .., y = ..     its first point, in whole world yards,
@@ -57,6 +59,10 @@ Road.JUMP_YARDS = 300           -- further than this between two looks is not tr
 Road.MAX_HELD = 120             -- samples remembered since the last stored point
 Road.MAX_SEGMENT_POINTS = 2000  -- a longer stretch is carried on in a new segment
 Road.MAX_NAME_BYTES = 96        -- a map's name longer than this is not kept
+-- The most points kept in the saved file (a road from level 1 to 60 is
+-- about 100,000; the Walka app reads up to a million). Past this the
+-- oldest stretches keep every other point: Road.thin.
+Road.MAX_POINTS = 400000
 
 Road.MODES = { w = true, r = true, t = true, g = true }
 
@@ -69,6 +75,58 @@ end
 -- The game keeps per-character files by name, so a new character with the
 -- name of a deleted one inherits its file: a GUID that differs starts the
 -- road afresh.
+-- `segment` with every two steps made one (the first point and the last
+-- stay where they are, and so do the times). Returns the points it lost.
+local function thinSegment(segment)
+    local steps = {}
+    for dt, dx, dy in string.gmatch(segment.d or "", "(-?%d+),(-?%d+),(-?%d+)") do
+        steps[#steps + 1] = { tonumber(dt), tonumber(dx), tonumber(dy) }
+    end
+    if #steps < 2 then
+        return 0
+    end
+    local parts = {}
+    for index = 1, #steps, 2 do
+        local a, b = steps[index], steps[index + 1]
+        if b then
+            parts[#parts + 1] = (a[1] + b[1]) .. "," .. (a[2] + b[2]) .. "," .. (a[3] + b[3])
+        else
+            parts[#parts + 1] = a[1] .. "," .. a[2] .. "," .. a[3]
+        end
+    end
+    local before = segment.n or #steps
+    segment.d = concat(parts, ";")
+    segment.n = #parts
+    return before - #parts
+end
+
+--- Keep the saved road within Road.MAX_POINTS: the oldest stretches are
+-- thinned first (every other point), the newest - where the character is
+-- now - last. The yards counted stay as they were.
+function Road.thin(db)
+    local segments = db.segments
+    local total = 0
+    for _, segment in ipairs(segments) do
+        total = total + (segment.n or 0) + 1
+    end
+    for _ = 1, 20 do
+        if total <= Road.MAX_POINTS then
+            return
+        end
+        local lost = 0
+        for index = 1, #segments - 1 do
+            if total - lost <= Road.MAX_POINTS then
+                break
+            end
+            lost = lost + thinSegment(segments[index])
+        end
+        if lost == 0 then
+            return  -- (nothing left to thin but the newest stretch)
+        end
+        total = total - lost
+    end
+end
+
 function Road.database(saved, guid, key)
     local db = type(saved) == "table" and saved or {}
     local sameCharacter = guid == nil or db.guid == nil or db.guid == guid
@@ -91,6 +149,7 @@ function Road.database(saved, guid, key)
         end
     end
     db.segments = kept
+    Road.thin(db)
     local maps = {}
     if type(db.maps) == "table" then
         for continent, map in pairs(db.maps) do

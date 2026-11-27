@@ -93,6 +93,7 @@ class Rig:
             self.clock.advance(TICK_S)
             await self.app.tick()
             self.treadmill.advance(TICK_S)
+        await self.app.synced()  # (the addon's file is written on a worker thread)
 
     async def walk(self, kmh: float = 3.2) -> None:
         """The walker presses start on the remote, waits out the countdown
@@ -525,6 +526,7 @@ def test_snapshot_is_json_serialisable_and_says_nothing_about_control(rig: Rig):
         "game",
         "session",
         "last_session",
+        "walks_rev",
         "totals",
         "heart_rate",
         "addon",
@@ -867,8 +869,16 @@ def test_a_sync_that_blows_up_is_reported_not_raised(rig: Rig, monkeypatch):
     def explode(*_args, **_kwargs):
         raise ValueError("cannot convert float NaN to integer")
 
-    monkeypatch.setattr("walka.app.addon_sync.sync", explode)
+    monkeypatch.setattr("walka.app.addon_sync.build_payload", explode)
     assert rig.app.sync_addon() is False
+    assert "NaN" in rig.app.addon_error
+
+    async def from_the_loop():
+        rig.app.addon_error = ""
+        rig.app.request_sync()
+        await rig.app.synced()
+
+    run(from_the_loop())
     assert "NaN" in rig.app.addon_error
 
 
@@ -937,3 +947,291 @@ def test_a_broken_locale_lookup_suggests_nothing(rig: Rig, monkeypatch):
 
     monkeypatch.setattr(locale_units, "system_units", broken)
     assert rig.app.snapshot()["setup"]["system_units"] is None
+
+
+# ---- a walk that cannot be written -----------------------------------------------------------------
+
+
+def full_disk(monkeypatch) -> dict:
+    """Every write of a walk fails, as on a full disk, until switched off."""
+    real_write = SessionStore._write
+    state = {"full": True}
+
+    def write(path, data):
+        if state["full"]:
+            raise OSError(28, "No space left on device")
+        real_write(path, data)
+
+    monkeypatch.setattr(SessionStore, "_write", staticmethod(write))
+    return state
+
+
+def walk_files(rig: Rig) -> list[Path]:
+    return sorted((rig.app.data_dir / "sessions").glob("*.json"))
+
+
+def test_a_walk_that_cannot_be_written_is_kept_and_written_once_there_is_room(rig: Rig, monkeypatch):
+    async def scenario():
+        await rig.connect()
+        await rig.walk()
+        await rig.run(300)  # (checkpoints written: the disk still had room)
+        full = full_disk(monkeypatch)
+        await rig.step_off()
+        assert walk_files(rig) == [] and rig.app.store.records == []
+        assert (rig.app.data_dir / "active-session.json").exists(), "the checkpoint keeps it meanwhile"
+        assert any("could not be saved" in event["text"] for event in rig.app.events)
+        full["full"] = False
+        await rig.run(app_module.CHECKPOINT_EVERY_S + 2)  # with no walk going: tried again all the same
+        assert len(walk_files(rig)) == 1 and rig.app.store.records[0].seconds > 290
+        assert not (rig.app.data_dir / "active-session.json").exists()
+        assert any(event["text"].startswith("Walk saved") for event in rig.app.events)
+
+    run(scenario())
+
+
+def test_a_walk_still_unwritten_survives_a_crash_and_a_start_on_a_full_disk(rig: Rig, tmp_path: Path, monkeypatch):
+    async def scenario():
+        await rig.connect()
+        await rig.walk()
+        await rig.run(300)
+        full_disk(monkeypatch)
+        await rig.step_off()
+        # Walka is killed here, and started again with the disk still full.
+
+    run(scenario())
+    checkpoint = rig.app.data_dir / "active-session.json"
+    seconds = json.loads(checkpoint.read_text("utf-8"))["seconds"]
+    rig.app.store._remove_checkpoint = lambda: None  # (the killed one clears nothing)
+    del rig.app
+    import gc
+
+    gc.collect()
+    again = App(Config(), tmp_path / "data", treadmill=SimulatedTreadmill(auto_run=False))
+    assert again.store.records == [] and checkpoint.exists(), "the only copy of the walk"
+    assert any(event["level"] == "error" and "could not be saved" in event["text"] for event in again.events)
+    del again
+    gc.collect()
+    monkeypatch.undo()
+    later = App(Config(), tmp_path / "data", treadmill=SimulatedTreadmill(auto_run=False))
+    assert [record.seconds for record in later.store.records] == [seconds]
+    assert not checkpoint.exists()
+
+
+def test_one_touch_of_the_hand_grips_does_not_last_the_walk(rig: Rig):
+    """A heart rate the pad reported once, long ago, is not this walk's."""
+
+    async def scenario():
+        await rig.connect()
+        await rig.walk()
+        rig.treadmill.status.heart_rate_bpm = 140
+        rig.treadmill.status.heart_rate_at = rig.clock.mono
+        await rig.run(3)
+        assert rig.app.recorder.last_hr == 140, "fresh: it counts"
+        await rig.run(120)  # the pad never says it again
+        assert rig.app.recorder.last_hr is None
+        await rig.step_off()
+
+    run(scenario())
+    record = rig.app.store.records[-1]
+    assert record.calories_source == "speed" and record.max_hr == 140 and record.avg_hr == pytest.approx(140)
+
+
+def test_the_checkpoint_goes_as_soon_as_the_walk_is_written(rig: Rig, monkeypatch):
+    """Not after the addon's file and the Walka account: a Walka killed in
+    between would find the checkpoint at its next start."""
+    seen: list[bool] = []
+    real_sync = rig.app.sync_addon
+
+    def sync(*args, **kwargs):
+        seen.append((rig.app.data_dir / "active-session.json").exists())
+        return real_sync(*args, **kwargs)
+
+    monkeypatch.setattr(rig.app, "sync_addon", sync)
+
+    async def scenario():
+        await rig.connect()
+        await rig.walk()
+        await rig.run(120)
+        assert (rig.app.data_dir / "active-session.json").exists()
+        await rig.step_off()
+
+    run(scenario())
+    assert len(rig.app.store.records) == 1 and seen and seen[-1] is False
+
+
+# ---- nothing on the loop waits on the disk --------------------------------------------------------
+
+
+def test_a_slow_look_at_the_games_folders_does_not_hold_up_the_loop(rig: Rig, monkeypatch):
+    """The scan runs on a worker thread. What the loop asks of it meanwhile
+    (rev, sessions, the status) is answered at once."""
+    import threading
+    import time as real_time
+
+    from walka import game_file
+
+    inside = threading.Event()
+    real_files = game_file.account_files
+
+    def slow(folder):
+        inside.set()
+        real_time.sleep(1.0)  # a network drive, a disk that is spinning up
+        return real_files(folder)
+
+    monkeypatch.setattr(game_file, "account_files", slow)
+    scanning = threading.Thread(target=rig.app.game.scan, kwargs={"force": True})
+    scanning.start()
+    assert inside.wait(5)
+    began = real_time.monotonic()
+    rig.app.game.rev, rig.app.game.sessions(), rig.app.game.status(), rig.app.game.journeys()
+    assert real_time.monotonic() - began < 0.2
+    scanning.join()
+
+
+def test_the_addons_file_is_written_off_the_loop(rig: Rig, monkeypatch):
+    """Finding the addon's folder looks at drives, and writing the file may
+    wait for the game to let go of it: a walk's end never waits for that."""
+    import threading
+    import time as real_time
+
+    from walka import addon_sync
+
+    loop_thread: list[int] = []
+    wrote_on: list[int] = []
+    real_write = addon_sync.write_data_file
+
+    def slow_write(directory, payload):
+        wrote_on.append(threading.get_ident())
+        real_time.sleep(0.5)
+        return real_write(directory, payload)
+
+    monkeypatch.setattr(addon_sync, "write_data_file", slow_write)
+
+    async def scenario():
+        loop_thread.append(threading.get_ident())
+        await rig.connect()
+        await rig.walk()
+        await rig.run(60)
+        rig.treadmill.press_stop()
+        slowest = 0.0
+        for _ in range(int((FREE_WALK_GRACE_S + 5) / TICK_S)):  # the walk ends, and the file is to be written
+            rig.clock.advance(TICK_S)
+            began = real_time.monotonic()
+            await rig.app.tick()
+            slowest = max(slowest, real_time.monotonic() - began)
+            rig.treadmill.advance(TICK_S)
+        assert rig.app.recorder is None and slowest < 0.3, "the loop waited for the file"
+        await rig.app.synced()
+        assert wrote_on and loop_thread[0] not in wrote_on
+        assert rig.app.last_sync is not None
+
+    run(scenario())
+    assert load_companion_data(rig).sessions[1] is not None
+
+
+# ---- made-up walks among real ones -------------------------------------------------------------------
+
+
+class RealPad(SimulatedTreadmill):
+    """The simulated pad's workings under a real reader's kind."""
+
+    kind = "ftms"
+
+
+def test_made_up_walks_are_kept_but_count_for_nothing_with_a_real_treadmill(tmp_path: Path):
+    from walka.session import SessionRecord
+
+    data = tmp_path / "data"
+    store = SessionStore(data)
+    common = {"distance_m": 1000.0, "steps": 1500, "kcal": 60.0, "seconds": 900.0}
+    store.add(SessionRecord(id="real", start=1_799_990_000.0, end=1_799_991_000.0, treadmill="URTM030", **common))
+    store.add(SessionRecord(id="demo", start=1_799_992_000.0, end=1_799_993_000.0, treadmill="URTM030",
+                            made_up=True, **common))  # fmt: skip
+    store.add(SessionRecord(id="old", start=1_799_994_000.0, end=1_799_995_000.0, treadmill="Simulated pad", **common))
+    del store
+    config = Config()
+    addon = tmp_path / "AddOns" / "Walka"
+    addon.mkdir(parents=True)
+    (addon / "Walka.toc").write_text("## Interface: 16001\n")
+    config.wow.addon_dir = str(addon)
+    real = App(config, data, treadmill=RealPad(auto_run=False), wall_clock=lambda: 1_800_000_000.0)
+    assert [r.id for r in real.store.records] == ["real", "demo", "old"], "kept: History lists them"
+    assert real.totals(1_800_000_000.0)["all"]["sessions"] == 1
+    assert real.sync_addon()
+    text = (addon / "CompanionData.lua").read_text("utf-8")
+    assert text.count("steps = 1500") == 1
+    # On the simulated treadmill itself, what it made up is shown.
+    made_up = App(config, data, treadmill=SimulatedTreadmill(auto_run=False), wall_clock=lambda: 1_800_000_000.0)
+    assert made_up.totals(1_800_000_000.0)["all"]["sessions"] == 3
+
+
+def test_a_made_up_run_does_not_write_the_installed_addons_file(tmp_path: Path):
+    config = Config()
+    addon = tmp_path / "AddOns" / "Walka"
+    addon.mkdir(parents=True)
+    (addon / "Walka.toc").write_text("## Interface: 16001\n")
+    config.wow.addon_dir = str(addon)
+    app = App(config, tmp_path / "data", treadmill=SimulatedTreadmill(auto_run=False), writes_addon=False)
+    assert app.sync_addon() is False and "made-up" in app.addon_error
+    assert not (addon / "CompanionData.lua").exists()
+
+
+def test_a_clock_set_back_in_the_middle_of_a_walk_changes_nothing_of_it(rig: Rig):
+    """The computer's clock is set back an hour (by hand, or by a time
+    server): the walk goes on being counted and checkpointed, and is saved
+    as long as it was, so that it can still be filed under a game session."""
+
+    async def scenario():
+        await rig.connect()
+        await rig.walk()
+        await rig.run(120)
+        rig.clock.wall -= 3600
+        checkpoint = rig.app.data_dir / "active-session.json"
+        before = json.loads(checkpoint.read_text("utf-8"))["seconds"]
+        await rig.run(300)
+        assert json.loads(checkpoint.read_text("utf-8"))["seconds"] > before + 250, "checkpoints go on"
+        assert rig.app.recorder.seconds > 400
+        await rig.step_off()
+
+    run(scenario())
+    (record,) = rig.app.store.records
+    assert record.seconds > 400
+    assert record.end - record.start == pytest.approx(record.seconds + FREE_WALK_GRACE_S + 6, abs=15)
+
+
+def test_state_json_is_never_left_half_written(rig: Rig, monkeypatch):
+    rig.app._state["treadmill"] = {"name": "URTM030"}
+    rig.app._save_state()
+    path = rig.app.data_dir / app_module.STATE_FILE
+    assert json.loads(path.read_text("utf-8"))["treadmill"]["name"] == "URTM030"
+    real_write = Path.write_text
+
+    def cut_short(self, text, *args, **kwargs):
+        real_write(self, text[: len(text) // 2], *args, **kwargs)
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(Path, "write_text", cut_short)
+    rig.app._state["treadmill"] = {"name": "another pad with a longer name"}
+    rig.app._save_state()
+    monkeypatch.undo()
+    assert json.loads(path.read_text("utf-8"))["treadmill"]["name"] == "URTM030"
+
+
+def test_filing_a_walk_under_a_game_session_is_news_to_the_walk_list(rig: Rig):
+    """The History list asks for the walks again only when the snapshot says
+    something changed: a walk filed under a character must be such news."""
+
+    async def scenario():
+        await rig.connect()
+        await rig.walk()
+        await rig.run(120)
+        await rig.step_off()
+
+    run(scenario())
+    (walk,) = rig.app.store.records
+    before = rig.app.snapshot()["walks_rev"]
+    assert rig.game_saves(game_db([(walk.start - 60, walk.end + 60, 3, ME)]))
+    assert rig.app.store.records[0].source == "wow"
+    after = rig.app.snapshot()
+    assert after["walks_rev"] > before
+    assert after["totals"]["all"]["sessions"] == 1, "(the count of walks alone did not change)"

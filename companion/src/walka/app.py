@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import threading
 import time
 from collections import deque
@@ -29,8 +30,8 @@ from . import config as config_module
 from .config import Config
 from .journey import attach as attach_journeys
 from .metrics import Profile
-from .road import RoadBook
-from .session import SessionRecord, SessionRecorder, SessionStore
+from .road import RoadBook, walked_spans
+from .session import SessionRecord, SessionRecorder, SessionStore, is_made_up
 from .treadmill import Treadmill, TreadmillError, TreadmillEvent
 from .treadmill_check import REPORTS_DIR, CheckState, run_check
 from .updates import UpdateState
@@ -51,6 +52,7 @@ STATE_FILE = "state.json"
 # standby - is left alone.
 RETURN_GAP_S = 20.0
 WATCH_RETRY_S = 30.0  # after the Bluetooth listening failed (adapter off, ...)
+CHECK_LET_GO_S = 2.0  # on closing: how long "Check my treadmill" may take to let go of the pad
 
 
 class ReturnDetector:
@@ -78,6 +80,7 @@ class App:
         treadmill: Treadmill,
         heart_rate: Any = None,
         walka_account: Any = None,
+        writes_addon: bool = True,
         wall_clock: Callable[[], float] = time.time,
         mono_clock: Callable[[], float] = time.monotonic,
     ) -> None:
@@ -147,7 +150,19 @@ class App:
         self._idle_since: float | None = None
         self._was_moving = False
         self._totals_cache: tuple[float, dict[str, Any]] | None = None
+        # False for a made-up run started from the command line (--demo,
+        # --simulate, --replay): the installed addon's file is not written,
+        # so that the game never shows made-up walks.
+        self.writes_addon = writes_addon
+        self._sync_task: asyncio.Task | None = None  # writing the addon's file, on a worker thread
+        self._sync_wanted = False
         self._state = self._load_state()
+        if self.store.recovery_failed:
+            self.log_event(
+                "A walk from before Walka was last closed could not be saved yet. Walka keeps it and tries "
+                "again; check that the disk is not full and the data folder can be written.",
+                "error",
+            )
 
         # Sending walks to a Walka account (walka_account/). Here it is
         # not there unless it is handed in: cli does that, at every start
@@ -173,10 +188,19 @@ class App:
             return {}
 
     def _save_state(self) -> None:
+        # Written beside it and then put in its place: a write cut short (a
+        # full disk, a crash) leaves the old file whole.
+        path = self.data_dir / STATE_FILE
+        tmp = path.with_name(path.name + ".tmp")
         try:
-            (self.data_dir / STATE_FILE).write_text(json.dumps(self._state), "utf-8")
+            tmp.write_text(json.dumps(self._state), "utf-8")
+            os.replace(tmp, path)
         except OSError as exc:
             log.debug("could not save state: %s", exc)
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
 
     def log_event(self, text: str, level: str = "info") -> None:
         self.events.appendleft({"time": self.wall(), "level": level, "text": text})
@@ -196,7 +220,7 @@ class App:
             self._pin_treadmill()
             self._state["treadmill"] = {"name": status.name}
             self._save_state()
-            self.sync_addon()
+            self.request_sync()
 
     def _pin_treadmill(self) -> None:
         """Tie Walka to the treadmill it has just connected to.
@@ -238,20 +262,25 @@ class App:
             self._was_moving = moving
             if self.treadmill.status.connected:  # (a belt out of reach has not been heard to stop)
                 self.log_event("The belt is moving." if moving else "The belt has stopped.")
-        self._record(wall, speed)
+        self._record(wall, speed, mono)
+        self._retry_saving(mono)
         self._maybe_check_for_update()
 
     # ---- recording ---------------------------------------------------------------
-    def _record(self, wall: float, speed_kmh: float) -> None:
+    def _record(self, wall: float, speed_kmh: float, mono: float | None = None) -> None:
         """A walk is whatever the belt does: it begins when the belt moves
         and ends when it has stood still for a while. (Which game session it
-        was in is learnt later, from the game's saved file: file_walks.)"""
+        was in is learnt later, from the game's saved file: file_walks.)
+        How long anything lasts - the stand-still, the time between
+        checkpoints, the walk - is counted by the monotonic clock ``mono``:
+        a computer clock set back mid-walk changes none of it."""
+        mono = self.mono() if mono is None else mono
         moving = speed_kmh > MOVING_KMH
         if moving:
             self._idle_since = None
         elif self._idle_since is None:
-            self._idle_since = wall
-        idle_for = 0.0 if self._idle_since is None else wall - self._idle_since
+            self._idle_since = mono
+        idle_for = 0.0 if self._idle_since is None else mono - self._idle_since
 
         recorder = self.recorder
         want = moving or (recorder is not None and idle_for < FREE_WALK_GRACE_S)
@@ -261,9 +290,12 @@ class App:
 
         if recorder is None and want:
             status = self.treadmill.status
-            recorder = SessionRecorder(treadmill=status.name, started_at=wall)
+            # (Made up: the simulated pad, or a recording played back - known
+            # by the kind of treadmill, whatever name it shows.)
+            made_up = self.treadmill.kind == "simulated"
+            recorder = SessionRecorder(treadmill=status.name, started_at=wall, made_up=made_up)
             self.recorder = recorder
-            self._last_checkpoint = wall
+            self._last_checkpoint = mono
 
         if recorder is not None:
             status = self.treadmill.status
@@ -271,8 +303,8 @@ class App:
             hr = self.heart_rate
             if hr is not None and getattr(hr, "fresh", False):
                 bpm = hr.bpm
-            elif status.heart_rate_bpm:
-                bpm = status.heart_rate_bpm
+            elif status.fresh_heart_rate(self.mono()):
+                bpm = status.fresh_heart_rate(self.mono())
             recorder.update(
                 wall,
                 speed_kmh=speed_kmh,
@@ -281,9 +313,10 @@ class App:
                 machine_steps=status.steps,
                 heart_rate=bpm,
                 connected=status.connected,
+                mono=mono,
             )
-            if wall - self._last_checkpoint >= CHECKPOINT_EVERY_S:
-                self._last_checkpoint = wall
+            if mono - self._last_checkpoint >= CHECKPOINT_EVERY_S:
+                self._last_checkpoint = mono
                 if self._unsaved:
                     # (Only then. Saving clears the checkpoint, and with it
                     # goes the lock that tells another Walka that this walk
@@ -294,6 +327,22 @@ class App:
                     # (While a finished walk is still waiting to be written,
                     # the checkpoint file is what keeps it safe: leave it.)
                     self.store.checkpoint(recorder.snapshot(wall))
+
+    def _retry_saving(self, mono: float) -> None:
+        """With no walk going, a walk that could not be written (a full
+        disk) is tried again now and then. (While one is going, its
+        checkpoints do that: _record.)"""
+        if self.recorder is not None or mono - self._last_checkpoint < CHECKPOINT_EVERY_S:
+            return
+        if not self._unsaved and not self.store.recovery_failed:
+            return
+        self._last_checkpoint = mono
+        if self.store.recovery_failed and self.store.retry_recovery():
+            self._totals_cache = None
+            self.log_event("The walk from before Walka was last closed is saved now.")
+            self.request_sync()
+        if self._unsaved:
+            self._save_unsaved()
 
     def _finish_recording(self, wall: float) -> SessionRecord | None:
         """Close the walk being recorded and file it. Never raises: a disk
@@ -311,9 +360,12 @@ class App:
 
     def _save_unsaved(self, *, announce: bool = False) -> None:
         """Write finished walks to disk. The file is written first and the
-        crash checkpoint cleared only afterwards; a walk that cannot be
-        written stays in memory for another try and in the checkpoint, where
-        the next start of the companion finds it."""
+        crash checkpoint cleared right afterwards - before anything else is
+        told of the walk, so that a Walka killed meanwhile does not find it
+        again; a walk that cannot be written stays in memory for another
+        try and in the checkpoint, where the next start of the companion
+        finds it."""
+        saved: list[SessionRecord] = []
         while self._unsaved:
             record = self._unsaved[0]
             try:
@@ -326,27 +378,32 @@ class App:
                         "check that the disk is not full and the data folder can be written.",
                         "error",
                     )
-                return
+                break
             self._unsaved.pop(0)
+            saved.append(record)
+        if not self._unsaved:
+            self.store.clear_checkpoint()
+        if not saved:
+            return
+        for record in saved:
             self.last_record = record
-            self._totals_cache = None
             self.log_event(
                 f"Walk saved: {record.seconds / 60:.0f} min, {record.distance_m / 1000:.2f} km, "
                 f"{record.steps} steps, {record.kcal:.0f} kcal."
             )
-            self.sync_addon()
-            if self.walka_account is not None:
+        self._totals_cache = None
+        self.request_sync()
+        if self.walka_account is not None:
+            for _record in saved:
                 try:
                     self.walka_account.walk_saved()  # (only wakes its sender: nothing is waited for here)
                 except Exception as exc:
-                    # This walk is on disk, and the next one in the list
-                    # must get there too: nothing of a Walka account may
-                    # stand in its way. (The kind of error only, as in start().)
+                    # These walks are on disk: nothing of a Walka account may
+                    # stand in the way of the rest. (The kind of error only, as in start().)
                     log.warning(
                         "the Walka account's part could not be told of a saved walk: an error of the kind %s",
                         type(exc).__name__,
                     )
-        self.store.clear_checkpoint()
 
     # ---- addon sync --------------------------------------------------------------
     def find_addon_dir(self) -> Path | None:
@@ -358,12 +415,9 @@ class App:
         addon is installed first, then every other install found."""
         return addon_sync.game_dirs(self.config.wow.addon_dir or None)
 
-    def sync_addon(self) -> bool:
-        """Write history and profile into the addon folder."""
-        directory = self.find_addon_dir()
-        if directory is None:
-            self.addon_error = "Walka addon folder not found - install the addon or set its folder in Settings."
-            return False
+    def addon_payload(self) -> dict[str, Any]:
+        """What the addon's file is to hold now. Memory only: made on the
+        loop, so that the walks are read where they are written."""
         profile = {
             "weightKg": round(self.config.profile.weight_kg, 1),
             "heightCm": round(self.config.profile.height_cm, 1),
@@ -371,8 +425,60 @@ class App:
         }
         known = self._state.get("treadmill")
         name = known.get("name", "") if isinstance(known, dict) else ""
+        walks = [record for record in self.store.records if self.shows_made_up or not is_made_up(record)]
+        return addon_sync.build_payload(walks, profile=profile, treadmill_name=name)
+
+    @property
+    def shows_made_up(self) -> bool:
+        """Do made-up walks count (the totals, the addon's file)? Only while
+        Walka itself runs on the simulated treadmill (or a recording): with
+        a real one they are kept, and listed, but count for nothing."""
+        return self.treadmill.kind == "simulated"
+
+    def request_sync(self) -> None:
+        """Have the addon's file written again, from the loop: on a worker
+        thread (finding the addon's folder looks at drives, and writing the
+        file may wait for the game to let go of it), one write at a time,
+        and the newest is always the last. Off the loop: at once."""
         try:
-            addon_sync.sync(directory, self.store, profile=profile, treadmill_name=name)
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self.sync_addon()
+            return
+        self._sync_wanted = True
+        if self._sync_task is None or self._sync_task.done():
+            self._sync_task = loop.create_task(self._sync_off_the_loop(), name="walka-addon-sync")
+
+    async def _sync_off_the_loop(self) -> None:
+        while self._sync_wanted:
+            self._sync_wanted = False
+            try:
+                payload = self.addon_payload()
+            except Exception as exc:
+                # (One damaged walk on file: reported, as sync_addon does.)
+                self.addon_error = f"could not write the addon data file: {exc}"
+                log.warning(self.addon_error, exc_info=True)
+                continue
+            await asyncio.to_thread(self.sync_addon, payload)
+
+    async def synced(self) -> None:
+        """Wait until the addon's file is as it was last asked to be."""
+        while self._sync_task is not None and not self._sync_task.done():
+            await asyncio.shield(self._sync_task)
+
+    def sync_addon(self, payload: dict[str, Any] | None = None) -> bool:
+        """Write history and profile into the addon folder (``payload``:
+        made beforehand with ``addon_payload``). Waits on the disk: from the
+        loop, ``request_sync``."""
+        if not self.writes_addon:
+            self.addon_error = "not written: Walka runs on a made-up treadmill, and the game is not shown made-up walks"
+            return False
+        directory = self.find_addon_dir()
+        if directory is None:
+            self.addon_error = "Walka addon folder not found - install the addon or set its folder in Settings."
+            return False
+        try:
+            addon_sync.write_data_file(directory, self.addon_payload() if payload is None else payload)
         except Exception as exc:
             # The sync is a convenience. Whatever goes wrong with it - a disk
             # that is full, one damaged walk on file - must not take the
@@ -489,7 +595,7 @@ class App:
         try:
             self.log_event(
                 "Checking the treadmill: Walka lets go of it for about 45 seconds, so that the check can connect. "
-                "Like Walka, the check only listens."
+                "The check only listens: it sends the treadmill nothing at all."
             )
             try:
                 await self.treadmill.disconnect()
@@ -510,7 +616,7 @@ class App:
         finally:
             self._checking = False
             self.connect_error = ""
-            if was_wanted:
+            if was_wanted and not self._stopping.is_set():
                 self.connect()
 
     # ---- heart rate over the local network -----------------------------------------------
@@ -603,6 +709,20 @@ class App:
             )
             self.log_event(self.update.install_error, "warning")
             return
+        # The belt may have been started while the new version came down:
+        # Walka does not restart in the middle of a walk. It waits until the
+        # walk is over (and saved), however long that is.
+        if self._was_moving or self.recorder is not None:
+            self.update.stage = "waiting"
+            self.log_event(f"Walka {restart.to_version} is ready: Walka restarts once this walk is over.")
+            while (self._was_moving or self.recorder is not None) and not self._stopping.is_set():
+                await asyncio.sleep(1.0 if self.recorder is None else 0.5)
+            if self._stopping.is_set():
+                # Closed meanwhile: Walka is not started again by itself. The
+                # new version is in place and is what starts next, which then
+                # says that it was updated (and updates the addon).
+                updates.note_done(restart)
+                return
         self.update.stage = "restarting"
         updates.restart_when_stopped(restart)
         self.log_event(f"Walka {restart.to_version} is ready: Walka saves the walk and restarts.")
@@ -745,9 +865,18 @@ class App:
         extra = []
         if self.recorder is not None and self.recorder.seconds > 0:
             extra.append(self.recorder.snapshot(wall))
-        totals = self.store.totals(wall, extra)
+        totals = self.store.totals(wall, extra, made_up=self.shows_made_up)
         self._totals_cache = (wall, totals)
         return totals
+
+    def walked_spans(self) -> list[tuple[float, float]]:
+        """When the treadmill's belt was moving, from the walks on file and
+        the one in progress: the road travelled then is the road walked on
+        the treadmill (road.walked_spans). On the loop: it reads the store."""
+        walks: list[SessionRecord] = list(self.store.records)
+        if self.recorder is not None and self.recorder.seconds > 0:
+            walks.append(self.recorder.snapshot(self.wall()))
+        return walked_spans(walk for walk in walks if not is_made_up(walk))
 
     def snapshot(self) -> dict[str, Any]:
         wall = self.wall()
@@ -762,6 +891,7 @@ class App:
             # Walka is tied to one treadmill (see _pin_treadmill).
             pinned=bool(self.config.treadmill.address) and hasattr(self.treadmill, "address"),
             moving=self._was_moving,
+            range_known=bool(getattr(self.treadmill, "speed_range_known", False)),
         )
         snapshot: dict[str, Any] = {
             "version": __version__,
@@ -773,6 +903,8 @@ class App:
             "game": self.game.status(),
             "session": self.recorder.live() if self.recorder is not None else None,
             "last_session": self.last_record.summary() if self.last_record is not None else None,
+            # Goes up whenever a walk on file is added, changed (filed under a game session) or deleted.
+            "walks_rev": self.store.rev,
             "totals": self.totals(wall),
             "heart_rate": None if hr is None else {
                 **hr.to_dict(),
@@ -861,7 +993,7 @@ class App:
                 f"The game's saved file shows the game sessions of {changed} "
                 f"walk{'s' if changed != 1 else ''}: filed under them."
             )
-            self.sync_addon()
+            self.request_sync()
         return changed
 
     # ---- lifecycle ---------------------------------------------------------------
@@ -919,7 +1051,7 @@ class App:
                 # look again soon. Otherwise back off between attempts.
                 idle = self.treadmill.status.connected or not self.connection_wanted()
                 await asyncio.wait_for(self._connect_now.wait(), timeout=2.0 if idle else backoff)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
 
     def should_watch(self) -> bool:
@@ -953,7 +1085,7 @@ class App:
                     return False
                 try:
                     await asyncio.wait_for(returned.wait(), 1.0)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     pass
         finally:
             self.watching = False
@@ -1019,6 +1151,10 @@ class App:
             self._save_unsaved()
         except Exception:
             log.exception("could not save the walk on exit")
+        try:
+            await self.synced()
+        except Exception:
+            log.exception("the addon's file was not written on exit")
         if self.hr_network is not None:
             try:
                 await self.hr_network.stop()
@@ -1030,6 +1166,10 @@ class App:
                 await self.heart_rate.close()
             except Exception:
                 pass
+        if self._check_task is not None and not self._check_task.done():
+            # The probe lets go of the pad (its BleakClient) as it is
+            # cancelled. After the walk is saved: that is waited for first.
+            await asyncio.wait([self._check_task], timeout=CHECK_LET_GO_S)
         try:
             await self.treadmill.disconnect()
         except Exception as exc:

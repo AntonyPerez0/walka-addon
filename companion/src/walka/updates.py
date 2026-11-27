@@ -88,8 +88,15 @@ def parse_version(text: str | None) -> tuple[int, ...] | None:
 
 
 def is_newer(latest: str | None, current: str = __version__) -> bool:
-    new, now = parse_version(latest), parse_version(current)
-    return new is not None and now is not None and new > now
+    """Is ``latest`` (never a trial: see parse_version) newer than this
+    Walka? A trial that runs ("0.13.0-rc1") is older than its own final
+    release, which is offered to it."""
+    new = parse_version(latest)
+    trial = re.fullmatch(r"v?(\d+\.\d+(?:\.\d+)?)-[0-9A-Za-z.]+", (current or "").strip())
+    now = parse_version(trial.group(1) if trial else current)
+    if new is None or now is None:
+        return False
+    return new > now or (trial is not None and new == now)
 
 
 def is_packed() -> bool:
@@ -411,6 +418,13 @@ def _write_done(restart: Restart) -> None:
         )
     except OSError as exc:
         log.warning("could not note the update: %s", exc)
+
+
+def note_done(restart: Restart) -> None:
+    """The new version is in place, and Walka is closing without restarting
+    (it was closed while it waited for a walk to end): the next start says
+    that it was updated, as after a restart."""
+    _write_done(restart)
 
 
 def take_done(data_dir: Path) -> dict[str, str] | None:

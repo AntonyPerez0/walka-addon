@@ -4,8 +4,11 @@
 
 ## Your Walka account (on walka.dev)
 
-Optional. Walka works in full without it, and if you never sign in it
-sends nothing and asks nobody.
+Optional. Walka works in full without it, and if you never sign in, the
+Walka account part sends nothing and asks nobody. (Apart from that, Walka
+asks GitHub whether a new version is out, at every start and then once a
+day: see [Updates](USING.md#updates). *Settings → Updates* switches that
+off.)
 
 On Walka's website, <https://walka.dev/>, you can have a Walka account. It
 holds your walks - and, if you put them there, body numbers and a food
@@ -43,8 +46,10 @@ else has a hand in that.
 * **What stays on your computer:** the samples (speed and heart rate
   every five seconds), the heart rate, the top speed, the treadmill's
   name, your character, its name, its realm and its road, and your
-  weight, height, age and sex. A walk made with the simulated treadmill
-  (as with `--demo`) is never sent, and while Walka runs with that treadmill
+  weight, height, age and sex. A made-up walk is never sent: one made
+  with the simulated treadmill (`--demo`, `--simulate`) or with a
+  recording played back (`--replay`). Walka marks it as made up when it is
+  recorded, whatever treadmill name it shows. While Walka runs like that,
   *Walka account* is not in Settings at all. A walk your Walka account
   does not take - one that lasts longer than two days, say - is not sent
   either: the dashboard says which.
@@ -52,9 +57,10 @@ else has a hand in that.
   asking again. (A walk that is saved as Walka closes goes at the next
   start. When there is no answer, Walka tries again later.) If your page
   on walka.dev is public, a walk counts on it as soon as it is sent.
-* **To stop:** *Stop sending* in the same place, or *Sign out*. Either
-  takes effect at once, and neither deletes anything in your Walka
-  account.
+* **To stop:** *Stop sending* in the same place, or *Sign out*. From that
+  moment no walk is sent. A request that was already on its way is not
+  called back: it ends by itself, within 20 seconds at most. Neither
+  deletes anything in your Walka account.
 * **Deleting on one side deletes nothing on the other.** A walk you
   delete on the dashboard stays in your Walka account until you delete it
   there ([walka.dev/account/walks/](https://walka.dev/account/walks/)). A
@@ -86,6 +92,12 @@ there, make your page public and delete the Walka account.
 * **"Sign out" on walka.dev does not sign this computer out.** A computer
   stays signed in until somebody signs out on it, in Walka, or the Walka
   account is deleted.
+* **Signing out in Walka does not always end the sign-in at walka.dev.**
+  It takes the sign-in off this computer at once. Walka also tells
+  walka.dev, but only when it has a sign-in in hand that has not run out
+  (one from the last hour or so); it never signs in again just to sign
+  out. Otherwise the sign-in stays valid at walka.dev, unused, until it
+  runs out there. Nothing on this computer can use it any more.
 * **A proxy set for your system is not used.** Walka makes its requests
   directly, and asks nobody whose certificate it cannot check. Where the
   internet is reached only through a proxy, Walka cannot sign in or send.

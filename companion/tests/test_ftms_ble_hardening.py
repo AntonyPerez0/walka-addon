@@ -181,7 +181,7 @@ def test_bluetooth_switched_off_reads_as_a_sentence_not_a_tuple():
     )
     assert "POWERED_OFF" in str(off)  # what used to be shown
     assert describe_bluetooth_error(off) == "Bluetooth radio is not powered on. Turn on Bluetooth and try again."
-    assert describe_bluetooth_error(asyncio.TimeoutError()).startswith("timed out - is the treadmill switched on")
+    assert describe_bluetooth_error(TimeoutError()).startswith("timed out - is the treadmill switched on")
     assert describe_bluetooth_error(TimeoutError(), timeout_hint="") == "timed out"
     assert describe_bluetooth_error(OSError("adapter unplugged")) == "adapter unplugged"
     assert describe_bluetooth_error(RuntimeError()) == "RuntimeError"  # never an empty reason
@@ -210,7 +210,7 @@ def test_a_connection_time_out_says_what_to_check():
             client = make_client(device, on_disconnect)
 
             async def connect():
-                raise asyncio.TimeoutError()  # what bleak raises: no text at all
+                raise TimeoutError()  # what bleak raises: no text at all
 
             client.connect = connect
             return client
@@ -237,7 +237,7 @@ def test_heart_rate_sensor_failures_are_readable_too(monkeypatch):
 
     async def connect_once():
         failed.set()
-        raise asyncio.TimeoutError()
+        raise TimeoutError()
 
     monitor._connect_once = connect_once
 

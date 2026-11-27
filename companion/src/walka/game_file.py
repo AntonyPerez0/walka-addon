@@ -29,7 +29,7 @@ import math
 import threading
 import time
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -197,7 +197,8 @@ class GameFiles:
     _demo: SavedGame | None = None
     _rev: int = 0
     _read_at: float | None = None
-    _lock: threading.Lock = field(default_factory=threading.Lock)
+    _lock: threading.Lock = field(default_factory=threading.Lock)  # what was read: held for moments only
+    _scan_lock: threading.Lock = field(default_factory=threading.Lock)  # one look at the disk at a time
 
     def use_demo(self, saved: SavedGame) -> None:
         """``--demo``: what a made-up game would have saved. The disk is not looked at."""
@@ -248,44 +249,56 @@ class GameFiles:
     # ---- looking --------------------------------------------------------------------
     def scan(self, *, force: bool = False) -> bool:
         """Look for files the game has written since the last look, and read
-        them. True if what the files hold has changed."""
-        with self._lock:
-            if self._demo is not None:
-                return False
-            now = self.mono()
-            if not force and now - self._scanned_at < RESCAN_S:
-                return False
-            self._scanned_at = now
-            if force or now - self._dirs_at >= GAME_DIRS_S or not self._dirs:
-                self._dirs_at = now
+        them. True if what the files hold has changed.
+
+        The disk is looked at without the lock that guards what was read:
+        what the loop asks meanwhile (``rev``, ``sessions``, ``status``) is
+        answered at once from the last look. One look at a time."""
+        with self._scan_lock:
+            with self._lock:
+                if self._demo is not None:
+                    return False
+                now = self.mono()
+                if not force and now - self._scanned_at < RESCAN_S:
+                    return False
+                self._scanned_at = now
+                look_for_game = force or now - self._dirs_at >= GAME_DIRS_S or not self._dirs
+                if look_for_game:
+                    self._dirs_at = now
+                dirs = list(self._dirs)
+                # (Copies: the entries are changed out here, and put back below.)
+                files = {path: replace(entry) for path, entry in self._files.items()}
+            if look_for_game:
                 try:
-                    self._dirs = [Path(folder) for folder in self.game_dirs()]
+                    dirs = [Path(folder) for folder in self.game_dirs()]
                 except Exception:
                     log.debug("could not look for the game", exc_info=True)
-                    self._dirs = []
+                    dirs = []
             found: list[Path] = []
-            for folder in self._dirs:
+            for folder in dirs:
                 found += account_files(folder)
             found = found[:MAX_FILES]
             changed = False
-            for path in list(self._files):
+            for path in list(files):
                 if path not in found:
-                    changed = changed or self._files[path].saved is not None
-                    del self._files[path]  # the account's folder is gone
+                    changed = changed or files[path].saved is not None
+                    del files[path]  # the account's folder is gone
             for path in found:
-                changed = self._read(path) or changed
-            self._read_at = self.wall()
-            if changed:
-                self._rev += 1
+                changed = self._read(path, files.setdefault(path, _File())) or changed
+            with self._lock:
+                self._dirs = dirs
+                self._files = files
+                self._read_at = self.wall()
+                if changed:
+                    self._rev += 1
             return changed
 
-    def _read(self, path: Path) -> bool:
+    def _read(self, path: Path, entry: _File) -> bool:
         try:
             status = path.stat()
         except OSError:
             return False
         stamp = (status.st_size, status.st_mtime_ns)
-        entry = self._files.setdefault(path, _File())
         if entry.stamp == stamp:
             return False  # read already, whatever came of it
         if self.wall() - status.st_mtime < SETTLE_S:
@@ -308,7 +321,7 @@ class GameFiles:
             if len(data) > MAX_FILE_BYTES:
                 raise savedvars.SavedVariablesError("the file is too big")
             saved = decode(savedvars.parse(data).get(DB_VARIABLE), status.st_mtime)
-        except (OSError, savedvars.SavedVariablesError) as exc:
+        except (OSError, ValueError, savedvars.SavedVariablesError) as exc:  # (whatever a damaged file holds)
             problem = f"{type(exc).__name__}: {exc}"
         entry.stamp = stamp  # (a file that cannot be read is not tried again until it changes)
         if problem:

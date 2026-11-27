@@ -1154,7 +1154,7 @@ def test_signing_out_keeps_the_walks_and_may_leave_a_notice(tmp_path):
     after = book.read()
     assert after["addresses"][ORIGIN]["signed_in"] is None and after["addresses"][ORIGIN]["notice"] == "ended"
     assert account_of(after)["sending"] is False and key in account_of(after)["walks"]
-    assert account_of(after)["email"] == "a@b.example"
+    assert account_of(after)["email"] == "" and account_of(after)["way"] == "", "not needed once signed out"
 
     book.change(lambda b: ledger.clear_notice(b, ORIGIN))
     assert book.read()["addresses"][ORIGIN]["notice"] is None
@@ -1426,3 +1426,18 @@ def test_a_walka_account_that_is_known_to_be_gone_has_no_copies_and_a_sign_in_to
             ).encode()
         )
         assert account_of(Ledger(tmp_path / "raw").read())["gone"] is False, junk
+
+
+def test_signing_out_keeps_only_what_is_needed_later(tmp_path):
+    """After sign-out the file needs the account's id and which walks went
+    to it (so that signing in again sends none of them twice). Not the
+    e-mail address, nor how the sign-in was made, nor the old choice."""
+    book = signed_in_and_on(tmp_path)
+    key = ledger.walk_key("20991231-120000", 4_102_401_600.0)
+    book.change(lambda b: ledger.note_walks(b, ORIGIN, ANNA, {key: {"state": "added", "row": "r1", "at": 1.0}}))
+    book.change(lambda b: ledger.sign_out(b, ORIGIN))
+    on_disk = (tmp_path / ledger.FILE_NAME).read_text("utf-8")
+    assert "a@b.example" not in on_disk and "github" not in on_disk
+    account = account_of(json.loads(on_disk))
+    assert account["email"] == "" and account["way"] == "" and account["chosen"] is None
+    assert key in account["walks"] and ANNA in on_disk

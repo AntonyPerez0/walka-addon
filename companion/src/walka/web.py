@@ -162,7 +162,7 @@ def create_app(app: App) -> web.Application:
                 await response.write(f"data: {payload}\n\n".encode())
                 try:
                     await asyncio.wait_for(stopping.wait(), PUSH_INTERVAL_S)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     pass
         except (ConnectionResetError, ConnectionError):
             pass
@@ -280,7 +280,8 @@ def create_app(app: App) -> web.Application:
     @routes.get("/api/sessions")
     async def sessions(request: web.Request) -> web.Response:
         try:
-            limit = max(1, min(2000, int(request.query.get("limit", "200"))))
+            # (As many as are asked for: History's "Show more" asks for all of them.)
+            limit = max(1, min(1_000_000, int(request.query.get("limit", "200"))))
         except ValueError:
             limit = 200
         found = [(record, record.summary()) for record in app.store.recent(limit)]
@@ -324,7 +325,7 @@ def create_app(app: App) -> web.Application:
         if not app.store.delete(request.match_info["session_id"]):
             raise web.HTTPNotFound()
         app._totals_cache = None
-        app.sync_addon()
+        app.request_sync()
         return ok()
 
     # ---- journey (the Share page) ------------------------------------------------
@@ -340,8 +341,10 @@ def create_app(app: App) -> web.Application:
         if not re.fullmatch(r"[0-9a-f]{1,16}", wanted):
             raise web.HTTPBadRequest(text="character: the id of a character from /api/journey")
         # Finding and reading the game's files can take a moment: never on
-        # the loop that records the walk.
-        return web.json_response(await asyncio.to_thread(app.roads.for_character, wanted))
+        # the loop that records the walk. (Which of the road was walked on
+        # the treadmill is known from the walks: read here, on the loop.)
+        walked = app.walked_spans()
+        return web.json_response(await asyncio.to_thread(app.roads.for_character, wanted, walked))
 
     @routes.post("/api/update/install")
     async def update_install(_request: web.Request) -> web.Response:
@@ -358,7 +361,8 @@ def create_app(app: App) -> web.Application:
 
     @routes.post("/api/addon/sync")
     async def addon_sync_now(_request: web.Request) -> web.Response:
-        success = app.sync_addon()
+        # (Finding the folder looks at drives: on a worker thread.)
+        success = await asyncio.to_thread(app.sync_addon, app.addon_payload())
         return web.json_response({"ok": success, "error": app.addon_error}, status=200 if success else 409)
 
     @routes.post("/api/addon/install")

@@ -289,16 +289,38 @@ def apply_update(config: Config, data: dict[str, Any]) -> Config:
     return config
 
 
+def _set_aside(path: Path, why: str) -> None:
+    """A config.json that cannot be read: defaults are used, and the next
+    save would write over it. So it is kept beside it first, as
+    config.json.unreadable (with a number, if that is taken), for whoever
+    wants to see what was in it."""
+    kept = path.with_name(path.name + ".unreadable")
+    number = 1
+    while kept.exists():
+        number += 1
+        kept = path.with_name(f"{path.name}.unreadable-{number}")
+    try:
+        os.replace(path, kept)
+    except OSError as exc:
+        log.warning("could not read %s (%s) - using defaults; nor could it be set aside (%s)", path, why, exc)
+        return
+    log.warning("could not read %s (%s) - using defaults. What it held is kept in %s", path, why, kept.name)
+
+
 def load(data_dir: Path | None = None) -> Config:
     """Load the config, falling back to defaults for anything missing or bad."""
     config = Config()
     path = (data_dir or default_data_dir()) / CONFIG_FILE
     try:
-        raw = json.loads(path.read_text("utf-8"))
+        # (utf-8-sig: Notepad and PowerShell begin UTF-8 with a byte order mark.)
+        raw = json.loads(path.read_text("utf-8-sig"))
     except FileNotFoundError:
         return config
     except (OSError, ValueError) as exc:
-        log.warning("could not read %s (%s) - using defaults", path, exc)
+        _set_aside(path, str(exc))
+        return config
+    if not isinstance(raw, dict):
+        _set_aside(path, "not a table of settings")
         return config
     if isinstance(raw, dict):
         apply_update(config, raw)

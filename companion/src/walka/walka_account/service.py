@@ -97,7 +97,7 @@ from .calls import WAYS, CallError, Signed
 from .https import Client, Origin
 from .keystore import Keys, KeyStoreError, entry_name, mark_name
 from .ledger import Ledger, LedgerError
-from .sender import MADE_UP, Halt, Sender, Walk, halt_of, read_walks
+from .sender import Halt, Sender, Walk, halt_of, made_up, read_walks
 from .signin import SignIn
 from .threads import off_loop, wait_for_event
 
@@ -377,7 +377,7 @@ class WalkaAccount:
         self.cancel()
         try:
             await asyncio.wait_for(self._wind_up(), CLOSE_WITHIN_S)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             log.warning("the Walka account's part did not close in time: what was left was dropped")
         except asyncio.CancelledError:
             raise
@@ -1443,7 +1443,7 @@ class WalkaAccount:
             since = chosen.get("from")
         waiting = []
         for record in self._records():
-            if getattr(record, "treadmill", "") == MADE_UP:
+            if made_up(record):
                 continue
             walk_id, start = getattr(record, "id", None), getattr(record, "start", None)
             key = walk_key(walk_id, start)
@@ -1616,7 +1616,7 @@ class WalkaAccount:
         if view.sending and view.chosen is not None and view.chosen.get("what") == "from":
             since = view.chosen.get("from")
         for record in reversed(self._records()):  # the newest first: they are the ones named
-            if getattr(record, "treadmill", "") == MADE_UP:
+            if made_up(record):
                 continue  # made-up walks are never counted
             walk_id, start = getattr(record, "id", None), getattr(record, "start", None)
             key = walk_key(walk_id, start)

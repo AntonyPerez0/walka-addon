@@ -92,6 +92,8 @@ export function translateTree(root = document.body) {
   }
 }
 
+const RIGHT_TO_LEFT = ["ar", "fa", "he", "ps", "ur", "yi"];
+
 /** Pick and load a translation for the browser's languages. Without one, nothing happens. */
 export async function loadLanguage(wanted = navigator.languages || [navigator.language]) {
   const lang = wanted
@@ -104,6 +106,8 @@ export async function loadLanguage(wanted = navigator.languages || [navigator.la
     const catalog = await response.json();
     useCatalog(catalog.strings);
     document.documentElement.lang = lang;
+    // Arabic, Hebrew, Persian, Urdu ... are written from the right.
+    document.documentElement.dir = catalog.dir === "rtl" || RIGHT_TO_LEFT.includes(lang.split("-")[0]) ? "rtl" : "ltr";
     translateTree();
     return lang;
   } catch {

@@ -1,7 +1,9 @@
 # Hardware notes: UREVO Strol 2E (URTM030), and other treadmills
 
 Walka listens to a treadmill over standard Bluetooth FTMS. It only listens:
-it never sends a treadmill a command (see [SAFETY.md](SAFETY.md)). It was
+it never sends a treadmill a command (see [SAFETY.md](SAFETY.md)). Older
+WalkingPads and FitShow pads, which report only when asked, get one fixed
+status question once a second, and nothing else. It was
 written around the UREVO Strol 2E, which most of this page is about; what
 is known about other makes - the WELLFIT TM029 Pro first of all - is under
 [Other treadmills](#other-treadmills).
@@ -215,7 +217,11 @@ To add a treadmill to the names Walka knows:
    the recording holds every notification heard, with its time, so the
    walk can be played back - in Walka's tests, or on the dashboard with
    `walka run --replay walka-probe-....json`. Both are made to be posted:
-   fitness machines only, addresses cut short, no serial number.
+   fitness machines only, addresses cut short, no serial number. It
+   listens to standard treadmills, foot pods (RSC) and the WalkingPad and
+   PitPat protocols. It sends no query, so a pad that reports only when
+   asked (an older WalkingPad, FitShow) says little in it; for FitShow's
+   generic 0xFFF0 channel use `walka probe --record --all`.
 2. Walk on it with the companion running, and check the dashboard against
    the treadmill's own display: speed, distance, steps.
 3. Add an entry to `KNOWN_TREADMILLS` in `treadmill/known.py` - the start

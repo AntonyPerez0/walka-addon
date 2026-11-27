@@ -68,8 +68,22 @@ def short_address(address: str) -> str:
 
 
 # Services whose notifications the probe switches on without being asked to:
-# standard ones, where doing so is what every fitness app does.
-LISTEN_SERVICES = frozenset({ftms.FTMS_SERVICE, ftms.DEVICE_INFORMATION_SERVICE, ftms.HEART_RATE_SERVICE})
+# the standard ones, where doing so is what every fitness app does, and the
+# ones Walka can read a walk from (treadmill/readers.py): a foot pod's, and
+# the makers' own protocols on services of their own. Switching notifications
+# on is all: the probe sends no query, so a pad that reports only when asked
+# says little here. (Not FitShow's 0xFFF0: many devices have that one - a
+# UREVO pad too - and a FitShow pad says nothing unasked. --all has it.)
+LISTEN_SERVICES = frozenset(
+    {
+        ftms.FTMS_SERVICE,
+        ftms.DEVICE_INFORMATION_SERVICE,
+        ftms.HEART_RATE_SERVICE,
+        ftms.RSC_SERVICE,
+        ftms.uuid16(0xFE00),  # WalkingPad
+        ftms.uuid16(0xFBA0),  # PitPat (reports by itself)
+    }
+)
 
 
 def listens_to(service_uuid: str, *, all_characteristics: bool = False) -> bool:
