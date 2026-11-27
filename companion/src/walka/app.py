@@ -52,6 +52,7 @@ STATE_FILE = "state.json"
 # standby - is left alone.
 RETURN_GAP_S = 20.0
 WATCH_RETRY_S = 30.0  # after the Bluetooth listening failed (adapter off, ...)
+CHECK_LET_GO_S = 2.0  # on closing: how long "Check my treadmill" may take to let go of the pad
 
 
 class ReturnDetector:
@@ -615,7 +616,7 @@ class App:
         finally:
             self._checking = False
             self.connect_error = ""
-            if was_wanted:
+            if was_wanted and not self._stopping.is_set():
                 self.connect()
 
     # ---- heart rate over the local network -----------------------------------------------
@@ -1165,6 +1166,10 @@ class App:
                 await self.heart_rate.close()
             except Exception:
                 pass
+        if self._check_task is not None and not self._check_task.done():
+            # The probe lets go of the pad (its BleakClient) as it is
+            # cancelled. After the walk is saved: that is waited for first.
+            await asyncio.wait([self._check_task], timeout=CHECK_LET_GO_S)
         try:
             await self.treadmill.disconnect()
         except Exception as exc:
