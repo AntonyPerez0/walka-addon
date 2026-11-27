@@ -67,13 +67,13 @@ Walka itself.)
   `test_ftms_ble.py` and `test_app.py` fail if anything else is written.
 * **Publishing a version:** put the same number in
   `companion/pyproject.toml`, `companion/src/walka/__init__.py` and
-  `Walka/Walka.toc`, commit and push. Then, on GitHub, open **Actions** →
-  **CI** → **Run workflow**, type the number (`0.1.0`) and run it. (Pushing
-  a tag does the same: `git tag v0.1.0`, `git push origin v0.1.0`. Only a
-  commit that is on the default branch is published: a tag on any other
-  commit is refused.) The publishing job runs in the GitHub environment
-  `release`: a reviewer added to it under *Settings → Environments* has to
-  approve each release before anything is published. When
+  `Walka/Walka.toc`, commit, and get it onto the default branch. Then tag
+  that commit and push the tag: `git tag v0.1.0`, `git push origin v0.1.0`.
+  That is the only way: a tag ruleset lets only the repository's admins
+  make `v*` tags, a tag on a commit that is not on the default branch is
+  refused, and running the workflow by hand only tests and builds. The
+  publishing job runs in the GitHub environment `release`, whose reviewer
+  approves each release before anything is published. When
   the run finishes, the **Releases** page has `Walka.exe`, the two Mac
   zips (the download buttons at the top of the README always give the
   latest ones) and `Walka-addon.zip`, which you upload to CurseForge

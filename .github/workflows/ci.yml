@@ -5,12 +5,8 @@ on:
     branches: ["**"]
     tags: ["v*"]
   pull_request:
+  # (By hand: the tests and the builds only. A release comes from a pushed tag alone.)
   workflow_dispatch:
-    inputs:
-      release_version:
-        description: "Publish a release with this version, for example 0.1.0 (leave empty to only run the tests and the build)"
-        required: false
-        default: ""
 
 permissions:
   contents: read
@@ -454,13 +450,13 @@ jobs:
 
   # Publishes a release: the programs people download from the buttons at
   # the top of the README (Walka.exe for Windows, a zip for each kind of
-  # Mac), and the addon as a zip that is ready to upload to CurseForge. Two ways to ask for one: push a version tag (v0.1.0), or
-  # run this workflow by hand (Actions > CI > Run workflow) and type the
-  # version - the tag is then made here. Either way only after the tests
+  # Mac), and the addon as a zip that is ready to upload to CurseForge. One way to ask for one: push a
+  # version tag (v0.1.0) on a commit of the default branch. A tag ruleset lets only the repository's
+  # admins make such tags, and the environment "release" waits for its reviewer. Only after the tests
   # and the build above have passed for that same commit.
   release:
     name: Publish release
-    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release_version != '')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: [test, virus-scan]
     runs-on: ubuntu-latest
     # Settings -> Environments -> release: a reviewer added there has to
@@ -468,7 +464,7 @@ jobs:
     environment: release
     # One run per version at a time: a second waits, then finds the first's release.
     concurrency:
-      group: release-${{ github.event_name == 'workflow_dispatch' && format('v{0}', inputs.release_version) || github.ref_name }}
+      group: release-${{ github.ref_name }}
       cancel-in-progress: false
     defaults:
       run:
@@ -481,7 +477,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
-      TAG: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', inputs.release_version) || github.ref_name }}
+      TAG: ${{ github.ref_name }}
       DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -493,9 +489,10 @@ jobs:
           # text (grep would pass a value with one good line among others).
           shape='^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'
           [[ "$TAG" =~ $shape ]] || { echo "::error::'$TAG' is not a version like v0.1.0"; exit 1; }
-          # Run by hand, a release is made from the main line of the code and from nowhere else.
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && [ "$GITHUB_REF_NAME" != "$DEFAULT_BRANCH" ]; then
-            echo "::error::A release is published from the branch '$DEFAULT_BRANCH', not from '$GITHUB_REF_NAME'. Choose it under 'Use workflow from'."
+          # Only from a pushed tag (a run by hand publishes nothing: it would have to make the tag
+          # itself, and the tag ruleset lets only admins make one).
+          if [ "$GITHUB_REF_TYPE" != "tag" ]; then
+            echo "::error::A release is published from a pushed tag only: git tag $TAG, then git push origin $TAG."
             exit 1
           fi
           # From a pushed tag too: a tag can be pushed on any commit of any
@@ -585,10 +582,9 @@ jobs:
             gh release upload "$TAG" $files --clobber
             gh release edit "$TAG" --draft=false
           else
-            # From a pushed tag: the tag must be there. Run by hand: the tag is made now, on this commit.
-            if [ "$GITHUB_REF_TYPE" = "tag" ]; then at="--verify-tag"; else at="--target $GITHUB_SHA"; fi
-            gh release create "$TAG" $files $at --title "Walka ${TAG#v}" --notes "$notes" $pre || {
-              echo "::error::The release was refused. If the message above is 'Resource not accessible by integration': GitHub does not let a workflow put a tag on a commit that itself changes a file under .github/workflows. Make any other commit on top of it and run this again."
+            # The tag was pushed: it must be there, and nothing here makes one.
+            gh release create "$TAG" $files --verify-tag --title "Walka ${TAG#v}" --notes "$notes" $pre || {
+              echo "::error::The release was refused: see the message above."
               exit 1
             }
           fi

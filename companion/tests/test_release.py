@@ -260,7 +260,8 @@ def checkout(repo_root: Path, tmp_path: Path):
 
 
 def run_step(script: str, cwd: Path, **env: str) -> subprocess.CompletedProcess:
-    full = {**os.environ, "GITHUB_EVENT_NAME": "push", "GITHUB_REF_NAME": "v0", "DEFAULT_BRANCH": "main", **env}
+    full = {**os.environ, "GITHUB_EVENT_NAME": "push", "GITHUB_REF_TYPE": "tag", "GITHUB_REF_NAME": "v0",
+            "DEFAULT_BRANCH": "main", **env}  # fmt: skip
     return subprocess.run(["bash", "-eo", "pipefail", "-c", script], cwd=cwd, env=full, capture_output=True,
                           text=True, timeout=60)  # fmt: skip
 
@@ -571,3 +572,20 @@ def test_where_walka_says_it_only_listens_it_says_what_it_asks_some_pads(repo_ro
         for match in found:
             assert "report your numbers" in flat[match.end() : match.end() + 400], f"{name}: {flat[match.start():][:200]}"
     assert "It only listens to the pad" not in (repo_root / "companion" / "pyproject.toml").read_text("utf-8")
+
+
+def test_a_release_comes_from_a_pushed_tag_and_from_nothing_else(repo_root: Path, checkout):
+    """A run by hand would have to make the tag itself, and the tag ruleset
+    lets only admins make v* tags: so a run by hand publishes nothing."""
+    text = workflow(repo_root)
+    assert "release_version" not in text and "--target" not in text
+    job = text[text.index("\n  release:") :]
+    assert "\n    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')\n" in job
+    publish = job[job.index("- name: Publish") :]
+    assert "--verify-tag" in publish
+    work, main, _side = checkout
+    tag = f"v{code_version(repo_root)}"
+    script = release_step(repo_root, "The tag is the version written in the code")
+    by_hand = run_step(script, work, TAG=tag, GITHUB_SHA=main, GITHUB_EVENT_NAME="workflow_dispatch",
+                       GITHUB_REF_TYPE="branch", GITHUB_REF_NAME="main")  # fmt: skip
+    assert by_hand.returncode != 0 and "from a pushed tag only" in by_hand.stdout
